@@ -6,7 +6,7 @@ import type { ResolvedContributionRegistry, ResolvedHookRegistration } from '@/e
 
 import { describe, expect, it } from 'vitest';
 
-import type { PluginCompatibilityDiagnostic } from '@/extensions/plugins/shared/pluginDiagnostics';
+import type { PluginCompatibilityDiagnostic } from '@/extensions/diagnostics/types';
 import { resolvePluginHookHandlerRegistry } from './resolvePluginHookHandlerRegistry';
 
 async function writeDaemonModule(params: Readonly<{ basename: string; contents: string }>): Promise<string> {
@@ -25,11 +25,18 @@ function createHookRegistration(
     }>,
 ): ResolvedHookRegistration {
     return {
-        source: 'plugin',
+        provenance: 'external',
+        source: { kind: 'path' },
         pluginId: params.pluginId,
         manifestPath: `/plugins/${params.pluginId}/.happier-plugin/plugin.json`,
         manifestDigest: `sha256:${params.pluginId}`,
         daemonEntryPath: params.daemonEntryPath,
+        sourceSpec: {
+            kind: 'path',
+            locator: `/plugins/${params.pluginId}`,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+        },
         definition: {
             hookApiVersion: 1,
             id: 'backend.terminalRuntime.bindTranscript',
@@ -49,6 +56,10 @@ function createRegistry(hookRegistrations: readonly ResolvedHookRegistration[]):
     return {
         providers: Object.freeze([]),
         backends: Object.freeze([]),
+        actions: Object.freeze([]),
+        resources: Object.freeze([]),
+        uiDescriptors: Object.freeze([]),
+        activationTargets: Object.freeze([]),
         hookRegistrations: Object.freeze([...hookRegistrations]),
         runtimeAdaptersByBackendId: new Map(),
         catalogEntriesById: Object.freeze({}),
@@ -92,6 +103,37 @@ describe('resolvePluginHookHandlerRegistry', () => {
         await expect(handlers?.[1]?.handler()).resolves.toBe('low');
         expect(result.diagnosticsByPluginId['acme.high']).toEqual([]);
         expect(result.diagnosticsByPluginId['acme.low']).toEqual([]);
+    });
+
+    it('supports bundled activation sources without requiring a file-backed daemon entry path', async () => {
+        const result = await resolvePluginHookHandlerRegistry({
+            registry: createRegistry([
+                createHookRegistration({
+                    pluginId: 'acme.bundled',
+                    // Intentionally not a real file path.
+                    daemonEntryPath: '/missing/daemon.mjs',
+                    exportName: 'bindTranscript',
+                    priority: 10,
+                }),
+            ]),
+            resolveActivationSource(registration) {
+                if (registration.pluginId !== 'acme.bundled') {
+                    return null;
+                }
+                return {
+                    kind: 'bundled',
+                    moduleId: '@happier-dev/extensions-acme-bundled/daemon',
+                    load: async () => ({
+                        bindTranscript: async () => 'bundled',
+                    }),
+                };
+            },
+        });
+
+        const handlers = result.handlersByHookId.get('backend.terminalRuntime.bindTranscript');
+        expect(handlers?.map((handler) => handler.pluginId)).toEqual(['acme.bundled']);
+        await expect(handlers?.[0]?.handler()).resolves.toBe('bundled');
+        expect(result.diagnosticsByPluginId['acme.bundled']).toEqual([]);
     });
 
     it('records a diagnostic and excludes plugin hooks whose export is missing', async () => {
@@ -179,11 +221,18 @@ describe('resolvePluginHookHandlerRegistry', () => {
             contents: 'export async function bindTranscript() { return "noop"; }\n',
         });
         const unsupportedRegistration = {
-            source: 'plugin',
+            provenance: 'external',
+            source: { kind: 'path' },
             pluginId: 'acme.daemon-target',
             manifestPath: '/plugins/acme.daemon-target/.happier-plugin/plugin.json',
             manifestDigest: 'sha256:acme.daemon-target',
             daemonEntryPath,
+            sourceSpec: {
+                kind: 'path',
+                locator: '/plugins/acme.daemon-target',
+                trustPolicy: 'local_trusted',
+                installPolicy: 'link',
+            },
             definition: {
                 hookApiVersion: 1,
                 id: 'backend.terminalRuntime.bindTranscript',
@@ -205,6 +254,76 @@ describe('resolvePluginHookHandlerRegistry', () => {
         expect(result.diagnosticsByPluginId['acme.daemon-target']).toEqual([
             expect.objectContaining({
                 code: 'plugin_manifest_semantic_invalid',
+            }),
+        ]);
+    });
+
+    it('requires explicit approval before loading prompt-trust plugin hook handlers', async () => {
+        const daemonEntryPath = await writeDaemonModule({
+            basename: 'daemon-prompt.mjs',
+            contents: 'export async function bindTranscript() { return "noop"; }\n',
+        });
+        const registration = createHookRegistration({
+            pluginId: 'acme.prompt',
+            daemonEntryPath,
+            exportName: 'bindTranscript',
+        });
+
+        const result = await resolvePluginHookHandlerRegistry({
+            registry: createRegistry([
+                {
+                    ...registration,
+                    sourceSpec: {
+                        ...registration.sourceSpec,
+                        kind: 'archive',
+                        locator: 'https://example.com/acme.prompt.tar.gz',
+                        trustPolicy: 'prompt',
+                        installPolicy: 'managed_install',
+                    },
+                },
+            ]),
+        });
+
+        expect(result.handlersByHookId.get('backend.terminalRuntime.bindTranscript')).toBeUndefined();
+        expect(result.diagnosticsByPluginId['acme.prompt']).toEqual([
+            expect.objectContaining({
+                code: 'plugin_trust_approval_required',
+                message: expect.stringMatching(/approval/i),
+            }),
+        ]);
+    });
+
+    it('fails closed for untrusted plugin hook handlers before daemon import', async () => {
+        const daemonEntryPath = await writeDaemonModule({
+            basename: 'daemon-untrusted.mjs',
+            contents: 'export async function bindTranscript() { return "noop"; }\n',
+        });
+        const registration = createHookRegistration({
+            pluginId: 'acme.untrusted',
+            daemonEntryPath,
+            exportName: 'bindTranscript',
+        });
+
+        const result = await resolvePluginHookHandlerRegistry({
+            registry: createRegistry([
+                {
+                    ...registration,
+                    sourceSpec: {
+                        ...registration.sourceSpec,
+                        kind: 'archive',
+                        locator: 'https://example.com/acme.untrusted.tar.gz',
+                        trustPolicy: 'untrusted',
+                        installPolicy: 'managed_install',
+                    },
+                },
+            ]),
+        });
+
+        expect(result.handlersByHookId.get('backend.terminalRuntime.bindTranscript')).toBeUndefined();
+        expect(result.diagnosticsByPluginId['acme.untrusted']).toEqual([
+            expect.objectContaining({
+                code: 'plugin_untrusted',
+                message: expect.stringMatching(/untrusted/i),
             }),
         ]);
     });

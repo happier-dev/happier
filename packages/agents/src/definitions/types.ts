@@ -5,8 +5,9 @@ import type { AgentLocalCliConfig } from '../localCli.js';
 import type { ProviderCliRuntimeSpec } from '../providers/providerCliRuntime.js';
 import type { AnyAgentRuntimeKindsManifest } from '../runtimeKinds.js';
 import type { ProviderSettingsDefinition } from '../providerSettings/index.js';
+import type { EngineSpec } from '../runtime/engine/contracts.js';
 
-export type ProviderDefinition = Readonly<{
+export type ProviderCatalogDefinition = Readonly<{
   id: AgentId;
   core: AgentCore;
   sessionModeDescriptor: AgentSessionModeDescriptor;
@@ -17,12 +18,23 @@ export type ProviderDefinition = Readonly<{
   providerSettings: ProviderSettingsDefinition | null;
 }>;
 
-export type BackendDefinition = Readonly<{
+export type BackendCatalogDefinition = Readonly<{
   id: AgentId;
   providerId: AgentId;
-  provider: ProviderDefinition;
+  provider: ProviderCatalogDefinition;
+  engine: EngineSpec | null;
   runtimeKinds: AnyAgentRuntimeKindsManifest | null;
 }>;
+
+/**
+ * Compatibility aliases while host/runtime consumers migrate to catalog-specific naming.
+ *
+ * Important naming split:
+ * - `BackendDefinitionV1` (protocol) remains the extension wire contract.
+ * - `BackendCatalogDefinition` (agents) is the normalized host catalog record.
+ */
+export type ProviderDefinition = ProviderCatalogDefinition;
+export type BackendDefinition = BackendCatalogDefinition;
 
 /**
  * Canonical normalized provider/backend definition contract used by registry consumers.

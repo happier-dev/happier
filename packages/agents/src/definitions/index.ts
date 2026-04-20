@@ -1,4 +1,6 @@
 export type {
+  ProviderCatalogDefinition,
+  BackendCatalogDefinition,
   ProviderDefinition,
   BackendDefinition,
   ProviderDefinitionContractV1,
@@ -11,6 +13,8 @@ export {
   getProviderDefinitionContract,
 } from './providerDefinitions.js';
 export {
+  getAllBackendCatalogDefinitions,
+  getBackendCatalogDefinition,
   getAllBackendDefinitions,
   getBackendDefinition,
   getAllBackendDefinitionContracts,

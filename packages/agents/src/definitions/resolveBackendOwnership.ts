@@ -1,8 +1,8 @@
 import type { AgentCore, AgentId } from '../types.js';
-import { AGENTS_CORE } from '../manifest.js';
+import { getAgentCore } from '../manifest.js';
 
 export function isConcreteBackendDefinitionAgentId(agentId: AgentId): boolean {
-  return (AGENTS_CORE[agentId] as AgentCore).backendDefinition !== false;
+  return (getAgentCore(agentId) as AgentCore).backendDefinition !== false;
 }
 
 export function resolveOwnedBackendIdsForAgent(agentId: AgentId): readonly AgentId[] {

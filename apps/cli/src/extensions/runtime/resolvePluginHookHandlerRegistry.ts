@@ -1,8 +1,9 @@
 import { isHookHandlerTargetV1 } from '@happier-dev/protocol';
-import type { PluginCompatibilityDiagnostic } from '@/extensions/plugins/shared/pluginDiagnostics';
-import type { ResolvedContributionRegistry, ResolvedHookRegistration } from '@/extensions/registry/types';
+import type { PluginCompatibilityDiagnostic } from '../diagnostics/types';
+import type { ResolvedContributionRegistry, ResolvedHookRegistration } from '../registry/types';
 
-import { loadPluginDaemonModule } from './loadPluginDaemonModule';
+import type { ExtensionActivationSource } from './activationSources';
+import { loadExtensionModule } from './loadExtensionModule';
 import type { PluginDaemonModuleNamespace, PluginHookHandler, ResolvedPluginHookHandler, ResolvedPluginHookHandlerRegistry } from './types';
 
 function appendDiagnostic(
@@ -77,6 +78,10 @@ function resolvePluginHookHandlerExport(
 export async function resolvePluginHookHandlerRegistry(params: Readonly<{
     registry?: ResolvedContributionRegistry;
     hookRegistrations?: readonly ResolvedHookRegistration[];
+    generation?: number;
+    resolveActivationSource?: (
+        registration: ResolvedHookRegistration,
+    ) => ExtensionActivationSource<PluginDaemonModuleNamespace> | null;
 }>): Promise<ResolvedPluginHookHandlerRegistry> {
     const handlersByHookIdMutable = new Map<string, ResolvedPluginHookHandler[]>();
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
@@ -106,13 +111,24 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
 
         let moduleNamespace: PluginDaemonModuleNamespace;
         try {
-            moduleNamespace = await loadPluginDaemonModule({
-                daemonEntryPath: registration.daemonEntryPath,
-            });
+            const source = params.resolveActivationSource?.(registration) ?? {
+                kind: 'file_backed' as const,
+                entryPath: registration.daemonEntryPath,
+                trustPolicy: registration.sourceSpec.trustPolicy,
+            };
+            moduleNamespace = await loadExtensionModule({
+                source,
+                cacheKey: `${registration.manifestDigest}:generation:${params.generation ?? 0}`,
+            }) as PluginDaemonModuleNamespace;
         } catch (error) {
             const errorCode = error instanceof Error ? String((error as Error & { code?: string }).code ?? '') : '';
             appendDiagnostic(diagnosticsByPluginId, registration.pluginId, {
                 code:
+                    errorCode === 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED'
+                        ? 'plugin_trust_approval_required'
+                        : errorCode === 'PLUGIN_DAEMON_TRUST_UNTRUSTED'
+                            ? 'plugin_untrusted'
+                            :
                     errorCode === 'PLUGIN_DAEMON_ENTRY_MISSING'
                         ? 'plugin_source_missing'
                         : errorCode === 'PLUGIN_DAEMON_ENTRY_KIND_UNSUPPORTED'

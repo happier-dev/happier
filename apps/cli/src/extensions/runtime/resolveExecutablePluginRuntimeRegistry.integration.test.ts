@@ -4,12 +4,12 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { createPluginStateStore } from '@/extensions/store/state';
 import {
     SAMPLE_PLUGIN_BACKEND_ID,
     SAMPLE_PLUGIN_PROVIDER_ID,
     materializeSamplePluginFixture,
-} from '@/extensions/plugins/testkit/samplePluginFixture';
+} from '@/extensions/testkit/samplePackage';
 
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
@@ -54,7 +54,8 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
         expect(runtimeRegistry.contributions.providerDefinitionsById.get(SAMPLE_PLUGIN_PROVIDER_ID)).toMatchObject({
             id: SAMPLE_PLUGIN_PROVIDER_ID,
-            source: 'plugin',
+            provenance: 'external',
+            source: { kind: 'path' },
             definition: {
                 id: SAMPLE_PLUGIN_PROVIDER_ID,
             },
@@ -62,10 +63,10 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         expect(runtimeRegistry.contributions.backendDefinitionsById.get(SAMPLE_PLUGIN_BACKEND_ID)).toMatchObject({
             id: SAMPLE_PLUGIN_BACKEND_ID,
             providerId: SAMPLE_PLUGIN_PROVIDER_ID,
-            source: 'plugin',
-            definition: {
-                id: SAMPLE_PLUGIN_BACKEND_ID,
-            },
+            provenance: 'external',
+            source: { kind: 'path' },
+            runtimeKind: 'native',
+            capabilities: {},
         });
         expect(runtimeRegistry.contributions.runtimeAdaptersByBackendId.get(SAMPLE_PLUGIN_BACKEND_ID)).toEqual(
             expect.arrayContaining([
@@ -109,5 +110,54 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         expect(handlers).toHaveLength(1);
         await expect(handlers?.[0]?.handler()).resolves.toBe('integration-bound');
         expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.sample']).toEqual([]);
+    });
+
+    it('requires explicit approval before loading executable hook handlers for prompt-trust plugins', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-root-'));
+        const store = createPluginStateStore({ happyHomeDir });
+
+        await materializeSamplePluginFixture(pluginRoot);
+        await store.write({
+            t: 'happier_plugin_state_v1',
+            schemaVersion: 1,
+            plugins: {
+                'acme.sample': {
+                    source: {
+                        kind: 'archive',
+                        locator: 'https://example.com/acme-sample.tar.gz',
+                        trustPolicy: 'prompt',
+                        installPolicy: 'managed_install',
+                        resolvedPath: pluginRoot,
+                        manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+                    },
+                    compatibility: {
+                        status: 'unknown',
+                        diagnostics: [],
+                    },
+                    install: {
+                        mode: 'managed_install',
+                        manifestVersion: '1.0.0',
+                        manifestDigest: null,
+                        installedPath: pluginRoot,
+                    },
+                    state: {
+                        enabled: true,
+                    },
+                },
+            },
+        });
+
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+
+        expect(runtimeRegistry.hookHandlersByHookId.get('backend.terminalRuntime.bindTranscript')).toBeUndefined();
+        expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.sample']).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    code: 'plugin_trust_approval_required',
+                    message: expect.stringMatching(/approval/i),
+                }),
+            ]),
+        );
     });
 });

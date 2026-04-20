@@ -325,6 +325,56 @@ test('tauri onboarding wizard QA marks a proof run with no captured steps as inc
   });
 });
 
+test('tauri onboarding wizard QA marks partially captured proof artifacts as incomplete', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+  const module = await import(pathToFileURL(scriptPath).href);
+
+  assert.equal(typeof module.summarizeTauriOnboardingWizardQaProof, 'function');
+
+  assert.deepEqual(module.summarizeTauriOnboardingWizardQaProof({
+    stepArtifacts: {
+      welcome: { screenshotPath: '/tmp/welcome.png', structurePath: '/tmp/welcome.structure.yml' },
+    },
+  }), {
+    ok: false,
+    blocker: 'missing_required_step_artifacts',
+    steps: ['welcome'],
+  });
+});
+
+test('tauri onboarding wizard QA exits non-zero when main receives incomplete proof', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+  const module = await import(pathToFileURL(scriptPath).href);
+
+  assert.equal(typeof module.main, 'function');
+
+  const processApi = { exitCode: 0 };
+  const writes = [];
+  await module.main([], {
+    runCapture: async () => ({
+      ok: false,
+      blocker: 'missing_required_step_artifacts',
+      steps: [],
+    }),
+    stdout: {
+      write: (text) => {
+        writes.push(text);
+      },
+    },
+    stderr: {
+      write: (text) => {
+        writes.push(text);
+      },
+    },
+    processApi,
+  });
+
+  assert.equal(processApi.exitCode, 1);
+  assert.equal(writes.length > 0, true);
+});
+
 test('tauri onboarding wizard QA keeps probing until the setup wizard surface appears after auth', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');

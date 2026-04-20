@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.sample",
+  "version": "1.0.0",
+  "displayName": "Acme Sample",
+  "description": "Sample plugin used to exercise the local-path plugin pipeline",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1,
+    "capabilities": [
+      "providers",
+      "backends",
+      "hooks"
+    ]
+  },
+  "targets": {
+    "daemon": {
+      "entry": "./daemon.mjs"
+    }
+  },
+  "permissions": [],
+  "contributions": [
+    {
+      "kind": "provider",
+      "kindVersion": 1,
+      "id": "acme.sample.provider",
+      "providerAgentId": "claude",
+      "display": {
+        "name": "Acme Sample Provider",
+        "tags": [
+          "plugin"
+        ]
+      },
+      "providerCliRuntime": {
+        "kindVersion": 1,
+        "id": "acme.sample.provider",
+        "title": "Acme Sample CLI",
+        "binaryName": "acme-sample",
+        "sourcePreferenceDefault": "system-first",
+        "managedInstall": {
+          "kind": "managed_package",
+          "packageName": "@acme/sample-cli",
+          "binaryName": "acme-sample"
+        },
+        "manualInstallKind": "command",
+        "manualInstallRecipes": null,
+        "acceptsJavaScriptFileOverride": false
+      },
+      "ownedBackendIds": [
+        "acme.sample.backend"
+      ]
+    },
+    {
+      "kind": "backend",
+      "kindVersion": 1,
+      "id": "acme.sample.backend",
+      "providerId": "acme.sample.provider",
+      "runtimeKind": "native",
+      "capabilities": {},
+      "runtimeAdapters": [
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.terminalRuntime.launch",
+          "kind": "terminalRuntime",
+          "operation": "launch",
+          "handler": {
+            "target": "daemon",
+            "exportName": "launch"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.terminalRuntime.discoverIdentity",
+          "kind": "terminalRuntime",
+          "operation": "discoverIdentity",
+          "handler": {
+            "target": "daemon",
+            "exportName": "discoverIdentity"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.terminalRuntime.bindTranscript",
+          "kind": "terminalRuntime",
+          "operation": "bindTranscript",
+          "handler": {
+            "target": "daemon",
+            "exportName": "bindTranscript"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.directSessions.validateSource",
+          "kind": "directSessions",
+          "operation": "validateSource",
+          "handler": {
+            "target": "daemon",
+            "exportName": "validateSource"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.directSessions.listCandidates",
+          "kind": "directSessions",
+          "operation": "listCandidates",
+          "handler": {
+            "target": "daemon",
+            "exportName": "listCandidates"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.directSessions.getActivity",
+          "kind": "directSessions",
+          "operation": "getActivity",
+          "handler": {
+            "target": "daemon",
+            "exportName": "getActivity"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.directSessions.pageTranscript",
+          "kind": "directSessions",
+          "operation": "pageTranscript",
+          "handler": {
+            "target": "daemon",
+            "exportName": "pageTranscript"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.directSessions.readAfterTranscript",
+          "kind": "directSessions",
+          "operation": "readAfterTranscript",
+          "handler": {
+            "target": "daemon",
+            "exportName": "readAfterTranscript"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.directSessions.resolveTakeoverSpawnOptions",
+          "kind": "directSessions",
+          "operation": "resolveTakeoverSpawnOptions",
+          "handler": {
+            "target": "daemon",
+            "exportName": "resolveTakeoverSpawnOptions"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.attach.evaluateEligibility",
+          "kind": "attach",
+          "operation": "evaluateEligibility",
+          "handler": {
+            "target": "daemon",
+            "exportName": "evaluateEligibility"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.attach.probeReachability",
+          "kind": "attach",
+          "operation": "probeReachability",
+          "handler": {
+            "target": "daemon",
+            "exportName": "probeReachability"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.attach.run",
+          "kind": "attach",
+          "operation": "run",
+          "handler": {
+            "target": "daemon",
+            "exportName": "runAttach"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.sessionHandoff.exportBundle",
+          "kind": "sessionHandoff",
+          "operation": "exportBundle",
+          "handler": {
+            "target": "daemon",
+            "exportName": "exportBundle"
+          }
+        },
+        {
+          "runtimeAdapterApiVersion": 1,
+          "id": "backend.sessionHandoff.importBundle",
+          "kind": "sessionHandoff",
+          "operation": "importBundle",
+          "handler": {
+            "target": "daemon",
+            "exportName": "importBundle"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "hook",
+      "hookApiVersion": 1,
+      "id": "backend.terminalRuntime.bindTranscript",
+      "category": "integration",
+      "scope": "backend",
+      "executionKind": "integrate",
+      "handler": {
+        "target": "plugin"
+      }
+    }
+  ]
+}

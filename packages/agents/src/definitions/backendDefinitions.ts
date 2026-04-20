@@ -1,13 +1,24 @@
 import type { AgentId } from '../types.js';
 import { BACKEND_ARTIFACTS } from './buildBackendArtifacts.js';
-import type { BackendDefinition } from './types.js';
+import type { BackendCatalogDefinition } from './types.js';
 
-export function getAllBackendDefinitions(): readonly BackendDefinition[] {
+export function getAllBackendCatalogDefinitions(): readonly BackendCatalogDefinition[] {
   return BACKEND_ARTIFACTS.backendDefinitions;
 }
 
-export function getBackendDefinition(agentId: AgentId): BackendDefinition | null {
+export function getBackendCatalogDefinition(agentId: AgentId): BackendCatalogDefinition | null {
   return BACKEND_ARTIFACTS.backendDefinitionsById.get(agentId) ?? null;
+}
+
+/**
+ * Compatibility exports while callers migrate to catalog-specific naming.
+ */
+export function getAllBackendDefinitions(): readonly BackendCatalogDefinition[] {
+  return getAllBackendCatalogDefinitions();
+}
+
+export function getBackendDefinition(agentId: AgentId): BackendCatalogDefinition | null {
+  return getBackendCatalogDefinition(agentId);
 }
 
 export function getAllBackendDefinitionContracts() {

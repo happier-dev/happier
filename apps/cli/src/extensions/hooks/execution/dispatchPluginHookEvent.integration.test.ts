@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { createPluginStateStore } from '@/extensions/store/state';
 import { resolveExecutablePluginRuntimeRegistry } from '@/extensions/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import { dispatchPluginHookEvent } from './dispatchPluginHookEvent';
@@ -40,40 +40,44 @@ async function writeHookPluginFixture(params: Readonly<{
 
   await writeFile(
     join(manifestDir, 'plugin.json'),
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            id: 'acme.session.hook',
-            version: '1.0.0',
-            displayName: 'Acme Session Hook',
-            description: params.description ?? 'Exercises product-owned hook dispatch through session.message.send',
-            engines: {
-              happier: '^0.2.0',
-            },
+    JSON.stringify(
+      {
+        schemaVersion: 2,
+        id: 'acme.session.hook',
+        version: '1.0.0',
+        displayName: 'Acme Session Hook',
+        description: params.description ?? 'Exercises product-owned hook dispatch through session.message.send',
+        engines: {
+          happier: '^0.2.0',
+        },
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['hooks'],
+        },
         targets: {
           daemon: {
             entry: './daemon.mjs',
           },
-            },
-            contributions: {
-              hooks: [
-                {
-                  hookApiVersion: 1,
-                  id: hookId,
-                  category: 'lifecycle',
-                  scope: 'session',
-                  executionKind: 'observe',
-                  filters: {
-                    sessionId: 'sess-1',
-                    eventNames: [hookId],
-                  },
-                  handler: {
-                    target: 'plugin',
-                    exportName: 'recordHookInvocation',
-              },
-            },
-          ],
         },
+        permissions: [],
+        contributions: [
+          {
+            kind: 'hook',
+            hookApiVersion: 1,
+            id: hookId,
+            category: 'lifecycle',
+            scope: 'session',
+            executionKind: 'observe',
+            filters: {
+              sessionId: 'sess-1',
+              eventNames: [hookId],
+            },
+            handler: {
+              target: 'plugin',
+              exportName: 'recordHookInvocation',
+            },
+          },
+        ],
       },
       null,
       2,

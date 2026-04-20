@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 2,
+  "id": "examples.lifecycle-hook-plugin",
+  "version": "0.1.0",
+  "displayName": "Lifecycle Hook Example",
+  "description": "Manifest-declared lifecycle hook example for plugin authoring.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1,
+    "capabilities": [
+      "hooks"
+    ]
+  },
+  "targets": {
+    "daemon": {
+      "entry": "./agent/daemon.mjs"
+    }
+  },
+  "permissions": [],
+  "contributions": [
+    {
+      "kind": "hook",
+      "hookApiVersion": 1,
+      "id": "provider.response.after",
+      "category": "lifecycle",
+      "scope": "provider",
+      "executionKind": "observe",
+      "priority": 50,
+      "handler": {
+        "target": "plugin",
+        "exportName": "observeProviderResponse"
+      }
+    }
+  ]
+}

@@ -66,6 +66,15 @@ export type ProviderUiV1 = z.infer<typeof ProviderUiV1Schema>;
 export const ProviderDefinitionV1Schema = z.object({
   kindVersion: z.literal(1).default(1),
   id: z.string().trim().min(1),
+  // Optional built-in/provider compatibility identity for producer/UI lookup.
+  // This is additive metadata, not a backend-target contract.
+  providerAgentId: OptionalStringSchema,
+  // Optional built-in icon carrier used for display fallback only.
+  iconAgentId: OptionalStringSchema,
+  // Optional canonical provider-settings backend binding for providers that own
+  // more than one backend. Hosts may still derive this for single-backend
+  // providers, but multi-backend providers should declare it explicitly.
+  settingsBackendId: OptionalStringSchema,
   display: ProviderDisplayV1Schema,
   providerCliRuntime: ProviderCliRuntimeV1Schema.optional(),
   install: ProviderInstallV1Schema.optional(),

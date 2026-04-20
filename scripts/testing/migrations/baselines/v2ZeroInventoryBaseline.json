@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-04-17T00:00:00.000Z",
+  "maxAllowedCounts": {
+    "builtin-cli-catalog-consumers": 35,
+    "static-ui-registry-consumers": 130,
+    "customacp-sentinel-consumers": 52,
+    "shared-core-provider-branching": 90,
+    "hook-emission-sites": 14,
+    "hardcoded-action-mcp-provider-id-surfaces": 9,
+    "voice-runtime-entrypoints": 13,
+    "v2-1-static-definition-runtime-foundation": 18,
+    "provider-auth-preferences-connected-services-message-meta": 42,
+    "command-handler-help-manifest": 130,
+    "execution-run-intent-profiles": 11,
+    "acp-shared-session-compatibility-surfaces": 5,
+    "implicit-abi-surfaces": 8,
+    "provider-session-loop-primitive-imports": 7,
+    "codex-legacy-direct-session-runner-imports": 0,
+    "runtimecore-create-session-runtime-whole-runner-delegation": 0,
+    "provider-execution-run-policy-plumbing": 0,
+    "execution-run-permission-interaction-centralization": 0,
+    "opencode-family-permission-policy-drift": 0,
+    "permission-taxonomy-forks": 0,
+    "runtimeforloop-agentbackend-shrink-only": 0,
+    "execution-run-agentbackend-semantic-debt": 0,
+    "runtime-identity-publication-read": 9,
+    "discovery-preflight-capabilities-rpc": 22,
+    "plugin-identity-install-provenance-trust": 34
+  }
+}

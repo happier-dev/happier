@@ -1,11 +1,45 @@
-import type { PluginCompatibilityDiagnostic } from '@/extensions/plugins/shared/pluginDiagnostics';
-import type { ResolvedHookRegistration } from '@/extensions/registry/types';
+import type { PluginCompatibilityDiagnostic } from '../diagnostics/types';
+import type { ResolvedHookRegistration } from '../registry/types';
 
 export type PluginDaemonModuleNamespace = Readonly<Record<string, unknown>> & Readonly<{
     default?: unknown;
 }>;
 
 export type PluginHookHandler = (...args: readonly unknown[]) => unknown | Promise<unknown>;
+
+export type PluginActionSurface = 'cli' | 'mcp' | 'session_agent';
+
+export type PluginActionHandlerRequest = Readonly<{
+    actionId: string;
+    pluginId: string;
+    input: unknown;
+    context: Readonly<{
+        defaultSessionId?: string;
+        surface: PluginActionSurface;
+    }>;
+    provenance: Readonly<{
+        manifestPath?: string;
+        manifestDigest?: string;
+        sourceKind?: string;
+    }>;
+}>;
+
+export type PluginActionHandler = (request: PluginActionHandlerRequest) => unknown | Promise<unknown>;
+
+export type PluginLifecycleEvent = 'activated' | 'deactivating';
+
+export type PluginLifecycleHandlerRequest = Readonly<{
+    event: PluginLifecycleEvent;
+    pluginId: string;
+    generation: number;
+    provenance: Readonly<{
+        manifestPath?: string;
+        manifestDigest?: string;
+        sourceKind?: string;
+    }>;
+}>;
+
+export type PluginLifecycleHandler = (request: PluginLifecycleHandlerRequest) => unknown | Promise<unknown>;
 
 export type ResolvedPluginHookHandler = Readonly<{
     pluginId: string;
@@ -17,6 +51,17 @@ export type ResolvedPluginHookHandler = Readonly<{
     exportName: string;
     registration: ResolvedHookRegistration;
     handler: PluginHookHandler;
+}>;
+
+export type ResolvedPluginLifecycleHandler = Readonly<{
+    pluginId: string;
+    lifecycleEvent: PluginLifecycleEvent;
+    registrationId: string;
+    priority: number;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string;
+    handler: PluginLifecycleHandler;
 }>;
 
 export type ResolvedPluginHookHandlerRegistry = Readonly<{

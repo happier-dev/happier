@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,8 +20,8 @@ describe('loadPluginDaemonModule', () => {
             contents: 'export async function bindTranscript() { return "loaded"; }\n',
         });
 
-        const first = await loadPluginDaemonModule({ daemonEntryPath });
-        const second = await loadPluginDaemonModule({ daemonEntryPath });
+        const first = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
+        const second = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
 
         expect(typeof first.bindTranscript).toBe('function');
         expect(second).toBe(first);
@@ -31,7 +31,7 @@ describe('loadPluginDaemonModule', () => {
         const missingRootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-missing-'));
         const daemonEntryPath = join(missingRootDir, 'missing.mjs');
 
-        await expect(loadPluginDaemonModule({ daemonEntryPath })).rejects.toThrow(
+        await expect(loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' })).rejects.toThrow(
             /Plugin daemon entry does not exist/,
         );
     });
@@ -42,8 +42,58 @@ describe('loadPluginDaemonModule', () => {
             contents: 'export function bindTranscript() { return "nope"; }\n',
         });
 
-        await expect(loadPluginDaemonModule({ daemonEntryPath })).rejects.toThrow(
+        await expect(loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' })).rejects.toThrow(
             /Unsupported plugin daemon entry extension/,
         );
+    });
+
+    it('fails closed when executable trust metadata is missing', async () => {
+        const daemonEntryPath = await writeDaemonModule({
+            extension: 'mjs',
+            contents: 'export const version = 1;\n',
+        });
+
+        await expect(loadPluginDaemonModule({ daemonEntryPath })).rejects.toThrow(
+            /requires explicit trust approval/,
+        );
+    });
+
+    it('invalidates cached daemon modules when the on-disk module fingerprint changes', async () => {
+        const daemonEntryPath = await writeDaemonModule({
+            extension: 'mjs',
+            contents: 'export const version = 1;\n',
+        });
+
+        const first = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
+        expect(first.version).toBe(1);
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        await writeFile(daemonEntryPath, 'export const version = 2;\n', 'utf8');
+
+        const second = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
+        expect(second.version).toBe(2);
+        expect(second).not.toBe(first);
+    });
+
+    it('invalidates cached daemon modules even when size and mtime are preserved (archive reinstall)', async () => {
+        const daemonEntryPath = await writeDaemonModule({
+            extension: 'mjs',
+            contents: 'export const version = 1;\n',
+        });
+
+        const first = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
+        expect(first.version).toBe(1);
+
+        const before = await stat(daemonEntryPath);
+        const preservedMtime = before.mtime;
+        const preservedAtime = before.atime;
+
+        // Same byte length, different contents.
+        await writeFile(daemonEntryPath, 'export const version = 2;\n', 'utf8');
+        await utimes(daemonEntryPath, preservedAtime, preservedMtime);
+
+        const second = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
+        expect(second.version).toBe(2);
+        expect(second).not.toBe(first);
     });
 });

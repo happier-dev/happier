@@ -1,12 +1,12 @@
 import type { AgentId } from '../types.js';
 import { PROVIDER_ARTIFACTS } from './buildProviderArtifacts.js';
-import type { ProviderDefinition } from './types.js';
+import type { ProviderCatalogDefinition } from './types.js';
 
-export function getAllProviderDefinitions(): readonly ProviderDefinition[] {
+export function getAllProviderDefinitions(): readonly ProviderCatalogDefinition[] {
   return PROVIDER_ARTIFACTS.providerDefinitions;
 }
 
-export function getProviderDefinition(agentId: AgentId): ProviderDefinition | null {
+export function getProviderDefinition(agentId: AgentId): ProviderCatalogDefinition | null {
   return PROVIDER_ARTIFACTS.providerDefinitionsById.get(agentId) ?? null;
 }
 

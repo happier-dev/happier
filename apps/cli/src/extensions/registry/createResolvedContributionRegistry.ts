@@ -1,21 +1,53 @@
-import type { AgentCatalogEntry, CatalogAgentId } from '@/backends/types';
+import type { AgentCatalogEntry, CatalogAgentId } from '../../backends/types';
 
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 import { resolvePluginContributions } from './resolvePluginContributions';
 import type {
     ResolvedBackendContribution,
     ResolvedBackendRuntimeAdapterContribution,
+    ResolvedActionContribution,
+    ResolvedCommandContribution,
     ResolvedContributionInputs,
     ResolvedContributionRegistry,
     ResolvedCatalogEntry,
+    ResolvedLifecycleHandlerContribution,
     ResolvedProviderContribution,
+    ResolvedResourceContribution,
+    ResolvedToolContribution,
+    ResolvedUiDescriptorContribution,
+    ResolvedActivationTarget,
 } from './types';
 
 export function createResolvedContributionRegistry(inputs: ResolvedContributionInputs): ResolvedContributionRegistry {
     const providerDefinitionsById = new Map<string, ResolvedProviderContribution>();
     const backendDefinitionsById = new Map<string, ResolvedBackendContribution>();
+    const standaloneCatalogEntries = Object.freeze([...(inputs.catalogEntries ?? [])]);
+    const actions = Object.freeze([...(inputs.actions ?? [])].sort(compareActionContributions));
+    const tools = Object.freeze([...(inputs.tools ?? [])].sort(compareToolContributions));
+    const commands = Object.freeze([...(inputs.commands ?? [])].sort(compareCommandContributions));
+    const resources = Object.freeze([...(inputs.resources ?? [])].sort(compareResourceContributions));
+    const uiDescriptors = Object.freeze([...(inputs.uiDescriptors ?? [])].sort(compareUiDescriptorContributions));
+    const activationTargets = Object.freeze([...(inputs.activationTargets ?? [])].sort(compareActivationTargets));
+    const lifecycleHandlers = Object.freeze([...(inputs.lifecycleHandlers ?? [])].sort(compareLifecycleHandlerContributions));
+    const actionsById = new Map<string, ResolvedActionContribution>();
+    const toolsById = new Map<string, ResolvedToolContribution>();
+    const commandsById = new Map<string, ResolvedCommandContribution>();
+    const resourcesById = new Map<string, ResolvedResourceContribution>();
+    const uiDescriptorsById = new Map<string, ResolvedUiDescriptorContribution>();
+    const lifecycleHandlersById = new Map<string, ResolvedLifecycleHandlerContribution>();
+    // Host dispatch map keyed by backend id. Runtime-adapter operation names are
+    // stable plugin ABI values; the dispatch map itself remains host-local.
     const runtimeAdaptersByBackendId = new Map<string, readonly ResolvedBackendRuntimeAdapterContribution[]>();
+    // Internal merged projection used by CLI host surfaces; not a public plugin ABI.
     const catalogEntriesById: Record<string, ResolvedCatalogEntry> = {};
+
+    for (const catalogEntry of standaloneCatalogEntries) {
+        assertCatalogEntryAligned(catalogEntry);
+        if (catalogEntriesById[catalogEntry.id]) {
+            throw new Error(`Duplicate catalog entry contribution '${catalogEntry.id}'`);
+        }
+        catalogEntriesById[catalogEntry.id] = catalogEntry;
+    }
 
     for (const provider of inputs.providers) {
         assertProviderContributionAligned(provider);
@@ -26,6 +58,9 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         providerDefinitionsById.set(provider.id, provider);
 
         if (provider.catalogEntry) {
+            if (catalogEntriesById[provider.catalogEntry.id]) {
+                throw new Error(`Duplicate catalog entry contribution '${provider.catalogEntry.id}'`);
+            }
             catalogEntriesById[provider.id] = provider.catalogEntry;
         }
     }
@@ -47,6 +82,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
                 backend.id,
                 Object.freeze(runtimeAdapters.map((definition) => ({
                     backendId: backend.id,
+                    provenance: backend.provenance,
                     source: backend.source,
                     definition,
                     pluginId: backend.pluginId,
@@ -58,10 +94,78 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         }
     }
 
+    for (const action of actions) {
+        if (actionsById.has(action.definition.id)) {
+            throw new Error(`Duplicate action contribution '${action.definition.id}'`);
+        }
+        actionsById.set(action.definition.id, action);
+    }
+
+    for (const tool of tools) {
+        if (toolsById.has(tool.definition.id)) {
+            throw new Error(`Duplicate tool contribution '${tool.definition.id}'`);
+        }
+        toolsById.set(tool.definition.id, tool);
+    }
+
+    for (const command of commands) {
+        if (commandsById.has(command.definition.id)) {
+            throw new Error(`Duplicate command contribution '${command.definition.id}'`);
+        }
+        commandsById.set(command.definition.id, command);
+    }
+
+    for (const resource of resources) {
+        if (resourcesById.has(resource.definition.id)) {
+            throw new Error(`Duplicate resource contribution '${resource.definition.id}'`);
+        }
+        resourcesById.set(resource.definition.id, resource);
+    }
+
+    for (const uiDescriptor of uiDescriptors) {
+        if (uiDescriptorsById.has(uiDescriptor.definition.id)) {
+            throw new Error(`Duplicate UI descriptor contribution '${uiDescriptor.definition.id}'`);
+        }
+        uiDescriptorsById.set(uiDescriptor.definition.id, uiDescriptor);
+    }
+
+    for (const lifecycleHandler of lifecycleHandlers) {
+        if (lifecycleHandlersById.has(lifecycleHandler.definition.id)) {
+            throw new Error(`Duplicate lifecycle handler contribution '${lifecycleHandler.definition.id}'`);
+        }
+        lifecycleHandlersById.set(lifecycleHandler.definition.id, lifecycleHandler);
+    }
+
     return Object.freeze({
+        generationId: buildRegistryGenerationId({
+            providers: inputs.providers,
+            backends: inputs.backends,
+            catalogEntries: standaloneCatalogEntries,
+            actions,
+            tools,
+            commands,
+            resources,
+            uiDescriptors,
+            activationTargets,
+            hookRegistrations: inputs.hookRegistrations ?? [],
+            lifecycleHandlers,
+        }),
         providers: inputs.providers,
         backends: inputs.backends,
+        actions,
+        tools,
+        commands,
+        resources,
+        uiDescriptors,
+        activationTargets,
         hookRegistrations: Object.freeze([...(inputs.hookRegistrations ?? [])]),
+        lifecycleHandlers,
+        actionsById: Object.freeze(actionsById),
+        toolsById: Object.freeze(toolsById),
+        commandsById: Object.freeze(commandsById),
+        resourcesById: Object.freeze(resourcesById),
+        uiDescriptorsById: Object.freeze(uiDescriptorsById),
+        lifecycleHandlersById: Object.freeze(lifecycleHandlersById),
         runtimeAdaptersByBackendId: Object.freeze(runtimeAdaptersByBackendId),
         catalogEntriesById: Object.freeze(catalogEntriesById),
         providerDefinitionsById,
@@ -76,7 +180,6 @@ export function getResolvedContributionRegistry(): ResolvedContributionRegistry 
     if (cachedResolvedContributionRegistry) {
         return cachedResolvedContributionRegistry;
     }
-
     cachedResolvedContributionRegistry = createResolvedContributionRegistry(resolveBuiltInContributions());
     return cachedResolvedContributionRegistry;
 }
@@ -94,12 +197,28 @@ export async function resolveMergedContributionRegistry(
     return createResolvedContributionRegistry({
         providers: Object.freeze([...builtIn.providers, ...plugin.providers]),
         backends: Object.freeze([...builtIn.backends, ...plugin.backends]),
+        catalogEntries: Object.freeze([...(builtIn.catalogEntries ?? []), ...(plugin.catalogEntries ?? [])]),
+        actions: Object.freeze([...(builtIn.actions ?? []), ...(plugin.actions ?? [])]),
+        tools: Object.freeze([...(builtIn.tools ?? []), ...(plugin.tools ?? [])]),
+        commands: Object.freeze([...(builtIn.commands ?? []), ...(plugin.commands ?? [])]),
+        resources: Object.freeze([...(builtIn.resources ?? []), ...(plugin.resources ?? [])]),
+        uiDescriptors: Object.freeze([...(builtIn.uiDescriptors ?? []), ...(plugin.uiDescriptors ?? [])]),
+        activationTargets: Object.freeze([...(builtIn.activationTargets ?? []), ...(plugin.activationTargets ?? [])]),
         hookRegistrations: Object.freeze([...(builtIn.hookRegistrations ?? []), ...(plugin.hookRegistrations ?? [])]),
+        lifecycleHandlers: Object.freeze([...(builtIn.lifecycleHandlers ?? []), ...(plugin.lifecycleHandlers ?? [])]),
         pluginDiagnosticsByPluginId: Object.freeze({
             ...(builtIn.pluginDiagnosticsByPluginId ?? {}),
             ...(plugin.pluginDiagnosticsByPluginId ?? {}),
         }),
     });
+}
+
+export async function primeResolvedContributionRegistry(
+    params?: Readonly<{ happyHomeDir?: string }>,
+): Promise<ResolvedContributionRegistry> {
+    const merged = await resolveMergedContributionRegistry(params);
+    cachedResolvedContributionRegistry = merged;
+    return merged;
 }
 
 function assertProviderContributionAligned(provider: ResolvedProviderContribution): void {
@@ -117,6 +236,12 @@ function assertProviderContributionAligned(provider: ResolvedProviderContributio
     }
 }
 
+function assertCatalogEntryAligned(catalogEntry: ResolvedCatalogEntry): void {
+    if (catalogEntry.id !== catalogEntry.cliSubcommand) {
+        throw new Error(`Catalog entry id/cliSubcommand mismatch for catalog entry contribution '${catalogEntry.id}'`);
+    }
+}
+
 function assertBackendContributionAligned(backend: ResolvedBackendContribution): void {
     if (backend.definition.kindVersion !== 1) {
         throw new Error(`Backend definition version mismatch for contribution '${backend.id}'`);
@@ -129,6 +254,121 @@ function assertBackendContributionAligned(backend: ResolvedBackendContribution):
     }
 }
 
+function compareActionContributions(left: ResolvedActionContribution, right: ResolvedActionContribution): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareToolContributions(left: ResolvedToolContribution, right: ResolvedToolContribution): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareCommandContributions(left: ResolvedCommandContribution, right: ResolvedCommandContribution): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareResourceContributions(left: ResolvedResourceContribution, right: ResolvedResourceContribution): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareUiDescriptorContributions(left: ResolvedUiDescriptorContribution, right: ResolvedUiDescriptorContribution): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareActivationTargets(left: ResolvedActivationTarget, right: ResolvedActivationTarget): number {
+    if (left.pluginId !== right.pluginId) {
+        return left.pluginId.localeCompare(right.pluginId);
+    }
+    return left.daemonEntryPath.localeCompare(right.daemonEntryPath);
+}
+
+function compareLifecycleHandlerContributions(
+    left: ResolvedLifecycleHandlerContribution,
+    right: ResolvedLifecycleHandlerContribution,
+): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const priorityDelta = right.definition.priority - left.definition.priority;
+    if (priorityDelta !== 0) {
+        return priorityDelta;
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function buildRegistryGenerationId(params: Readonly<{
+    providers: readonly ResolvedProviderContribution[];
+    backends: readonly ResolvedBackendContribution[];
+    catalogEntries?: readonly ResolvedCatalogEntry[];
+    actions: readonly ResolvedActionContribution[];
+    tools: readonly ResolvedToolContribution[];
+    commands: readonly ResolvedCommandContribution[];
+    resources: readonly ResolvedResourceContribution[];
+    uiDescriptors: readonly ResolvedUiDescriptorContribution[];
+    activationTargets: readonly ResolvedActivationTarget[];
+    hookRegistrations: ResolvedContributionInputs['hookRegistrations'];
+    lifecycleHandlers: readonly ResolvedLifecycleHandlerContribution[];
+}>): string {
+    const parts = [
+        ...params.providers.map((provider) => `provider:${provider.provenance}:${provider.source.kind}:${provider.id}:${provider.manifestDigest ?? ''}`),
+        ...params.backends.map((backend) => `backend:${backend.provenance}:${backend.source.kind}:${backend.id}:${backend.manifestDigest ?? ''}`),
+        ...(params.catalogEntries ?? []).map((catalogEntry) => `catalog:${catalogEntry.id}:${catalogEntry.cliSubcommand}`),
+        ...params.actions.map((action) => `action:${action.provenance}:${action.source.kind}:${action.definition.id}:${action.manifestDigest ?? ''}`),
+        ...params.tools.map((tool) => `tool:${tool.provenance}:${tool.source.kind}:${tool.definition.id}:${tool.definition.name}:${tool.manifestDigest ?? ''}`),
+        ...params.commands.map((command) => `command:${command.provenance}:${command.source.kind}:${command.definition.id}:${command.definition.command}:${command.manifestDigest ?? ''}`),
+        ...params.resources.map((resource) => `resource:${resource.provenance}:${resource.source.kind}:${resource.definition.id}:${resource.manifestDigest ?? ''}`),
+        ...params.uiDescriptors.map((uiDescriptor) => `ui:${uiDescriptor.provenance}:${uiDescriptor.source.kind}:${uiDescriptor.definition.id}:${uiDescriptor.manifestDigest ?? ''}`),
+        ...params.activationTargets.map((target) => `activate:${target.provenance}:${target.source.kind}:${target.pluginId}:${target.manifestDigest}:${target.daemonEntryPath}`),
+        ...(params.hookRegistrations ?? []).map((hook) => `hook:${hook.provenance}:${hook.source.kind}:${hook.definition.id}:${hook.manifestDigest}`),
+        ...params.lifecycleHandlers.map((handler) => `lifecycle:${handler.provenance}:${handler.source.kind}:${handler.definition.id}:${handler.definition.event}:${handler.manifestDigest ?? ''}`),
+    ].sort();
+    return `registry:${parts.join('|')}`;
+}
+
 export function getBuiltInCatalogEntries(): Record<CatalogAgentId, AgentCatalogEntry> {
-    return getResolvedContributionRegistry().catalogEntriesById as Record<CatalogAgentId, AgentCatalogEntry>;
+    return createResolvedContributionRegistry(resolveBuiltInContributions()).catalogEntriesById as Record<CatalogAgentId, AgentCatalogEntry>;
 }

@@ -1,11 +1,12 @@
 import { AGENT_IDS, type AgentId } from '../types.js';
-import type { BackendDefinition, BackendDefinitionContractV1 } from './types.js';
+import type { BackendCatalogDefinition, BackendDefinitionContractV1 } from './types.js';
 import { PROVIDER_ARTIFACTS } from './buildProviderArtifacts.js';
 import { isConcreteBackendDefinitionAgentId } from './resolveBackendOwnership.js';
+import { buildEngineSpecFromRuntimeKindsManifest } from '../runtime/engine/contracts.js';
 
 export const BACKEND_DEFINITION_AGENT_IDS: readonly AgentId[] = AGENT_IDS.filter(isConcreteBackendDefinitionAgentId);
 
-function createBackendDefinition(agentId: AgentId): BackendDefinition {
+function createBackendDefinition(agentId: AgentId): BackendCatalogDefinition {
   const provider = PROVIDER_ARTIFACTS.providerDefinitionsById.get(agentId);
   if (provider === null || provider === undefined) {
     throw new Error(`Missing provider definition for backend definition: ${agentId}`);
@@ -15,12 +16,16 @@ function createBackendDefinition(agentId: AgentId): BackendDefinition {
     id: agentId,
     providerId: agentId,
     provider,
+    engine: buildEngineSpecFromRuntimeKindsManifest({
+      engineId: agentId,
+      runtimeKindsManifest: provider.core.runtimeKinds ?? null,
+    }),
     runtimeKinds: provider.core.runtimeKinds ?? null,
   };
 }
 
 const BACKEND_DEFINITIONS = Object.freeze(BACKEND_DEFINITION_AGENT_IDS.map((agentId) => createBackendDefinition(agentId)));
-const BACKEND_DEFINITIONS_BY_ID = new Map<AgentId, BackendDefinition>(
+const BACKEND_DEFINITIONS_BY_ID = new Map<AgentId, BackendCatalogDefinition>(
   BACKEND_DEFINITIONS.map((definition) => [definition.id, definition]),
 );
 const BACKEND_DEFINITION_CONTRACTS = Object.freeze(BACKEND_DEFINITION_AGENT_IDS.map((agentId) => ({
@@ -33,8 +38,8 @@ const BACKEND_DEFINITION_CONTRACTS_BY_ID = new Map<string, BackendDefinitionCont
 );
 
 export type BackendArtifacts = Readonly<{
-  backendDefinitions: readonly BackendDefinition[];
-  backendDefinitionsById: ReadonlyMap<AgentId, BackendDefinition>;
+  backendDefinitions: readonly BackendCatalogDefinition[];
+  backendDefinitionsById: ReadonlyMap<AgentId, BackendCatalogDefinition>;
   backendDefinitionContracts: readonly BackendDefinitionContractV1[];
   backendDefinitionContractsById: ReadonlyMap<string, BackendDefinitionContractV1>;
 }>;

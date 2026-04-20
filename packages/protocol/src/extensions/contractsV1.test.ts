@@ -1,25 +1,51 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+  ActionDefinitionV1Schema,
+  BackendDefinitionV1Schema,
+  BackendRuntimeAdapterOperationCatalogV1,
+  BackendRuntimeAdapterV1Schema,
+  ExtensionManifestV2Schema,
+  ExtensionSourceSpecV1Schema,
+  ExtensionTargetsV2Schema,
+  HookCategoryV1Schema,
+  HookEventEnvelopeV1Schema,
+  HookExecutionKindV1Schema,
+  HookHandlerTargetV1Schema,
+  HookRegistrationV1Schema,
+  HookScopeV1Schema,
+  ProviderCliRuntimeV1Schema,
+  ProviderDefinitionV1Schema,
+  RuntimeDescriptorV1Schema,
+  SerializedActionDefinitionV1Schema,
+  isSupportedBackendRuntimeAdapterOperationV1,
+  readHookEventEnvelopeV1,
+  readHookRegistrationV1,
+} from '../index.js';
 import * as protocol from '../index.js';
 
 describe('extension and hook contract exports', () => {
   it('exports additive hook enums and extension schemas through the protocol root', () => {
-    expect(typeof (protocol as any).HookScopeV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).HookCategoryV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).HookExecutionKindV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).ActionDefinitionV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).SerializedActionDefinitionV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).PluginManifestV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).ProviderDefinitionV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).ProviderCliRuntimeV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).BackendDefinitionV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).HookRegistrationV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).HookEventEnvelopeV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).ExtensionSourceSpecV1Schema?.safeParse).toBe('function');
+    expect(typeof HookScopeV1Schema.safeParse).toBe('function');
+    expect(typeof HookCategoryV1Schema.safeParse).toBe('function');
+    expect(typeof HookExecutionKindV1Schema.safeParse).toBe('function');
+    expect(typeof ActionDefinitionV1Schema.safeParse).toBe('function');
+    expect(typeof SerializedActionDefinitionV1Schema.safeParse).toBe('function');
+    expect(typeof ExtensionManifestV2Schema.safeParse).toBe('function');
+    expect(typeof ProviderDefinitionV1Schema.safeParse).toBe('function');
+    expect(typeof ProviderCliRuntimeV1Schema.safeParse).toBe('function');
+    expect(typeof BackendDefinitionV1Schema.safeParse).toBe('function');
+    expect(typeof BackendRuntimeAdapterV1Schema.safeParse).toBe('function');
+    expect(typeof BackendRuntimeAdapterOperationCatalogV1).toBe('object');
+    expect(typeof isSupportedBackendRuntimeAdapterOperationV1).toBe('function');
+    expect(typeof RuntimeDescriptorV1Schema.safeParse).toBe('function');
+    expect(typeof HookRegistrationV1Schema.safeParse).toBe('function');
+    expect(typeof HookEventEnvelopeV1Schema.safeParse).toBe('function');
+    expect(typeof ExtensionSourceSpecV1Schema.safeParse).toBe('function');
   });
 
   it('parses representative extension definitions and manifests', () => {
-    const actionDefinition = (protocol as any).ActionDefinitionV1Schema.parse({
+    const actionDefinition = ActionDefinitionV1Schema.parse({
       kindVersion: 1,
       id: 'acme.plugin.review.start',
       title: 'Plugin Review',
@@ -27,8 +53,10 @@ describe('extension and hook contract exports', () => {
       safety: 'safe',
       placements: [],
       slash: null,
+      futureActionDefinitionFlag: 'action-definition-extra',
       bindings: {
         mcpToolName: 'acme_plugin_review_start',
+        futureBindingsFlag: 'bindings-extra',
       },
       examples: null,
       surfaces: {
@@ -39,8 +67,32 @@ describe('extension and hook contract exports', () => {
         session_agent: true,
         mcp: true,
         cli: true,
+        futureSurfaceFlag: 'surface-extra',
       },
-      inputHints: null,
+      prompting: {
+        voiceHotPath: true,
+        futurePromptingFlag: 'prompting-extra',
+      },
+      inputHints: {
+        title: 'Plugin Review',
+        description: 'Runs a plugin-defined review action',
+        futureInputHintsFlag: 'input-hints-extra',
+        fields: [
+          {
+            path: 'instructions',
+            title: 'Instructions',
+            widget: 'text',
+            futureFieldHintFlag: 'field-extra',
+            options: [
+              {
+                value: 'default',
+                label: 'Default',
+                futureOptionFlag: 'option-extra',
+              },
+            ],
+          },
+        ],
+      },
       inputSchema: {
         type: 'object',
         properties: {
@@ -49,9 +101,11 @@ describe('extension and hook contract exports', () => {
       },
     });
 
-    const providerDefinition = (protocol as any).ProviderDefinitionV1Schema.parse({
+    const providerDefinition = ProviderDefinitionV1Schema.parse({
       kindVersion: 1,
       id: 'ohMyPi',
+      providerAgentId: ' claude ',
+      iconAgentId: ' codex ',
       display: {
         name: 'Oh My Pi',
         tags: ['acp'],
@@ -76,11 +130,13 @@ describe('extension and hook contract exports', () => {
       ownedBackendIds: ['ohMyPi.acp'],
     });
 
-    const backendDefinition = (protocol as any).BackendDefinitionV1Schema.parse({
+    const backendDefinition = BackendDefinitionV1Schema.parse({
       kindVersion: 1,
       id: 'ohMyPi.acp',
       providerId: 'ohMyPi',
       runtimeKind: 'acp',
+      providerAgentId: ' claude ',
+      iconAgentId: ' codex ',
       capabilities: {
         directSessions: true,
         terminalRuntime: true,
@@ -90,6 +146,7 @@ describe('extension and hook contract exports', () => {
           runtimeAdapterApiVersion: 1,
           id: 'backend.terminalRuntime.launch',
           kind: 'terminalRuntime',
+          operation: 'launch',
           handler: {
             target: 'daemon',
             exportName: 'launch',
@@ -98,7 +155,7 @@ describe('extension and hook contract exports', () => {
       ],
     });
 
-    const registration = (protocol as any).HookRegistrationV1Schema.parse({
+    const registration = HookRegistrationV1Schema.parse({
       hookApiVersion: 1,
       id: 'backend.terminalRuntime.bindTranscript',
       category: 'integration',
@@ -110,8 +167,8 @@ describe('extension and hook contract exports', () => {
       },
     });
 
-    const manifest = (protocol as any).PluginManifestV1Schema.parse({
-      schemaVersion: 1,
+    const manifest = ExtensionManifestV2Schema.parse({
+      schemaVersion: 2,
       id: 'acme.ohmypi',
       version: '1.0.0',
       displayName: 'Acme Oh My Pi',
@@ -119,19 +176,32 @@ describe('extension and hook contract exports', () => {
       engines: {
         happier: '^1.0.0',
       },
+      runtime: {
+        apiVersion: 1,
+        capabilities: ['providers', 'backends', 'hooks'],
+      },
       targets: {
         daemon: {
           entry: './daemon.js',
         },
       },
-      contributions: {
-        providers: [providerDefinition],
-        backends: [backendDefinition],
-        hooks: [registration],
-      },
+      contributions: [
+        {
+          kind: 'provider',
+          ...providerDefinition,
+        },
+        {
+          kind: 'backend',
+          ...backendDefinition,
+        },
+        {
+          kind: 'hook',
+          ...registration,
+        },
+      ],
     });
 
-    const envelope = (protocol as any).HookEventEnvelopeV1Schema.parse({
+    const envelope = HookEventEnvelopeV1Schema.parse({
       eventId: 'session.started',
       scope: 'session',
       category: 'lifecycle',
@@ -142,7 +212,7 @@ describe('extension and hook contract exports', () => {
       },
     });
 
-    const source = (protocol as any).ExtensionSourceSpecV1Schema.parse({
+    const source = ExtensionSourceSpecV1Schema.parse({
       kind: 'path',
       locator: '/tmp/plugins/ohmypi',
       trustPolicy: 'local_trusted',
@@ -151,22 +221,42 @@ describe('extension and hook contract exports', () => {
 
     expect(actionDefinition.id).toBe('acme.plugin.review.start');
     expect(providerDefinition.id).toBe('ohMyPi');
+    expect(providerDefinition.providerAgentId).toBe('claude');
+    expect(providerDefinition.iconAgentId).toBe('codex');
     expect(providerDefinition.providerCliRuntime?.binaryName).toBe('omp');
     expect(backendDefinition.id).toBe('ohMyPi.acp');
+    expect(backendDefinition.providerAgentId).toBe('claude');
+    expect(backendDefinition.iconAgentId).toBe('codex');
     expect(backendDefinition.runtimeAdapters).toHaveLength(1);
     expect(backendDefinition.runtimeAdapters[0]).toMatchObject({
       id: 'backend.terminalRuntime.launch',
       kind: 'terminalRuntime',
+      operation: 'launch',
+    });
+    expect(manifest.schemaVersion).toBe(2);
+    expect(manifest.contributions).toHaveLength(3);
+    expect(manifest.contributions[0]).toMatchObject({
+      kind: 'provider',
+      id: 'ohMyPi',
+      providerAgentId: 'claude',
+      iconAgentId: 'codex',
+    });
+    expect(manifest.contributions[1]).toMatchObject({
+      kind: 'backend',
+      id: 'ohMyPi.acp',
+    });
+    expect(manifest.contributions[2]).toMatchObject({
+      kind: 'hook',
+      id: 'backend.terminalRuntime.bindTranscript',
     });
     expect(registration.id).toBe('backend.terminalRuntime.bindTranscript');
-    expect(manifest.contributions.providers).toHaveLength(1);
-    expect(manifest.contributions.backends[0].runtimeAdapters).toHaveLength(1);
+    expect(manifest.targets.daemon?.entry).toBe('./daemon.js');
     expect(envelope.scope).toBe('session');
     expect(source.kind).toBe('path');
   });
 
   it('rejects hook registrations when category and execution semantics conflict', () => {
-    const parsed = (protocol as any).HookRegistrationV1Schema.safeParse({
+    const parsed = HookRegistrationV1Schema.safeParse({
       hookApiVersion: 1,
       id: 'backend.terminalRuntime.bindTranscript',
       category: 'integration',
@@ -181,7 +271,7 @@ describe('extension and hook contract exports', () => {
   });
 
   it('rejects hook registrations whose handler target is not a plugin export', () => {
-    const parsed = (protocol as any).HookRegistrationV1Schema.safeParse({
+    const parsed = HookRegistrationV1Schema.safeParse({
       hookApiVersion: 1,
       id: 'backend.terminalRuntime.bindTranscript',
       category: 'integration',
@@ -196,12 +286,12 @@ describe('extension and hook contract exports', () => {
   });
 
   it('accepts only plugin hook handler targets in the supported v1 contract', () => {
-    expect((protocol as any).HookHandlerTargetV1Schema.parse('plugin')).toBe('plugin');
-    expect((protocol as any).HookHandlerTargetV1Schema.safeParse('daemon').success).toBe(false);
+    expect(HookHandlerTargetV1Schema.parse('plugin')).toBe('plugin');
+    expect(HookHandlerTargetV1Schema.safeParse('daemon').success).toBe(false);
   });
 
   it('rejects invalid backend runtime adapter descriptors', () => {
-    const parsed = (protocol as any).BackendDefinitionV1Schema.safeParse({
+    const parsed = BackendDefinitionV1Schema.safeParse({
       kindVersion: 1,
       id: 'ohMyPi.acp',
       providerId: 'ohMyPi',
@@ -212,6 +302,7 @@ describe('extension and hook contract exports', () => {
           runtimeAdapterApiVersion: 1,
           id: 'backend.terminalRuntime.launch',
           kind: 'terminalRuntime',
+          operation: 'launch',
           handler: {
             target: 'daemon',
             exportName: '',
@@ -223,9 +314,61 @@ describe('extension and hook contract exports', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('rejects unsupported plugin manifest target descriptors in the v1 contract', () => {
+  it('requires canonical runtime adapter operations instead of deriving them from opaque ids', () => {
+    expect(BackendRuntimeAdapterV1Schema.safeParse({
+      runtimeAdapterApiVersion: 1,
+      id: 'launch-adapter',
+      kind: 'terminalRuntime',
+      handler: {
+        target: 'daemon',
+        exportName: 'launch',
+      },
+    }).success).toBe(false);
+
+    const parsed = BackendRuntimeAdapterV1Schema.parse({
+      runtimeAdapterApiVersion: 1,
+      id: 'launch-adapter',
+      kind: 'terminalRuntime',
+      operation: 'launch',
+      handler: {
+        target: 'daemon',
+        exportName: 'launch',
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      id: 'launch-adapter',
+      kind: 'terminalRuntime',
+      operation: 'launch',
+    });
+  });
+
+  it('treats runtime adapter operation names as host-validated ABI strings rather than schema-level enums', () => {
+    const parsed = BackendRuntimeAdapterV1Schema.parse({
+      runtimeAdapterApiVersion: 1,
+      id: 'future-adapter',
+      kind: 'terminalRuntime',
+      operation: 'futureOperation',
+      handler: {
+        target: 'daemon',
+        exportName: 'futureOperation',
+      },
+    });
+
+    expect(parsed.operation).toBe('futureOperation');
+    expect(isSupportedBackendRuntimeAdapterOperationV1({
+      kind: 'terminalRuntime',
+      operation: 'launch',
+    })).toBe(true);
+    expect(isSupportedBackendRuntimeAdapterOperationV1({
+      kind: 'terminalRuntime',
+      operation: 'futureOperation',
+    })).toBe(false);
+  });
+
+  it('rejects unsupported extension target descriptors in the v2 manifest contract', () => {
     expect(
-      (protocol as any).PluginTargetsV1Schema.safeParse({
+      ExtensionTargetsV2Schema.safeParse({
         daemon: {
           entry: './daemon.js',
         },
@@ -236,7 +379,7 @@ describe('extension and hook contract exports', () => {
     ).toBe(false);
 
     expect(
-      (protocol as any).PluginTargetsV1Schema.safeParse({
+      ExtensionTargetsV2Schema.safeParse({
         daemon: {
           entry: './daemon.js',
         },
@@ -248,10 +391,11 @@ describe('extension and hook contract exports', () => {
   });
 
   it('rejects plugin-target backend runtime adapter handlers in the v1 contract', () => {
-    const parsed = (protocol as any).BackendRuntimeAdapterV1Schema.safeParse({
+    const parsed = BackendRuntimeAdapterV1Schema.safeParse({
       runtimeAdapterApiVersion: 1,
       id: 'backend.terminalRuntime.launch',
       kind: 'terminalRuntime',
+      operation: 'launch',
       handler: {
         target: 'plugin',
         exportName: 'launch',
@@ -261,8 +405,13 @@ describe('extension and hook contract exports', () => {
     expect(parsed.success).toBe(false);
   });
 
+  it('does not expose internal runtime adapter operation-id helpers through the public protocol root', () => {
+    expect((protocol as Record<string, unknown>).BackendRuntimeAdapterOperationIdsByKindV1).toBeUndefined();
+    expect((protocol as Record<string, unknown>).isSupportedBackendRuntimeAdapterOperationIdV1).toBeUndefined();
+  });
+
   it('rejects invalid provider CLI runtime descriptors in provider definitions', () => {
-    const parsed = (protocol as any).ProviderDefinitionV1Schema.safeParse({
+    const parsed = ProviderDefinitionV1Schema.safeParse({
       kindVersion: 1,
       id: 'acme.plugin',
       display: {
@@ -287,7 +436,6 @@ describe('extension and hook contract exports', () => {
   });
 
   it('reads hook registrations from additive mixed-version payloads', () => {
-    const readHookRegistrationV1 = (protocol as any).readHookRegistrationV1 as (value: unknown) => unknown;
     expect(typeof readHookRegistrationV1).toBe('function');
 
     const normalized = readHookRegistrationV1({
@@ -317,7 +465,6 @@ describe('extension and hook contract exports', () => {
   });
 
   it('reads hook event envelopes from additive mixed-version payload aliases', () => {
-    const readHookEventEnvelopeV1 = (protocol as any).readHookEventEnvelopeV1 as (value: unknown) => unknown;
     expect(typeof readHookEventEnvelopeV1).toBe('function');
 
     const normalized = readHookEventEnvelopeV1({
@@ -361,5 +508,66 @@ describe('extension and hook contract exports', () => {
       payload: {},
     });
     expect(unsupportedVersion).toBe(null);
+  });
+
+  it('accepts widened hook scopes for daemon and plugin lifecycle events', () => {
+    const registration = HookRegistrationV1Schema.parse({
+      hookApiVersion: 1,
+      id: 'plugin.reload.after',
+      category: 'lifecycle',
+      scope: 'plugin',
+      executionKind: 'observe',
+      handler: {
+        target: 'plugin',
+        exportName: 'afterReload',
+      },
+    });
+
+    const envelope = HookEventEnvelopeV1Schema.parse({
+      hookVersion: 1,
+      eventId: 'spawn.augmentEnv',
+      category: 'augmentation',
+      scope: 'daemon',
+      timestampMs: 1,
+      payload: {},
+    });
+
+    expect(registration.scope).toBe('plugin');
+    expect(envelope.scope).toBe('daemon');
+  });
+
+  it('rejects unsafe extension ids in v2 manifests', () => {
+    for (const extensionId of [
+      '../escape',
+      'acme/escape',
+      'acme..plugin',
+      '.hidden',
+      '__proto__',
+      'acme.__proto__.plugin',
+      'constructor',
+      'prototype.plugin',
+    ]) {
+      expect(ExtensionManifestV2Schema.safeParse({
+        schemaVersion: 2,
+        id: extensionId,
+        version: '1.0.0',
+        displayName: 'Unsafe Extension',
+        description: 'Should fail validation',
+        engines: {
+          happier: '^1.0.0',
+        },
+        runtime: {
+          apiVersion: 1,
+          capabilities: [],
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.js',
+          },
+        },
+        permissions: [],
+        contributions: [],
+      }).success).toBe(false);
+    }
   });
 });

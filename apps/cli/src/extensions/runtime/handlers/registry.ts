@@ -1,0 +1,175 @@
+import type { ResolvedHookRegistration } from '@/extensions/registry/types';
+
+import type {
+    PluginExtensionApiActionRegistration,
+    PluginExtensionApiCommandRegistration,
+    PluginExtensionApiHookRegistration,
+    PluginExtensionApiLifecycleHandlerRegistration,
+    PluginExtensionApiRuntimeAdapterRegistration,
+    PluginExtensionApiToolRegistration,
+} from '../api/types';
+import type {
+    PluginActionHandler,
+    PluginHookHandler,
+    ResolvedPluginHookHandler,
+    ResolvedPluginLifecycleHandler,
+} from '../types';
+
+export type ActivatedHandlerRegistry = Readonly<{
+    actionHandlersByActionId: ReadonlyMap<string, PluginActionHandler>;
+    hookHandlersByHookId: ReadonlyMap<string, readonly ResolvedPluginHookHandler[]>;
+    lifecycleHandlersByEvent: ReadonlyMap<string, readonly ResolvedPluginLifecycleHandler[]>;
+    runtimeAdapterHandlersByBackendId: ReadonlyMap<string, ReadonlyMap<string, PluginHookHandler>>;
+}>;
+
+function buildRuntimeAdapterDispatchKey(registration: PluginExtensionApiRuntimeAdapterRegistration): string {
+    return `${registration.kind}:${registration.operation}`;
+}
+
+function createSyntheticHookRegistration(params: Readonly<{
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string;
+    registration: PluginExtensionApiHookRegistration;
+}>): ResolvedHookRegistration {
+    return {
+        provenance: 'external',
+        source: { kind: 'path' },
+        pluginId: params.pluginId,
+        manifestPath: params.manifestPath,
+        manifestDigest: params.manifestDigest,
+        daemonEntryPath: params.daemonEntryPath,
+        sourceSpec: {
+            kind: 'path',
+            locator: params.manifestPath,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+        },
+        definition: {
+            hookApiVersion: 1,
+            id: params.registration.hookId,
+            category: params.registration.category ?? 'lifecycle',
+            scope: params.registration.scope ?? 'session',
+            executionKind: params.registration.executionKind ?? 'observe',
+            priority: params.registration.priority,
+            handler: {
+                target: 'plugin',
+            },
+        },
+    };
+}
+
+export function createActivatedHandlerRegistry(params: Readonly<{
+    entries: readonly Readonly<{
+        pluginId: string;
+        manifestPath: string;
+        manifestDigest: string;
+        daemonEntryPath: string;
+        actions: readonly PluginExtensionApiActionRegistration[];
+        tools: readonly PluginExtensionApiToolRegistration[];
+        commands: readonly PluginExtensionApiCommandRegistration[];
+        hooks: readonly PluginExtensionApiHookRegistration[];
+        lifecycleHandlers: readonly PluginExtensionApiLifecycleHandlerRegistration[];
+        runtimeAdapters: readonly PluginExtensionApiRuntimeAdapterRegistration[];
+    }>[];
+}>): ActivatedHandlerRegistry {
+    const actionHandlersByActionId = new Map<string, PluginActionHandler>();
+    const hookHandlersMutable = new Map<string, ResolvedPluginHookHandler[]>();
+    const lifecycleHandlersMutable = new Map<string, ResolvedPluginLifecycleHandler[]>();
+    const runtimeAdapterHandlersMutable = new Map<string, Map<string, PluginHookHandler>>();
+
+    for (const entry of params.entries) {
+        for (const registration of entry.actions) {
+            actionHandlersByActionId.set(registration.id, registration.handler);
+        }
+        for (const registration of entry.tools) {
+            actionHandlersByActionId.set(registration.id, registration.handler);
+        }
+        for (const registration of entry.commands) {
+            actionHandlersByActionId.set(registration.actionId ?? registration.id, registration.handler);
+        }
+
+        for (const registration of entry.hooks) {
+            const resolved: ResolvedPluginHookHandler = {
+                pluginId: entry.pluginId,
+                hookId: registration.hookId,
+                priority: registration.priority ?? 0,
+                manifestPath: entry.manifestPath,
+                manifestDigest: entry.manifestDigest,
+                daemonEntryPath: entry.daemonEntryPath,
+                exportName: '<activation>',
+                registration: createSyntheticHookRegistration({
+                    pluginId: entry.pluginId,
+                    manifestPath: entry.manifestPath,
+                    manifestDigest: entry.manifestDigest,
+                    daemonEntryPath: entry.daemonEntryPath,
+                    registration,
+                }),
+                handler: registration.handler,
+            };
+            const existing = hookHandlersMutable.get(registration.hookId);
+            if (existing) {
+                existing.push(resolved);
+            } else {
+                hookHandlersMutable.set(registration.hookId, [resolved]);
+            }
+        }
+
+        for (const [index, registration] of entry.lifecycleHandlers.entries()) {
+            const registrationId = registration.id?.trim().length
+                ? registration.id.trim()
+                : `${entry.pluginId}:${registration.event}:${index}`;
+            const resolved: ResolvedPluginLifecycleHandler = {
+                pluginId: entry.pluginId,
+                lifecycleEvent: registration.event,
+                registrationId,
+                priority: registration.priority ?? 0,
+                manifestPath: entry.manifestPath,
+                manifestDigest: entry.manifestDigest,
+                daemonEntryPath: entry.daemonEntryPath,
+                handler: registration.handler,
+            };
+            const existing = lifecycleHandlersMutable.get(registration.event);
+            if (existing) {
+                existing.push(resolved);
+            } else {
+                lifecycleHandlersMutable.set(registration.event, [resolved]);
+            }
+        }
+
+        for (const registration of entry.runtimeAdapters) {
+            const existing = runtimeAdapterHandlersMutable.get(registration.backendId) ?? new Map<string, PluginHookHandler>();
+            existing.set(buildRuntimeAdapterDispatchKey(registration), registration.handler);
+            runtimeAdapterHandlersMutable.set(registration.backendId, existing);
+        }
+    }
+
+    const hookHandlersByHookId = new Map<string, readonly ResolvedPluginHookHandler[]>();
+    for (const [hookId, handlers] of hookHandlersMutable.entries()) {
+        hookHandlersByHookId.set(
+            hookId,
+            Object.freeze([...handlers].sort((left, right) => right.priority - left.priority || left.pluginId.localeCompare(right.pluginId))),
+        );
+    }
+
+    const lifecycleHandlersByEvent = new Map<string, readonly ResolvedPluginLifecycleHandler[]>();
+    for (const [event, handlers] of lifecycleHandlersMutable.entries()) {
+        lifecycleHandlersByEvent.set(
+            event,
+            Object.freeze([...handlers].sort((left, right) => right.priority - left.priority || left.pluginId.localeCompare(right.pluginId))),
+        );
+    }
+
+    const runtimeAdapterHandlersByBackendId = new Map<string, ReadonlyMap<string, PluginHookHandler>>();
+    for (const [backendId, handlers] of runtimeAdapterHandlersMutable.entries()) {
+        runtimeAdapterHandlersByBackendId.set(backendId, new Map(handlers));
+    }
+
+    return {
+        actionHandlersByActionId,
+        hookHandlersByHookId,
+        lifecycleHandlersByEvent,
+        runtimeAdapterHandlersByBackendId,
+    };
+}

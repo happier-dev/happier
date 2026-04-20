@@ -22,6 +22,7 @@ import {
   startTargetedDriverSession,
 } from './tauriDriverSessionSelection.mjs';
 import { appendTauriQaHmrOptOut } from './tauriQaPathing.mjs';
+import { summarizeQaStepArtifactsProof } from './tauriQaProofSummary.mjs';
 export {
   doesDriverSessionStatusMatchRequestedPort,
   resolveCandidateDriverSessionPorts,
@@ -532,13 +533,10 @@ export async function readBackendStateWithRetries({
 }
 
 export function summarizeTauriOnboardingWizardQaProof({ stepArtifacts = {} } = {}) {
-  const steps = Object.keys(stepArtifacts ?? {});
-  const ok = steps.length > 0;
-  return {
-    ok,
-    blocker: ok ? null : 'no_step_artifacts_captured',
-    steps,
-  };
+  return summarizeQaStepArtifactsProof({
+    stepArtifacts,
+    requiredStepIds: buildStepPlan().map((step) => step.id),
+  });
 }
 
 async function clickSelector(selector, { appIdentifier, env } = {}) {
@@ -649,7 +647,15 @@ async function appendJsonLineArtifact(filePath, data) {
   await appendTextArtifact(filePath, `${payload}\n`);
 }
 
-async function main(argv = process.argv.slice(2)) {
+export async function main(
+  argv = process.argv.slice(2),
+  {
+    runCapture = null,
+    stdout = process.stdout,
+    stderr = process.stderr,
+    processApi = process,
+  } = {},
+) {
   const plan = buildTauriOnboardingWizardQaPlan();
   const json = argv.includes('--json');
   const help = argv.includes('--help') || argv.includes('-h');
@@ -671,7 +677,16 @@ async function main(argv = process.argv.slice(2)) {
   }
 
   if (json) {
-    process.stdout.write(JSON.stringify({ ok: true, plan }, null, 2) + '\n');
+    stdout.write(JSON.stringify({ ok: true, plan }, null, 2) + '\n');
+    return;
+  }
+
+  if (typeof runCapture === 'function') {
+    const result = await runCapture({ plan, env: process.env });
+    stdout.write(JSON.stringify(result, null, 2) + '\n');
+    if (!result.ok) {
+      processApi.exitCode = 1;
+    }
     return;
   }
 
@@ -963,7 +978,10 @@ async function main(argv = process.argv.slice(2)) {
 
   const proofSummary = summarizeTauriOnboardingWizardQaProof({ stepArtifacts });
   if (!proofSummary.ok) {
-    await appendWarning(plan.artifactRoot, '- no step artifacts were captured during the native proof run; the live stack still is not exposing the expected post-auth surfaces');
+    const warning = proofSummary.blocker === 'no_step_artifacts_captured'
+      ? '- no step artifacts were captured during the native proof run; the live stack still is not exposing the expected post-auth surfaces'
+      : '- required step artifacts were incomplete during the native proof run; the live stack is not authoritative yet';
+    await appendWarning(plan.artifactRoot, warning);
   }
 
   const consoleLogs = await runOnboardingWizardMcpCli(
