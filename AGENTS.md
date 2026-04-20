@@ -299,6 +299,7 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
   - `backends/` is **reserved** for `apps/cli` only — do not introduce new `backends/**` folders in `packages/*` or `apps/ui`.
   - **Protocol layout invariant**: provider-specific executable logic/policy/defaults must live under `packages/protocol/src/providers/<providerId>/**` (avoid scattering provider folders inside other protocol domains).
   - **Protocol structure rule**: never add `packages/protocol/src/**/providers/<providerId>/**` or `packages/protocol/src/**/backends/<providerId>/**`. Keep a single `packages/protocol/src/providers/<providerId>/**` tree and re-export provider wire/schema from there when domain code needs it.
+  - **Extension unification wave (2026-04-19)**: first-party bundled agent/provider/backend families are migrating into `packages/extensions/<extensionId>/src/**` as the final authored owner model. During migration, the existing provider folders above remain valid **transitional bridges**, but new long-lived ownership must follow the packetized plans in `.project/plans/2026-04-19-*-packetized-execution-spec.md`.
 - Avoid compatibility shims for renames/moves by default. When restructuring, update all imports directly so the final structure is canonical.
 - Split crowded folders by domain (for example: `runtime/`, `session/`, `spawn/`, `permission/`) instead of accumulating many cross-cutting files at one level.
 - Keep files single-purpose. If a file starts owning multiple responsibilities, extract cohesive modules with explicit names.
@@ -325,7 +326,7 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
   - shared/provider-agnostic support facts in `packages/agents/*`
   - CLI executable backend wiring in `apps/cli/src/backends/catalog.ts` + `apps/cli/src/backends/<provider>/index.ts`
   - UI provider composition in `apps/ui/sources/agents/registry/*` + `apps/ui/sources/agents/providers/<provider>/*`
-- Executable provider-specific behavior MUST stay inside the provider folder (`apps/cli/src/backends/<provider>/...`, `apps/ui/sources/agents/providers/<provider>/...`).
+- Executable provider-specific behavior MUST stay inside the provider-owned module. During the 2026-04-19 extension-unification migration, the owner for first-party bundled families may be the bundled extension package (`packages/extensions/<extensionId>/src/agent/**`) instead of the historical host-local provider folders.
 - Core/shared layers MUST stay provider-agnostic. Do not add provider-name branching (`codex`, `claude`, `opencode`, etc.) in core orchestration when the behavior can be obtained through the existing catalog/registry hook surface.
 - When a new cross-provider feature needs provider-specific behavior, extend the existing catalog/entry type with a new hook/field and implement that hook in each provider's `index.ts`/provider module; do not add a new ad-hoc registry in unrelated core code.
 - Before adding provider-specific logic anywhere outside a provider folder, stop and check whether it belongs as:
