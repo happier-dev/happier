@@ -1,4 +1,5 @@
 import type { Metadata } from '@/api/types';
+import { publishSessionControlsMetadataBestEffort } from '@/agent/runtime/controls/publishSessionControlsMetadataBestEffort';
 
 import { probeClaudeHelpText } from './probeClaudeHelpText';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
@@ -29,9 +30,8 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
   }).catch(() => null);
   if (!state) return;
 
-  await params.session.updateMetadata((prev) => ({
-    ...prev,
-    sessionModelsV1: state,
-    acpSessionModelsV1: state,
-  }));
+  await publishSessionControlsMetadataBestEffort({
+    session: params.session,
+    sessionModelsState: state,
+  });
 }

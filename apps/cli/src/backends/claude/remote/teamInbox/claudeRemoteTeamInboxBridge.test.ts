@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 
 import { createClaudeRemoteTeamInboxBridge } from './claudeRemoteTeamInboxBridge';
 

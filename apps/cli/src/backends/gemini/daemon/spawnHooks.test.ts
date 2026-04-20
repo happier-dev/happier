@@ -31,13 +31,13 @@ afterEach(async () => {
   tempDirs.clear();
 });
 
-describe('geminiDaemonSpawnHooks.validateSpawn', () => {
+describe('geminiDaemonSpawnHooks.resolveRuntimePrerequisites', () => {
   it('rejects spawn when gemini is not resolvable', async () => {
     process.env.PATH = '';
     delete process.env.HAPPIER_GEMINI_PATH;
 
     const { geminiDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await geminiDaemonSpawnHooks.validateSpawn!({});
+    const res = await geminiDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('expected validation to fail');
     expect(res.errorMessage.toLowerCase()).toContain('gemini');
@@ -51,7 +51,7 @@ describe('geminiDaemonSpawnHooks.validateSpawn', () => {
     process.env.PATH = dir;
 
     const { geminiDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await geminiDaemonSpawnHooks.validateSpawn!({});
+    const res = await geminiDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(true);
   });
 
@@ -61,7 +61,7 @@ describe('geminiDaemonSpawnHooks.validateSpawn', () => {
     process.env.HAPPIER_GEMINI_PATH = binPath;
 
     const { geminiDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await geminiDaemonSpawnHooks.validateSpawn!({});
+    const res = await geminiDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(true);
   });
 
@@ -83,7 +83,7 @@ describe('geminiDaemonSpawnHooks.validateSpawn', () => {
     });
 
     const { geminiDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await geminiDaemonSpawnHooks.validateSpawn!({});
+    const res = await geminiDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(true);
   });
 });

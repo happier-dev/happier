@@ -1,25 +1,31 @@
-import type { AgentBackend, AgentFactoryOptions } from '@/agent/core';
+import type { AgentFactoryOptions } from '@/agent/core';
 import type { ChecklistId } from '@/capabilities/checklistIds';
 import type { Capability } from '@/capabilities/service';
 import type { CommandHandler } from '@/cli/commandRegistry';
 import type { CloudConnectTarget } from '@/cloud/connectTypes';
-import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
+import type { DaemonSpawnHooks } from '../daemon/spawnHooks';
 import type { DirectSessionsProviderId } from '@happier-dev/protocol';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import type { DirectSessionProviderOps } from './directSessions/providerOps';
-import type { AcpForkContinuationHandler } from './forking/acpForkContinuationHandler';
-import type { ProviderNativeForkHandler } from './forking/providerNativeForkHandler';
-import type { AnyTerminalRuntimeOps } from './terminalRuntime/types';
+import type { DirectSessionProviderOps } from '@/session/directSessions/providerOps';
+import type { AcpForkContinuationHandler } from '@/session/fork/acpForkContinuationHandler';
+import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeForkHandler';
+import type { ReplayForkContinuationHandler } from '@/session/fork/replayForkContinuationHandler';
+import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
 import type { ImportedSessionHandoffBundle, SessionHandoffProviderBundle } from '@/session/handoff/types';
+import type { ProviderCliLaunchSpec } from '../runtime/managedTools/requireProviderCliLaunchSpec';
 
 export { AGENT_IDS as CATALOG_AGENT_IDS, DEFAULT_AGENT_ID as DEFAULT_CATALOG_AGENT_ID } from '@happier-dev/agents';
 import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happier-dev/agents';
+import { LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID } from '@/agent/acp/catalog/compat/customAcp';
+export type CatalogAgentLookupId = CatalogAgentId | typeof LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID;
 export type { CatalogAgentId, VendorResumeSupportLevel };
+export type { ProviderCliLaunchSpec };
 import type { CodexBackendMode } from '@happier-dev/agents';
 import type { InstallableKey } from '@happier-dev/protocol';
 import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
-import type { ConnectedServicesSpawnMaterializer } from './connectedServices/spawnMaterializer';
-export type { ConnectedServicesSpawnMaterializer };
+import type { ConnectedServicesMaterializer } from '@/daemon/connectedServices/materialization/materializer';
+import type { CliBindingsGetter } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { CatalogAcpBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import type {
   CliAuthMethod,
   CliAuthReason,
@@ -38,8 +44,9 @@ export type {
   CliAuthStatus,
   CliAuthStatusDraft,
 };
+export type { ConnectedServicesMaterializer };
 
-export type CatalogAcpBackendCreateResult = Readonly<{ backend: AgentBackend }>;
+export type CatalogAcpBackendCreateResult = Readonly<{ backend: CatalogAcpBackend }>;
 export type CatalogAcpBackendFactory = (opts: AgentFactoryOptions) => CatalogAcpBackendCreateResult;
 
 export type VendorResumeSupportParams = Readonly<{
@@ -68,6 +75,20 @@ export type ProviderAttachReachability =
   | Readonly<{ reachable: true }>
   | Readonly<{ reachable: false; reason: string }>;
 
+/**
+ * Host-projected runtime binding hook.
+ *
+ * This is intentionally an internal host seam (not a plugin ABI).
+ * It exists to let built-in backends provide an operational host binding
+ * implementation so the engine registry can avoid falling back to legacy
+ * registries/runners during the migration.
+ */
+// Intentionally `any`: the host binding seam is internal and the
+// canonical param/result types are owned by the engine registry layer.
+// Keeping this hook loosely typed avoids type-level coupling/cycles between
+// backend catalog definitions and the engine registry implementation, and avoids
+// surfacing unrelated in-flight lane type errors during the migration wave.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ProviderAttachOps = Readonly<{
   evaluateEligibility: (params: Readonly<{
     metadata: Record<string, unknown>;
@@ -115,8 +136,8 @@ export type CliDetectSpec = Readonly<{
 }>;
 
 export type AgentCatalogEntry = Readonly<{
-  id: CatalogAgentId;
-  cliSubcommand: CatalogAgentId;
+  id: CatalogAgentLookupId;
+  cliSubcommand: CatalogAgentLookupId;
   /**
    * Optional CLI subcommand handler for this agent.
    */
@@ -155,7 +176,13 @@ export type AgentCatalogEntry = Readonly<{
    *
    * This keeps provider-specific auth file/env shaping out of the daemon core.
    */
-  getConnectedServicesSpawnMaterializer?: () => Promise<ConnectedServicesSpawnMaterializer | null>;
+  getConnectedServicesMaterializer?: () => Promise<ConnectedServicesMaterializer | null>;
+  /**
+   * Optional provider-owned managed-server launch spec used to identify and validate host-managed processes.
+   *
+   * This keeps backend-specific launch identity shaping behind the catalog instead of hard-coding it in the host.
+   */
+  getManagedServerLaunchSpec?: () => Promise<ProviderCliLaunchSpec | null>;
   /**
    * Optional provider-owned attach operations for shared local-control backends.
    *
@@ -170,6 +197,13 @@ export type AgentCatalogEntry = Readonly<{
    * instead of branching in shared catalog consumers.
    */
   getTerminalRuntimeOps?: () => Promise<AnyTerminalRuntimeOps | null>;
+  /**
+   * Optional provider-owned host bindings.
+   *
+   * When present, the engine registry will prefer these bindings over the legacy
+   * execution-run registry fallback.
+   */
+  getBindings?: CliBindingsGetter;
   /**
    * Whether this agent supports vendor-level resume (NOT Happy session resume).
    *
@@ -209,6 +243,13 @@ export type AgentCatalogEntry = Readonly<{
    * through the backend catalog.
    */
   getProviderNativeForkHandler?: () => Promise<ProviderNativeForkHandler>;
+  /**
+   * Optional replay-fork continuation shaper.
+   *
+   * Used by replay-fork orchestration to keep provider-specific affinity/env shaping
+   * behind the backend catalog (avoid provider branching in shared fork core).
+   */
+  getReplayForkContinuationHandler?: () => Promise<ReplayForkContinuationHandler>;
   /**
    * Optional provider-owned session handoff bundle export/import operations.
    *
@@ -262,5 +303,6 @@ export type {
   DirectSessionProviderOps,
   DirectSessionsProviderId,
   ProviderNativeForkHandler,
+  ReplayForkContinuationHandler,
 };
-export type { AnyTerminalRuntimeOps, TerminalRuntimeOps } from './terminalRuntime/types';
+export type { AnyTerminalRuntimeOps, TerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';

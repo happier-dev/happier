@@ -1,38 +1,58 @@
+import { basename, join } from 'node:path';
+
+import { getAgentAuthProbeConfig } from '@happier-dev/agents';
 import { createCatalogCliAuthSpec } from '@/capabilities/cliAuth/createCatalogCliAuthSpec';
-import { readJsonFileSafe, joinHomePath, readStringField } from '@/capabilities/cliAuth/shared';
+import { readJsonFileSafe, readStringField } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/backends/types';
+import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/directSessions/resolveClaudeConfigDir';
 
 function readClaudeCredentialsStatus(): CliAuthStatusDraft {
-  const parsed = readJsonFileSafe(joinHomePath('.claude', '.credentials.json'));
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { state: 'logged_out', reason: 'missing_credentials' };
-  }
+  const configDir = resolveConfiguredClaudeConfigDir({ env: process.env });
+  const credentialFiles = getAgentAuthProbeConfig('claude').credentialPaths?.map((credentialPath) => basename(credentialPath)) ?? [
+    '.credentials.json',
+    '.claude.json',
+  ];
+  let expiredCredentialsStatus: CliAuthStatusDraft | null = null;
 
-  const record = parsed as Record<string, unknown>;
-  const accessToken = readStringField(record, 'accessToken');
-  const expiresAt = readStringField(record, 'expiresAt');
-  if (!accessToken) {
-    return { state: 'logged_out', reason: 'missing_credentials', source: 'file', method: 'credentials_file' };
-  }
-
-  if (expiresAt) {
-    const expiryMs = Date.parse(expiresAt);
-    if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
-      return { state: 'logged_out', reason: 'expired', source: 'file', method: 'credentials_file' };
+  for (const credentialFile of credentialFiles) {
+    const parsed = readJsonFileSafe(join(configDir, credentialFile));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      continue;
     }
+
+    const record = parsed as Record<string, unknown>;
+    const accessToken = readStringField(record, 'accessToken');
+    const expiresAt = readStringField(record, 'expiresAt');
+    if (!accessToken) {
+      continue;
+    }
+
+    if (expiresAt) {
+      const expiryMs = Date.parse(expiresAt);
+      if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
+        expiredCredentialsStatus = { state: 'logged_out', reason: 'expired', source: 'file', method: 'credentials_file' };
+        continue;
+      }
+    }
+
+    const accountLabel =
+      readStringField(record, 'email')
+      ?? readStringField(record, 'accountEmail')
+      ?? readStringField(record, 'userEmail');
+
+    return {
+      state: 'logged_in',
+      method: 'credentials_file',
+      source: 'file',
+      ...(accountLabel ? { accountLabel } : {}),
+    };
   }
 
-  const accountLabel =
-    readStringField(record, 'email')
-    ?? readStringField(record, 'accountEmail')
-    ?? readStringField(record, 'userEmail');
+  if (expiredCredentialsStatus) {
+    return expiredCredentialsStatus;
+  }
 
-  return {
-    state: 'logged_in',
-    method: 'credentials_file',
-    source: 'file',
-    ...(accountLabel ? { accountLabel } : {}),
-  };
+  return { state: 'logged_out', reason: 'missing_credentials' };
 }
 
 export const claudeCliAuthSpec: CliAuthSpec = createCatalogCliAuthSpec('claude', {

@@ -1,15 +1,15 @@
 import { InvalidateSync } from "@/utils/sync";
-import { RawJSONLines } from "../types";
+import type { RawJSONLines } from "@/backends/claude/contracts/rawJsonLines";
 import { logger } from "@/ui/logger";
 import { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
 import { resolveClaudeSubagentJsonlPath } from '../remote/sidechains/resolveClaudeSubagentJsonlPath';
 import { createClaudeTeamInboxCollector } from './teamInbox/claudeTeamInboxCollector';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
-import { createClaudeScannerFileObservationRuntime } from '../transcripts/scanner/createClaudeScannerFileObservationRuntime';
-import { createClaudeScannerMainTranscriptStoreLifecycle } from '../transcripts/scanner/createClaudeScannerMainTranscriptStoreLifecycle';
-import { createClaudeScannerMessageRouter } from '../transcripts/scanner/createClaudeScannerMessageRouter';
-import { createClaudeScannerSessionCoordinator } from '../transcripts/scanner/createClaudeScannerSessionCoordinator';
-import { createClaudeScannerSessionPathResolver } from '../transcripts/scanner/createClaudeScannerSessionPathResolver';
+import { createMessageRouter } from '../transcripts/scanner/coordination/messageRouter';
+import { createSessionCoordinator } from '../transcripts/scanner/coordination/sessionCoordinator';
+import { createSessionPathResolver } from '../transcripts/scanner/paths/sessionPathResolver';
+import { createFileObservationRuntime } from '../transcripts/scanner/runtime/fileObservation';
+import { createMainTranscriptStore } from '../transcripts/scanner/stores/mainTranscriptStore';
 
 export type SessionScannerSessionInfo = {
     sessionId: string;
@@ -35,7 +35,7 @@ export async function createSessionScanner(opts: {
     transcriptMissingWarningMs?: number
 }) {
     const shapeLogger = createEventShapeLoggerForLog({ logger, scope: 'claude-jsonl' });
-    const messageRouter = createClaudeScannerMessageRouter({
+    const messageRouter = createMessageRouter({
         onMessage: (message) => {
             try {
                 opts.onMessage(message);
@@ -48,23 +48,23 @@ export async function createSessionScanner(opts: {
         },
     });
 
-    const sessionPathResolver = createClaudeScannerSessionPathResolver({
+    const sessionPathResolver = createSessionPathResolver({
         sessionId: opts.sessionId,
         transcriptPath: opts.transcriptPath ?? null,
         workingDirectory: opts.workingDirectory,
         claudeConfigDir: opts.claudeConfigDir ?? null,
     });
-    const sessionCoordinator = createClaudeScannerSessionCoordinator({
+    const sessionCoordinator = createSessionCoordinator({
         sessionId: opts.sessionId,
     });
 
     const transcriptMissingWarningMs = opts.transcriptMissingWarningMs ?? 5000;
-    const mainTranscriptStoreLifecycle = createClaudeScannerMainTranscriptStoreLifecycle({
+    const mainTranscriptStoreLifecycle = createMainTranscriptStore({
         workingDirectory: opts.workingDirectory,
         claudeConfigDir: opts.claudeConfigDir ?? null,
         invalidate: () => invalidate?.(),
     });
-    const fileObservationRuntime = createClaudeScannerFileObservationRuntime({
+    const fileObservationRuntime = createFileObservationRuntime({
         onInvalidate: () => invalidate?.(),
         onTranscriptMissing: opts.onTranscriptMissing,
         transcriptMissingWarningMs,

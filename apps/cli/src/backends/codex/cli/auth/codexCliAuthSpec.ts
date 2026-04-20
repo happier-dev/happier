@@ -1,6 +1,6 @@
-import { createCatalogCliAuthSpec } from '@/capabilities/cliAuth/createCatalogCliAuthSpec';
-import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
-import type { CliAuthSpec } from '@/backends/types';
+import { createCatalogCliAuthSpec } from '../../../../capabilities/cliAuth/createCatalogCliAuthSpec';
+import { runCliCommandBestEffort } from '../../../../capabilities/cliAuth/shared';
+import type { CliAuthSpec } from '../../../types';
 
 import { readCodexEnvironmentAuthState } from './readCodexEnvironmentAuthState';
 

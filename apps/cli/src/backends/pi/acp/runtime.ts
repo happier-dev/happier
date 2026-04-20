@@ -1,12 +1,10 @@
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
+import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-
-import { maybeUpdatePiSessionIdMetadata } from '@/backends/pi/utils/piSessionIdMetadata';
 
 export function createPiAcpRuntime(params: {
   directory: string;
@@ -20,30 +18,20 @@ export function createPiAcpRuntime(params: {
   memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
-  const lastPublishedPiSessionId = { value: null as string | null };
-
-  return createCatalogProviderAcpRuntime({
+  return createCatalogProviderSessionIdentityRuntime({
     provider: 'pi',
     loggerLabel: 'PiACP',
+    sessionIdMetadataKey: 'piSessionId',
     directory: params.directory,
+    machineId: params.machineId,
     session: params.session,
     transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    memoryRecallGuidance: {
-      enabled: params.memoryRecallGuidanceEnabled === true,
-      machineId: params.machineId,
-    },
+    memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
     getPermissionMode: params.getPermissionMode,
     inFlightSteer: { enabled: true },
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdatePiSessionIdMetadata({
-        getPiSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedPiSessionId,
-      });
-    },
   });
 }

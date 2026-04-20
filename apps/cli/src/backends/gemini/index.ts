@@ -1,7 +1,7 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
 
 import { checklists } from './cli/checklists';
-import { geminiDaemonSpawnHooks } from '@/backends/gemini/daemon/spawnHooks';
+import { geminiDaemonSpawnHooks } from './daemon/spawnHooks';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -13,9 +13,13 @@ export const agent = {
   getCliAuthSpec: async () => (await import('@/backends/gemini/cli/auth/geminiCliAuthSpec')).geminiCliAuthSpec,
   getCloudConnectTarget: async () => (await import('@/backends/gemini/cloud/connect')).geminiCloudConnect,
   getDaemonSpawnHooks: async () => geminiDaemonSpawnHooks,
-  getConnectedServicesSpawnMaterializer: async () =>
-    (await import('@/backends/gemini/connectedServices/createGeminiConnectedServicesSpawnMaterializer'))
-      .createGeminiConnectedServicesSpawnMaterializer(),
+  getConnectedServicesMaterializer: async () =>
+    (await import('@/backends/gemini/connectedServices/createGeminiConnectedServicesMaterializer'))
+      .createGeminiConnectedServicesMaterializer(),
+  getBindings: async () => {
+    const { createGeminiBindings } = await import('@/backends/gemini/bindings/index');
+    return () => createGeminiBindings();
+  },
   vendorResumeSupport: AGENTS_CORE.gemini.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createGeminiBackend } = await import('@/backends/gemini/acp/backend');

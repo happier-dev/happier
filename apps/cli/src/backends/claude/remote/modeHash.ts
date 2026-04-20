@@ -1,6 +1,6 @@
 import { hashObject } from '@/utils/deterministicJson';
 
-import type { EnhancedMode } from '@/backends/claude/loop';
+import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
 import { resolveClaudeEffortForModel } from '@/backends/claude/utils/claudeEffort';
 

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { Metadata } from '@/api/types';
-import { Session } from './session';
+import { Session } from './runtime/session/ClaudeSession';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import type { EnhancedMode } from './loop';
+import type { EnhancedMode } from './runtime/claudeEnhancedMode';
 
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
 
@@ -29,6 +29,7 @@ function createSessionClientStub(overrides?: Partial<SessionClientPort>): Sessio
     sendSessionEvent: vi.fn(),
     sendClaudeSessionMessage: vi.fn(),
     sendAgentMessage: vi.fn(),
+    sendAgentMessageCommitted: vi.fn(async () => {}),
     keepAlive: vi.fn(),
     getMetadataSnapshot: () => null,
     waitForMetadataUpdate: vi.fn(async () => false),

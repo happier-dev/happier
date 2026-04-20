@@ -129,7 +129,9 @@ describe('Gemini ACP backend CLI path resolution', () => {
   it('fails closed when no gemini CLI resolution is available', async () => {
     process.env.PATH = '';
     delete process.env.HAPPIER_GEMINI_PATH;
-    delete process.env.HAPPIER_HOME_DIR;
+    const homeDir = await createTempDir('happier-gemini-missing-home-');
+    tempDirs.add(homeDir);
+    process.env.HAPPIER_HOME_DIR = homeDir;
 
     expect(() =>
       createGeminiBackend({

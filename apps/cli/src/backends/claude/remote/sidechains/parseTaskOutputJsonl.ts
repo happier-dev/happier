@@ -1,4 +1,4 @@
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { parseRawJsonLinesLine } from '@/backends/claude/utils/parseRawJsonLines';
 
 export function parseTaskOutputJsonlText(text: string): RawJSONLines[] {

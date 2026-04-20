@@ -1,4 +1,4 @@
-import { createProviderTerminalDisplay, type ProviderTerminalDisplayProps } from '@/backends/shared/createProviderTerminalDisplay';
+import { createProviderTerminalDisplay, type ProviderTerminalDisplayProps } from '@/ui/providers/providerTerminalDisplay';
 
 export type KiloTerminalDisplayProps = ProviderTerminalDisplayProps;
 

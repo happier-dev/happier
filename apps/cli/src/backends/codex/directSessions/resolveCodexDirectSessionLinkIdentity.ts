@@ -4,15 +4,15 @@ import {
   type CodexBackendMode,
 } from '@happier-dev/agents';
 import {
-  readCanonicalAgentRuntimeDescriptorV1ForProvider,
-  type AgentRuntimeDescriptorV1,
+  readCanonicalRuntimeDescriptorV1ForProvider,
   type DirectSessionsSource,
+  type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
-import type { DirectSessionLinkIdentity } from '@/backends/directSessions/providerOps';
+import type { DirectSessionLinkIdentity } from '@/session/directSessions/providerOps';
 
-function readCanonicalCodexRuntimeDescriptor(value: AgentRuntimeDescriptorV1 | null | undefined) {
-  return readCanonicalAgentRuntimeDescriptorV1ForProvider(value, 'codex');
+function readCanonicalCodexRuntimeDescriptor(value: RuntimeDescriptorV1 | null | undefined) {
+  return readCanonicalRuntimeDescriptorV1ForProvider(value, 'codex');
 }
 
 function resolveCodexRuntimeSourceAffinity(source: DirectSessionsSource): Readonly<{
@@ -75,7 +75,7 @@ function buildCodexDirectSessionSource(params: Readonly<{
 export function resolveCodexDirectSessionLinkIdentity(params: Readonly<{
   remoteSessionId: string;
   source: DirectSessionsSource;
-  runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+  runtimeDescriptor?: RuntimeDescriptorV1 | null;
   metadata?: Record<string, unknown>;
 }>): DirectSessionLinkIdentity {
   const canonicalRuntimeDescriptor = readCanonicalCodexRuntimeDescriptor(params.runtimeDescriptor ?? null);

@@ -1,8 +1,8 @@
 import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
+import { resolveCliPathOverride } from '@/agent/runtime/cli/resolveCliPathOverride';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { spawn } from 'node:child_process';
 
 type PiProbedModelRow = Readonly<{

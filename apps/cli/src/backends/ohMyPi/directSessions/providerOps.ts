@@ -1,15 +1,16 @@
 import {
+  createDirectSessionTranscriptProviderOps,
   mergeDirectSessionEnvironmentVariables,
   type DirectSessionProviderOps,
-} from '@/backends/directSessions/providerOps';
+} from '@/session/directSessions/providerOps';
 
 import { listOhMyPiSessionCandidates } from './listOhMyPiSessionCandidates';
 import { resolveConfiguredOhMyPiAgentDir, resolveOhMyPiAgentDir } from './resolveOhMyPiAgentDir';
-import { validateOhMyPiDirectSessionsSource } from './validateOhMyPiDirectSessionsSource';
+import { sourceValidation } from './sourceValidation';
 import { acquireOhMyPiJsonlSessionStore, withOhMyPiJsonlSessionStore } from '../transcripts/sessionStore';
 
 export const ohMyPiDirectSessionProviderOps: DirectSessionProviderOps = {
-  validateSource: ({ source, env }) => validateOhMyPiDirectSessionsSource({ source, env }),
+  validateSource: ({ source, env }) => sourceValidation({ source, env }),
   listCandidates: async ({ source, cursor, limit, searchTerm }) => {
     const res = await listOhMyPiSessionCandidates({ source, cursor, limit, searchTerm });
     return { candidates: res.candidates, nextCursor: res.nextCursor ?? null };
@@ -29,69 +30,71 @@ export const ohMyPiDirectSessionProviderOps: DirectSessionProviderOps = {
       };
     });
   },
-  pageTranscript: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
-    if (direction !== 'older') {
+  ...createDirectSessionTranscriptProviderOps({
+    pageOlder: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
+      if (direction !== 'older') {
+        return {
+          items: [],
+          nextCursor: null,
+          tailCursor: null,
+          hasMore: false,
+          truncated: false,
+        };
+      }
+      return withOhMyPiJsonlSessionStore({
+        key: {
+          providerId: 'ohMyPi',
+          source,
+          remoteSessionId,
+        },
+      }, async (store) => {
+        const res = await store.pageOlder({ cursor, maxBytes, maxItems });
+        return {
+          items: Array.from(res.items),
+          nextCursor: res.nextCursor ?? null,
+          tailCursor: res.tailCursor ?? null,
+          hasMore: res.hasMore,
+          truncated: res.truncated === true,
+        };
+      });
+    },
+    readAfter: async ({ source, remoteSessionId, cursor, maxBytes, maxItems }) => {
+      return withOhMyPiJsonlSessionStore({
+        key: {
+          providerId: 'ohMyPi',
+          source,
+          remoteSessionId,
+        },
+      }, async (store) => {
+        const res = await store.readAfter({ cursor, maxBytes, maxItems });
+        return {
+          items: Array.from(res.items),
+          nextCursor: res.nextCursor ?? null,
+          truncated: res.truncated === true,
+        };
+      });
+    },
+    acquireFollowLease: async ({ source, remoteSessionId }) => {
+      const lease = await acquireOhMyPiJsonlSessionStore({
+        key: {
+          providerId: 'ohMyPi',
+          source,
+          remoteSessionId,
+        },
+      });
       return {
-        items: [],
-        nextCursor: null,
-        tailCursor: null,
-        hasMore: false,
-        truncated: false,
+        release: lease.release,
+        getTailCursor: () => lease.store.getTailCursor(),
+        subscribeToTranscriptUpdates: (listener) => lease.store.subscribe(async (event) => {
+          await listener({
+            items: Array.from(event.items),
+            nextCursor: event.nextCursor,
+            truncated: event.truncated,
+          });
+        }),
       };
-    }
-    return withOhMyPiJsonlSessionStore({
-      key: {
-        providerId: 'ohMyPi',
-        source,
-        remoteSessionId,
-      },
-    }, async (store) => {
-      const res = await store.pageOlder({ cursor, maxBytes, maxItems });
-      return {
-        items: Array.from(res.items),
-        nextCursor: res.nextCursor ?? null,
-        tailCursor: res.tailCursor ?? null,
-        hasMore: res.hasMore,
-        truncated: res.truncated === true,
-      };
-    });
-  },
-  readAfterTranscript: async ({ source, remoteSessionId, cursor, maxBytes, maxItems }) => {
-    return withOhMyPiJsonlSessionStore({
-      key: {
-        providerId: 'ohMyPi',
-        source,
-        remoteSessionId,
-      },
-    }, async (store) => {
-      const res = await store.readAfter({ cursor, maxBytes, maxItems });
-      return {
-        items: Array.from(res.items),
-        nextCursor: res.nextCursor ?? null,
-        truncated: res.truncated === true,
-      };
-    });
-  },
-  acquireFollowLease: async ({ source, remoteSessionId }) => {
-    const lease = await acquireOhMyPiJsonlSessionStore({
-      key: {
-        providerId: 'ohMyPi',
-        source,
-        remoteSessionId,
-      },
-    });
-    return {
-      release: lease.release,
-      getTailCursor: () => lease.store.getTailCursor(),
-      subscribeToTranscriptUpdates: (listener) => lease.store.subscribe(async (event) => {
-        await listener({
-          items: Array.from(event.items),
-          nextCursor: event.nextCursor,
-          truncated: event.truncated,
-        });
-      }),
-    };
-  },
+    },
+  }),
   canonicalizeLinkedSession: async ({ remoteSessionId, source }) => {
     if (source.kind !== 'ohMyPiAgentDir') {
       return { remoteSessionId, source };
@@ -117,7 +120,7 @@ export const ohMyPiDirectSessionProviderOps: DirectSessionProviderOps = {
       if (!directory) return null;
       return {
         directory,
-        backendTarget: { kind: 'builtInAgent', agentId: 'ohMyPi' },
+        backendTarget: { kind: 'backend', backendId: 'ohMyPi', sourceKind: 'built_in' },
         existingSessionId: sessionId,
         resume: linked.remoteSessionId,
         approvedNewDirectoryCreation: true,

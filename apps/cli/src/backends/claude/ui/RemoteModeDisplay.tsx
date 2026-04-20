@@ -21,10 +21,10 @@ export function interpretRemoteModeKeypress(
   state: { confirmationMode: RemoteModeConfirmation; actionInProgress: RemoteModeActionInProgress },
   input: string,
   key: { ctrl?: boolean; meta?: boolean; shift?: boolean } = {},
-  opts?: { allowSwitchToLocal?: boolean },
+  opts?: { allowSwitchToTerminal?: boolean },
 ): { action: RemoteModeKeypressAction } {
   return interpretRemoteModeKeypressShared(state, input, key, {
-    allowSwitchToLocal: opts?.allowSwitchToLocal ?? true,
+    allowSwitchToTerminal: opts?.allowSwitchToTerminal ?? true,
   });
 }
 
@@ -32,18 +32,18 @@ export type RemoteModeDisplayProps = {
   messageBuffer: MessageBuffer;
   logPath?: string;
   onExit?: () => void;
-  onSwitchToLocal?: () => void;
+  onSwitchToTerminal?: () => void;
 };
 
-export const RemoteModeDisplay: React.FC<RemoteModeDisplayProps> = ({ messageBuffer, logPath, onExit, onSwitchToLocal }) => {
+export const RemoteModeDisplay: React.FC<RemoteModeDisplayProps> = ({ messageBuffer, logPath, onExit, onSwitchToTerminal }) => {
   return (
     <RemoteControlDisplay
       providerName="Claude"
       messageBuffer={messageBuffer}
       logPath={logPath}
-      allowSwitchToLocal={true}
+      allowSwitchToTerminal={true}
       onExit={onExit}
-      onSwitchToLocal={onSwitchToLocal}
+      onSwitchToTerminal={onSwitchToTerminal}
     />
   );
 };

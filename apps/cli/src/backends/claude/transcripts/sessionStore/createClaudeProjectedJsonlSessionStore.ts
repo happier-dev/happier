@@ -1,10 +1,10 @@
-import { createProjectedJsonlSessionStore } from '@/api/session/fileBackedTranscripts/jsonl/createProjectedJsonlSessionStore';
+import { createProjectedJsonlSessionStore } from '../../../../api/session/fileBackedTranscripts/jsonl/createProjectedJsonlSessionStore';
 import type {
   FileBackedTranscriptPageResult,
   FileBackedTranscriptReadAfterResult,
   FileBackedTranscriptSessionStore,
   FileBackedTranscriptSessionStoreKey,
-} from '@/api/session/fileBackedTranscripts/store';
+} from '../../../../api/session/fileBackedTranscripts/store';
 
 import { readClaudeJsonlSessionActivity } from './operations/readClaudeJsonlSessionActivity';
 import { readClaudeJsonlSessionTitle } from './operations/readClaudeJsonlSessionTitle';

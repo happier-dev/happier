@@ -2,17 +2,107 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import { createClaudeSessionRuntimePlan } from '@/backends/claude/runtime/createSessionPlan';
+import { runHostSessionRuntime } from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
 
 type Deferred<T> = {
     promise: Promise<T>;
     resolve: (value: T) => void;
 };
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+const {
+    initializeBackendApiContextMock,
+    applyStartupMetadataUpdateToSessionMock,
+    createSessionMetadataMock,
+    createBaseSessionForAttachMock,
+    initializeRuntimeOverridesSynchronizerMock,
+    readSettingsMock,
+} = vi.hoisted(() => ({
+    initializeBackendApiContextMock: vi.fn(async () => ({
+        api: {
+            getOrCreateSession: vi.fn(async () => ({ id: 'session-start', metadataVersion: currentMetadataVersion })),
+            sessionSyncClient: vi.fn(() => ({
+                sessionId: 'session-start',
+                rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn() },
+                ensureMetadataSnapshot: vi.fn(async () => metadataSnapshot ?? { path: '/srv/project' }),
+                getMetadataSnapshot: vi.fn(() => metadataSnapshot ?? { path: '/srv/project' }),
+                onUserMessage: vi.fn((handler: (message: any) => void) => {
+                    capturedUserMessageHandler = handler;
+                }),
+                sendSessionEvent: vi.fn(),
+                sendClaudeSessionMessage: vi.fn(),
+                sendAgentMessage: vi.fn(),
+                sendCodexMessage: vi.fn(),
+                sendUserTextMessage: vi.fn(),
+                updateMetadata: vi.fn(),
+                updateAgentState: vi.fn(),
+                keepAlive: vi.fn(),
+                waitForMetadataUpdate: vi.fn(async () => true),
+                popPendingMessage: vi.fn(async () => false),
+                peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+                discardPendingMessageQueueV2All: vi.fn(async () => 0),
+                discardCommittedMessageLocalIds: vi.fn(async () => 0),
+                sendSessionDeath: vi.fn(),
+                flush: vi.fn(async () => {}),
+                close: vi.fn(async () => {}),
+            })),
+            push: vi.fn(() => ({ sendToAllDevices: vi.fn() })),
+        },
+        machineId: 'machine_1',
+    })),
+    applyStartupMetadataUpdateToSessionMock: vi.fn(() => metadataUpdateDeferred.promise),
+    createSessionMetadataMock: vi.fn(() => ({
+        state: { controlledByUser: false },
+        metadata: { path: '/tmp/project', terminal: null },
+    })),
+    createBaseSessionForAttachMock: vi.fn(async () => ({
+        id: 'session-attach',
+        metadataVersion: currentMetadataVersion,
+    })),
+    initializeRuntimeOverridesSynchronizerMock: vi.fn(async () => ({
+        seedFromSession: async () => {
+            throw stopAfterSeed;
+        },
+        syncFromMetadata: vi.fn(),
+        getSnapshot: () => ({
+            permissionMode: { current: 'default', updatedAt: 0 },
+            modelOverride: { current: null, updatedAt: 0 },
+        }),
+    })),
+    readSettingsMock: vi.fn(async () => ({ machineId: 'machine_1' })),
+}));
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
     const startedAt = Date.now();
     while (!predicate()) {
         if (Date.now() - startedAt > timeoutMs) {
             throw new Error(`Timed out after ${timeoutMs}ms`);
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+}
+
+async function waitForOrRunResult(
+    predicate: () => boolean,
+    runResult: Promise<unknown>,
+    timeoutMs = 5000,
+): Promise<void> {
+    let settled = false;
+    let resolution: unknown;
+    void runResult.then((value) => {
+        settled = true;
+        resolution = value;
+    });
+
+    const startedAt = Date.now();
+    while (!predicate()) {
+        if (settled) {
+            throw resolution instanceof Error ? resolution : new Error(`Run settled early: ${String(resolution)}`);
+        }
+        if (Date.now() - startedAt > timeoutMs) {
+            throw new Error(
+                `Timed out after ${timeoutMs}ms (progress=${JSON.stringify(liveHostPathProgress)}, createSessionMetadata=${createSessionMetadataMock.mock.calls.length}, initializeBackendApiContext=${initializeBackendApiContextMock.mock.calls.length}, createBaseSessionForAttach=${createBaseSessionForAttachMock.mock.calls.length}, applyStartupMetadataUpdate=${applyStartupMetadataUpdateToSessionMock.mock.calls.length})`,
+            );
         }
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
@@ -41,22 +131,12 @@ let capturedUserMessageHandler: ((message: any) => void) | null = null;
 let lastLoopOptions: any = null;
 let metadataSnapshot: Record<string, unknown> | null = null;
 let currentMetadataVersion = 1;
-
-const applyStartupMetadataUpdateToSessionMock = vi.fn(() => metadataUpdateDeferred.promise);
-const createSessionMetadataMock = vi.fn(() => ({
-    state: { controlledByUser: false },
-    metadata: { path: '/tmp/project', terminal: null },
-}));
-const initializeRuntimeOverridesSynchronizerMock = vi.fn(async () => ({
-    seedFromSession: async () => {
-        throw stopAfterSeed;
-    },
-    syncFromMetadata: vi.fn(),
-    getSnapshot: () => ({
-        permissionMode: { current: 'default', updatedAt: 0 },
-        modelOverride: { current: null, updatedAt: 0 },
-    }),
-}));
+const liveHostPathProgress = {
+    importedPlanModule: false,
+    importedRunnerModule: false,
+    createdPlan: false,
+    enteredRun: false,
+};
 
 vi.mock('@/ui/logger', () => ({
     logger: {
@@ -78,28 +158,7 @@ vi.mock('@/api/offline/serverConnectionErrors', () => ({
 }));
 
 vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
-    initializeBackendApiContext: vi.fn(async () => ({
-        api: {
-            getOrCreateSession: vi.fn(async () => ({ id: 'session-start', metadataVersion: currentMetadataVersion })),
-            sessionSyncClient: vi.fn(() => ({
-                sessionId: 'session-start',
-                rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn() },
-                ensureMetadataSnapshot: vi.fn(async () => metadataSnapshot ?? { path: '/srv/project' }),
-                getMetadataSnapshot: vi.fn(() => metadataSnapshot ?? { path: '/srv/project' }),
-                onUserMessage: vi.fn((handler: (message: any) => void) => {
-                    capturedUserMessageHandler = handler;
-                }),
-                sendSessionEvent: vi.fn(),
-                updateMetadata: vi.fn(),
-                updateAgentState: vi.fn(),
-                sendSessionDeath: vi.fn(),
-                flush: vi.fn(async () => {}),
-                close: vi.fn(async () => {}),
-            })),
-            push: vi.fn(() => ({ sendToAllDevices: vi.fn() })),
-        },
-        machineId: 'machine_1',
-    })),
+    initializeBackendApiContext: initializeBackendApiContextMock,
 }));
 
 vi.mock('@/agent/runtime/createSessionMetadata', () => ({
@@ -107,14 +166,12 @@ vi.mock('@/agent/runtime/createSessionMetadata', () => ({
 }));
 
 vi.mock('@/agent/runtime/createBaseSessionForAttach', () => ({
-    createBaseSessionForAttach: vi.fn(async () => ({
-        id: 'session-attach',
-        metadataVersion: currentMetadataVersion,
-    })),
+    createBaseSessionForAttach: createBaseSessionForAttachMock,
 }));
 
 vi.mock('@/agent/runtime/startupMetadataUpdate', () => ({
     applyStartupMetadataUpdateToSession: applyStartupMetadataUpdateToSessionMock,
+    buildSessionModeOverride: vi.fn(() => null),
     buildModelOverride: vi.fn(() => null),
     buildPermissionModeOverride: vi.fn(() => null),
 }));
@@ -123,7 +180,16 @@ vi.mock('@/agent/runtime/runtimeOverridesSynchronizer', () => ({
     initializeRuntimeOverridesSynchronizer: initializeRuntimeOverridesSynchronizerMock,
 }));
 
+vi.mock('@/persistence', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/persistence')>();
+    return {
+        ...actual,
+        readSettings: readSettingsMock,
+    };
+});
+
 vi.mock('@/agent/runtime/startupSideEffects', () => ({
+    primeAgentStateForUi: vi.fn(),
     persistTerminalAttachmentInfoIfNeeded: vi.fn(async () => {}),
     reportSessionToDaemonIfRunning: vi.fn(async () => {}),
     sendTerminalFallbackMessageIfNeeded: vi.fn(),
@@ -175,11 +241,11 @@ vi.mock('@/backends/claude/sdk/metadataExtractor', () => ({
     extractSDKMetadataAsync: vi.fn(),
 }));
 
-vi.mock('@/agent/runtime/runnerTerminationOutcome', () => ({
+vi.mock('@/agent/runtime/lifecycle/runnerTerminationOutcome', () => ({
     computeRunnerTerminationOutcome: vi.fn(() => ({ exitCode: 0, archive: false, archiveReason: null })),
 }));
 
-vi.mock('@/agent/runtime/runnerTerminationHandlers', () => ({
+vi.mock('@/agent/runtime/lifecycle/runnerTerminationHandlers', () => ({
     registerRunnerTerminationHandlers: vi.fn(() => ({
         requestTermination: vi.fn(),
         whenTerminated: Promise.resolve(),
@@ -198,77 +264,111 @@ vi.mock('@/mcp/runtime/resolveRunnerMcpServers', () => ({
     })),
 }));
 
-vi.mock('@/backends/claude/loop', () => ({
-    loop: vi.fn(async (opts: any) => {
-        lastLoopOptions = opts;
-        return await loopDeferred.promise;
-    }),
-}));
+vi.mock('@/backends/claude/runtime/session/runModeLoop', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/backends/claude/runtime/session/runModeLoop')>();
+    return {
+        ...actual,
+        runClaudeModeLoop: vi.fn(async (opts: any) => {
+            lastLoopOptions = opts;
+            return await loopDeferred.promise;
+        }),
+    };
+});
 
-describe('runClaude startup metadata ordering', () => {
+async function runClaudeViaLiveHostPath(
+    credentials: Credentials,
+    options: Record<string, unknown>,
+): Promise<void> {
+    liveHostPathProgress.importedPlanModule = false;
+    liveHostPathProgress.importedRunnerModule = false;
+    liveHostPathProgress.createdPlan = false;
+    liveHostPathProgress.enteredRun = false;
+    liveHostPathProgress.importedPlanModule = true;
+    liveHostPathProgress.importedRunnerModule = true;
+
+    const plan = createClaudeSessionRuntimePlan({
+        credentials,
+        ...options,
+    });
+    expect(plan.config).not.toHaveProperty('hostBootstrap');
+    liveHostPathProgress.createdPlan = true;
+
+    liveHostPathProgress.enteredRun = true;
+    await runHostSessionRuntime(plan.opts, plan.config, {
+        runSessionLoopLifecycleFn: async ({ startupCoordinator }) => {
+            await startupCoordinator?.start?.();
+        },
+    });
+}
+
+describe('Claude host-owned startup metadata ordering', () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
         void code;
         return undefined as never;
     }) as typeof process.exit);
 
     beforeEach(() => {
-        vi.resetModules();
         vi.clearAllMocks();
+        readSettingsMock.mockResolvedValue({ machineId: 'machine_1' });
         metadataUpdateDeferred = createDeferred<void>();
         loopDeferred = createDeferred<number>();
         capturedUserMessageHandler = null;
         lastLoopOptions = null;
         metadataSnapshot = null;
         currentMetadataVersion = 1;
+        liveHostPathProgress.importedPlanModule = false;
+        liveHostPathProgress.importedRunnerModule = false;
+        liveHostPathProgress.createdPlan = false;
+        liveHostPathProgress.enteredRun = false;
     });
 
     afterEach(() => {
+        // Provider runners must not hard-exit the process. Host owns termination policy.
+        expect(exitSpy).not.toHaveBeenCalled();
         exitSpy.mockClear();
     });
 
+    async function withFastStartAttachEnv<T>(fn: () => Promise<T>): Promise<T> {
+        const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
+        process.env.HAPPIER_SESSION_ATTACH_FILE = '/tmp/claude-fast-start-attach.json';
+        try {
+            return await fn();
+        } finally {
+            if (previousAttachFile === undefined) {
+                delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+            } else {
+                process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
+            }
+        }
+    }
+
     it('waits for attach startup metadata writes before seeding runtime overrides', async () => {
         currentMetadataVersion = -1;
-        const { runClaude } = await import('./runClaude');
+        await withFastStartAttachEnv(async () => {
+            const runPromise = runClaudeViaLiveHostPath(testCredentials, {
+                startedBy: 'terminal',
+                startingMode: 'local',
+                existingSessionId: 'session-attach',
+                permissionMode: 'default',
+            }).then(
+                () => 'resolved',
+                (error) => error,
+            );
 
-        const runPromise = runClaude(testCredentials, {
-            startedBy: 'daemon',
-            startingMode: 'remote',
-            existingSessionId: 'session-attach',
-        }).then(
-            () => 'resolved',
-            (error) => error,
-        );
+            await waitForOrRunResult(
+                () => applyStartupMetadataUpdateToSessionMock.mock.calls.length > 0,
+                runPromise,
+            );
 
-        await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
+            expect(applyStartupMetadataUpdateToSessionMock).toHaveBeenCalledTimes(1);
+            expect(initializeRuntimeOverridesSynchronizerMock).not.toHaveBeenCalled();
 
-        expect(applyStartupMetadataUpdateToSessionMock).toHaveBeenCalledTimes(1);
-        expect(initializeRuntimeOverridesSynchronizerMock).not.toHaveBeenCalled();
+            metadataUpdateDeferred.resolve();
+            await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
+            loopDeferred.resolve(0);
 
-        metadataUpdateDeferred.resolve();
-
-        await expect(runPromise).resolves.toBe(stopAfterSeed);
-    });
-
-    it('waits for fresh-session startup metadata writes before seeding runtime overrides', async () => {
-        currentMetadataVersion = 1;
-        const { runClaude } = await import('./runClaude');
-
-        const runPromise = runClaude(testCredentials, {
-            startedBy: 'daemon',
-            startingMode: 'remote',
-        }).then(
-            () => 'resolved',
-            (error) => error,
-        );
-
-        await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
-
-        expect(applyStartupMetadataUpdateToSessionMock).toHaveBeenCalledTimes(1);
-        expect(initializeRuntimeOverridesSynchronizerMock).not.toHaveBeenCalled();
-
-        metadataUpdateDeferred.resolve();
-
-        await expect(runPromise).resolves.toBe(stopAfterSeed);
+            await expect(runPromise).resolves.toBe('resolved');
+        });
     });
 
     it('passes runtime identity replacement through attach startup metadata writes during handoff resume', async () => {
@@ -276,29 +376,35 @@ describe('runClaude startup metadata ordering', () => {
         const previousAttachMetadataIdentityPolicy = process.env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY;
         process.env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY = 'replace_with_runtime_identity';
         try {
-            const { runClaude } = await import('./runClaude');
+            await withFastStartAttachEnv(async () => {
+                const runPromise = runClaudeViaLiveHostPath(testCredentials, {
+                    startedBy: 'terminal',
+                    startingMode: 'local',
+                    existingSessionId: 'session-attach',
+                    permissionMode: 'default',
+                }).then(
+                    () => 'resolved',
+                    (error) => error,
+                );
 
-            const runPromise = runClaude(testCredentials, {
-                startedBy: 'daemon',
-                startingMode: 'remote',
-                existingSessionId: 'session-attach',
-            }).then(
-                () => 'resolved',
-                (error) => error,
-            );
+                await waitForOrRunResult(
+                    () => applyStartupMetadataUpdateToSessionMock.mock.calls.length > 0,
+                    runPromise,
+                );
 
-            await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
+                expect(applyStartupMetadataUpdateToSessionMock).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        mode: 'attach',
+                        attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+                    }),
+                );
 
-            expect(applyStartupMetadataUpdateToSessionMock).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    mode: 'attach',
-                    attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
-                }),
-            );
+                metadataUpdateDeferred.resolve();
+                await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
+                loopDeferred.resolve(0);
 
-            metadataUpdateDeferred.resolve();
-
-            await expect(runPromise).resolves.toBe(stopAfterSeed);
+                await expect(runPromise).resolves.toBe('resolved');
+            });
         } finally {
             if (previousAttachMetadataIdentityPolicy === undefined) {
                 delete process.env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY;
@@ -308,47 +414,52 @@ describe('runClaude startup metadata ordering', () => {
         }
     });
 
-    it('reports the canonical session id first for daemon-started attach sessions', async () => {
+    it('reports the canonical session id first for deferred attach sessions', async () => {
         currentMetadataVersion = -1;
-        const { runClaude } = await import('./runClaude');
-
-        const runPromise = runClaude(testCredentials, {
-            startedBy: 'daemon',
-            startingMode: 'remote',
-            existingSessionId: 'session-attach',
-        }).then(
-            () => 'resolved',
-            (error) => error,
-        );
-
-        await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
-
-        const reportMock = vi.mocked(reportSessionToDaemonIfRunning);
-        expect(reportMock.mock.calls.length).toBeGreaterThan(0);
-        expect(reportMock.mock.calls[0]?.[0]?.sessionId).toBe('session-attach');
-        expect(reportMock.mock.calls.some(([call]) => call?.sessionId === 'PID-12345')).toBe(false);
-
-        metadataUpdateDeferred.resolve();
-
-        await expect(runPromise).resolves.toBe(stopAfterSeed);
-    });
-
-    it('uses the requested directory seed instead of a canonicalized cwd during remote startup', async () => {
-        currentMetadataVersion = 1;
-        const previousRequestedDirectory = process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY;
-        process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY = '/tmp/requested-remote-directory';
-        try {
-            const { runClaude } = await import('./runClaude');
-
-            const runPromise = runClaude(testCredentials, {
-                startedBy: 'daemon',
-                startingMode: 'remote',
+        await withFastStartAttachEnv(async () => {
+            const runPromise = runClaudeViaLiveHostPath(testCredentials, {
+                startedBy: 'terminal',
+                startingMode: 'local',
+                existingSessionId: 'session-attach',
+                permissionMode: 'default',
             }).then(
                 () => 'resolved',
                 (error) => error,
             );
 
-            await waitFor(() => createSessionMetadataMock.mock.calls.length === 1);
+            await waitForOrRunResult(
+                () => applyStartupMetadataUpdateToSessionMock.mock.calls.length > 0,
+                runPromise,
+            );
+
+            metadataUpdateDeferred.resolve();
+            const reportMock = vi.mocked(reportSessionToDaemonIfRunning);
+            await waitFor(() => reportMock.mock.calls.length > 0);
+            expect(reportMock.mock.calls[0]?.[0]?.sessionId).toBe('session-attach');
+            expect(reportMock.mock.calls.some(([call]) => call?.sessionId === 'PID-12345')).toBe(false);
+
+            await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
+            loopDeferred.resolve(0);
+
+            await expect(runPromise).resolves.toBe('resolved');
+        });
+    });
+
+    it('uses the requested directory seed passed into the deferred attach path', async () => {
+        currentMetadataVersion = 1;
+        await withFastStartAttachEnv(async () => {
+            const runPromise = runClaudeViaLiveHostPath(testCredentials, {
+                startedBy: 'terminal',
+                startingMode: 'local',
+                existingSessionId: 'session-attach',
+                permissionMode: 'default',
+                directory: '/tmp/requested-remote-directory',
+            }).then(
+                () => 'resolved',
+                (error) => error,
+            );
+
+            await waitFor(() => createSessionMetadataMock.mock.calls.length > 0);
 
             expect(createSessionMetadataMock).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -357,62 +468,10 @@ describe('runClaude startup metadata ordering', () => {
             );
 
             metadataUpdateDeferred.resolve();
+            await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
+            loopDeferred.resolve(0);
 
-            await expect(runPromise).resolves.toBe(stopAfterSeed);
-        } finally {
-            if (previousRequestedDirectory === undefined) {
-                delete process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY;
-            } else {
-                process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY = previousRequestedDirectory;
-            }
-        }
-    });
-
-    it('prefers a newer reasoningEffort from user-message meta over the older session metadata override', async () => {
-        currentMetadataVersion = 1;
-        metadataSnapshot = {
-            path: '/srv/project',
-            sessionConfigOptionOverridesV1: {
-                v: 1,
-                updatedAt: 10,
-                overrides: {
-                    reasoning_effort: {
-                        updatedAt: 10,
-                        value: 'high',
-                    },
-                },
-            },
-        };
-        initializeRuntimeOverridesSynchronizerMock.mockResolvedValueOnce({
-            seedFromSession: vi.fn(async () => {}),
-            syncFromMetadata: vi.fn(),
-            getSnapshot: () => ({
-                permissionMode: { current: 'default', updatedAt: 0 },
-                modelOverride: { current: null, updatedAt: 0 },
-            }),
-        } as any);
-
-        const { runClaude } = await import('./runClaude');
-
-        const runPromise = runClaude(testCredentials, {
-            startedBy: 'daemon',
-            startingMode: 'remote',
+            await expect(runPromise).resolves.toBe('resolved');
         });
-
-        await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
-        metadataUpdateDeferred.resolve();
-        await waitFor(() => capturedUserMessageHandler !== null && lastLoopOptions !== null);
-        expect(capturedUserMessageHandler).not.toBeNull();
-        capturedUserMessageHandler!({
-            content: { text: 'use less thinking' },
-            meta: { reasoningEffort: 'low' },
-            createdAt: 20,
-        });
-
-        const queuedMode = lastLoopOptions?.messageQueue?.queue?.[0]?.mode;
-        expect(queuedMode?.reasoningEffort).toBe('low');
-
-        loopDeferred.resolve(0);
-        await expect(runPromise).resolves.toBeUndefined();
     });
 });

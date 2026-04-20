@@ -1,6 +1,6 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import type { CodexMcpClient } from '@/backends/codex/codexMcpClient';
+import type { CodexMcpClient } from '@/backends/codex/mcp/sessionClient';
 
 type CodexResettableRuntime = Readonly<{
   reset: () => Promise<void>;

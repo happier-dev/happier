@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 
 type AuggieToolPolicy = 'allow' | 'deny' | 'ask-user';
 

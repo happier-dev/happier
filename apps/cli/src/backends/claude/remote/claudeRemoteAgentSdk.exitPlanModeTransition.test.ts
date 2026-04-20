@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
-import { makeMode } from './claudeRemoteAgentSdk.testkit';
+import { runClaudeRemoteAgentSdk as claudeRemoteAgentSdk } from './sdk/runAgentSdk';
+import { makeMode } from './sdk/testkit';
 
 describe('claudeRemoteAgentSdk (ExitPlanMode transition)', () => {
   it('switches permission mode and clears agentModeId after ExitPlanMode approval within the same assistant turn', async () => {

@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { claudeLocal } from './claudeLocal';
+import { runClaudeTerminalSession as claudeLocal } from './runtime/terminal/runTerminalSession';
 
 async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>): Promise<T> {
     const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -79,6 +79,8 @@ describe('claudeLocal abort teardown', () => {
         let exitHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | null = null;
 
         mockSpawn.mockReturnValue({
+            pid: 4242,
+            killed: false,
             stdio: [null, null, null, null],
             on: vi.fn((event: string, callback: any) => {
                 if (event === 'exit') {
@@ -407,7 +409,7 @@ describe('claudeLocal --continue handling', () => {
         }));
 
         try {
-            const { claudeLocal: runtimeResolvedClaudeLocal } = await import('./claudeLocal');
+            const { runClaudeTerminalSession: runtimeResolvedClaudeLocal } = await import('./runtime/terminal/runTerminalSession');
 
             await expect(runtimeResolvedClaudeLocal({
                 abort: new AbortController().signal,
@@ -438,7 +440,7 @@ describe('claudeLocal --continue handling', () => {
         }));
 
         try {
-            const { claudeLocal: runtimeResolvedClaudeLocal } = await import('./claudeLocal');
+            const { runClaudeTerminalSession: runtimeResolvedClaudeLocal } = await import('./runtime/terminal/runTerminalSession');
 
             await runtimeResolvedClaudeLocal({
                 abort: new AbortController().signal,
@@ -481,7 +483,7 @@ describe('claudeLocal --continue handling', () => {
         });
 
         try {
-            const { claudeLocal: runtimeResolvedClaudeLocal, claudeCliPath: bundledLauncherPath } = await import('./claudeLocal');
+            const { runClaudeTerminalSession: runtimeResolvedClaudeLocal, claudeCliPath: bundledLauncherPath } = await import('./runtime/terminal/runTerminalSession');
 
             await runtimeResolvedClaudeLocal({
                 abort: new AbortController().signal,
@@ -1039,6 +1041,36 @@ describe('claudeLocal launcher selection', () => {
         } finally {
             if (typeof prev === 'string') process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = prev;
             else delete process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+        }
+    });
+
+    it('publishes the resolved Claude config dir override to spawned Claude processes', async () => {
+        const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+        const previousHappierClaudeConfigDir = process.env.HAPPIER_CLAUDE_CONFIG_DIR;
+        const claudeConfigDir = join(mkdtempSync(join(tmpdir(), 'happier-claude-local-config-')), '.claude');
+
+        delete process.env.CLAUDE_CONFIG_DIR;
+        process.env.HAPPIER_CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+        try {
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            });
+
+            expect(mockSpawn).toHaveBeenCalled();
+            const spawnOpts = mockSpawn.mock.calls[0][2];
+            expect(spawnOpts?.env?.CLAUDE_CONFIG_DIR).toBe(claudeConfigDir);
+            expect(spawnOpts?.env?.HAPPIER_CLAUDE_CONFIG_DIR).toBe(claudeConfigDir);
+        } finally {
+            if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+            else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+            if (previousHappierClaudeConfigDir === undefined) delete process.env.HAPPIER_CLAUDE_CONFIG_DIR;
+            else process.env.HAPPIER_CLAUDE_CONFIG_DIR = previousHappierClaudeConfigDir;
+            rmSync(claudeConfigDir.replace(/[\\/]\\.claude$/, ''), { recursive: true, force: true });
         }
     });
 

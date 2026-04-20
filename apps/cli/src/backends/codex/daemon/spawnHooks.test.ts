@@ -46,7 +46,7 @@ afterEach(async () => {
   tempDirs.clear();
 });
 
-describe('codexDaemonSpawnHooks.validateSpawn', () => {
+describe('codexDaemonSpawnHooks.resolveRuntimePrerequisites', () => {
   it('validates ACP spawn when codexBackendMode=acp is set without the legacy flag', async () => {
     const cwd = await createTempDir('happier-codex-spawnhooks-cwd-');
     tempDirs.add(cwd);
@@ -54,7 +54,7 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ HAPPIER_CODEX_ACP_BIN: './missing-codex-acp' });
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await codexDaemonSpawnHooks.validateSpawn!({
+    const res = await codexDaemonSpawnHooks.resolveRuntimePrerequisites!({
       codexBackendMode: 'acp',
     } as any);
     expect(res.ok).toBe(false);
@@ -69,8 +69,8 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ HAPPIER_CODEX_ACP_BIN: './missing-codex-acp' });
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await codexDaemonSpawnHooks.validateSpawn!({
-      experimentalCodexAcp: true,
+    const res = await codexDaemonSpawnHooks.resolveRuntimePrerequisites!({
+      codexBackendMode: 'acp',
     } as any);
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('expected ACP spawn validation to fail');
@@ -82,8 +82,8 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ HAPPIER_CODEX_ACP_BIN: undefined, PATH: pathDir });
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await codexDaemonSpawnHooks.validateSpawn!({
-      experimentalCodexAcp: true,
+    const res = await codexDaemonSpawnHooks.resolveRuntimePrerequisites!({
+      codexBackendMode: 'acp',
     } as any);
     expect(res.ok).toBe(false);
   });
@@ -94,8 +94,8 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ HAPPIER_CODEX_ACP_BIN: undefined, PATH: pathDir });
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await codexDaemonSpawnHooks.validateSpawn!({
-      experimentalCodexAcp: true,
+    const res = await codexDaemonSpawnHooks.resolveRuntimePrerequisites!({
+      codexBackendMode: 'acp',
     } as any);
     expect(res.ok).toBe(false);
   });
@@ -107,8 +107,8 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ HAPPIER_CODEX_ACP_BIN: undefined, PATH: pathDir });
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await codexDaemonSpawnHooks.validateSpawn!({
-      experimentalCodexAcp: true,
+    const res = await codexDaemonSpawnHooks.resolveRuntimePrerequisites!({
+      codexBackendMode: 'acp',
     } as any);
     expect(res.ok).toBe(false);
   });
@@ -121,11 +121,11 @@ describe('codexDaemonSpawnHooks', () => {
   });
 });
 
-describe('codexDaemonSpawnHooks.buildExtraEnvForChild', () => {
+describe('codexDaemonSpawnHooks.augmentEnv', () => {
   it('publishes the ACP env marker when codexBackendMode=acp is set', async () => {
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
     expect(
-      codexDaemonSpawnHooks.buildExtraEnvForChild?.({
+      codexDaemonSpawnHooks.augmentEnv?.({
         codexBackendMode: 'acp',
       } as any),
     ).toEqual({ HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' });
@@ -134,10 +134,30 @@ describe('codexDaemonSpawnHooks.buildExtraEnvForChild', () => {
   it('does not publish the ACP env marker when codexBackendMode=appServer overrides the legacy flag', async () => {
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
     expect(
-      codexDaemonSpawnHooks.buildExtraEnvForChild?.({
+      codexDaemonSpawnHooks.augmentEnv?.({
         codexBackendMode: 'appServer',
-        experimentalCodexAcp: true,
       } as any),
     ).toEqual({});
+  });
+
+  it('publishes canonical vendor resume support params through the daemon hook seam', async () => {
+    const { codexDaemonSpawnHooks } = await import('./spawnHooks');
+
+    expect(
+      (codexDaemonSpawnHooks as typeof codexDaemonSpawnHooks & {
+        resolveVendorResumeSupportParams?: (params: {
+          catalogAgentId: 'codex' | null;
+          options: {
+            codexBackendMode?: 'acp' | 'mcp' | 'appServer';
+            runtimeDescriptorV1?: unknown;
+          };
+        }) => unknown;
+      }).resolveVendorResumeSupportParams?.({
+        catalogAgentId: 'codex',
+        options: {
+          codexBackendMode: 'acp',
+        },
+      }),
+    ).toEqual({ codexBackendMode: 'acp' });
   });
 });

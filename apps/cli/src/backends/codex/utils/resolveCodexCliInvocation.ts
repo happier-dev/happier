@@ -2,9 +2,9 @@ import { accessSync, constants as fsConstants, existsSync, readFileSync, statSyn
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
-import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
-import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
-import { isBun } from '@/utils/runtime';
+import { requireJavaScriptRuntimeExecutable } from '../../../runtime/js/requireJavaScriptRuntimeExecutable';
+import { requireProviderCliCommand } from '../../../runtime/managedTools/requireProviderCliCommand';
+import { isBun } from '../../../utils/runtime';
 
 const JAVA_SCRIPT_ENTRYPOINT_EXTENSION = /\.(?:c?js|mjs)$/i;
 const JAVA_SCRIPT_SHEBANG = /^#!.*\b(?:env\s+)?(?:node|bun)(?:\s|$)/;

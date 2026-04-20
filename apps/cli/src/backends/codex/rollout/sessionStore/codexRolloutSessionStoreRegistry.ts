@@ -1,5 +1,5 @@
-import type { FileBackedTranscriptSessionLease, FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
-import { FileBackedTranscriptSessionRegistry } from '@/api/session/fileBackedTranscripts/store';
+import type { FileBackedTranscriptSessionLease, FileBackedTranscriptSessionStore } from '../../../../api/session/fileBackedTranscripts/store';
+import { FileBackedTranscriptSessionRegistry } from '../../../../api/session/fileBackedTranscripts/store';
 
 import { resolveCodexRolloutSessionStoreColdIdleMs, resolveCodexRolloutSessionStoreDetachedGraceMs } from './codexRolloutSessionStoreCachePolicy';
 import { createCodexRolloutSessionStore } from './createCodexRolloutSessionStore';

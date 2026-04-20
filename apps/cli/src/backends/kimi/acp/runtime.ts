@@ -1,11 +1,10 @@
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
+import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
-import { maybeUpdateKimiSessionIdMetadata } from '@/backends/kimi/utils/kimiSessionIdMetadata';
 import type { PermissionMode } from '@/api/types';
 
 export function createKimiAcpRuntime(params: {
@@ -20,31 +19,21 @@ export function createKimiAcpRuntime(params: {
   memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
-  const lastPublishedKimiSessionId = { value: null as string | null };
-
-  return createCatalogProviderAcpRuntime({
+  return createCatalogProviderSessionIdentityRuntime({
     provider: 'kimi',
     loggerLabel: 'KimiACP',
+    sessionIdMetadataKey: 'kimiSessionId',
     directory: params.directory,
+    machineId: params.machineId,
     session: params.session,
     transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    memoryRecallGuidance: {
-      enabled: params.memoryRecallGuidanceEnabled === true,
-      machineId: params.machineId,
-    },
+    memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
     getPermissionMode: params.getPermissionMode,
     resolvePermissionMode: ({ getPermissionMode, session }) =>
       getPermissionMode?.() ?? session.getMetadataSnapshot?.()?.permissionMode,
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdateKimiSessionIdMetadata({
-        getKimiSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedKimiSessionId,
-      });
-    },
   });
 }

@@ -14,12 +14,13 @@ import {
 type MutableMetadata = Record<string, unknown>;
 
 function createSessionHarness(initialMetadata: MutableMetadata = {}): Readonly<{
-    session: { updateMetadata: ReturnType<typeof vi.fn> };
+    session: { ensureMetadataSnapshot: ReturnType<typeof vi.fn>; updateMetadata: ReturnType<typeof vi.fn> };
     getMetadata: () => MutableMetadata;
 }> {
     let metadata: MutableMetadata = { ...initialMetadata };
     return {
         session: {
+            ensureMetadataSnapshot: vi.fn(async () => metadata),
             updateMetadata: vi.fn((updater: (current: MutableMetadata) => MutableMetadata) => {
                 metadata = updater(metadata);
             }),
@@ -481,6 +482,12 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 updatedAt: 1,
                 configOptions: [{ id: 'some', name: 'Some', type: 'string', currentValue: 'x' }],
             },
+            acpConfigOptionsV1: {
+                v: 1,
+                provider: 'codex',
+                updatedAt: 1,
+                configOptions: [{ id: 'some', name: 'Some', type: 'string', currentValue: 'x' }],
+            },
         };
         const { session, getMetadata } = createSessionHarness(seedMetadata);
 
@@ -497,6 +504,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
         expect(getMetadata()[SESSION_MODES_STATE_KEY]).toEqual(seedMetadata[SESSION_MODES_STATE_KEY]);
         expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toEqual(seedMetadata[SESSION_MODELS_STATE_KEY]);
         expect(getMetadata()[SESSION_CONFIG_OPTIONS_STATE_KEY]).toEqual(seedMetadata[SESSION_CONFIG_OPTIONS_STATE_KEY]);
+        expect(getMetadata().acpConfigOptionsV1).toEqual(seedMetadata.acpConfigOptionsV1);
     });
 
     it('prefers the provider default mode id when the collaboration mode list omits explicit current markers', async () => {

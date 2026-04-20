@@ -1,4 +1,4 @@
-import type { RawJSONLines } from '../../types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from '../../utils/internalClaudeEventTypes';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from '../../utils/normalizeClaudeToolUseNames';
 import { parseRawJsonLinesObject } from '../../utils/parseRawJsonLines';

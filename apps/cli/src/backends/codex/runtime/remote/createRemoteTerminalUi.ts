@@ -1,0 +1,85 @@
+import { render } from 'ink';
+import React from 'react';
+
+import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
+import { CodexTerminalDisplay } from '@/backends/codex/ui/CodexTerminalDisplay';
+
+export function createCodexRemoteTerminalUi(params: {
+    messageBuffer: MessageBuffer;
+    logPath?: string;
+    hasTTY: boolean;
+    stdin: NodeJS.ReadStream;
+    onExit: () => Promise<void>;
+    onSwitchToTerminal: () => Promise<void>;
+}) {
+    let inkInstance: ReturnType<typeof render> | null = null;
+    let allowSwitchToTerminal = false;
+
+    const renderRemoteUi = () => React.createElement(CodexTerminalDisplay, {
+        messageBuffer: params.messageBuffer,
+        logPath: params.logPath,
+        allowSwitchToTerminal,
+        onExit: params.onExit,
+        onSwitchToTerminal: params.onSwitchToTerminal,
+    });
+
+    const mount = () => {
+        if (!params.hasTTY) return;
+        if (!inkInstance) {
+            console.clear();
+            inkInstance = render(renderRemoteUi(), {
+                exitOnCtrlC: false,
+                patchConsole: false,
+                stdout: createNonBlockingStdout(process.stdout as any),
+            });
+
+            params.stdin.resume();
+            if (params.stdin.isTTY) {
+                params.stdin.setRawMode(true);
+            }
+            params.stdin.setEncoding('utf8');
+            return;
+        }
+        inkInstance.rerender(renderRemoteUi());
+    };
+
+    const unmount = async () => {
+        if (!params.hasTTY) return;
+        if (params.stdin.isTTY) {
+            try {
+                params.stdin.setRawMode(false);
+            } catch {
+                // ignore
+            }
+        }
+        if (inkInstance) {
+            try {
+                inkInstance.unmount();
+            } catch {
+                // ignore
+            }
+            inkInstance = null;
+        }
+        await cleanupStdinAfterInk({ stdin: params.stdin as any, drainMs: 75 });
+        try {
+            params.stdin.pause();
+        } catch {
+            // ignore
+        }
+    };
+
+    const setAllowSwitchToTerminal = (allowed: boolean) => {
+        allowSwitchToTerminal = allowed;
+        if (inkInstance) {
+            inkInstance.rerender(renderRemoteUi());
+        }
+    };
+
+    return {
+        mount,
+        unmount,
+        setAllowSwitchToTerminal,
+    };
+}

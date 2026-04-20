@@ -1,4 +1,4 @@
-import { AGENT_MODEL_CONFIG, providers as agentProviders } from '@happier-dev/agents';
+import { AGENT_MODEL_CONFIG } from '@happier-dev/agents';
 
 import type { Metadata } from '@/api/types';
 
@@ -27,31 +27,12 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
     currentModelId: params.currentModelId,
     availableModels: models.map((model) => {
       const description = typeof model.description === 'string' ? model.description : '';
-      const supportsThinking = agentProviders.claude.isClaudeEffortSupportedModelId(model.id);
-      const supportsMax = supportsThinking && agentProviders.claude.isClaudeEffortMaxSupportedModelId(model.id);
-
       return {
         id: model.id,
         name: model.name,
         ...(description ? { description } : {}),
-        ...(supportsThinking
-          ? {
-              modelOptions: [
-                {
-                  id: 'reasoning_effort',
-                  name: 'Thinking',
-                  type: 'select',
-                  // Claude defaults to high effort when unset; reflect that as the baseline UI value.
-                  currentValue: 'high',
-                  options: [
-                    { value: 'low', name: 'Low' },
-                    { value: 'medium', name: 'Medium' },
-                    { value: 'high', name: 'High' },
-                    ...(supportsMax ? [{ value: 'max', name: 'Max' }] : []),
-                  ],
-                },
-              ],
-            }
+        ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0
+          ? { modelOptions: model.modelOptions }
           : {}),
       };
     }),

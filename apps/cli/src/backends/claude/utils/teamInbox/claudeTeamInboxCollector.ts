@@ -3,7 +3,7 @@ import { isAbsolute, join } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { logger } from '@/ui/logger';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 import { tryParseJsonObject } from '@/utils/tryParseJsonRecord';

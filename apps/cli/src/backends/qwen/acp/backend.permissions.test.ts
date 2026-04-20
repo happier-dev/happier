@@ -55,8 +55,6 @@ describe('Qwen ACP backend permissions', () => {
   });
 
   it.each([
-    { mode: undefined, expected: 'default' },
-    { mode: 'default', expected: 'default' },
     { mode: 'read-only', expected: 'plan' },
     { mode: 'plan', expected: 'plan' },
     { mode: 'safe-yolo', expected: 'auto-edit' },
@@ -69,6 +67,15 @@ describe('Qwen ACP backend permissions', () => {
     const modeFlagIndex = args.indexOf('--approval-mode');
     expect(modeFlagIndex).toBeGreaterThanOrEqual(0);
     expect(args[modeFlagIndex + 1]).toBe(expected);
+  });
+
+  it.each([
+    { mode: undefined },
+    { mode: 'default' },
+  ])('omits --approval-mode when permissionMode="$mode" so the Qwen CLI honors settings.json', ({ mode }) => {
+    const args = readArgs(mode as PermissionMode | undefined);
+    expect(args[0]).toBe('--acp');
+    expect(args).not.toContain('--approval-mode');
   });
 
   it('resolves the CLI from options.env PATH when process PATH is empty', () => {

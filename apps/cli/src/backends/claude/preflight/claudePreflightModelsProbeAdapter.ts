@@ -1,11 +1,7 @@
-import { AGENT_MODEL_CONFIG, providers as agentProviders } from '@happier-dev/agents';
+import { AGENT_MODEL_CONFIG } from '@happier-dev/agents';
 
-import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
-import { probeClaudeHelpText } from '@/backends/claude/sessionControls/probeClaudeHelpText';
-
-function shouldAddThinkingModelOption(modelId: string): boolean {
-  return agentProviders.claude.isClaudeEffortSupportedModelId(modelId);
-}
+import type { PreflightModelsProbeAdapter } from '../../../capabilities/probes/preflightModelsProbeAdapterTypes';
+import { probeClaudeHelpText } from '../sessionControls/probeClaudeHelpText';
 
 export const claudePreflightModelsProbeAdapter: PreflightModelsProbeAdapter = {
   failureCacheStrategy: 'cooldown',
@@ -21,25 +17,8 @@ export const claudePreflightModelsProbeAdapter: PreflightModelsProbeAdapter = {
       id: model.id,
       name: model.name,
       ...(typeof model.description === 'string' ? { description: model.description } : {}),
-      ...(shouldAddThinkingModelOption(model.id)
-        ? (() => {
-          const supportsMax = agentProviders.claude.isClaudeEffortMaxSupportedModelId(model.id);
-          return {
-            modelOptions: [{
-              id: 'reasoning_effort',
-              name: 'Thinking',
-              type: 'select',
-              // Claude defaults to high effort when unset; reflect that as the baseline UI value.
-              currentValue: 'high',
-              options: [
-                { value: 'low', name: 'Low' },
-                { value: 'medium', name: 'Medium' },
-                { value: 'high', name: 'High' },
-                ...(supportsMax ? [{ value: 'max', name: 'Max' }] : []),
-              ],
-            }],
-          };
-        })()
+      ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0
+        ? { modelOptions: model.modelOptions }
         : { modelOptions: undefined }),
     }));
   },

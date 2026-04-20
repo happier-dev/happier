@@ -1,92 +1,51 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { readdir, stat } from 'node:fs/promises';
-import readline from 'node:readline';
-import { dirname, join } from 'node:path';
-
-import spawn from 'cross-spawn';
-
 import type {
-  AgentBackend,
   AgentMessage,
   AgentMessageHandler,
   SessionId,
   StartSessionResult,
 } from '@/agent/core';
-import { logger } from '@/ui/logger';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
-
-import { mapPiRpcEventToAgentMessages } from './eventMapping';
 import type {
-  PiRpcCommand,
-  PiRpcCommandWithoutId,
-  PiRpcCommandsData,
-  PiRpcModelsData,
-  PiRpcResponse,
-  PiRpcSessionStatsData,
-  PiRpcStateData,
-} from './types';
-
-type PendingRpcRequest = {
-  resolve: (response: PiRpcResponse) => void;
-  reject: (error: Error) => void;
-  timeout: NodeJS.Timeout;
-  commandType: PiRpcCommandWithoutId['type'];
-};
-
-type PendingTurn = {
-  promise: Promise<void>;
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timeout: NodeJS.Timeout;
-};
-
-type Deferred<T> = {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (error: Error) => void;
-};
-
-function createDeferred<T>(): Deferred<T> {
-  let resolve: ((value: T) => void) | null = null;
-  let reject: ((error: Error) => void) | null = null;
-
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-
-  if (!resolve || !reject) {
-    throw new Error('Failed to initialize deferred promise');
-  }
-
-  return { promise, resolve, reject };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function asNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function asError(value: unknown): Error {
-  if (value instanceof Error) return value;
-  return new Error(String(value));
-}
-
-type PiThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh';
-
-function normalizePiThinkingEffort(raw: unknown): PiThinkingEffort | null {
-  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') return value;
-  if (value === 'max') return 'xhigh';
-  return null;
-}
+  ExecutionRunHostRuntime,
+  ExecutionRunHostRuntimeMessageHandler,
+  ExecutionRunSessionProvisionOptions,
+  ExecutionRunSessionProvisionResult,
+} from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import type { AcpRuntimeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
+import {
+  asRecord,
+  type PendingRpcRequest,
+} from './rpcSupport';
+import {
+  emitPiRpcMessage,
+  handlePiRpcStderrLine,
+  handlePiRpcStdoutLine,
+  type PiRpcEventHandlerContext,
+} from './eventHandlers';
+import {
+  capturePiRpcAuthJsonSnapshot,
+  ensurePiRpcProcess,
+  maybeRestartPiRpcProcessForUpdatedAuthJson,
+  restartPiRpcProcessAndContinue,
+  spawnPiRpcProcess,
+  stopPiRpcProcessForRestart,
+  type PiRpcProcessLifecycleContext,
+} from './processLifecycle';
+import type { PiRpcCommandWithoutId, PiRpcResponse, PiRpcStateData } from './types';
+import { PiPendingTurnState } from './piPendingTurnState';
+import { PiRuntimeStateTracker } from './piRuntimeStateTracker';
+import {
+  cancelPiRpcTurn,
+  sendPiRpcPrompt,
+  sendPiRpcSteerPrompt,
+  setPiRpcSessionConfigOption,
+  setPiRpcSessionModel,
+  type PiRpcResponseFlowContext,
+} from './responseFlow';
+import { sendPiRpcCommand } from './sendPiRpcCommand';
+import { assertPiRpcSession, loadPiRpcSession, startPiRpcSession } from './sessionState';
+import { createPiRpcStateOperations } from './backendStateOperations';
+import { createPiRpcBackendContextBuilders } from './createPiRpcBackendContextBuilders';
+import { createPiRpcBackendMutableState } from './createPiRpcBackendMutableState';
 
 export type PiRpcSpawnOptions = {
   cwd: string;
@@ -95,7 +54,10 @@ export type PiRpcSpawnOptions = {
   env?: Record<string, string>;
 };
 
-export class PiRpcBackend implements AgentBackend {
+// Intentional provider-local dual-role leaf: Pi RPC is the native runtime surface
+// for both direct backend usage and execution-run hosting, so no second adapter
+// owns session/process state for this provider.
+export class PiRpcBackend implements AcpRuntimeBackend, ExecutionRunHostRuntime {
   readonly options: Readonly<{
     cwd: string;
     command: string;
@@ -103,25 +65,32 @@ export class PiRpcBackend implements AgentBackend {
     env: Record<string, string>;
   }>;
 
-  private process: ChildProcessWithoutNullStreams | null = null;
-  private stdoutLineReader: readline.Interface | null = null;
-  private stderrLineReader: readline.Interface | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
   private readonly openPromptRequestIds = new Set<string>();
-  private pendingTurn: PendingTurn | null = null;
-  private pendingTurnBarrier: Deferred<void> | null = null;
-  private sessionId: string | null = null;
-  private sessionFile: string | null = null;
-  private lastAuthJsonMtimeMs: number | null = null;
-  private authRestartPendingMtimeMs: number | null = null;
-  private authRestartInFlight: Promise<void> | null = null;
-  private currentModelProvider: string | null = null;
-  private readonly modelProviderById = new Map<string, string>();
-  private sessionModelState: { currentModelId: string; availableModels: Array<{ id: string; name: string; description?: string; modelOptions?: unknown[] }> } | null =
-    null;
-  private lastPublishedUsageKey: string | null = null;
+  private readonly turnState = new PiPendingTurnState({
+    resetOpenPromptRequestIds: () => {
+      this.openPromptRequestIds.clear();
+    },
+  });
+  private readonly createPendingTurn = (timeoutMs: number): Promise<void> => {
+    return this.turnState.createPendingTurn(timeoutMs);
+  };
+  private readonly runtimeState = new PiRuntimeStateTracker();
+  private readonly mutableState = createPiRpcBackendMutableState();
+  private readonly stateOperations = createPiRpcStateOperations({
+    sendCommand: async (command, timeoutMs) => await this.sendCommand(command, timeoutMs),
+    runtimeState: this.runtimeState,
+    emitMessage: (message) => {
+      this.emitMessage(message);
+    },
+    isDisposed: () => this.disposed,
+    hasProcess: () => Boolean(this.mutableState.getProcess()),
+  });
   private disposed = false;
+  private readonly contextBuilders: ReturnType<
+    typeof createPiRpcBackendContextBuilders
+  >;
 
   constructor(options: PiRpcSpawnOptions) {
     this.options = {
@@ -130,6 +99,65 @@ export class PiRpcBackend implements AgentBackend {
       args: [...options.args],
       env: { ...(options.env ?? {}) },
     };
+    this.contextBuilders = createPiRpcBackendContextBuilders({
+      options: this.options,
+      state: this.mutableState,
+      isDisposed: () => this.disposed,
+      hasPendingTurn: () => this.turnState.hasPendingTurn(),
+      emitMessage: (message) => {
+        this.emitMessage(message);
+      },
+      ensureProcess: async () => {
+        await this.ensureProcess();
+      },
+      stopRpcProcessForRestart: async () => {
+        await this.stopRpcProcessForRestart();
+      },
+      spawnRpcProcess: (params) => {
+        this.spawnRpcProcess(params);
+      },
+      captureAuthJsonSnapshot: async () => {
+        await this.captureAuthJsonSnapshot();
+      },
+      getState: async () => await this.stateOperations.getState(),
+      publishRuntimeState: async (state) => {
+        await this.publishRuntimeState(state);
+      },
+      assertSession: (sessionId) => {
+        this.assertSession(sessionId);
+      },
+      beginPromptBarrier: () => this.turnState.beginPromptBarrier(),
+      createPendingTurn: (timeoutMs) => this.createPendingTurn(timeoutMs),
+      rejectPendingTurn: (error) => {
+        this.turnState.rejectPendingTurn(error);
+      },
+      resolvePendingTurn: () => {
+        this.turnState.resolvePendingTurn();
+      },
+      maybeRestartForUpdatedAuthJson: () => this.maybeRestartForUpdatedAuthJson(),
+      restartAndContinue: async () => {
+        await this.restartAndContinue();
+      },
+      sendCommand: async (command, timeoutMs) =>
+        await this.sendCommand(command, timeoutMs),
+      resolveModelSelection: async (modelIdRaw) =>
+        await this.resolveModelSelection(modelIdRaw),
+      rememberCurrentModelProvider: (provider) => {
+        this.runtimeState.rememberCurrentModelProvider(provider);
+      },
+      pendingRequests: this.pendingRequests,
+      messageHandlers: this.messageHandlers,
+      openPromptRequestIds: this.openPromptRequestIds,
+      publishUsageStatsBestEffort: async () => {
+        await this.publishUsageStatsBestEffort();
+      },
+      handleStdoutLine: (line) => {
+        this.handleStdoutLine(line);
+      },
+      handleStderrLine: (line) => {
+        this.handleStderrLine(line);
+      },
+    });
   }
 
   onMessage(handler: AgentMessageHandler): void {
@@ -140,149 +168,41 @@ export class PiRpcBackend implements AgentBackend {
     this.messageHandlers.delete(handler);
   }
 
-  async startSession(): Promise<StartSessionResult> {
-    await this.ensureProcess();
-    this.emitMessage({ type: 'status', status: 'starting' });
-
-    const stateBefore = await this.getState();
-    const existingSessionId = asNonEmptyString(stateBefore.sessionId);
-    const existingSessionFile = asNonEmptyString(stateBefore.sessionFile);
-    if (existingSessionId) {
-      this.sessionId = existingSessionId;
-      this.sessionFile = existingSessionFile;
-      await this.captureAuthJsonSnapshot();
-      await this.publishRuntimeState(stateBefore);
-      this.emitMessage({ type: 'status', status: 'idle' });
-      return { sessionId: existingSessionId };
-    }
-
-    const created = await this.sendCommand({ type: 'new_session' }, 60_000);
-    if ((asRecord(created.data)?.cancelled ?? false) === true) {
-      throw new Error('Pi cancelled new_session');
-    }
-
-    const stateAfter = await this.getState();
-    const nextSessionId = asNonEmptyString(stateAfter.sessionId);
-    const nextSessionFile = asNonEmptyString(stateAfter.sessionFile);
-    if (!nextSessionId) {
-      throw new Error('Pi did not return a session id');
-    }
-
-    this.sessionId = nextSessionId;
-    this.sessionFile = nextSessionFile;
-    await this.captureAuthJsonSnapshot();
-    await this.publishRuntimeState(stateAfter);
-    this.emitMessage({ type: 'status', status: 'idle' });
-    return { sessionId: nextSessionId };
+  async readResumeSupport(opts?: Readonly<{ captureReplay?: boolean }>): Promise<boolean> {
+    return opts?.captureReplay === true ? false : typeof this.loadSession === 'function';
   }
 
-  private async resolveSessionFileForSessionId(expectedSessionId: string): Promise<string | null> {
-    const candidateDirs = new Set<string>();
-    const fromEnv = asNonEmptyString(this.options.env.PI_CODING_AGENT_DIR);
-    if (fromEnv) {
-      candidateDirs.add(fromEnv);
-      candidateDirs.add(join(fromEnv, 'sessions'));
+  async provisionSession(
+    opts?: ExecutionRunSessionProvisionOptions,
+  ): Promise<ExecutionRunSessionProvisionResult> {
+    if (opts?.resumeSessionId) {
+      const loaded = await this.loadSession(opts.resumeSessionId);
+      return { sessionId: loaded.sessionId };
     }
-    if (this.sessionFile) candidateDirs.add(dirname(this.sessionFile));
 
-    const matches: Array<{ path: string; mtimeMs: number }> = [];
-    const visited = new Set<string>();
-    const queue: Array<{ dir: string; depth: number }> = [];
-    const maxDepth = 4;
-    const enqueue = (dir: string, depth: number) => {
-      if (depth > maxDepth) return;
-      if (visited.has(dir)) return;
-      visited.add(dir);
-      queue.push({ dir, depth });
+    const started = await this.startSession();
+    return { sessionId: started.sessionId };
+  }
+
+  subscribeMessages(handler: ExecutionRunHostRuntimeMessageHandler): () => void {
+    this.onMessage(handler);
+    return () => {
+      this.offMessage(handler);
     };
-    for (const dir of candidateDirs) enqueue(dir, 0);
+  }
 
-    while (queue.length) {
-      const next = queue.shift();
-      if (!next) break;
-      try {
-        const entries = await readdir(next.dir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isDirectory()) {
-            if (next.depth < maxDepth) enqueue(join(next.dir, entry.name), next.depth + 1);
-            continue;
-          }
-          if (!entry.isFile()) continue;
-          const name = entry.name;
-          if (!name.includes(expectedSessionId)) continue;
-          if (!name.endsWith('.jsonl')) continue;
-          const path = join(next.dir, name);
-          try {
-            const s = await stat(path);
-            matches.push({ path, mtimeMs: typeof s.mtimeMs === 'number' ? s.mtimeMs : 0 });
-          } catch {
-            // ignore
-          }
+  async startSession(): Promise<StartSessionResult> {
+    return await startPiRpcSession(this.createSessionStateContext(async () => {
+        const created = await this.sendCommand({ type: 'new_session' }, 60_000);
+        if ((asRecord(created.data)?.cancelled ?? false) === true) {
+          throw new Error('Pi cancelled new_session');
         }
-      } catch {
-        // ignore
-      }
-    }
-
-    matches.sort((a, b) => (b.mtimeMs - a.mtimeMs) || a.path.localeCompare(b.path));
-    return matches[0]?.path ?? null;
+      }),
+    );
   }
 
   async loadSession(sessionId: SessionId): Promise<StartSessionResult> {
-    if (this.disposed) {
-      throw new Error('Pi backend is disposed');
-    }
-
-    const expectedSessionId = String(sessionId ?? '').trim();
-    if (!expectedSessionId) {
-      throw new Error('Pi loadSession requires a session id');
-    }
-
-    // If we're already attached to a session, validate that it matches.
-    if (this.sessionId) {
-      if (this.sessionId !== expectedSessionId) {
-        throw new Error(`Pi session mismatch (expected ${expectedSessionId}, got ${this.sessionId})`);
-      }
-      return { sessionId: this.sessionId };
-    }
-
-    if (this.pendingTurn) {
-      throw new Error('Cannot load Pi session while a turn is in-flight');
-    }
-
-    // `--session <path>` is Pi's deterministic resume primitive.
-    // We intentionally avoid `--continue` here because it resumes "most recent", which can be the wrong
-    // session when multiple sessions exist in PI_CODING_AGENT_DIR.
-    this.emitMessage({ type: 'status', status: 'starting' });
-    try {
-      await this.stopRpcProcessForRestart();
-      const sessionFile = await this.resolveSessionFileForSessionId(expectedSessionId);
-      if (!sessionFile) {
-        throw new Error(`Unable to resolve Pi session file for session id '${expectedSessionId}'`);
-      }
-      this.spawnRpcProcess({ args: [...this.options.args, '--session', sessionFile] });
-
-      const state = await this.getState();
-      const resumedSessionId = asNonEmptyString(state.sessionId);
-      if (!resumedSessionId) {
-        throw new Error('Pi did not return a session id after --session');
-      }
-      if (resumedSessionId !== expectedSessionId) {
-        throw new Error(`Pi session mismatch after --session (expected ${expectedSessionId}, got ${resumedSessionId})`);
-      }
-
-      this.sessionId = resumedSessionId;
-      this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
-      await this.captureAuthJsonSnapshot();
-      await this.publishRuntimeState(state);
-      this.emitMessage({ type: 'status', status: 'idle' });
-      return { sessionId: resumedSessionId };
-    } catch (error) {
-      // Ensure we don't leave a half-initialized process around after a failed load attempt.
-      await this.stopRpcProcessForRestart();
-      this.sessionId = null;
-      throw error;
-    }
+    return await loadPiRpcSession(this.createSessionStateContext(async () => {}), sessionId);
   }
 
   /**
@@ -290,842 +210,131 @@ export class PiRpcBackend implements AgentBackend {
    * This mirrors the ACP `getSessionModelState` shape.
    */
   getSessionModelState(): { currentModelId: string; availableModels: Array<{ id: string; name: string; description?: string }> } | null {
-    return this.sessionModelState;
+    return this.runtimeState.getSessionModelState();
   }
 
   async sendPrompt(sessionId: SessionId, prompt: string): Promise<void> {
-    this.assertSession(sessionId);
-
-    const barrier = createDeferred<void>();
-    this.pendingTurnBarrier = barrier;
-    const settleBarrier = (error?: Error) => {
-      if (this.pendingTurnBarrier !== barrier) return;
-      this.pendingTurnBarrier = null;
-      if (error) {
-        barrier.reject(error);
-        return;
-      }
-      barrier.resolve(undefined);
-    };
-
-    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
-    try {
-      if (maybeRestart) await maybeRestart;
-      const message = prompt.trim();
-      if (!message) {
-        settleBarrier();
-        return;
-      }
-
-      // Ensure we have a live process *before* allocating a pending turn.
-      // If the process died between turns, `ensureProcess()` may need to restart and reattach via --session.
-      await this.ensureProcess();
-
-      settleBarrier();
-
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const turn = this.createPendingTurn(240_000);
-        try {
-          await this.sendCommand({ type: 'prompt', message });
-          await turn;
-          return;
-        } catch (error) {
-          const promptError = asError(error);
-          const normalizedError = promptError.message.toLowerCase();
-          const canFallbackToSteer =
-            normalizedError.includes('already processing') || normalizedError.includes('streamingbehavior');
-
-          if (canFallbackToSteer) {
-            try {
-              await this.sendCommand({ type: 'steer', message });
-              await turn;
-              return;
-            } catch (steerError) {
-              const resolvedSteerError = asError(steerError);
-              this.rejectPendingTurn(resolvedSteerError);
-              await turn.catch(() => undefined);
-              throw resolvedSteerError;
-            }
-          }
-
-          this.rejectPendingTurn(promptError);
-          await turn.catch(() => undefined);
-
-          const canRecoverFromProcessExit =
-            attempt === 0 &&
-            !!this.sessionId &&
-            (normalizedError.includes('pi process exited') ||
-              normalizedError.includes('pi process terminated') ||
-              normalizedError.includes('failed to write pi rpc command') ||
-              normalizedError.includes('epipe'));
-
-          if (!canRecoverFromProcessExit) {
-            throw promptError;
-          }
-
-          try {
-            await this.restartAndContinue();
-          } catch (restartError) {
-            throw asError(restartError);
-          }
-        }
-      }
-    } catch (error) {
-      settleBarrier(asError(error));
-      throw error;
-    }
+    await sendPiRpcPrompt(this.createResponseFlowContext(), sessionId, prompt);
   }
 
   async sendSteerPrompt(sessionId: SessionId, prompt: string): Promise<void> {
-    this.assertSession(sessionId);
-    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
-    if (maybeRestart) await maybeRestart;
-    const message = prompt.trim();
-    if (!message) return;
-    await this.sendCommand({ type: 'steer', message });
+    await sendPiRpcSteerPrompt(this.createResponseFlowContext(), sessionId, prompt);
   }
 
   async setSessionModel(sessionId: SessionId, modelId: string): Promise<void> {
-    this.assertSession(sessionId);
-    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
-    if (maybeRestart) await maybeRestart;
-    const normalized = modelId.trim();
-    if (!normalized) return;
-
-    const selection = await this.resolveModelSelection(normalized);
-    await this.sendCommand({ type: 'set_model', provider: selection.provider, modelId: selection.modelId }, 60_000);
-    this.currentModelProvider = selection.provider;
-    await this.publishRuntimeState(await this.getState());
+    await setPiRpcSessionModel(this.createResponseFlowContext(), sessionId, modelId);
   }
 
   async setSessionConfigOption(sessionId: SessionId, configId: string, value: string | number | boolean | null): Promise<void> {
-    this.assertSession(sessionId);
-    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
-    if (maybeRestart) await maybeRestart;
-
-    const normalizedId = typeof configId === 'string' ? configId.trim().toLowerCase() : '';
-    if (!normalizedId) return;
-
-    // Pi's RPC supports `set_thinking_level`. We expose it through the generic model-scoped option id.
-    if (normalizedId !== 'reasoning_effort') return;
-
-    const level = normalizePiThinkingEffort(value);
-    if (!level) return;
-
-    await this.sendCommand({ type: 'set_thinking_level', level }, 30_000);
-    await this.publishRuntimeState(await this.getState());
+    await setPiRpcSessionConfigOption(this.createResponseFlowContext(), sessionId, configId, value);
   }
 
   async cancel(sessionId: SessionId): Promise<void> {
-    this.assertSession(sessionId);
-    await this.sendCommand({ type: 'abort' });
-    this.resolvePendingTurn();
-    this.emitMessage({ type: 'status', status: 'idle' });
+    await cancelPiRpcTurn(this.createResponseFlowContext(), sessionId);
   }
 
   async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
-    if (!this.pendingTurn && this.pendingTurnBarrier) {
-      await this.pendingTurnBarrier.promise;
-    }
-    if (!this.pendingTurn) return;
-    const turn = this.pendingTurn;
+    await this.turnState.waitForResponseComplete(timeoutMs);
+  }
 
-    const stallTimeoutMs =
-      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? Math.trunc(timeoutMs)
-        : null;
-
-    if (stallTimeoutMs === null) {
-      await turn.promise;
-      return;
-    }
-
-    let timeout: NodeJS.Timeout | null = null;
-    try {
-      await Promise.race([
-        turn.promise,
-        new Promise<void>((_, reject) => {
-          timeout = setTimeout(() => {
-            reject(new Error('Timed out waiting for Pi response completion'));
-          }, stallTimeoutMs);
-          timeout.unref?.();
-        }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
+  async waitForTurnCompletion(timeoutMs?: number | null): Promise<void> {
+    await this.waitForResponseComplete(timeoutMs);
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
 
-    this.rejectAllPending(new Error('Pi backend disposed'));
-    this.rejectPendingTurn(new Error('Pi backend disposed'));
-
-    if (this.stdoutLineReader) {
-      this.stdoutLineReader.close();
-      this.stdoutLineReader = null;
-    }
-    if (this.stderrLineReader) {
-      this.stderrLineReader.close();
-      this.stderrLineReader = null;
-    }
-
-    const child = this.process;
-    this.process = null;
-    if (!child) return;
-
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // ignore
-        }
-        resolve();
-      }, 2_000);
-      timeout.unref?.();
-
-      child.once('exit', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
+    this.createProcessLifecycleContext().rejectAllPending(
+      new Error('Pi backend disposed'),
+    );
+    this.turnState.rejectPendingTurn(new Error('Pi backend disposed'));
+    this.turnState.rejectBarrier(new Error('Pi backend disposed'));
+    await this.stopRpcProcessForRestart();
   }
 
   private async ensureProcess(): Promise<void> {
-    if (this.disposed) {
-      throw new Error('Pi backend is disposed');
-    }
-    if (this.process) return;
-    if (this.sessionId) {
-      // Best-effort recovery: if we have an established session id but the process is gone, attempt to
-      // restart and reattach to the same session via `--session`.
-      await this.restartAndContinue();
-      return;
-    }
-
-    this.spawnRpcProcess({ args: this.options.args });
+    await ensurePiRpcProcess(this.createProcessLifecycleContext());
   }
 
   private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
-    const child = spawn(this.options.command, params.args, {
-      cwd: this.options.cwd,
-      env: {
-        ...process.env,
-        ...this.options.env,
-      },
-      stdio: 'pipe',
-      windowsHide: true,
-    });
-
-    if (!child.stdin || !child.stdout || !child.stderr) {
-      throw new Error('Failed to start Pi RPC process with piped stdio');
-    }
-
-    this.process = child as ChildProcessWithoutNullStreams;
-    this.stdoutLineReader = readline.createInterface({ input: child.stdout });
-    this.stdoutLineReader.on('line', (line) => this.handleStdoutLine(line));
-    this.stderrLineReader = readline.createInterface({ input: child.stderr });
-    this.stderrLineReader.on('line', (line) => this.handleStderrLine(line));
-
-    const handleIoError = (error: unknown) => {
-      const resolved = asError(error);
-      if (!this.disposed) {
-        this.emitMessage({
-          type: 'status',
-          status: 'error',
-          detail: `Pi IO error: ${resolved.message}`,
-        });
-      }
-      this.rejectAllPending(new Error(`Pi IO error: ${resolved.message}`));
-      this.rejectPendingTurn(new Error('Pi process terminated'));
-    };
-
-    // Defensive: avoid unhandled EPIPE on stdio streams when the subprocess exits between turns.
-    child.stdin.on('error', handleIoError);
-    child.stdout.on('error', handleIoError);
-    child.stderr.on('error', handleIoError);
-
-    child.on('error', (error) => {
-      this.emitMessage({
-        type: 'status',
-        status: 'error',
-        detail: `Pi process error: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      this.rejectAllPending(new Error(`Pi process error: ${error instanceof Error ? error.message : String(error)}`));
-      this.rejectPendingTurn(new Error('Pi process terminated'));
-    });
-
-    child.on('exit', (code, signal) => {
-      if (!this.disposed) {
-        const detail = `Pi process exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`;
-        this.emitMessage({
-          type: 'status',
-          status: code === 0 ? 'stopped' : 'error',
-          detail,
-        });
-      }
-      this.rejectAllPending(new Error('Pi process exited'));
-      this.rejectPendingTurn(new Error('Pi process exited'));
-      this.process = null;
-    });
-  }
-
-  private resolveAuthJsonPath(): string | null {
-    const agentDir = asNonEmptyString(this.options.env.PI_CODING_AGENT_DIR);
-    if (!agentDir) return null;
-    return join(agentDir, 'auth.json');
+    spawnPiRpcProcess(this.createProcessLifecycleContext(), params);
   }
 
   private async captureAuthJsonSnapshot(): Promise<void> {
-    const authPath = this.resolveAuthJsonPath();
-    if (!authPath) return;
-    try {
-      const s = await stat(authPath);
-      this.lastAuthJsonMtimeMs = typeof s.mtimeMs === 'number' && Number.isFinite(s.mtimeMs) ? s.mtimeMs : null;
-    } catch {
-      this.lastAuthJsonMtimeMs = null;
-    }
+    await capturePiRpcAuthJsonSnapshot(this.createProcessLifecycleContext());
   }
 
   private maybeRestartForUpdatedAuthJson(): Promise<void> | void {
-    if (this.disposed) return;
-    if (!this.sessionId) return;
-    if (!this.process) return;
-
-    const authPath = this.resolveAuthJsonPath();
-    if (!authPath) return;
-
-    return (async () => {
-      if (this.authRestartInFlight) {
-        // If a restart is already in-flight, await it when we're idle, but never block an in-flight turn.
-        if (this.pendingTurn) return;
-        try {
-          await this.authRestartInFlight;
-        } catch {
-          // best-effort
-        }
-        return;
-      }
-
-      // If we already observed an auth change during a turn, defer stat + restart until idle.
-      if (this.pendingTurn && this.authRestartPendingMtimeMs !== null) {
-        return;
-      }
-
-      let nextMtimeMs: number | null = null;
-      try {
-        const s = await stat(authPath);
-        nextMtimeMs = typeof s.mtimeMs === 'number' && Number.isFinite(s.mtimeMs) ? s.mtimeMs : null;
-      } catch {
-        return;
-      }
-
-      if (this.lastAuthJsonMtimeMs === null) {
-        this.lastAuthJsonMtimeMs = nextMtimeMs;
-        return;
-      }
-      if (nextMtimeMs === null || nextMtimeMs === this.lastAuthJsonMtimeMs) return;
-
-      if (this.pendingTurn) {
-        // Auth changed mid-turn: never restart while Pi is streaming a response.
-        this.authRestartPendingMtimeMs = nextMtimeMs;
-        return;
-      }
-
-      // Idle boundary: attempt a best-effort restart so the new credentials are picked up.
-      this.authRestartInFlight = (async () => {
-        try {
-          await this.restartAndContinue();
-          this.lastAuthJsonMtimeMs = nextMtimeMs;
-          this.authRestartPendingMtimeMs = null;
-          await this.captureAuthJsonSnapshot();
-        } catch (error) {
-          // Best-effort: keep running with the existing process; we'll retry on the next idle boundary.
-          this.authRestartPendingMtimeMs = nextMtimeMs;
-          logger.debug('[pi] Failed to restart after auth.json update (non-fatal)', error);
-        } finally {
-          this.authRestartInFlight = null;
-        }
-      })();
-
-      await this.authRestartInFlight;
-    })();
+    return maybeRestartPiRpcProcessForUpdatedAuthJson(this.createProcessLifecycleContext());
   }
 
   private async restartAndContinue(): Promise<void> {
-    const expectedSessionId = this.sessionId;
-    if (!expectedSessionId) return;
-    if (this.pendingTurn) {
-      throw new Error('Cannot restart Pi while a turn is in-flight');
-    }
-
-    await this.stopRpcProcessForRestart();
-    const sessionFile = this.sessionFile ?? (await this.resolveSessionFileForSessionId(expectedSessionId));
-    if (!sessionFile) {
-      throw new Error(`Pi process is not running (unable to resolve session file for session id '${expectedSessionId}')`);
-    }
-    this.spawnRpcProcess({ args: [...this.options.args, '--session', sessionFile] });
-
-    const state = await this.getState();
-    const nextSessionId = asNonEmptyString(state.sessionId);
-    if (!nextSessionId) {
-      throw new Error('Pi did not return a session id after --session');
-    }
-    if (nextSessionId !== expectedSessionId) {
-      throw new Error(`Pi session mismatch after --session (expected ${expectedSessionId}, got ${nextSessionId})`);
-    }
-    this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
-    await this.publishRuntimeState(state);
-    this.emitMessage({ type: 'status', status: 'idle' });
+    await restartPiRpcProcessAndContinue(this.createProcessLifecycleContext());
   }
 
   private async stopRpcProcessForRestart(): Promise<void> {
-    this.rejectAllPending(new Error('Pi restarting'));
-    this.rejectPendingTurn(new Error('Pi restarting'));
-
-    if (this.stdoutLineReader) {
-      this.stdoutLineReader.close();
-      this.stdoutLineReader = null;
-    }
-    if (this.stderrLineReader) {
-      this.stderrLineReader.close();
-      this.stderrLineReader = null;
-    }
-
-    const child = this.process;
-    this.process = null;
-    if (!child) return;
-
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // ignore
-        }
-        resolve();
-      }, 2_000);
-      timeout.unref?.();
-
-      child.once('exit', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
+    await stopPiRpcProcessForRestart(this.createProcessLifecycleContext());
   }
 
   private handleStdoutLine(line: string): void {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    const parsed = (() => {
-      try {
-        return JSON.parse(trimmed) as unknown;
-      } catch {
-        this.emitMessage({ type: 'terminal-output', data: line });
-        return null;
-      }
-    })();
-    if (!parsed) return;
-
-    const record = asRecord(parsed);
-    if (!record) return;
-
-    if (record.type === 'response') {
-      this.handleResponse(record as PiRpcResponse);
-      return;
-    }
-
-    this.handleEvent(record);
-  }
-
-  private handleResponse(response: PiRpcResponse): void {
-    const id = asNonEmptyString(response.id);
-    if (!id) return;
-    const pending = this.pendingRequests.get(id);
-    if (!pending) {
-      if (response.command === 'prompt' && !response.success && this.openPromptRequestIds.has(id)) {
-        this.openPromptRequestIds.delete(id);
-        const detail = asNonEmptyString(response.error) ?? 'Pi prompt failed';
-        this.rejectPendingTurn(new Error(detail));
-        this.emitMessage({ type: 'status', status: 'error', detail });
-      }
-      return;
-    }
-
-    clearTimeout(pending.timeout);
-    this.pendingRequests.delete(id);
-
-    if (!response.success) {
-      this.openPromptRequestIds.delete(id);
-      pending.reject(new Error(asNonEmptyString(response.error) ?? `Pi RPC command failed: ${response.command}`));
-      return;
-    }
-    if (pending.commandType === 'prompt') {
-      this.openPromptRequestIds.add(id);
-    }
-    pending.resolve(response);
-  }
-
-  private handleEvent(event: Record<string, unknown>): void {
-    for (const msg of mapPiRpcEventToAgentMessages(event)) {
-      this.emitMessage(msg);
-    }
-
-    if (event.type === 'turn_end' || event.type === 'agent_end') {
-      this.resolvePendingTurn();
-      void this.publishUsageStatsBestEffort();
-    }
-
-    if (event.type === 'message_update') {
-      const assistant = asRecord(event.assistantMessageEvent);
-      const assistantType = asNonEmptyString(assistant?.type);
-      if (assistantType === 'thinking_start') {
-        this.emitMessage({ type: 'event', name: 'thinking_update', payload: { thinking: true } });
-      } else if (assistantType === 'thinking_end' || assistantType === 'text_start' || assistantType === 'text_delta') {
-        this.emitMessage({ type: 'event', name: 'thinking_update', payload: { thinking: false } });
-      }
-    }
+    handlePiRpcStdoutLine(this.createEventHandlerContext(), (message) => this.emitMessage(message), line);
   }
 
   private async publishUsageStatsBestEffort(): Promise<void> {
-      if (this.disposed) return;
-      if (!this.process) return;
-
-    try {
-      const stats = await this.getSessionStats();
-      const sessionId = asNonEmptyString(stats.sessionId);
-      if (!sessionId) return;
-
-      const assistantMessagesRaw = stats.assistantMessages;
-      const assistantMessages =
-        typeof assistantMessagesRaw === 'number' && Number.isFinite(assistantMessagesRaw) ? assistantMessagesRaw : null;
-      const rawKey = assistantMessages !== null ? `${sessionId}:${assistantMessages}` : sessionId;
-      if (this.lastPublishedUsageKey === rawKey) return;
-      this.lastPublishedUsageKey = rawKey;
-
-      const asNonNegative = (v: unknown): number | null =>
-        typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
-
-      const input = asNonNegative(stats.tokens?.input);
-      const output = asNonNegative(stats.tokens?.output);
-      const cacheRead = asNonNegative(stats.tokens?.cacheRead);
-      const cacheWrite = asNonNegative(stats.tokens?.cacheWrite);
-      const total = asNonNegative(stats.tokens?.total);
-
-      const tokens: Record<string, number> = {};
-      if (input !== null) tokens.input = input;
-      if (output !== null) tokens.output = output;
-      if (cacheRead !== null) tokens.cache_read = cacheRead;
-      if (cacheWrite !== null) tokens.cache_creation = cacheWrite;
-      if (total !== null) tokens.total = total;
-      if (Object.keys(tokens).length === 0) return;
-
-      const costRaw = stats.cost;
-      const costTotal = typeof costRaw === 'number' && Number.isFinite(costRaw) && costRaw >= 0 ? costRaw : null;
-
-      this.emitMessage({
-        type: 'token-count',
-        key: `pi:${rawKey}`,
-        tokens,
-        ...(costTotal !== null ? { cost: { total: costTotal } } : {}),
-      });
-    } catch {
-      // best-effort
-    }
+    await this.stateOperations.publishUsageStatsBestEffort();
   }
 
   private handleStderrLine(line: string): void {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    this.emitMessage({ type: 'terminal-output', data: trimmed });
-
-    const normalized = trimmed.toLowerCase();
-    if (normalized.includes('api key') || normalized.includes('unauthorized') || normalized.includes('authentication')) {
-      this.emitMessage({
-        type: 'status',
-        status: 'error',
-        detail: 'Pi authentication error. Check your API credentials for the configured provider.',
-      });
-    }
+    handlePiRpcStderrLine(this.disposed, (message) => this.emitMessage(message), line);
   }
 
   private emitMessage(message: AgentMessage): void {
-    const safeMessage: AgentMessage =
-      message.type === 'terminal-output'
-        ? ({ ...message, data: redactBugReportSensitiveText(String(message.data ?? '')) } as AgentMessage)
-        : message;
-
-    for (const handler of this.messageHandlers) {
-      try {
-        handler(safeMessage);
-      } catch (error) {
-        logger.debug('[pi] Message handler failed (non-fatal)', error);
-      }
-    }
+    emitPiRpcMessage(this.messageHandlers, message);
   }
 
   private async sendCommand(
     command: PiRpcCommandWithoutId,
     timeoutMs = 30_000,
   ): Promise<PiRpcResponse> {
-    await this.ensureProcess();
-    const child = this.process;
-    if (!child?.stdin) {
-      throw new Error('Pi process stdin is unavailable');
-    }
-
-    const id = randomUUID();
-    const payload: PiRpcCommand = { ...command, id } as PiRpcCommand;
-    const encoded = JSON.stringify(payload);
-
-    const response = await new Promise<PiRpcResponse>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        this.openPromptRequestIds.delete(id);
-        reject(new Error(`Timed out waiting for Pi RPC response (${command.type})`));
-      }, timeoutMs);
-      timeout.unref?.();
-
-      this.pendingRequests.set(id, { resolve, reject, timeout, commandType: command.type });
-      child.stdin.write(`${encoded}\n`, (error) => {
-        if (!error) return;
-        clearTimeout(timeout);
-        this.pendingRequests.delete(id);
-        this.openPromptRequestIds.delete(id);
-        reject(new Error(`Failed to write Pi RPC command (${command.type}): ${error.message}`));
-      });
+    return await sendPiRpcCommand({
+      ensureProcess: async () => {
+        await this.ensureProcess();
+      },
+      getProcess: this.mutableState.getProcess,
+      pendingRequests: this.pendingRequests,
+      openPromptRequestIds: this.openPromptRequestIds,
+      command,
+      timeoutMs,
     });
-
-    return response;
-  }
-
-  private createPendingTurn(timeoutMs: number): Promise<void> {
-    this.rejectPendingTurn(new Error('replaced by newer turn'));
-    let resolveTurn: (() => void) | null = null;
-    let rejectTurn: ((error: Error) => void) | null = null;
-
-    const promise = new Promise<void>((resolve, reject) => {
-      resolveTurn = resolve;
-      rejectTurn = reject;
-    });
-
-    const timeout = setTimeout(() => {
-      if (this.pendingTurn?.timeout === timeout) {
-        this.pendingTurn = null;
-      }
-      this.openPromptRequestIds.clear();
-      rejectTurn?.(new Error('Timed out waiting for Pi turn completion'));
-    }, timeoutMs);
-    timeout.unref?.();
-
-    if (!resolveTurn || !rejectTurn) {
-      clearTimeout(timeout);
-      throw new Error('Failed to initialize Pi pending turn');
-    }
-
-    this.pendingTurn = { promise, resolve: resolveTurn, reject: rejectTurn, timeout };
-    return promise;
-  }
-
-  private resolvePendingTurn(): void {
-    if (!this.pendingTurn) return;
-    const pending = this.pendingTurn;
-    this.pendingTurn = null;
-    clearTimeout(pending.timeout);
-    this.openPromptRequestIds.clear();
-    pending.resolve();
-  }
-
-  private rejectPendingTurn(error: Error): void {
-    if (!this.pendingTurn) return;
-    const pending = this.pendingTurn;
-    this.pendingTurn = null;
-    clearTimeout(pending.timeout);
-    this.openPromptRequestIds.clear();
-    pending.reject(error);
-  }
-
-  private rejectAllPending(error: Error): void {
-    for (const [id, pending] of this.pendingRequests.entries()) {
-      clearTimeout(pending.timeout);
-      pending.reject(error);
-      this.pendingRequests.delete(id);
-    }
-  }
-
-  private async getState(): Promise<PiRpcStateData> {
-    const response = await this.sendCommand({ type: 'get_state' }, 30_000);
-    return (asRecord(response.data) ?? {}) as PiRpcStateData;
-  }
-
-  private async getAvailableModels(): Promise<PiRpcModelsData> {
-    const response = await this.sendCommand({ type: 'get_available_models' }, 60_000);
-    return (asRecord(response.data) ?? {}) as PiRpcModelsData;
-  }
-
-  private async getSessionStats(): Promise<PiRpcSessionStatsData> {
-    const response = await this.sendCommand({ type: 'get_session_stats' }, 30_000);
-    return (asRecord(response.data) ?? {}) as PiRpcSessionStatsData;
-  }
-
-  private async getCommands(): Promise<PiRpcCommandsData> {
-    const response = await this.sendCommand({ type: 'get_commands' }, 30_000);
-    return (asRecord(response.data) ?? {}) as PiRpcCommandsData;
   }
 
   private async publishRuntimeState(state: PiRpcStateData): Promise<void> {
-    const modelRecord = asRecord(state.model);
-    const currentModelId = asNonEmptyString(modelRecord?.id) ?? '';
-    const currentModelProvider = asNonEmptyString(modelRecord?.provider);
-    if (currentModelProvider) {
-      this.currentModelProvider = currentModelProvider;
-    }
-    const thinkingLevelFromState = normalizePiThinkingEffort((state as any).thinkingLevel) ?? 'medium';
-
-    let normalized: Array<{ id: string; name: string; description: string; modelOptions?: unknown[] }> =
-      (this.sessionModelState?.availableModels ?? []).map((m) => ({
-        id: m.id,
-        name: m.name,
-        description: m.description ?? '',
-      }));
-
-    try {
-      const available = await this.getAvailableModels();
-      const models = Array.isArray(available.models) ? available.models : [];
-      this.modelProviderById.clear();
-      normalized = models
-        .map((entry) => {
-          const model = asRecord(entry);
-          const id = asNonEmptyString(model?.id);
-          const provider = asNonEmptyString(model?.provider);
-          if (!id || !provider) return null;
-          const name = asNonEmptyString(model?.name) ?? `${provider}/${id}`;
-          this.modelProviderById.set(id, provider);
-          this.modelProviderById.set(`${provider}/${id}`, provider);
-          const supportsThinking = (model as any).reasoning === true;
-          const modelOptions: unknown[] | undefined = supportsThinking
-            ? [{
-                id: 'reasoning_effort',
-                name: 'Thinking',
-                type: 'select',
-                currentValue: thinkingLevelFromState,
-                options: [
-                  { value: 'low', name: 'Low' },
-                  { value: 'medium', name: 'Medium' },
-                  { value: 'high', name: 'High' },
-                  { value: 'xhigh', name: 'Max' },
-                ],
-              }]
-            : undefined;
-          return {
-            id,
-            name,
-            description: provider,
-            ...(modelOptions ? { modelOptions } : {}),
-          };
-        })
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-    } catch {
-      // Best-effort: model introspection should not block session start/resume.
-    }
-
-    this.sessionModelState = {
-      currentModelId,
-      availableModels: normalized,
-    };
-
-    this.emitMessage({
-      type: 'event',
-      name: 'session_models_state',
-      payload: {
-        currentModelId,
-        availableModels: normalized,
-      },
-    });
-
-    try {
-      const commands = await this.getCommands();
-      const commandList = Array.isArray(commands.commands) ? commands.commands : [];
-      const availableCommands = commandList
-        .map((entry) => {
-          const item = asRecord(entry);
-          const name = asNonEmptyString(item?.name);
-          if (!name) return null;
-          const description = asNonEmptyString(item?.description) ?? undefined;
-          return {
-            command: name.startsWith('/') ? name : `/${name}`,
-            ...(description ? { description } : {}),
-          };
-        })
-        .filter((entry): entry is { command: string; description?: string } => entry !== null);
-
-      this.emitMessage({
-        type: 'event',
-        name: 'available_commands_update',
-        payload: { availableCommands },
-      });
-    } catch {
-      // Best-effort: commands introspection should not block session start/resume.
-    }
+    await this.stateOperations.publishRuntimeState(state);
   }
 
   private async resolveModelSelection(modelIdRaw: string): Promise<{ provider: string; modelId: string }> {
-    if (modelIdRaw.includes('/')) {
-      const [provider, ...rest] = modelIdRaw.split('/');
-      const modelId = rest.join('/').trim();
-      const normalizedProvider = provider.trim();
-      if (normalizedProvider && modelId) {
-        this.modelProviderById.set(modelId, normalizedProvider);
-        this.modelProviderById.set(`${normalizedProvider}/${modelId}`, normalizedProvider);
-        return { provider: normalizedProvider, modelId };
-      }
-    }
-
-    const fromKnownMap = this.modelProviderById.get(modelIdRaw);
-    if (fromKnownMap) {
-      return { provider: fromKnownMap, modelId: modelIdRaw };
-    }
-
-    if (this.currentModelProvider) {
-      return { provider: this.currentModelProvider, modelId: modelIdRaw };
-    }
-
-    const state = await this.getState();
-    const model = asRecord(state.model);
-    const provider = asNonEmptyString(model?.provider);
-    if (provider) {
-      this.currentModelProvider = provider;
-      return { provider, modelId: modelIdRaw };
-    }
-
-    throw new Error(`Cannot resolve Pi provider for model "${modelIdRaw}"`);
+    return await this.stateOperations.resolveModelSelection(modelIdRaw);
   }
 
   private assertSession(sessionId: SessionId): void {
-    if (!this.sessionId) {
-      throw new Error('Pi session was not started');
-    }
-    if (this.sessionId !== sessionId) {
-      throw new Error(`Pi session mismatch (expected ${this.sessionId}, got ${sessionId})`);
-    }
+    assertPiRpcSession(this.mutableState.getSessionId(), sessionId);
+  }
+
+  private createSessionStateContext(createSession: () => Promise<void>) {
+    return this.contextBuilders.createSessionStateContext(createSession);
+  }
+
+  private createResponseFlowContext(): PiRpcResponseFlowContext {
+    return this.contextBuilders.createResponseFlowContext();
+  }
+
+  private createEventHandlerContext(): PiRpcEventHandlerContext {
+    return this.contextBuilders.createEventHandlerContext();
+  }
+
+  private createProcessLifecycleContext(): PiRpcProcessLifecycleContext {
+    return this.contextBuilders.createProcessLifecycleContext();
   }
 
 }

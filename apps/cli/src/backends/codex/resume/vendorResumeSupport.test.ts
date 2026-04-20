@@ -41,11 +41,11 @@ describe('supportsCodexVendorResume', () => {
     expect(supportsCodexVendorResume({})).toBe(true);
   });
 
-  it('allows when explicitly enabled via ACP for this spawn', () => {
+  it('allows when explicit experimentalCodexAcp requests ACP while the env-backed experiment is off', () => {
     expect(supportsCodexVendorResume({ experimentalCodexAcp: true })).toBe(true);
   });
 
-  it('allows when codexBackendMode is explicitly set to acp', () => {
+  it('allows when explicit codexBackendMode=acp is selected while the env-backed experiment is off', () => {
     expect(
       supportsCodexVendorResume({
         codexBackendMode: 'acp',

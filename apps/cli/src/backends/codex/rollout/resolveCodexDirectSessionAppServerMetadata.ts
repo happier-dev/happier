@@ -2,7 +2,7 @@ import type { DirectSessionCandidateV1, DirectSessionsSource, DirectTranscriptRa
 
 import { findCodexDirectSessionCandidateViaAppServer } from '../appServer/session/findCodexDirectSessionCandidateViaAppServer';
 
-import { resolveCodexHomesForDirectSessionsSource } from '../directSessions/resolveCodexHomesForDirectSessionsSource';
+import { homes as resolveHomes } from '../directSessions/homes';
 
 type CodexDirectSessionAppServerMetadata = Readonly<{
   updatedAtMs: number;
@@ -22,7 +22,7 @@ export async function resolveCodexDirectSessionAppServerMetadata(params: Readonl
   env?: NodeJS.ProcessEnv;
 }>): Promise<CodexDirectSessionAppServerMetadata | null> {
   const env = params.env ?? process.env;
-  const homes = await resolveCodexHomesForDirectSessionsSource({
+  const homes = await resolveHomes({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env,

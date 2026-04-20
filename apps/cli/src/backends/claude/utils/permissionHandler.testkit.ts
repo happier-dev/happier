@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-import type { Session } from '../session';
+import type { Session } from '../runtime/session/ClaudeSession';
 import { ClaudePermissionRpcRouter } from './permissionRpcRouter';
 import type { PermissionRpcPayload } from './permissionRpc';
 

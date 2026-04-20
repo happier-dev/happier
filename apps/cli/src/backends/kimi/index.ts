@@ -10,6 +10,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('@/backends/kimi/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/kimi/cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('@/backends/kimi/cli/auth/kimiCliAuthSpec')).kimiCliAuthSpec,
+  getBindings: async () => (await import('@/backends/kimi/bindings/index')).createKimiBindings(),
   vendorResumeSupport: AGENTS_CORE.kimi.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createKimiBackend } = await import('@/backends/kimi/acp/backend');

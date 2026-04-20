@@ -1,6 +1,6 @@
-import type { TerminalRuntimeOps } from '@/backends/terminalRuntime/types';
+import type { TerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
 
-import { waitForOhMyPiTerminalRuntimeBinding } from './waitForOhMyPiTerminalRuntimeBinding';
+import { waitForOhMyPiTerminalTranscriptBinding } from './waitForOhMyPiTerminalTranscriptBinding';
 
 export type OhMyPiTerminalRuntimeBindTranscriptParams = Readonly<{
     cwd: string;
@@ -16,7 +16,7 @@ export const ohMyPiTerminalRuntimeOps: TerminalRuntimeOps<
     OhMyPiTerminalRuntimeBindTranscriptParams
 > = {
     bindTranscript: (params) =>
-        waitForOhMyPiTerminalRuntimeBinding({
+        waitForOhMyPiTerminalTranscriptBinding({
             cwd: params.cwd,
             env: params.env,
             terminalId: params.terminalId,

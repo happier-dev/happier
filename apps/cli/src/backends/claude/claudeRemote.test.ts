@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SDKMessage } from '@/backends/claude/sdk';
-import type { EnhancedMode } from './loop';
+import type { EnhancedMode } from './runtime/claudeEnhancedMode';
 
 const mockQuery = vi.fn();
 const ensureJavaScriptRuntimeExecutableMock = vi.fn(async () => '/managed/js-runtime');
@@ -44,7 +44,7 @@ vi.mock('./utils/resolveClaudeCliPath', () => ({
   resolveClaudeCliPath: resolveClaudeCliPathMock,
 }));
 
-type RemoteOptions = Parameters<(typeof import('./claudeRemote'))['claudeRemote']>[0];
+type RemoteOptions = Parameters<(typeof import('./runtime/remote/runRemoteSession'))['runClaudeRemoteSession']>[0];
 type QueryCall = Readonly<{
   options?: Readonly<{
     resume?: string;
@@ -107,7 +107,7 @@ describe('claudeRemote', () => {
   it('keeps resume sessionId even if claudeCheckSession returns false (avoid false-negative context loss)', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -123,7 +123,7 @@ describe('claudeRemote', () => {
   it('bootstraps the managed JavaScript runtime before starting the SDK query', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(createBaseOptions());
 
@@ -135,7 +135,7 @@ describe('claudeRemote', () => {
   it('passes the resolved Claude CLI path into the remote launcher env so it does not rediscover it', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(createBaseOptions());
 
@@ -143,10 +143,31 @@ describe('claudeRemote', () => {
     expect(call?.options?.env?.HAPPIER_CLAUDE_PATH).toBe('/resolved/claude-cli.js');
   });
 
+  it('forwards the resolved Claude config dir override into the remote launcher env', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/happier-claude-config';
+
+    try {
+      const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
+
+      await claudeRemote(createBaseOptions());
+
+      const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+      expect(call?.options?.env?.CLAUDE_CONFIG_DIR).toBe('/tmp/happier-claude-config');
+    } finally {
+      if (previousClaudeConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+    }
+  });
+
   it('honors --continue in remote mode by passing continue=true to the SDK', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -162,7 +183,7 @@ describe('claudeRemote', () => {
   it('passes through --mcp-config to the underlying Claude Code CLI (no parsing/merging)', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     const mcpRaw = JSON.stringify({ mcpServers: { fixture: { type: 'stdio', command: 'node', args: ['server.mjs'] } } });
     await claudeRemote(
@@ -179,7 +200,7 @@ describe('claudeRemote', () => {
   it('passes through --mcp-config=<json> to the underlying Claude Code CLI (no parsing/merging)', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     const mcpRaw = JSON.stringify({ mcpServers: { fixture: { type: 'stdio', command: 'node', args: ['server.mjs'] } } });
     const arg = `--mcp-config=${mcpRaw}`;
@@ -197,7 +218,7 @@ describe('claudeRemote', () => {
   it('injects --effort when the mode specifies a non-default reasoningEffort', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -213,10 +234,29 @@ describe('claudeRemote', () => {
     expect(call?.options?.extraArgs).toEqual(['--effort', 'medium']);
   });
 
+  it('injects --effort high for Opus 4.7 because xhigh is the model default', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
+
+    await claudeRemote(
+      createBaseOptions({
+        nextMessage: async () => ({
+          message: 'hello',
+          mode: defaultMode({ model: 'claude-opus-4-7', reasoningEffort: 'high' }),
+        }),
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toEqual(['--effort', 'high']);
+  });
+
   it('injects Claude Code experimental Agent Teams env var when enabled on the mode', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -243,7 +283,7 @@ describe('claudeRemote', () => {
       interrupt,
     } as any);
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -263,7 +303,7 @@ describe('claudeRemote', () => {
   it('forwards --setting-sources when claudeRemoteSettingSourcesV2 selects a subset', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -282,7 +322,7 @@ describe('claudeRemote', () => {
   it('does not force --setting-sources when claudeRemoteSettingSourcesV2 selects all sources', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -301,7 +341,7 @@ describe('claudeRemote', () => {
   it('does not forward an invalid --setting-sources override when claudeRemoteSettingSourcesV2 selects no sources', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -320,7 +360,7 @@ describe('claudeRemote', () => {
   it('does not forward a legacy "none" setting-sources override to the Claude Code CLI', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -339,7 +379,7 @@ describe('claudeRemote', () => {
   it('appends Happier MCP config when provided, while preserving user --mcp-config passthrough', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     const happierMcp = JSON.stringify({
       mcpServers: { happier: { type: 'stdio', command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
@@ -361,7 +401,7 @@ describe('claudeRemote', () => {
   it('treats --resume (no id) as resume-last-session in remote mode', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -377,7 +417,7 @@ describe('claudeRemote', () => {
   it('calls onSessionFound from system init without waiting for transcript file', async () => {
     mockQuery.mockReturnValue(messageStream(systemInitMessage('sess_1'), resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     const onSessionFound = vi.fn();
     let nextCount = 0;
@@ -401,7 +441,7 @@ describe('claudeRemote', () => {
   it('appends the remote system prompt only once when both custom and append prompts are provided', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(
       createBaseOptions({
@@ -429,7 +469,7 @@ describe('claudeRemote', () => {
   it('does not pass an explicit allowedTools allowlist by default (so user MCP tools are not hidden)', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
-    const { claudeRemote } = await import('./claudeRemote');
+    const { runClaudeRemoteSession: claudeRemote } = await import('./runtime/remote/runRemoteSession');
 
     await claudeRemote(createBaseOptions());
 

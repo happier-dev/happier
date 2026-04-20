@@ -380,6 +380,13 @@ export function logDebug(message: string): void {
     }
 }
 
+function isBenignClaudeStdinWriteError(error: unknown): boolean {
+    const e = error as { code?: unknown; message?: unknown }
+    const code = typeof e?.code === 'string' ? e.code : ''
+    const message = typeof e?.message === 'string' ? e.message : ''
+    return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED' || /broken pipe|stream.*destroyed/i.test(message)
+}
+
 /**
  * Stream async messages to stdin
  */
@@ -388,9 +395,42 @@ export async function streamToStdin(
     stdin: NodeJS.WritableStream,
     abort?: AbortSignal
 ): Promise<void> {
-    for await (const message of stream) {
-        if (abort?.aborted) break
-        stdin.write(JSON.stringify(message) + '\n')
+    let pendingError: Error | null = null
+    let streamBroken = false
+    const onStdinError = (error: unknown) => {
+        if (isBenignClaudeStdinWriteError(error)) {
+            streamBroken = true
+            return
+        }
+        pendingError = error instanceof Error ? error : new Error(String(error))
     }
-    stdin.end()
+
+    stdin.on?.('error', onStdinError)
+
+    try {
+        for await (const message of stream) {
+            if (abort?.aborted || streamBroken) break
+            if (pendingError) throw pendingError
+            try {
+                stdin.write(JSON.stringify(message) + '\n')
+            } catch (error) {
+                if (isBenignClaudeStdinWriteError(error)) {
+                    streamBroken = true
+                    break
+                }
+                throw error
+            }
+        }
+
+        if (pendingError) throw pendingError
+        if (streamBroken) return
+
+        try {
+            stdin.end()
+        } catch (error) {
+            if (!isBenignClaudeStdinWriteError(error)) throw error
+        }
+    } finally {
+        stdin.off?.('error', onStdinError)
+    }
 }

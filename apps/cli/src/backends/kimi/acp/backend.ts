@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 import type { PermissionMode } from '@/api/types';
 import { kimiTransport } from '@/backends/kimi/acp/transport';
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';

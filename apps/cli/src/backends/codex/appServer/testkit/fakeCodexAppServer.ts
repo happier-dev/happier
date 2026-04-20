@@ -11,6 +11,7 @@ const CODEX_APP_SERVER_TEST_ENV_KEYS = [
     'HAPPIER_TRANSCRIPT_STORAGE',
     'CODEX_HOME',
     'OPENAI_API_KEY',
+    'CODEX_API_KEY',
 ] as const;
 
 export function createCodexAppServerTestEnvScope() {

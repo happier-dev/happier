@@ -22,7 +22,6 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       },
     });
 
-    expect(state.metadata.sessionModelsV1).toEqual(state.metadata.acpSessionModelsV1);
     expect(state.metadata.sessionModelsV1).toEqual(
       expect.objectContaining({
         v: 1,
@@ -32,6 +31,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
         availableModels: expect.any(Array),
       }),
     );
+    expect(state.metadata.acpSessionModelsV1).toBeUndefined();
   });
 
   it('does not publish metadata when currentModelId is blank', async () => {

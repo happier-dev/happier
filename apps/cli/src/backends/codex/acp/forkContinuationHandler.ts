@@ -1,4 +1,4 @@
-import type { AcpForkContinuationHandler } from '@/backends/forking/acpForkContinuationHandler';
+import type { AcpForkContinuationHandler } from '@/session/fork/acpForkContinuationHandler';
 
 export const codexAcpForkContinuationHandler: AcpForkContinuationHandler = async (params) => ({
   spawn: {

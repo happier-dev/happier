@@ -1,3 +1,6 @@
+type ClaudeRemoteSettingSourceV2 = 'user' | 'project' | 'local';
+type ClaudeRemoteDebugCategory = 'api' | 'mcp' | 'hooks' | 'file' | '1p';
+
 export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteAgentSdkEnabled: boolean;
     /**
@@ -6,13 +9,7 @@ export type ClaudeRemoteMetaState = Readonly<{
      * Default: ['user','project','local'] which represents "Claude default behavior" and
      * should generally NOT force an explicit override in the runner.
      */
-    claudeRemoteSettingSourcesV2: readonly ('user' | 'project' | 'local')[];
-    /**
-     * Legacy (v1) setting sources.
-     *
-     * Kept for back-compat with older clients. New code should prefer `claudeRemoteSettingSourcesV2`.
-     */
-    claudeRemoteSettingSources: 'project' | 'user_project' | 'none';
+    claudeRemoteSettingSourcesV2: readonly ClaudeRemoteSettingSourceV2[];
     claudeCodeExperimentalAgentTeamsEnabled: boolean;
     claudeLocalPermissionBridgeEnabled: boolean;
     claudeLocalPermissionBridgeWaitIndefinitely: boolean;
@@ -23,47 +20,51 @@ export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteStrictMcpServerConfig: boolean;
     claudeRemoteDebugEnabled: boolean;
     claudeRemoteVerboseEnabled: boolean;
-    claudeRemoteDebugCategories: readonly ('api' | 'mcp' | 'hooks' | 'file' | '1p')[];
+    claudeRemoteDebugCategories: readonly ClaudeRemoteDebugCategory[];
     claudeRemoteAdvancedOptionsJson: string;
 }>;
 
 const SETTING_SOURCES_V2_ORDER = ['user', 'project', 'local'] as const;
 const DEBUG_CATEGORIES_ORDER = ['api', 'mcp', 'hooks', 'file', '1p'] as const;
 
-function normalizeSettingSourcesV2(raw: unknown): ('user' | 'project' | 'local')[] | null {
+function normalizeSettingSourcesV2(raw: unknown): ClaudeRemoteSettingSourceV2[] | null {
     if (!Array.isArray(raw)) return null;
     const set = new Set<string>();
     for (const value of raw) {
         if (typeof value !== 'string') continue;
         set.add(value);
     }
-    const out: ('user' | 'project' | 'local')[] = [];
+    const out: ClaudeRemoteSettingSourceV2[] = [];
     for (const key of SETTING_SOURCES_V2_ORDER) {
         if (set.has(key)) out.push(key);
     }
     return out;
 }
 
-function normalizeDebugCategories(raw: unknown): Array<'api' | 'mcp' | 'hooks' | 'file' | '1p'> | null {
+function normalizeDebugCategories(raw: unknown): ClaudeRemoteDebugCategory[] | null {
     if (!Array.isArray(raw)) return null;
     const set = new Set<string>();
     for (const value of raw) {
         if (typeof value !== 'string') continue;
         set.add(value);
     }
-    const out: Array<'api' | 'mcp' | 'hooks' | 'file' | '1p'> = [];
+    const out: ClaudeRemoteDebugCategory[] = [];
     for (const key of DEBUG_CATEGORIES_ORDER) {
         if (set.has(key)) out.push(key);
     }
     return out;
 }
 
+function mapLegacySettingSourcesToV2(raw: unknown): ClaudeRemoteSettingSourceV2[] | null {
+    if (raw === 'none') return [];
+    if (raw === 'project') return ['project'];
+    if (raw === 'user_project') return ['user', 'project'];
+    return null;
+}
+
 export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.freeze({
     claudeRemoteAgentSdkEnabled: true,
     claudeRemoteSettingSourcesV2: ['user', 'project', 'local'] as const,
-    // Default to loading BOTH user + project settings so Claude Code can see the user's
-    // globally configured MCP servers (and other preferences) when launched by Happier.
-    claudeRemoteSettingSources: 'user_project',
     claudeCodeExperimentalAgentTeamsEnabled: false,
     claudeLocalPermissionBridgeEnabled: true,
     claudeLocalPermissionBridgeWaitIndefinitely: true,
@@ -100,10 +101,10 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
         next.claudeRemoteSettingSourcesV2 = normalizedV2;
     }
 
-    if (typeof record.claudeRemoteSettingSources === 'string') {
-        const value = record.claudeRemoteSettingSources;
-        if (value === 'project' || value === 'user_project' || value === 'none') {
-            next.claudeRemoteSettingSources = value;
+    if (normalizedV2 === null) {
+        const legacyV2 = mapLegacySettingSourcesToV2(record.claudeRemoteSettingSources);
+        if (legacyV2 !== null) {
+            next.claudeRemoteSettingSourcesV2 = legacyV2;
         }
     }
 

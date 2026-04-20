@@ -2,7 +2,7 @@ import {
   emitReadyIfIdle as emitReadyIfIdleShared,
   type EmitReadyIfIdleOptions,
 } from '@/agent/runtime/emitReadyIfIdle';
-import type { CodexToolResponse } from '../types';
+import type { CodexToolResponse } from '../mcp/types';
 
 export type ReadyEventOptions = EmitReadyIfIdleOptions;
 

@@ -6,19 +6,20 @@ import type { AgentCatalogEntry } from '../types';
 export const agent = {
   id: AGENTS_CORE.pi.id,
   cliSubcommand: AGENTS_CORE.pi.cliSubcommand,
-  getCliCommandHandler: async () => (await import('@/backends/pi/cli/command')).handlePiCliCommand,
-  getCliCapabilityOverride: async () => (await import('@/backends/pi/cli/capability')).cliCapability,
-  getCliDetect: async () => (await import('@/backends/pi/cli/detect')).cliDetect,
-  getCliAuthSpec: async () => (await import('@/backends/pi/cli/auth/piCliAuthSpec')).piCliAuthSpec,
-  getConnectedServicesSpawnMaterializer: async () =>
-    (await import('@/backends/pi/connectedServices/createPiConnectedServicesSpawnMaterializer'))
-      .createPiConnectedServicesSpawnMaterializer(),
+  getCliCommandHandler: async () => (await import('./cli/command')).handlePiCliCommand,
+  getCliCapabilityOverride: async () => (await import('./cli/capability')).cliCapability,
+  getCliDetect: async () => (await import('./cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('./cli/auth/piCliAuthSpec')).piCliAuthSpec,
+  getBindings: async () => (await import('./bindings/index')).createPiBindings(),
+  getConnectedServicesMaterializer: async () =>
+    (await import('./connectedServices/createPiConnectedServicesMaterializer'))
+      .createPiConnectedServicesMaterializer(),
   vendorResumeSupport: AGENTS_CORE.pi.resume.vendorResume,
   getPreflightSessionControlsProbeAdapter: async () =>
-    (await import('@/backends/pi/preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,
+    (await import('./preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,
   getAcpBackendFactory: async () => {
-    const { createPiBackend } = await import('@/backends/pi/acp/backend');
-    return (opts) => ({ backend: createPiBackend(opts) });
+    const { createPiRpcBackend } = await import('./rpc/backend');
+    return (opts) => ({ backend: createPiRpcBackend(opts) });
   },
   checklists,
 } satisfies AgentCatalogEntry;

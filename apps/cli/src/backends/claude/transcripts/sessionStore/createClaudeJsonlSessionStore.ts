@@ -7,8 +7,7 @@ import type {
     ClaudeJsonlSessionStoreReadAfterParams,
 } from './claudeJsonlSessionStoreTypes';
 import { createClaudeProjectedJsonlSessionStore } from './createClaudeProjectedJsonlSessionStore';
-import { pageClaudeJsonlSessionTranscript } from './operations/pageClaudeJsonlSessionTranscript';
-import { readAfterClaudeJsonlSessionTranscript } from './operations/readAfterClaudeJsonlSessionTranscript';
+import { pageClaudeJsonlSessionTranscript, readAfterClaudeJsonlSessionTranscript } from './operations';
 
 export function createClaudeJsonlSessionStore(key: FileBackedTranscriptSessionStoreKey): FileBackedTranscriptSessionStore<
     DirectTranscriptRawMessageV1,

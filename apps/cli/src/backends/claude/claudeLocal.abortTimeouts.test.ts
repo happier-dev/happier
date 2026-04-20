@@ -82,7 +82,7 @@ describe('claudeLocal abort escalation timers', () => {
       });
 
       const controller = new AbortController();
-      const { claudeLocal } = await import('./claudeLocal');
+      const { runClaudeTerminalSession: claudeLocal } = await import('./runtime/terminal/runTerminalSession');
       const promise = claudeLocal({
         abort: controller.signal,
         sessionId: null,

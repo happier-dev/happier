@@ -69,7 +69,7 @@ export class CodexTerminalRuntimeMirror {
             return;
         }
         if (!this.allowLegacyFollowerFallback) {
-            throw new Error('Codex local control requires a direct-transcript binding; enable the legacy follower fallback explicitly for noncanonical fixtures.');
+            throw new Error('Codex terminal mode requires a direct-transcript binding; enable the legacy follower fallback explicitly for noncanonical fixtures.');
         }
         this.startedMode = 'follower';
         await this.followerRuntime.start();

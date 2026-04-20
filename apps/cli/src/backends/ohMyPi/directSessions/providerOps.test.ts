@@ -89,7 +89,7 @@ describe('ohMyPiDirectSessionProviderOps.resolveTakeoverSpawnOptions', () => {
 
     expect(result).toEqual({
       directory: '/repo/oh-my-pi',
-      backendTarget: { kind: 'builtInAgent', agentId: 'ohMyPi' },
+      backendTarget: { kind: 'backend', backendId: 'ohMyPi', sourceKind: 'built_in' },
       existingSessionId: 'happy-session-1',
       resume: remoteSessionId,
       approvedNewDirectoryCreation: true,

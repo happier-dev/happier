@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { EnhancedMode } from '../loop';
+import type { EnhancedMode } from '../runtime/claudeEnhancedMode';
 import { PermissionHandler } from './permissionHandler';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 

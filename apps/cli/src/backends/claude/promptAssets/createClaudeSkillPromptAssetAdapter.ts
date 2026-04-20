@@ -1,5 +1,5 @@
-import type { PromptAssetAdapter } from '@/promptAssets/types';
-import { createSkillMdPromptAssetAdapter } from '@/promptAssets/adapters/skillMd/createSkillMdPromptAssetAdapter';
+import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import { createSkillMdPromptAssetAdapter } from '@/prompts/assets/adapters/skillMd/createSkillMdPromptAssetAdapter';
 
 export function createClaudeSkillPromptAssetAdapter(params?: Readonly<{
   homedir?: () => string;

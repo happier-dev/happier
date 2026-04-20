@@ -382,7 +382,7 @@ describe('codex session handoff bundle', () => {
       home: 'user',
       homePath: codexHome,
     });
-    expect(result.agentRuntimeDescriptorV1).toMatchObject({
+    expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
       providerId: 'codex',
       provider: {
@@ -438,7 +438,7 @@ describe('codex session handoff bundle', () => {
       home: 'connectedService',
       connectedServiceId: 'openai-codex',
     });
-    expect(result.agentRuntimeDescriptorV1).toMatchObject({
+    expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
       providerId: 'codex',
       provider: {
@@ -446,15 +446,7 @@ describe('codex session handoff bundle', () => {
         vendorSessionId: 'thread_connected',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
-        providerExtra: {
-          v: 1,
-          runtimeAffinity: {
-            backendMode: 'appServer',
-            vendorSessionId: 'thread_connected',
-            home: 'connectedService',
-            connectedServiceId: 'openai-codex',
-          },
-        },
+        homePath: codexHome,
       },
     });
   });
@@ -555,7 +547,7 @@ describe('codex session handoff bundle', () => {
       },
     });
 
-    expect(result.agentRuntimeDescriptorV1).toMatchObject({
+    expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
       providerId: 'codex',
       provider: {
@@ -563,15 +555,7 @@ describe('codex session handoff bundle', () => {
         vendorSessionId: 'thread_source',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
-        providerExtra: {
-          v: 1,
-          runtimeAffinity: {
-            backendMode: 'appServer',
-            vendorSessionId: 'thread_source',
-            home: 'connectedService',
-            connectedServiceId: 'openai-codex',
-          },
-        },
+        homePath: codexHome,
       },
     });
   });
@@ -623,7 +607,7 @@ describe('codex session handoff bundle', () => {
     expect(result.resume).toMatchObject({
       codexBackendMode: 'appServer',
     });
-    expect(result.agentRuntimeDescriptorV1).toMatchObject({
+    expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
       providerId: 'codex',
       provider: {
@@ -631,15 +615,7 @@ describe('codex session handoff bundle', () => {
         vendorSessionId: 'thread_affinity',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
-        providerExtra: {
-          v: 1,
-          runtimeAffinity: {
-            backendMode: 'appServer',
-            vendorSessionId: 'thread_affinity',
-            home: 'connectedService',
-            connectedServiceId: 'openai-codex',
-          },
-        },
+        homePath: codexHome,
       },
     });
   });

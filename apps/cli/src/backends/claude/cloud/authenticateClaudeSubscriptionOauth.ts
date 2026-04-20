@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 
-import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
-import { generatePkceCodes } from '@/cloud/pkce';
-import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
-import { promptInput } from '@/terminal/prompts/promptInput';
+import type { CloudConnectAuthenticateOptions } from '../../../cloud/connectTypes';
+import { generatePkceCodes } from '../../../cloud/pkce';
+import { parseOauthRedirectPaste } from '../../../cloud/parseOauthRedirectPaste';
+import { promptInput } from '../../../terminal/prompts/promptInput';
 import { openBrowser } from '@/ui/openBrowser';
 import { delay } from '@/utils/time';
 

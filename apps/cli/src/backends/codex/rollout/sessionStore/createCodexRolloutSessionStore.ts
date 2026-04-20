@@ -22,7 +22,7 @@ import {
     pageCodexRolloutDirectTranscriptSnapshot,
     readAfterCodexRolloutDirectTranscriptSnapshot,
     resolveCodexRolloutDirectTranscriptSnapshot,
-} from './codexRolloutTranscriptHistory';
+} from './transcriptHistory';
 
 type CodexRolloutStoreActivity = Readonly<{ lastActivityAtMs: number | null }>;
 

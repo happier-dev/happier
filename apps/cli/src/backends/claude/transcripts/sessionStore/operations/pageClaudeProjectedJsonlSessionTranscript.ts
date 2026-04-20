@@ -1,4 +1,4 @@
-import { readJsonlFileBackwardPage } from '@/api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
+import { readJsonlFileBackwardPage } from '../../../../../api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
 
 import { readClaudeJsonlFileSize } from './readClaudeJsonlFileSize';
 

@@ -7,7 +7,7 @@ import {
   resolveExistingCodexAcpManagedBinPath,
 } from '@/capabilities/deps/codexAcp';
 import { logger } from '@/ui/logger';
-import type { RuntimeInstallableAdapter, RuntimeInstallableLaunchResolution } from '@/installables/runtime/runtimeInstallablesRegistry';
+import type { RuntimeInstallableAdapter, RuntimeInstallableLaunchResolution } from '@/runtime/installables/registry';
 
 import { resolveCodexAcpSpawn } from './resolveCommand';
 import { validateCodexAcpSpawnAvailability } from './spawnAvailability';

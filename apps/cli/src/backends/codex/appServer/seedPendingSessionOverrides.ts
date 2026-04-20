@@ -2,7 +2,7 @@ import type { Metadata } from '@/api/types';
 import {
   computePendingModelOverrideApplication,
   computePendingSessionModeOverrideApplication,
-} from '@/agent/runtime/permission/permissionModeFromMetadata';
+} from '@/agent/runtime/permissions/modeFromMetadata';
 import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from '@/agent/runtime/sessionConfigOptionOverrideSync';
 import { logger } from '@/ui/logger';
 

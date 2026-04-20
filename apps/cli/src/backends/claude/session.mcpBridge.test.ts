@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
-import type { EnhancedMode } from './loop';
+import type { EnhancedMode } from './runtime/claudeEnhancedMode';
 
 const createHappierMcpBridgeSpy = vi.fn(async (..._args: unknown[]) => ({
   happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
@@ -13,7 +13,7 @@ vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
   createHappierMcpBridge: (...args: unknown[]) => createHappierMcpBridgeSpy(...args),
 }));
 
-import { Session } from './session';
+import { Session } from './runtime/session/ClaudeSession';
 
 function createSessionClientStub(overrides?: Partial<SessionClientPort>): SessionClientPort {
   return {
@@ -25,6 +25,7 @@ function createSessionClientStub(overrides?: Partial<SessionClientPort>): Sessio
     sendSessionEvent: vi.fn(),
     sendClaudeSessionMessage: vi.fn(),
     sendAgentMessage: vi.fn(),
+    sendAgentMessageCommitted: vi.fn(async () => {}),
     keepAlive: vi.fn(),
     getMetadataSnapshot: () => null,
     waitForMetadataUpdate: vi.fn(async () => false),

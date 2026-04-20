@@ -1,4 +1,4 @@
-import type { DirectSessionActivitySample, DirectSessionTranscriptPage, DirectSessionTranscriptReadAfter } from '@/backends/directSessions/providerOps';
+import type { DirectSessionActivitySample, DirectSessionTranscriptPage, DirectSessionTranscriptReadAfter } from '@/session/directSessions/providerOps';
 
 export type ClaudeJsonlSessionStorePageOlderParams = Readonly<{
     cursor?: string;

@@ -3,8 +3,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { delimiter as pathDelimiter } from 'node:path';
 
-import { isCodexPermissionMode, type PermissionMode } from '@/api/types';
-import { resolveExistingCodexAcpManagedBinPath } from '@/capabilities/deps/codexAcp';
+import { isCodexPermissionMode, type PermissionMode } from '../../../api/types';
+import { resolveExistingCodexAcpManagedBinPath } from '../../../capabilities/deps/codexAcp';
 import { appendCodexCliConfigOverridesArgs } from '../utils/appendCodexCliConfigOverridesArgs';
 
 export type SpawnSpec = { command: string; args: string[] };

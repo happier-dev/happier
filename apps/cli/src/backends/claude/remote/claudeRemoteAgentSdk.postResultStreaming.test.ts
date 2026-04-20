@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
-import { makeMode } from './claudeRemoteAgentSdk.testkit';
+import { runClaudeRemoteAgentSdk as claudeRemoteAgentSdk } from './sdk/runAgentSdk';
+import { makeMode } from './sdk/testkit';
 
 describe('claudeRemoteAgentSdk post-result streaming', () => {
     it('continues consuming the response stream after a result while waiting for nextMessage', async () => {
@@ -95,6 +95,98 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
         } finally {
             resolveSecond(null);
             await runnerPromise;
+        }
+    });
+
+    it('does not rearm ready for a post-turn assistant message before another queued prompt starts', async () => {
+        let responseNextCalls = 0;
+        let resolveSecond!: (value: { message: string; mode: any } | null) => void;
+        const secondMessagePromise = new Promise<{ message: string; mode: any } | null>((resolve) => {
+            resolveSecond = resolve;
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            let closed = false;
+            const iterator = {
+                [Symbol.asyncIterator]() {
+                    return this;
+                },
+                async next() {
+                    if (closed) {
+                        return { done: true, value: undefined };
+                    }
+
+                    responseNextCalls += 1;
+                    if (responseNextCalls === 1) {
+                        return { done: false, value: { type: 'result', result: 'first-result' } as any };
+                    }
+                    if (responseNextCalls === 2) {
+                        return {
+                            done: false,
+                            value: {
+                                type: 'assistant',
+                                message: { role: 'assistant', content: [{ type: 'text', text: 'How can I help you today?' }] },
+                            } as any,
+                        };
+                    }
+                    if (responseNextCalls === 3) {
+                        return { done: false, value: { type: 'result', result: 'late-result-for-same-turn' } as any };
+                    }
+
+                    return await new Promise((resolve) => {
+                        const timer = setTimeout(() => resolve({ done: true, value: undefined }), 5);
+                        timer.unref?.();
+                    });
+                },
+            };
+
+            return {
+                ...iterator,
+                close: vi.fn(() => {
+                    closed = true;
+                }),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (!didSendFirst) {
+                didSendFirst = true;
+                return { message: 'first', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            }
+            return await secondMessagePromise;
+        });
+
+        const onReady = vi.fn();
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady,
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        try {
+            await vi.waitFor(() => {
+                expect(responseNextCalls).toBeGreaterThanOrEqual(3);
+            });
+            expect(onReady).toHaveBeenCalledTimes(1);
+        } finally {
+            resolveSecond(null);
+            await runnerPromise.catch(() => {});
         }
     });
 

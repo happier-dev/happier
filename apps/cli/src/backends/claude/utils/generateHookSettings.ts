@@ -1,19 +1,32 @@
 /**
- * Generate temporary settings file with Claude hooks for session tracking
- * 
- * Creates a settings overlay file passed to Claude Code via `--settings`.
+ * Generate temporary hook artifacts for a Claude CLI session.
  *
- * IMPORTANT:
- * We intentionally do NOT read or merge Claude's `~/.claude/settings.json` (or project/local variants).
- * Claude Code merges `--settings` additively with settings loaded from its configured sources, including hooks.
+ * Hooks are registered via `--plugin-dir <dir>` (an ephemeral session-only plugin
+ * whose only payload is a `hooks/hooks.json`). Non-hook configuration (for now just
+ * the `mcp__happier__change_title*` allow rules) still rides on `--settings <file>`.
  *
- * This was validated by running real `claude -p` processes:
- * - Project settings hooks + `--settings` hooks both fired (additive).
- * - Therefore, reading/merging user settings here is redundant and can introduce bugs (stale merges, invalid JSON).
+ * Why not put the hooks in the `--settings` overlay like we used to?
+ *
+ * Claude Code's CLI treats `--settings` as a single overlay: when two `--settings`
+ * flags are passed, only the first wins and subsequent ones are silently dropped
+ * for hooks. Any PATH-resident wrapper that prepends its own `--settings` (cmux's
+ * `/Applications/cmux.app/.../bin/claude` is the case we hit) causes Happier's
+ * hooks to be silently discarded — no SessionStart fires, no transcript sync,
+ * empty mobile UI.
+ *
+ * `--plugin-dir` is in a different, additive channel: multiple plugin dirs compose
+ * without collision, and our hooks fire regardless of what else is in the spawn
+ * chain. This module produces both artifacts so the caller can pass
+ *   claude --plugin-dir <pluginDir> --settings <settingsFile> ...
+ * and have hooks register reliably.
+ *
+ * Set `HAPPIER_CLAUDE_HOOKS_DISABLED=1` in the environment to suppress plugin-dir
+ * generation entirely (for debugging Happier-spawned Claude without hook mirroring).
+ * The non-hook settings file is still written in that mode.
  */
 
 import { join } from 'node:path';
-import { writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, unlinkSync, existsSync, rmSync } from 'node:fs';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage';
@@ -27,54 +40,101 @@ export interface GenerateHookSettingsOptions {
     permissionHookSecret?: string;
 }
 
-type ClaudeHookSettingsOverlay = Readonly<{
-    hooks: Record<string, unknown>;
+type ClaudeSettingsOverlay = Readonly<{
     permissions?: Readonly<{
         allow?: readonly string[];
     }>;
 }>;
 
-/**
- * Generate a temporary settings file with SessionStart hook configuration
- * 
- * @param port - The port where Happy server is listening
- * @returns Path to the generated settings file
- */
-export function generateHookSettingsFile(port: number, options: GenerateHookSettingsOptions = {}): string {
-    const hooksDir = join(
+const HOOKS_DISABLED_ENV_VAR = 'HAPPIER_CLAUDE_HOOKS_DISABLED';
+
+function areHappierHooksDisabled(): boolean {
+    const raw = process.env[HOOKS_DISABLED_ENV_VAR];
+    if (typeof raw !== 'string') return false;
+    const trimmed = raw.trim().toLowerCase();
+    return trimmed === '1' || trimmed === 'true' || trimmed === 'yes';
+}
+
+function resolveNodeExecutable(): string {
+    const nodeExecutable = resolveJavaScriptRuntimeExecutable({ isBunRuntime: isBun() });
+    if (!nodeExecutable) {
+        throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('claude session hook plugin'));
+    }
+    return nodeExecutable;
+}
+
+function resolveTmpRoot(subdirName: 'hooks' | 'hook-plugins'): string {
+    const root = join(
         configuration.happyHomeDir,
         'tmp',
-        resolveReleaseRingScopedBasename('hooks', configuration.publicReleaseRing),
+        resolveReleaseRingScopedBasename(subdirName, configuration.publicReleaseRing),
     );
-    mkdirSync(hooksDir, { recursive: true });
+    mkdirSync(root, { recursive: true });
+    return root;
+}
+
+/**
+ * Generate a temporary settings JSON file with non-hook configuration only
+ * (currently: MCP change_title allow rules). Hooks are no longer carried here;
+ * see `generateHookPluginDir` for those.
+ */
+export function generateHookSettingsFile(_port: number, _options: GenerateHookSettingsOptions = {}): string {
+    const hooksDir = resolveTmpRoot('hooks');
 
     // Unique filename per process to avoid conflicts
     const filename = `session-hook-${process.pid}.json`;
     const filepath = join(hooksDir, filename);
 
-    // Path to the hook forwarder script
-    const forwarderScript = resolveCliRuntimeAssetPath('scripts', 'session_hook_forwarder.cjs');
-    const nodeExecutable = resolveJavaScriptRuntimeExecutable({ isBunRuntime: isBun() });
+    const settings: ClaudeSettingsOverlay = {
+        permissions: {
+            allow: [
+                'mcp__happier__change_title',
+                'mcp__happier__session_title_set',
+            ],
+        },
+    };
 
-    // Fail closed if no JavaScript runtime is available (binary-safe runtime contract)
-    if (!nodeExecutable) {
-        throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('session hook forwarder'));
+    writeFileSync(filepath, JSON.stringify(settings, null, 2));
+    logger.debug(`[generateHookSettings] Created settings file: ${filepath}`);
+
+    return filepath;
+}
+
+/**
+ * Generate a temporary plugin directory containing `hooks/hooks.json`.
+ * Claude is launched with `--plugin-dir <returned path>` so the session registers
+ * these hooks as an additive, session-only plugin.
+ *
+ * Returns `null` when `HAPPIER_CLAUDE_HOOKS_DISABLED=1` is set — callers should
+ * then skip passing `--plugin-dir` and proceed without hook mirroring.
+ */
+export function generateHookPluginDir(port: number, options: GenerateHookSettingsOptions = {}): string | null {
+    if (areHappierHooksDisabled()) {
+        logger.debug(`[generateHookSettings] ${HOOKS_DISABLED_ENV_VAR} is set; skipping hook plugin generation`);
+        return null;
     }
 
-    const hookCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(forwarderScript)} ${port}`;
+    const pluginsRoot = resolveTmpRoot('hook-plugins');
+    const pluginDir = join(pluginsRoot, `session-${process.pid}`);
+    const hooksDir = join(pluginDir, 'hooks');
+    mkdirSync(hooksDir, { recursive: true });
+
+    const nodeExecutable = resolveNodeExecutable();
+    const sessionForwarderScript = resolveCliRuntimeAssetPath('scripts', 'session_hook_forwarder.cjs');
+    const sessionHookCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(sessionForwarderScript)} ${port}`;
 
     const hooks: Record<string, unknown> = {
         SessionStart: [
             {
-                matcher: "*",
+                matcher: '',
                 hooks: [
                     {
-                        type: "command",
-                        command: hookCommand
-                    }
-                ]
-            }
-        ]
+                        type: 'command',
+                        command: sessionHookCommand,
+                    },
+                ],
+            },
+        ],
     };
 
     if (options.enableLocalPermissionBridge) {
@@ -87,45 +147,50 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
 
         hooks.PermissionRequest = [
             {
-                matcher: "*",
+                matcher: '',
                 hooks: [
                     {
-                        type: "command",
-                        command: permissionCommand
-                    }
-                ]
-            }
+                        type: 'command',
+                        command: permissionCommand,
+                    },
+                ],
+            },
         ];
     }
 
-    const settings: ClaudeHookSettingsOverlay = {
-        hooks,
-        permissions: {
-            allow: [
-                'mcp__happier__change_title',
-                'mcp__happier__session_title_set',
-            ],
-        },
-    };
+    const hooksJson = { hooks };
+    const hooksFile = join(hooksDir, 'hooks.json');
+    writeFileSync(hooksFile, JSON.stringify(hooksJson, null, 2));
+    logger.debug(`[generateHookSettings] Created hook plugin dir: ${pluginDir}`);
 
-    writeFileSync(filepath, JSON.stringify(settings, null, 2));
-    logger.debug(`[generateHookSettings] Created hook settings file: ${filepath}`);
-
-    return filepath;
+    return pluginDir;
 }
 
 /**
- * Clean up the temporary hook settings file
- * 
- * @param filepath - Path to the settings file to remove
+ * Remove the settings file produced by `generateHookSettingsFile`.
  */
 export function cleanupHookSettingsFile(filepath: string): void {
     try {
         if (existsSync(filepath)) {
             unlinkSync(filepath);
-            logger.debug(`[generateHookSettings] Cleaned up hook settings file: ${filepath}`);
+            logger.debug(`[generateHookSettings] Cleaned up settings file: ${filepath}`);
         }
     } catch (error) {
-        logger.debug(`[generateHookSettings] Failed to cleanup hook settings file: ${error}`);
+        logger.debug(`[generateHookSettings] Failed to cleanup settings file: ${error}`);
+    }
+}
+
+/**
+ * Remove the plugin directory produced by `generateHookPluginDir`.
+ */
+export function cleanupHookPluginDir(dirpath: string | null | undefined): void {
+    if (typeof dirpath !== 'string' || dirpath.length === 0) return;
+    try {
+        if (existsSync(dirpath)) {
+            rmSync(dirpath, { recursive: true, force: true });
+            logger.debug(`[generateHookSettings] Cleaned up hook plugin dir: ${dirpath}`);
+        }
+    } catch (error) {
+        logger.debug(`[generateHookSettings] Failed to cleanup hook plugin dir: ${error}`);
     }
 }

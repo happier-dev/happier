@@ -1,5 +1,5 @@
 import type { SDKAssistantMessage, SDKMessage, SDKUserMessage } from '@/backends/claude/sdk';
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { configuration } from '@/configuration';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 import { parseRawJsonLinesObject } from '@/backends/claude/utils/parseRawJsonLines';

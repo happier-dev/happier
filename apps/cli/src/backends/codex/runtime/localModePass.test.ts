@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PermissionMode } from '@/api/types';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -6,16 +6,21 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
 import { runCodexLocalModePass } from './localModePass';
 
-const mockCatalogLaunch = vi.fn();
-vi.mock('@/backends/catalog', () => ({
-    getTerminalRuntimeOps: vi.fn(async () => ({
-        launch: (params: unknown) => mockCatalogLaunch(params),
-    })),
+const { resolveBackendExecutionSurfaces } = vi.hoisted(() => ({
+  resolveBackendExecutionSurfaces: vi.fn(),
+}));
+
+vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
+  resolveBackendExecutionSurfaces,
 }));
 
 type Mode = { permissionMode: PermissionMode; localId?: string | null };
 
 describe('runCodexLocalModePass', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('uses the shared terminal-runtime catalog launch path when no explicit launcher override is provided', async () => {
     const queue = new MessageQueue2<Mode>(() => 'hash');
     const session = {
@@ -24,7 +29,15 @@ describe('runCodexLocalModePass', () => {
       discardCommittedMessageLocalIds: vi.fn(),
       sendSessionEvent: vi.fn(),
     };
-    mockCatalogLaunch.mockResolvedValueOnce({ type: 'switch', resumeId: 'resume-catalog' });
+    const launch = vi.fn(async () => ({ type: 'switch', resumeId: 'resume-catalog' }));
+    resolveBackendExecutionSurfaces.mockResolvedValue({
+      terminalRuntime: {
+        launch,
+      },
+      directSessions: null,
+      attach: null,
+      sessionHandoff: null,
+    });
 
     const result = await runCodexLocalModePass({
       session: session as unknown as ApiSessionClient,
@@ -38,7 +51,8 @@ describe('runCodexLocalModePass', () => {
     });
 
     expect(result).toEqual({ type: 'remote', resumeId: 'resume-catalog' });
-    expect(mockCatalogLaunch).toHaveBeenCalledWith({
+    expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith('codex');
+    expect(launch).toHaveBeenCalledWith({
       path: '/tmp/project',
       api: {},
       session,

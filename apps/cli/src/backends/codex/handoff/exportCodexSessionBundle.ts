@@ -6,12 +6,13 @@ import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity 
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 import {
   DirectSessionsSourceSchema,
-  readAgentRuntimeDescriptorV1ForProvider,
-  readCanonicalAgentRuntimeDescriptorV1ForProvider,
+  readCanonicalRuntimeDescriptorV1ForProvider,
+  readRuntimeDescriptorV1ForProvider,
+  readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
 
 import { collectCodexSessionRolloutFiles } from '../rollout/discovery/collectCodexSessionRolloutFiles';
-import { resolveCodexHomesForDirectSessionsSource } from '../directSessions/resolveCodexHomesForDirectSessionsSource';
+import { homes } from '../directSessions/homes';
 import type { CodexSessionBundle } from '../../../session/handoff/types';
 
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {
@@ -42,7 +43,7 @@ async function resolvePreferredCodexHomes(params: Readonly<{
     return [fallbackCodexHome];
   }
 
-  const resolvedHomes = await resolveCodexHomesForDirectSessionsSource({
+  const resolvedHomes = await homes({
     source,
     activeServerDir: params.activeServerDir,
     env: params.env,
@@ -51,7 +52,10 @@ async function resolvePreferredCodexHomes(params: Readonly<{
 }
 
 function resolveCodexSource(metadata: Record<string, unknown>): DirectSessionsSource | undefined {
-  const runtimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(metadata.agentRuntimeDescriptorV1, 'codex');
+  const runtimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(
+    readRuntimeDescriptorV1FromMetadata(metadata),
+    'codex',
+  );
   const directSession = asRecord(metadata.directSessionV1);
   const parsedDirectSource = directSession?.providerId === 'codex'
     ? DirectSessionsSourceSchema.safeParse(directSession.source)
@@ -87,7 +91,10 @@ export async function exportCodexSessionBundle(params: Readonly<{
   activeServerDir: string;
 }>): Promise<CodexSessionBundle> {
   const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(params.metadata);
-  const runtimeDescriptor = readAgentRuntimeDescriptorV1ForProvider(params.metadata.agentRuntimeDescriptorV1, 'codex');
+  const runtimeDescriptor = readRuntimeDescriptorV1ForProvider(
+    readRuntimeDescriptorV1FromMetadata(params.metadata),
+    'codex',
+  );
   const sanitizedRuntimeDescriptor = runtimeDescriptor
     ? buildCodexAgentRuntimeDescriptor({
       backendMode: runtimeDescriptor.provider.backendMode,

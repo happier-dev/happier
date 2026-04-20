@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { EnhancedMode } from '../loop';
+import type { EnhancedMode } from '../runtime/claudeEnhancedMode';
 import type { SDKAssistantMessage } from '../sdk';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
@@ -141,7 +141,7 @@ describe('PermissionHandler (mode parameter precedence)', () => {
     ).resolves.toMatchObject({ behavior: 'allow' });
   });
 
-  it('auto-allows edit tools when mode.permissionMode is safe-yolo (mapped to acceptEdits)', async () => {
+  it('auto-allows edit tools when mode.permissionMode is safe-yolo (mapped to auto)', async () => {
     const { session } = createPermissionHandlerSessionStub();
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);

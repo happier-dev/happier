@@ -68,4 +68,28 @@ describe('buildCodexMcpStartConfig (canonical suite)', () => {
 
     expect(out.model).toBeUndefined();
   });
+
+  it('omits sandbox + approval-policy when undefined so Codex honors ~/.codex/config.toml', () => {
+    const out = buildCodexMcpStartConfig({
+      prompt: 'hi',
+      mcpServers: {},
+      // Neither sandbox nor approvalPolicy provided: happens when Happier resolves to 'default'.
+    });
+
+    expect(out).not.toHaveProperty('sandbox');
+    expect(out).not.toHaveProperty('approval-policy');
+    expect(out.prompt).toBe('hi');
+  });
+
+  it('omits sandbox + approval-policy when null so Codex honors ~/.codex/config.toml', () => {
+    const out = buildCodexMcpStartConfig({
+      prompt: 'hi',
+      mcpServers: {},
+      sandbox: null,
+      approvalPolicy: null,
+    });
+
+    expect(out).not.toHaveProperty('sandbox');
+    expect(out).not.toHaveProperty('approval-policy');
+  });
 });

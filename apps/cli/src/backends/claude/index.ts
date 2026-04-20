@@ -1,26 +1,27 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
 
-import { claudeDaemonSpawnHooks } from '@/backends/claude/daemon/spawnHooks';
-import { normalizeClaudeHappyCliSessionControlPermissionMode } from '@/backends/claude/utils/permissionMode';
+import { claudeDaemonSpawnHooks } from './daemon/spawnHooks';
+import { normalizeClaudeHappyCliSessionControlPermissionMode } from './utils/permissionMode';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
   id: AGENTS_CORE.claude.id,
   cliSubcommand: AGENTS_CORE.claude.cliSubcommand,
-  getCliCommandHandler: async () => (await import('@/backends/claude/cli/command')).handleClaudeCliCommand,
-  getCliCapabilityOverride: async () => (await import('@/backends/claude/cli/capability')).cliCapability,
-  getCliDetect: async () => (await import('@/backends/claude/cli/detect')).cliDetect,
-  getCliAuthSpec: async () => (await import('@/backends/claude/cli/auth/claudeCliAuthSpec')).claudeCliAuthSpec,
-  getCloudConnectTarget: async () => (await import('@/backends/claude/cloud/connect')).claudeCloudConnect,
+  getCliCommandHandler: async () => (await import('./cli/command')).handleClaudeCliCommand,
+  getCliCapabilityOverride: async () => (await import('./cli/capability')).cliCapability,
+  getCliDetect: async () => (await import('./cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('./cli/auth/claudeCliAuthSpec')).claudeCliAuthSpec,
+  getCloudConnectTarget: async () => (await import('./cloud/connect')).claudeCloudConnect,
   getDaemonSpawnHooks: async () => claudeDaemonSpawnHooks,
-  getDirectSessionProviderOps: async () => (await import('@/backends/claude/directSessions/providerOps')).claudeDirectSessionProviderOps,
-  getConnectedServicesSpawnMaterializer: async () =>
-    (await import('@/backends/claude/connectedServices/createClaudeConnectedServicesSpawnMaterializer'))
-      .createClaudeConnectedServicesSpawnMaterializer(),
-  getSessionHandoffProviderOps: async () => (await import('@/backends/claude/handoff/providerOps')).claudeSessionHandoffProviderOps,
+  getDirectSessionProviderOps: async () => (await import('./directSessions/providerOps')).claudeDirectSessionProviderOps,
+  getConnectedServicesMaterializer: async () =>
+    (await import('./connectedServices/createClaudeConnectedServicesMaterializer'))
+      .createClaudeConnectedServicesMaterializer(),
+  getBindings: async () => (await import('./bindings/index')).createClaudeBindings,
+  getSessionHandoffProviderOps: async () => (await import('./handoff/providerOps')).claudeSessionHandoffProviderOps,
   normalizeSessionControlPermissionMode: normalizeClaudeHappyCliSessionControlPermissionMode,
-  getTerminalRuntimeOps: async () => (await import('@/backends/claude/terminalRuntime/claudeTerminalRuntimeOps')).claudeTerminalRuntimeOps,
+  getTerminalRuntimeOps: async () => (await import('./terminalRuntime/claudeTerminalRuntimeOps')).claudeTerminalRuntimeOps,
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
-  getPreflightSessionControlsProbeAdapter: async () => (await import('@/backends/claude/preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
-  getHeadlessTmuxArgvTransform: async () => (await import('@/terminal/tmux/headlessTmuxArgs')).ensureRemoteStartingModeArgs,
+  getPreflightSessionControlsProbeAdapter: async () => (await import('./preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
+  getHeadlessTmuxArgvTransform: async () => (await import('../../terminal/tmux/headlessArgs')).ensureHeadlessTmuxRemoteStartingModeArgs,
 } satisfies AgentCatalogEntry;

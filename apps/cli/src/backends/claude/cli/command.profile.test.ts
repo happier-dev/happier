@@ -1,14 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const { runSessionCommandSpy } = vi.hoisted(() => ({
+  runSessionCommandSpy: vi.fn(),
+}));
+
+vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
+  getSessionHostBridge: () => ({
+    runSessionCommand: (...args: unknown[]) => runSessionCommandSpy(...args),
+  }),
+}));
+
 import { handleClaudeCliCommand } from './command';
-import * as runClaudeModule from '@/backends/claude/runClaude';
 import * as ensureDaemonModule from '@/daemon/ensureDaemon';
 import * as persistenceModule from '@/persistence';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import * as providerSettingsModule from '@/settings/providerSettings';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  runSessionCommandSpy.mockReset();
 });
 
 describe('handleClaudeCliCommand --profile', () => {
@@ -23,7 +32,6 @@ describe('handleClaudeCliCommand --profile', () => {
       } as any);
       vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
       vi.spyOn(ensureDaemonModule, 'shouldAutoStartDaemonAfterAuth').mockReturnValue(false);
-      vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
       vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
         source: 'none',
         settings: {
@@ -40,7 +48,7 @@ describe('handleClaudeCliCommand --profile', () => {
         whenRefreshed: null,
       } as any);
 
-      const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+      runSessionCommandSpy.mockResolvedValue(undefined);
 
       await handleClaudeCliCommand({
         args: ['--profile', 'work'],
@@ -51,7 +59,7 @@ describe('handleClaudeCliCommand --profile', () => {
       expect(process.env.HAPPIER_SESSION_PROFILE_ID).toBe('work');
       expect(process.env.TEST_PROFILE_TOKEN).toBe('shh');
 
-      const passedOptions = runSpy.mock.calls[0]?.[1] as any;
+      const passedOptions = runSessionCommandSpy.mock.calls[0]?.[1] as any;
       const claudeArgs = Array.isArray(passedOptions?.claudeArgs) ? passedOptions.claudeArgs : [];
       expect(claudeArgs).not.toContain('--profile');
       expect(claudeArgs).not.toContain('work');
@@ -77,7 +85,6 @@ describe('handleClaudeCliCommand --profile', () => {
     } as any);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
     vi.spyOn(ensureDaemonModule, 'shouldAutoStartDaemonAfterAuth').mockReturnValue(false);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
       settings: {
@@ -94,7 +101,7 @@ describe('handleClaudeCliCommand --profile', () => {
       whenRefreshed: null,
     } as any);
 
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['--profile', 'work', '--permission-mode=bypassPermissions'],
@@ -102,8 +109,9 @@ describe('handleClaudeCliCommand --profile', () => {
       terminalRuntime: null,
     } as any);
 
-    const passedOptions = runSpy.mock.calls[0]?.[1] as any;
-    expect(passedOptions?.permissionMode).toBe('bypassPermissions');
+    const passedOptions = runSessionCommandSpy.mock.calls[0]?.[1] as any;
+    // The shared session-start parser canonicalizes historical aliases (bypassPermissions -> yolo).
+    expect(passedOptions?.permissionMode).toBe('yolo');
 
     const claudeArgs = Array.isArray(passedOptions?.claudeArgs) ? passedOptions.claudeArgs : [];
     expect(claudeArgs).not.toContain('--permission-mode=bypassPermissions');

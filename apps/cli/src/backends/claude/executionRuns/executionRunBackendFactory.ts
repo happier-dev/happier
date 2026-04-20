@@ -1,20 +1,36 @@
 import { ClaudeSdkAgentBackend } from '@/backends/claude/sdkAgentBackend/ClaudeSdkAgentBackend';
 import type { ExecutionRunBackendFactory } from '@/agent/executionRuns/registry/executionRunBackendTypes';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { BackendIsolationBundle, BackendIsolationRequest } from '@/runtime/isolation/types';
 import { configuration } from '@/configuration';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { resolveClaudeExecutionRunPermissionPolicy } from './resolveClaudeExecutionRunPermissionPolicy';
 import { resolveClaudeCodeXdgIsolation } from '@/backends/claude/utils/resolveClaudeCodeXdgIsolation';
+import { resolvePermissionPolicy } from './permissionPolicy';
+
+function exposeClaudeExecutionRunHostRuntime(runtime: ClaudeSdkAgentBackend): ExecutionRunHostRuntime {
+  return Object.freeze({
+    readResumeSupport: runtime.readResumeSupport.bind(runtime),
+    provisionSession: runtime.provisionSession.bind(runtime),
+    sendPrompt: runtime.sendPrompt.bind(runtime),
+    sendSteerPrompt: runtime.sendSteerPrompt.bind(runtime),
+    cancel: runtime.cancel.bind(runtime),
+    subscribeMessages: runtime.subscribeMessages.bind(runtime),
+    respondToPermission: runtime.respondToPermission.bind(runtime),
+    waitForTurnCompletion: runtime.waitForTurnCompletion.bind(runtime),
+    dispose: runtime.dispose.bind(runtime),
+  });
+}
 
 export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
-  return new ClaudeSdkAgentBackend({
+  const runtime = new ClaudeSdkAgentBackend({
     cwd: opts.cwd,
     modelId: opts.modelId ?? 'default',
-    permissionPolicy: resolveClaudeExecutionRunPermissionPolicy(opts.permissionMode),
+    permissionPolicy: resolvePermissionPolicy(opts.permissionMode),
     settingsPath: opts.isolation?.settingsPath,
     env: opts.isolation?.env,
   });
+  return exposeClaudeExecutionRunHostRuntime(runtime);
 };
 
 export function resolveIsolation(request: BackendIsolationRequest, baseBundle: BackendIsolationBundle): BackendIsolationBundle {

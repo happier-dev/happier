@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 
 import { ClaudeTurnChangeTracker } from './ClaudeTurnChangeTracker';

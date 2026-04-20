@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 
 import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
@@ -9,7 +10,7 @@ import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { writeTextFileSync } from '@/testkit/fs/fileHelpers';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
-import { getDefaultClaudeCodePath, getDefaultClaudeCodePathForAgentSdk } from './utils';
+import { getDefaultClaudeCodePath, getDefaultClaudeCodePathForAgentSdk, streamToStdin } from './utils';
 
 const envKeys = [
   'HOME',
@@ -361,5 +362,33 @@ describe('Claude SDK utils - getDefaultClaudeCodePathForAgentSdk', () => {
     Object.defineProperty(process, 'execPath', { value: fakeNode, configurable: true });
 
     expect(getDefaultClaudeCodePathForAgentSdk()).toBe(globalCliJs);
+  });
+});
+
+describe('Claude SDK utils - streamToStdin', () => {
+  it('treats EPIPE from Claude stdin as benign when the subprocess exits mid-stream', async () => {
+    class BrokenPipeWritable extends EventEmitter {
+      destroyed = false;
+      writableEnded = false;
+      endCalled = false;
+
+      write(): boolean {
+        throw Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+      }
+
+      end(): void {
+        this.endCalled = true;
+        this.writableEnded = true;
+      }
+    }
+
+    async function* promptStream(): AsyncIterable<unknown> {
+      yield { type: 'user', message: { role: 'user', content: 'hello' } };
+    }
+
+    const stdin = new BrokenPipeWritable();
+
+    await expect(streamToStdin(promptStream(), stdin as unknown as NodeJS.WritableStream)).resolves.toBeUndefined();
+    expect(stdin.endCalled).toBe(false);
   });
 });

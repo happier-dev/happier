@@ -60,4 +60,18 @@ describe('readCodexEnvironmentAuthState', () => {
       accountLabel: 'valid@example.test',
     });
   });
+
+  it('accepts CODEX_API_KEY env auth without an auth file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-state-'));
+    tempDirs.push(dir);
+
+    expect(readCodexEnvironmentAuthState({
+      HOME: dir,
+      USERPROFILE: dir,
+      CODEX_API_KEY: 'codex-test-key',
+    })).toEqual({
+      method: 'api_key_env',
+      accountLabel: null,
+    });
+  });
 });

@@ -4,12 +4,14 @@ import {
     SESSION_MODES_STATE_KEY,
 } from '@happier-dev/agents';
 import type { Metadata } from '@/api/types';
+import { publishSessionControlsMetadataBestEffort } from '@/agent/runtime/controls/publishSessionControlsMetadataBestEffort';
 
 type JsonRpcClient = Readonly<{
     request: (method: string, params?: unknown) => Promise<unknown>;
 }>;
 
 type MetadataSession = Readonly<{
+    ensureMetadataSnapshot?: (opts: Readonly<{ timeoutMs: number }>) => Promise<Metadata | null>;
     updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
 }>;
 
@@ -470,67 +472,79 @@ export async function publishCodexAppServerSessionControlsMetadata(params: Reado
         currentServiceTier: params.currentServiceTier,
     });
 
-    await Promise.resolve(params.session.updateMetadata((metadata) => ({
-        ...metadata,
-        [SESSION_MODES_STATE_KEY]: (() => {
-            const existing = (metadata as Record<string, unknown>)[SESSION_MODES_STATE_KEY];
-            if (!(availableModes.length > 0)) {
-                // If the probe produced no usable items, keep the last known-good state if present;
-                // otherwise publish an empty placeholder so the UI can show a loading state.
-                if (hasGenericSessionModesState(existing, provider)) return existing;
-                return {
-                    v: 1,
-                    provider,
-                    updatedAt,
-                    currentModeId: normalizeString(params.currentModeId) ?? 'default',
-                    availableModes: [],
-                };
-            }
+    const hasMetadataSnapshotCapability = typeof params.session.ensureMetadataSnapshot === 'function';
+    const metadataSnapshot = hasMetadataSnapshotCapability
+        ? await params.session.ensureMetadataSnapshot({ timeoutMs: 60_000 }).catch(() => null)
+        : null;
+    if (!metadataSnapshot && hasMetadataSnapshotCapability) return;
+
+    const metadataRecord = (metadataSnapshot ?? {}) as Record<string, unknown>;
+    const sessionModesState = (() => {
+        const existing = metadataRecord[SESSION_MODES_STATE_KEY];
+        if (!(availableModes.length > 0)) {
+            // If the probe produced no usable items, keep the last known-good state if present;
+            // otherwise publish an empty placeholder so the UI can show a loading state.
+            if (hasGenericSessionModesState(existing, provider)) return existing;
             return {
-                v: 1,
+                v: 1 as const,
                 provider,
                 updatedAt,
-                currentModeId: currentModeId ?? normalizeString(params.currentModeId) ?? 'default',
-                availableModes,
+                currentModeId: normalizeString(params.currentModeId) ?? 'default',
+                availableModes: [],
             };
-        })(),
-        [SESSION_MODELS_STATE_KEY]: (() => {
-            const existing = (metadata as Record<string, unknown>)[SESSION_MODELS_STATE_KEY];
-            if (!(availableModels.length > 0)) {
-                if (hasGenericSessionModelsState(existing, provider)) return existing;
-                return {
-                    v: 1,
-                    provider,
-                    updatedAt,
-                    currentModelId: normalizeString(params.currentModelId) ?? 'default',
-                    availableModels: [],
-                };
-            }
+        }
+        return {
+            v: 1 as const,
+            provider,
+            updatedAt,
+            currentModeId: currentModeId ?? normalizeString(params.currentModeId) ?? 'default',
+            availableModes,
+        };
+    })();
+    const sessionModelsState = (() => {
+        const existing = metadataRecord[SESSION_MODELS_STATE_KEY];
+        if (!(availableModels.length > 0)) {
+            if (hasGenericSessionModelsState(existing, provider)) return existing;
             return {
-                v: 1,
+                v: 1 as const,
                 provider,
                 updatedAt,
-                currentModelId: currentModelId ?? normalizeString(params.currentModelId) ?? 'default',
-                availableModels,
+                currentModelId: normalizeString(params.currentModelId) ?? 'default',
+                availableModels: [],
             };
-        })(),
-        [SESSION_CONFIG_OPTIONS_STATE_KEY]: (() => {
-            const existing = (metadata as Record<string, unknown>)[SESSION_CONFIG_OPTIONS_STATE_KEY];
-            if (!(availableModels.length > 0)) {
-                if (hasGenericSessionConfigOptionsState(existing, provider)) return existing;
-                return {
-                    v: 1,
-                    provider,
-                    updatedAt,
-                    configOptions: [],
-                };
-            }
+        }
+        return {
+            v: 1 as const,
+            provider,
+            updatedAt,
+            currentModelId: currentModelId ?? normalizeString(params.currentModelId) ?? 'default',
+            availableModels,
+        };
+    })();
+    const sessionConfigOptionsState = (() => {
+        const existing = metadataRecord[SESSION_CONFIG_OPTIONS_STATE_KEY];
+        if (!(availableModels.length > 0)) {
+            if (hasGenericSessionConfigOptionsState(existing, provider)) return existing;
             return {
-                v: 1,
+                v: 1 as const,
                 provider,
                 updatedAt,
-                configOptions,
+                configOptions: [],
             };
-        })(),
-    })));
+        }
+        return {
+            v: 1 as const,
+            provider,
+            updatedAt,
+            configOptions,
+        };
+    })();
+
+    await publishSessionControlsMetadataBestEffort({
+        session: params.session,
+        metadataSnapshot,
+        sessionModesState,
+        sessionModelsState,
+        sessionConfigOptionsState,
+    });
 }

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { claudeRemoteDispatch } from './claudeRemoteDispatch';
+import { dispatchClaudeRemoteSession as claudeRemoteDispatch } from '../runtime/remote/dispatch';
 import { getProjectPath } from '../utils/path';
 
 describe('claudeRemoteDispatch', () => {
@@ -39,7 +39,6 @@ describe('claudeRemoteDispatch', () => {
                 })}\n`,
             );
 
-            const mockLegacy = vi.fn(async () => {});
             const mockAgentSdk = vi.fn(async () => {
                 const contents = await readFile(transcriptPath, 'utf8');
                 expect(contents).toMatch(/\"type\":\"tool_result\"/);
@@ -57,11 +56,10 @@ describe('claudeRemoteDispatch', () => {
                         return { message: 'continue', mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any };
                     },
                 } as any,
-                { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+                { runClaudeRemoteAgentSdk: mockAgentSdk },
             );
 
             expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-            expect(mockLegacy).toHaveBeenCalledTimes(0);
         } finally {
             if (previousClaudeConfigDir === undefined) {
                 delete process.env.CLAUDE_CONFIG_DIR;
@@ -72,7 +70,6 @@ describe('claudeRemoteDispatch', () => {
     });
 
     it('routes to Agent SDK runner when enabled on first message', async () => {
-        const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async () => {});
         const onRunnerSelected = vi.fn();
 
@@ -89,16 +86,14 @@ describe('claudeRemoteDispatch', () => {
                     };
                 },
             } as any,
-            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+            { runClaudeRemoteAgentSdk: mockAgentSdk },
         );
 
         expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
         expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
     it('routes to Agent SDK runner when the enablement flag is missing on first message (back-compat default)', async () => {
-        const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async () => {});
         const onRunnerSelected = vi.fn();
 
@@ -115,16 +110,14 @@ describe('claudeRemoteDispatch', () => {
                     };
                 },
             } as any,
-            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+            { runClaudeRemoteAgentSdk: mockAgentSdk },
         );
 
         expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
         expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
-    it('falls back to legacy runner when Agent SDK runner fails with an authentication error before consuming additional messages', async () => {
-        const mockLegacy = vi.fn(async () => {});
+    it('does not fall back to legacy runner when Agent SDK runner fails with an authentication error before consuming additional messages', async () => {
         const mockAgentSdk = vi.fn(async () => {
             throw new Error(
                 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}',
@@ -133,29 +126,28 @@ describe('claudeRemoteDispatch', () => {
         const onRunnerSelected = vi.fn();
 
         let sent = false;
-        await claudeRemoteDispatch(
-            {
-                onRunnerSelected,
-                nextMessage: async () => {
-                    if (sent) return null;
-                    sent = true;
-                    return {
-                        message: 'hello',
-                        mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
-                    };
-                },
-            } as any,
-            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
-        );
+        await expect(
+            claudeRemoteDispatch(
+                {
+                    onRunnerSelected,
+                    nextMessage: async () => {
+                        if (sent) return null;
+                        sent = true;
+                        return {
+                            message: 'hello',
+                            mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
+                        };
+                    },
+                } as any,
+                { runClaudeRemoteAgentSdk: mockAgentSdk },
+            ),
+        ).rejects.toThrow(/Failed to authenticate/);
 
-        expect(onRunnerSelected).toHaveBeenNthCalledWith(1, 'agentSdk');
-        expect(onRunnerSelected).toHaveBeenNthCalledWith(2, 'legacy');
+        expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
         expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(1);
     });
 
     it('does not fall back to legacy runner if Agent SDK has already started a session before failing with an authentication error', async () => {
-        const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async (params: any) => {
             params.onSessionFound?.('sess_started');
             throw new Error(
@@ -179,47 +171,44 @@ describe('claudeRemoteDispatch', () => {
                         };
                     },
                 } as any,
-                { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+                { runClaudeRemoteAgentSdk: mockAgentSdk },
             ),
         ).rejects.toThrow(/Failed to authenticate/);
 
         expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
         expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
-    it('falls back to legacy runner when Agent SDK runner exits with code 1 before emitting any messages', async () => {
-        const mockLegacy = vi.fn(async () => {});
+    it('does not fall back to legacy runner when Agent SDK runner exits with code 1 before emitting any messages', async () => {
         const mockAgentSdk = vi.fn(async () => {
             throw new Error('Claude Code process exited with code 1');
         });
         const onRunnerSelected = vi.fn();
 
         let sent = false;
-        await claudeRemoteDispatch(
-            {
-                onRunnerSelected,
-                onMessage: vi.fn(),
-                nextMessage: async () => {
-                    if (sent) return null;
-                    sent = true;
-                    return {
-                        message: 'continue',
-                        mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
-                    };
-                },
-            } as any,
-            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
-        );
+        await expect(
+            claudeRemoteDispatch(
+                {
+                    onRunnerSelected,
+                    onMessage: vi.fn(),
+                    nextMessage: async () => {
+                        if (sent) return null;
+                        sent = true;
+                        return {
+                            message: 'continue',
+                            mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
+                        };
+                    },
+                } as any,
+                { runClaudeRemoteAgentSdk: mockAgentSdk },
+            ),
+        ).rejects.toThrow(/exited with code 1/);
 
-        expect(onRunnerSelected).toHaveBeenNthCalledWith(1, 'agentSdk');
-        expect(onRunnerSelected).toHaveBeenNthCalledWith(2, 'legacy');
+        expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
         expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(1);
     });
 
     it('does not fall back to legacy runner when Agent SDK exits with code 1 after emitting a message', async () => {
-        const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async (params: any) => {
             params.onMessage?.({ type: 'assistant', message: { role: 'assistant', content: [] } });
             throw new Error('Claude Code process exited with code 1');
@@ -241,17 +230,15 @@ describe('claudeRemoteDispatch', () => {
                         };
                     },
                 } as any,
-                { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+                { runClaudeRemoteAgentSdk: mockAgentSdk },
             ),
         ).rejects.toThrow(/exited with code 1/);
 
         expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
         expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
     it('still routes to Agent SDK runner when enabled even if --mcp-config flags are present (runner parses and maps to mcpServers)', async () => {
-        const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async () => {});
         const onRunnerSelected = vi.fn();
 
@@ -269,16 +256,14 @@ describe('claudeRemoteDispatch', () => {
                     };
                 },
             } as any,
-            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+            { runClaudeRemoteAgentSdk: mockAgentSdk },
         );
 
         expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
         expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
-    it('routes to legacy runner when Agent SDK is not enabled on first message', async () => {
-        const mockLegacy = vi.fn(async () => {});
+    it('routes to Agent SDK runner even when the enablement flag is disabled on first message', async () => {
         const mockAgentSdk = vi.fn(async () => {});
         const onRunnerSelected = vi.fn();
 
@@ -295,12 +280,10 @@ describe('claudeRemoteDispatch', () => {
                     };
                 },
             } as any,
-            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+            { runClaudeRemoteAgentSdk: mockAgentSdk },
         );
 
-        expect(onRunnerSelected).toHaveBeenCalledWith('legacy');
-        expect(mockAgentSdk).toHaveBeenCalledTimes(0);
-        expect(mockLegacy).toHaveBeenCalledTimes(1);
+        expect(onRunnerSelected).toHaveBeenCalledWith('agentSdk');
+        expect(mockAgentSdk).toHaveBeenCalledTimes(1);
     });
 });
-

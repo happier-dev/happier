@@ -62,7 +62,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
 
   it('adds a model-scoped Thinking option only when the installed Claude CLI supports --effort', async () => {
     tempDir = makeTempDir('happier-claude-preflight-');
-    const fakeClaude = writeFakeClaudeBinary(tempDir, '  --effort <level>  Effort level for the current session (low, medium, high, max)');
+    const fakeClaude = writeFakeClaudeBinary(tempDir, '  --effort <level>  Effort level for the current session (low, medium, high, xhigh, max)');
 
     process.env.PATH = '/usr/bin:/bin';
     process.env.HAPPIER_CLAUDE_PATH = fakeClaude;
@@ -75,6 +75,24 @@ describe('claudePreflightModelsProbeAdapter', () => {
     });
 
     expect(Array.isArray(raw)).toBe(true);
+
+    // Opus 4.7 supports effort, including `xhigh` and `max`.
+    expect(raw).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'claude-opus-4-7',
+        modelOptions: [expect.objectContaining({
+          id: 'reasoning_effort',
+          currentValue: 'xhigh',
+          options: expect.arrayContaining([
+            expect.objectContaining({ value: 'low' }),
+            expect.objectContaining({ value: 'medium' }),
+            expect.objectContaining({ value: 'high' }),
+            expect.objectContaining({ value: 'xhigh' }),
+            expect.objectContaining({ value: 'max' }),
+          ]),
+        })],
+      }),
+    ]));
 
     // Opus 4.6 supports effort, including the special `max` level.
     expect(raw).toEqual(expect.arrayContaining([

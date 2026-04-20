@@ -1,15 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const { runSessionCommandSpy } = vi.hoisted(() => ({
+  runSessionCommandSpy: vi.fn(),
+}));
+
+vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
+  getSessionHostBridge: () => ({
+    runSessionCommand: (...args: unknown[]) => runSessionCommandSpy(...args),
+  }),
+}));
+
 import { handleClaudeCliCommand } from './command';
-import * as runClaudeModule from '@/backends/claude/runClaude';
 import * as ensureDaemonModule from '@/daemon/ensureDaemon';
 import * as persistenceModule from '@/persistence';
-import * as providerSettingsModule from '@/settings/providerSettings';
 import * as sessionsHttpModule from '@/session/transport/http/sessionsHttp';
 import * as resumeCommandModule from '@/cli/commands/resume';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  runSessionCommandSpy.mockReset();
 });
 
 describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', () => {
@@ -20,7 +29,6 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
     } as any);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
     vi.spyOn(ensureDaemonModule, 'shouldAutoStartDaemonAfterAuth').mockReturnValue(false);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
 
     vi.spyOn(sessionsHttpModule, 'fetchSessionById').mockResolvedValue({
       id: 'session_happy_123',
@@ -37,7 +45,7 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
     } as any);
 
     const resumeSpy = vi.spyOn(resumeCommandModule, 'handleResumeCommand').mockResolvedValue(undefined);
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['--resume', 'session_happy_123'],
@@ -52,7 +60,7 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
         terminalRuntime: null,
       }),
     );
-    expect(runSpy).not.toHaveBeenCalled();
+    expect(runSessionCommandSpy).not.toHaveBeenCalled();
   });
 
   it('delegates to `happier resume <id>` for implicit Claude invocations when the id is a Happier session id', async () => {
@@ -62,7 +70,6 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
     } as any);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
     vi.spyOn(ensureDaemonModule, 'shouldAutoStartDaemonAfterAuth').mockReturnValue(false);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
 
     vi.spyOn(sessionsHttpModule, 'fetchSessionById').mockResolvedValue({
       id: 'cmm_test_happy_123',
@@ -79,7 +86,7 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
     } as any);
 
     const resumeSpy = vi.spyOn(resumeCommandModule, 'handleResumeCommand').mockResolvedValue(undefined);
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['--resume', 'cmm_test_happy_123'],
@@ -94,7 +101,7 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
         terminalRuntime: null,
       }),
     );
-    expect(runSpy).not.toHaveBeenCalled();
+    expect(runSessionCommandSpy).not.toHaveBeenCalled();
   });
 
   it('does not rewrite resume ids for explicit happier claude invocations', async () => {
@@ -104,9 +111,8 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
     } as any);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
     vi.spyOn(ensureDaemonModule, 'shouldAutoStartDaemonAfterAuth').mockReturnValue(false);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
 
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['claude', '--resume', 'cmm_test_happy_123'],
@@ -114,9 +120,12 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
       terminalRuntime: null,
     } as any);
 
-    const passedOptions = runSpy.mock.calls[0]?.[1] as any;
-    const claudeArgs = Array.isArray(passedOptions?.claudeArgs) ? passedOptions.claudeArgs : [];
-    expect(claudeArgs).toEqual(expect.arrayContaining(['--resume', 'cmm_test_happy_123']));
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({
+        claudeArgs: expect.arrayContaining(['--resume', 'cmm_test_happy_123']),
+      }),
+    );
   });
 
   it('does not delegate when the resume id is not a Happier session id', async () => {
@@ -126,12 +135,11 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
     } as any);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
     vi.spyOn(ensureDaemonModule, 'shouldAutoStartDaemonAfterAuth').mockReturnValue(false);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
 
     vi.spyOn(sessionsHttpModule, 'fetchSessionById').mockResolvedValue(null);
 
     const resumeSpy = vi.spyOn(resumeCommandModule, 'handleResumeCommand').mockResolvedValue(undefined);
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['--resume', 'cmm_test_happy_123'],
@@ -140,6 +148,11 @@ describe('handleClaudeCliCommand --resume (best-effort Happier id resolution)', 
     } as any);
 
     expect(resumeSpy).not.toHaveBeenCalled();
-    expect(runSpy).toHaveBeenCalled();
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({
+        resume: 'cmm_test_happy_123',
+      }),
+    );
   });
 });

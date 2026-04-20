@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 
-import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
-import { makeMode } from './claudeRemoteAgentSdk.testkit';
+import { runClaudeRemoteAgentSdk as claudeRemoteAgentSdk } from './sdk/runAgentSdk';
+import { makeMode } from './sdk/testkit';
 
 describe('claudeRemoteAgentSdk error artifacts', () => {
     it('attaches tail text for debug/stderr logs (bounded) when the Agent SDK runner throws', async () => {

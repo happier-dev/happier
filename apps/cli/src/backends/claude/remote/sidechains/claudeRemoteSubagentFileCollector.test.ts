@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import type { SDKAssistantMessage, SDKUserMessage } from '@/backends/claude/sdk';
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 
 import { ClaudeRemoteSubagentFileCollector } from './claudeRemoteSubagentFileCollector';
 

@@ -9,7 +9,7 @@ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process
 import { resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
 import { readCodexAppServerRequestTimeoutMs } from './codexAppServerRpcTimeout';
-import { safeJsonStringify } from '@/utils/safeJson';
+import { safeJsonStringify } from '../../../../utils/safeJson';
 
 type JsonRpcMessage = Readonly<{
     id?: number | string | null;
@@ -62,10 +62,11 @@ function resolveRpcLogPath(env: NodeJS.ProcessEnv): string | null {
 
 function createRpcLogger(env: NodeJS.ProcessEnv): {
     append: (entry: RpcLogEntry) => void;
+    flush: () => Promise<void>;
 } {
     const path = resolveRpcLogPath(env);
     if (!path) {
-        return { append: () => undefined };
+        return { append: () => undefined, flush: async () => undefined };
     }
 
     let chain = Promise.resolve();
@@ -76,7 +77,12 @@ function createRpcLogger(env: NodeJS.ProcessEnv): {
             .catch(() => undefined);
     };
 
-    return { append };
+    return {
+        append,
+        flush: async () => {
+            await chain;
+        },
+    };
 }
 
 function failWaiters(state: MessageQueueState, error: Error): void {
@@ -462,6 +468,7 @@ export async function createCodexAppServerClient(params: Readonly<{
                 // ignore
             }
             await closedPromise;
+            await rpcLogger.flush();
         })();
         return await disposePromise;
     };

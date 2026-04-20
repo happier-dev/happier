@@ -32,7 +32,7 @@ afterEach(async () => {
   tempDirs.clear();
 });
 
-describe('claudeDaemonSpawnHooks.validateSpawn', () => {
+describe('claudeDaemonSpawnHooks.resolveRuntimePrerequisites', () => {
   it('rejects spawn when claude is not resolvable', async () => {
     const homeDir = await createTempDir('happier-claude-spawnhooks-no-cli-home-');
     tempDirs.add(homeDir);
@@ -44,7 +44,7 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
     });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await claudeDaemonSpawnHooks.validateSpawn!({});
+    const res = await claudeDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('expected validation to fail');
     expect(res.errorMessage.toLowerCase()).toContain('claude');
@@ -57,7 +57,7 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ HAPPIER_CLAUDE_PATH: undefined, PATH: dir });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await claudeDaemonSpawnHooks.validateSpawn!({});
+    const res = await claudeDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(true);
   });
 
@@ -66,7 +66,7 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ PATH: '', HAPPIER_CLAUDE_PATH: binPath });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await claudeDaemonSpawnHooks.validateSpawn!({});
+    const res = await claudeDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(true);
   });
 
@@ -80,7 +80,7 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
     envScope.patch({ HAPPIER_CLAUDE_PATH: entryPath });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await claudeDaemonSpawnHooks.validateSpawn!({});
+    const res = await claudeDaemonSpawnHooks.resolveRuntimePrerequisites!({});
     expect(res.ok).toBe(true);
   });
 });
@@ -92,7 +92,7 @@ describe('claudeDaemonSpawnHooks', () => {
   });
 });
 
-describe('claudeDaemonSpawnHooks.buildExtraEnvForChild', () => {
+describe('claudeDaemonSpawnHooks.augmentEnv', () => {
   it('does not force CLAUDE_CONFIG_DIR when no override is set', async () => {
     const homeDir = await createTempDir('happier-claude-spawnhooks-home-');
     tempDirs.add(homeDir);
@@ -103,7 +103,7 @@ describe('claudeDaemonSpawnHooks.buildExtraEnvForChild', () => {
     });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({});
+    expect(claudeDaemonSpawnHooks.augmentEnv?.({} as any)).toEqual({});
   });
 
   it('publishes an explicit CLAUDE_CONFIG_DIR override when set', async () => {
@@ -113,7 +113,7 @@ describe('claudeDaemonSpawnHooks.buildExtraEnvForChild', () => {
     });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({
+    expect(claudeDaemonSpawnHooks.augmentEnv?.({} as any)).toEqual({
       CLAUDE_CONFIG_DIR: '/tmp/claude-config',
     });
   });

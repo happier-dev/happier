@@ -143,7 +143,7 @@ type BackendRunContext = {
 async function withFakeClaudeBackend(
     params: Readonly<{
     dirPrefix: string;
-    permissionPolicy: 'no_tools' | 'read_only' | 'workspace_write';
+    permissionPolicy: 'no_tools' | 'read_only' | 'workspace_write' | 'parent_session_prompt';
     toolName?: string;
     toolInput?: Record<string, unknown>;
     hangTurn?: boolean;
@@ -244,6 +244,43 @@ describe('ClaudeSdkAgentBackend', () => {
     } else {
       process.env.DEBUG = originalDebug;
     }
+  });
+
+  it('exposes the execution-run host runtime contract directly', async () => {
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-execution-run-host-runtime-',
+        permissionPolicy: 'no_tools',
+      },
+      async ({ backend }) => {
+        expect('readResumeSupport' in backend).toBe(true);
+        expect('provisionSession' in backend).toBe(true);
+        expect('subscribeMessages' in backend).toBe(true);
+        expect('waitForTurnCompletion' in backend).toBe(true);
+
+        const executionRunBackend = backend as typeof backend & {
+          readResumeSupport: (opts?: { captureReplay?: boolean }) => Promise<boolean>;
+          provisionSession: (opts?: { initialPrompt?: string; resumeSessionId?: string }) => Promise<{ sessionId: string }>;
+          subscribeMessages: (handler: (msg: unknown) => void) => () => void;
+          waitForTurnCompletion: (timeoutMs?: number | null) => Promise<void>;
+        };
+
+        await expect(executionRunBackend.readResumeSupport()).resolves.toBe(true);
+        await expect(executionRunBackend.readResumeSupport({ captureReplay: true })).resolves.toBe(false);
+
+        const messages: unknown[] = [];
+        const unsubscribe = executionRunBackend.subscribeMessages((message) => {
+          messages.push(message);
+        });
+
+        const started = await executionRunBackend.provisionSession({ initialPrompt: 'hi' });
+        expect(started.sessionId).toEqual(expect.any(String));
+        await executionRunBackend.waitForTurnCompletion();
+        expect(messages).toContainEqual(expect.objectContaining({ type: 'model-output' }));
+
+        unsubscribe();
+      },
+    );
   });
 
   it('emits cumulative model-output fullText when Claude returns multiple assistant messages in a single turn', async () => {
@@ -410,6 +447,7 @@ describe('ClaudeSdkAgentBackend', () => {
           },
           cost: {
             total: 0.123,
+            reportedUsd: 0.123,
           },
         });
       },
@@ -709,6 +747,49 @@ describe('ClaudeSdkAgentBackend', () => {
     );
   });
 
+  it('surfaces a permission request and resumes the tool call after approval in parent_session_prompt policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-parent-session-prompt-',
+        permissionPolicy: 'parent_session_prompt',
+        toolName: 'Bash',
+        toolInput: { command: 'touch /tmp/outside-workspace' },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        const permissionRequests: Array<{ id: string; reason: string; payload: unknown }> = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+          if (msg.type === 'permission-request') {
+            permissionRequests.push(msg);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        const promptPromise = backend.sendPrompt(sessionId, 'hi');
+
+        await expect.poll(() => permissionRequests.length).toBe(1);
+        await expect((backend as any).respondToPermission(permissionRequests[0].id, true)).resolves.toBeUndefined();
+
+        await promptPromise;
+        await (backend as any).waitForResponseComplete?.();
+
+        expect(permissionRequests[0]).toMatchObject({
+          reason: 'Bash',
+          payload: {
+            toolName: 'Bash',
+            input: { command: 'touch /tmp/outside-workspace' },
+          },
+        });
+        expect(seen.join(' ')).toContain('TOOL_ALLOWED');
+      },
+    );
+  });
+
   it('cancel interrupts a hanging turn so subsequent prompts can proceed', async () => {
     delete process.env.DEBUG;
 
@@ -841,16 +922,16 @@ describe('ClaudeSdkAgentBackend', () => {
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'this will hang');
         expect(typeof (backend as any).waitForResponseComplete).toBe('function');
-        const pending = (backend as any).waitForResponseComplete();
+        const pending = (backend as any).waitForResponseComplete().then(
+          () => 'resolved',
+          (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
+        );
 
         await new Promise((resolve) => setTimeout(resolve, 30));
         await backend.dispose();
 
         const settled = await Promise.race([
-          pending.then(
-            () => 'resolved',
-            (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
-          ),
+          pending,
           new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 300)),
         ]);
         expect(settled).toBe('rejected:Agent disposed');

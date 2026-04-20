@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { canonicalizeDirectSessionsPath } from '@/backends/directSessions/sourceValidation';
+import { canonicalizeDirectSessionsPath } from '@/session/directSessions/sourceValidation';
 
 export function expandHomeDirForDirectSessions(raw: string): string {
   const trimmed = raw.trim();

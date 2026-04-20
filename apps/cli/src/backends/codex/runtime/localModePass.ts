@@ -2,15 +2,15 @@ import type { PermissionMode } from '@/api/types';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 
-import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
-import { requireTerminalRuntimeLaunch } from '@/backends/terminalRuntime/requireTerminalRuntimeLaunch';
+import { discardQueuedAndPendingForTerminalSwitch } from '../../../agent/runtimeSwitching/discardQueuedAndPendingForSwitch';
+import { requireTerminalRuntimeLaunch } from '@/agent/terminalRuntime/providers/requireTerminalRuntimeLaunch';
 
-import type { CodexLauncherResult } from '../codexLocalLauncher';
+import type { CodexTerminalRuntimeLaunchResult } from '../terminalRuntime/launchTerminalRuntime';
 
 type QueueModeWithLocalId = { localId?: string | null };
 
-type DiscardController = (args: Parameters<typeof discardQueuedAndPendingForLocalSwitch>[0]) => Promise<
-  Awaited<ReturnType<typeof discardQueuedAndPendingForLocalSwitch>>
+type DiscardController = (args: Parameters<typeof discardQueuedAndPendingForTerminalSwitch>[0]) => Promise<
+  Awaited<ReturnType<typeof discardQueuedAndPendingForTerminalSwitch>>
 >;
 
 export type CodexLocalModePassResult =
@@ -32,7 +32,7 @@ export async function runCodexLocalModePass<Mode extends QueueModeWithLocalId>(o
     messageQueue: MessageQueue2<Mode>;
     permissionMode: PermissionMode;
     resumeId: string | null;
-  }) => Promise<CodexLauncherResult>;
+  }) => Promise<CodexTerminalRuntimeLaunchResult>;
   discardController?: DiscardController;
 }): Promise<CodexLocalModePassResult> {
   let cachedServerPendingCount: number | null = null;
@@ -43,7 +43,7 @@ export async function runCodexLocalModePass<Mode extends QueueModeWithLocalId>(o
   };
 
   if (opts.messageQueue.size() > 0 || (await getServerPendingCount()) > 0) {
-    const discardController = opts.discardController ?? discardQueuedAndPendingForLocalSwitch;
+    const discardController = opts.discardController ?? discardQueuedAndPendingForTerminalSwitch;
     const discardResult = await discardController({
       queue: opts.messageQueue,
       getServerPendingCount,
@@ -75,7 +75,7 @@ export async function runCodexLocalModePass<Mode extends QueueModeWithLocalId>(o
     messageQueue: MessageQueue2<Mode>;
     permissionMode: PermissionMode;
     resumeId: string | null;
-  }, CodexLauncherResult>('codex');
+  }, CodexTerminalRuntimeLaunchResult>('codex');
   const localResult = await launchLocal({
     path: opts.workspaceDir,
     api: opts.api,

@@ -1,4 +1,4 @@
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import type { SDKMessage } from '@/backends/claude/sdk';
 
 export function normalizeClaudeToolNameToCanonicalToolNameV2(rawName: string): string {

@@ -12,26 +12,26 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 export type CodexTerminalDisplayProps = {
   messageBuffer: MessageBuffer;
   logPath?: string;
-  allowSwitchToLocal?: boolean;
+  allowSwitchToTerminal?: boolean;
   onExit?: () => void | Promise<void>;
-  onSwitchToLocal?: () => void | Promise<void>;
+  onSwitchToTerminal?: () => void | Promise<void>;
 };
 
 export const CodexTerminalDisplay: React.FC<CodexTerminalDisplayProps> = ({
   messageBuffer,
   logPath,
-  allowSwitchToLocal,
+  allowSwitchToTerminal,
   onExit,
-  onSwitchToLocal,
+  onSwitchToTerminal,
 }) => {
   return (
     <RemoteControlDisplay
       providerName="Codex"
       messageBuffer={messageBuffer}
       logPath={logPath}
-      allowSwitchToLocal={allowSwitchToLocal === true}
+      allowSwitchToTerminal={allowSwitchToTerminal === true}
       onExit={onExit}
-      onSwitchToLocal={onSwitchToLocal}
+      onSwitchToTerminal={onSwitchToTerminal}
     />
   );
 };

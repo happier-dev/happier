@@ -1,7 +1,7 @@
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { normalizeClaudeToolUseNamesInRawJsonLines } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
-import { parseRawJsonLinesObject } from '@/backends/claude/utils/parseRawJsonLines';
+import { normalizeClaudeToolUseNamesInRawJsonLines } from '../../utils/normalizeClaudeToolUseNames';
+import { parseRawJsonLinesObject } from '../../utils/parseRawJsonLines';
 
 function extractEnvelopeTimestampMs(value: unknown): number {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;

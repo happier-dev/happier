@@ -1,5 +1,5 @@
-import { readJsonlFileForward } from '@/api/session/fileBackedTranscripts/jsonl/readJsonlForward';
-import { readDirectSessionTitleCandidate } from '@/api/directSessions/title/readDirectSessionTitleCandidate';
+import { readJsonlFileForward } from '../../../api/session/fileBackedTranscripts/jsonl/readJsonlForward';
+import { readDirectSessionTitleCandidate } from '../../../api/directSessions/title/readDirectSessionTitleCandidate';
 
 import { mapCodexRolloutEventToActions } from './projection/mapCodexRolloutEventToActions';
 

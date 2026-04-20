@@ -1,13 +1,12 @@
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
+import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import type { AuggieBackendOptions } from '@/backends/auggie/acp/backend';
-import { maybeUpdateAuggieSessionIdMetadata } from '@/backends/auggie/utils/auggieSessionIdMetadata';
 
 export function createAuggieAcpRuntime(params: {
   directory: string;
@@ -22,32 +21,22 @@ export function createAuggieAcpRuntime(params: {
   allowIndexing: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
-  const lastPublishedAuggieSessionId = { value: null as string | null };
-
-  return createCatalogProviderAcpRuntime<AuggieBackendOptions>({
+  return createCatalogProviderSessionIdentityRuntime<AuggieBackendOptions>({
     provider: 'auggie',
     loggerLabel: 'AuggieACP',
+    sessionIdMetadataKey: 'auggieSessionId',
     directory: params.directory,
+    machineId: params.machineId,
     session: params.session,
     transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    memoryRecallGuidance: {
-      enabled: params.memoryRecallGuidanceEnabled === true,
-      machineId: params.machineId,
-    },
+    memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
     getPermissionMode: params.getPermissionMode,
     backendOptions: {
       allowIndexing: params.allowIndexing,
-    },
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdateAuggieSessionIdMetadata({
-        getAuggieSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedAuggieSessionId,
-      });
     },
   });
 }

@@ -1,13 +1,13 @@
 import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
 
-import { listCodexDirectSessionCandidatesViaAppServer } from './listCodexDirectSessionCandidatesViaAppServer';
+import { candidates as listCandidates } from './candidates';
 
 export async function findCodexDirectSessionCandidateViaAppServer(params: Readonly<{
   codexHome: string;
   remoteSessionId: string;
   env?: NodeJS.ProcessEnv;
 }>): Promise<DirectSessionCandidateV1 | null> {
-  const candidates = await listCodexDirectSessionCandidatesViaAppServer({
+  const candidates = await listCandidates({
     codexHome: params.codexHome,
     env: params.env,
   });

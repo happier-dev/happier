@@ -1,11 +1,10 @@
-import type { RawJSONLines } from '../../types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { createClaudeProjectedJsonlSessionStore } from './createClaudeProjectedJsonlSessionStore';
 import type {
     ClaudeJsonlSessionStoreActivity,
     ClaudeJsonlSessionStorePageOlderParams,
 } from './claudeJsonlSessionStoreTypes';
-import { pageClaudeRawJsonlSessionTranscript } from './operations/pageClaudeRawJsonlSessionTranscript';
-import { readClaudeRawJsonlSessionMessages } from './operations/readClaudeRawJsonlSessionMessages';
+import { pageClaudeRawJsonlSessionTranscript, readClaudeRawJsonlSessionMessages } from './operations';
 import type { FileBackedTranscriptSessionStoreKey } from '@/api/session/fileBackedTranscripts/store';
 
 export type ClaudeRawJsonlSessionStoreReadAfterParams = Readonly<{

@@ -2,10 +2,10 @@ import { spawn } from 'node:child_process';
 
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
-import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
-import { isBun } from '@/utils/runtime';
-import { isClaudeCliJavaScriptFile } from '@/backends/claude/utils/resolveClaudeCliPath';
+import { requireJavaScriptRuntimeExecutable } from '../../../runtime/js/requireJavaScriptRuntimeExecutable';
+import { requireProviderCliLaunchSpec } from '../../../runtime/managedTools/requireProviderCliLaunchSpec';
+import { isBun } from '../../../utils/runtime';
+import { isClaudeCliJavaScriptFile } from '../utils/resolveClaudeCliPath';
 
 export async function probeClaudeHelpText(params: Readonly<{ cwd: string; timeoutMs: number }>): Promise<string | null> {
   const timeoutMs = Math.max(250, params.timeoutMs);

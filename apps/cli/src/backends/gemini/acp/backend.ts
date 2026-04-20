@@ -19,7 +19,7 @@ import {
   DEFAULT_GEMINI_MODEL
 } from '@/backends/gemini/constants';
 import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 import {
   readGeminiLocalConfigFromEnv,
   determineGeminiModel,
@@ -142,8 +142,13 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
 
   // Build args - ACP + provider-native approvals.
   // Model is passed via GEMINI_MODEL env var (gemini CLI reads it automatically)
-  // We don't use --model flag to avoid potential stdout conflicts with ACP protocol
-  const geminiArgs = ['--experimental-acp', '--approval-mode', approvalMode, ...(sandboxEnabled ? ['--sandbox'] : [])];
+  // We don't use --model flag to avoid potential stdout conflicts with ACP protocol.
+  //
+  // When the resolved approvalMode is 'default', omit `--approval-mode` so the Gemini CLI
+  // honors the user's `tools.approvalMode` from their settings.json (user/project hierarchy).
+  // Any non-'default' mode still wins, overriding settings.json as before.
+  const approvalModeArgs = approvalMode === 'default' ? [] : ['--approval-mode', approvalMode];
+  const geminiArgs = ['--experimental-acp', ...approvalModeArgs, ...(sandboxEnabled ? ['--sandbox'] : [])];
 
   // Gemini CLI ACP requires an explicit authenticate() call before session/new, otherwise it can
   // return "Authentication required" even when local OAuth credentials are present.

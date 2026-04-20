@@ -1,4 +1,4 @@
-import { RawJSONLinesSchema, type RawJSONLines } from '../types';
+import { RawJSONLinesSchema, type RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 
 export function parseRawJsonLinesObject(value: unknown): RawJSONLines | null {
   const parsed = RawJSONLinesSchema.safeParse(value);

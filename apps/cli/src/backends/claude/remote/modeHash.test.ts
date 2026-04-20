@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EnhancedMode } from '@/backends/claude/loop';
+import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 
 import { hashClaudeEnhancedModeForQueue } from './modeHash';
 

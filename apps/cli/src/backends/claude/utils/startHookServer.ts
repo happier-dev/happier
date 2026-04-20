@@ -10,14 +10,14 @@
  * 
  * ### Startup
  * ```
- * runClaude.ts                                  
+ * backends/claude/runtime/createSessionPlan.ts
  *     │                                         
  *     ├─► startHookServer() ──► HTTP server on random port (e.g., 52290)
  *     │                                         
  *     ├─► generateHookSettingsFile(port) ──► ~/.happier/tmp/hooks/session-hook-<pid>.json
  *     │   (contains SessionStart hook pointing to our server)
  *     │                                         
- *     └─► loop() ──► claudeLocal/claudeRemote
+ *     └─► runClaudeModeLoop() ──► launchClaudeTerminalSession() / launchClaudeRemoteSession()
  *             │
  *             └─► spawn claude --settings <hook-settings-path>
  * ```

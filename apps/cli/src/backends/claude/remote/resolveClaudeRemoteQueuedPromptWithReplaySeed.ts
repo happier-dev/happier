@@ -1,11 +1,11 @@
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
-import type { EnhancedMode } from '@/backends/claude/loop';
+import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 
 export async function resolveClaudeRemoteQueuedPromptWithReplaySeed(params: Readonly<{
   sessionClient: {
     getMetadataSnapshot: () => unknown;
     updateMetadata: (updater: (metadata: any) => any) => void | Promise<void>;
-    refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+    refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void | boolean>;
   };
   batch: Readonly<{
     message: string;
@@ -14,7 +14,7 @@ export async function resolveClaudeRemoteQueuedPromptWithReplaySeed(params: Read
   didBootstrap: boolean;
 }>): Promise<{ message: string; didBootstrap: boolean }> {
   const resolution = await resolveProviderPromptWithReplaySeed({
-    session: params.sessionClient,
+    session: params.sessionClient as Parameters<typeof resolveProviderPromptWithReplaySeed>[0]['session'],
     userText: params.batch.message,
     allowSeed: params.batch.mode.replaySeedAllowed !== false,
     localId: params.batch.mode.localId ?? null,

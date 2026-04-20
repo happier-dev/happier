@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 
 export type QwenApprovalMode = 'plan' | 'default' | 'auto-edit' | 'yolo';
 
@@ -16,5 +16,10 @@ export function resolveQwenApprovalMode(permissionMode: PermissionMode | null | 
 }
 
 export function buildQwenAcpArgs(permissionMode: PermissionMode | null | undefined): string[] {
-  return ['--acp', '--approval-mode', resolveQwenApprovalMode(permissionMode)];
+  // When the resolved mode is 'default', omit `--approval-mode` so the Qwen CLI honors
+  // the user's `tools.approvalMode` from their settings.json hierarchy. Any non-'default'
+  // mode still wins, overriding settings.json as before.
+  const resolved = resolveQwenApprovalMode(permissionMode);
+  if (resolved === 'default') return ['--acp'];
+  return ['--acp', '--approval-mode', resolved];
 }

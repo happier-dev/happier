@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
 
-import type { Session } from '../session';
+import type { Session } from '../runtime/session/ClaudeSession';
 import { PermissionHandler } from './permissionHandler';
 
 function createSessionStub(sendToAllDevicesAsync: ReturnType<typeof vi.fn>): Session {

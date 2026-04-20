@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/agents';
 import {
   DirectSessionsSourceSchema,
-  readCanonicalAgentRuntimeDescriptorV1ForProvider,
+  readCanonicalRuntimeDescriptorV1ForProvider,
 } from '@happier-dev/protocol';
 
 import type { CodexSessionBundle, ImportedSessionHandoffBundle } from '../../../session/handoff/types';
@@ -55,7 +55,7 @@ export async function importCodexSessionBundle(params: Readonly<{
 }>): Promise<ImportedSessionHandoffBundle> {
   const codexHome = resolveCodexHome(params.env);
   const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(params.bundle) ?? { backendMode: 'appServer' as const };
-  const importedRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(params.bundle.affinity?.runtimeDescriptor, 'codex');
+  const importedRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(params.bundle.affinity?.runtimeDescriptor, 'codex');
   const sourceAffinity = resolveCodexRuntimeSourceAffinity(params.bundle.affinity?.source);
   const runtimeDescriptor = importedRuntimeDescriptor
     ? buildCodexAgentRuntimeDescriptor({
@@ -96,7 +96,7 @@ export async function importCodexSessionBundle(params: Readonly<{
   return {
     remoteSessionId: params.bundle.remoteSessionId,
     directSource,
-    agentRuntimeDescriptorV1: runtimeDescriptor,
+    runtimeDescriptorV1: runtimeDescriptor,
     resume: {
       directory: params.targetPath,
       agent: 'codex',

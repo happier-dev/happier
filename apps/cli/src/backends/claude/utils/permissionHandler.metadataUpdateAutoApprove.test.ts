@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { EnhancedMode } from '../loop';
+import type { EnhancedMode } from '../runtime/claudeEnhancedMode';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

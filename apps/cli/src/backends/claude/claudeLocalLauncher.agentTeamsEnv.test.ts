@@ -3,12 +3,12 @@ import { EventEmitter } from 'node:events';
 
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
-import { Session } from './session';
+import { Session } from './runtime/session/ClaudeSession';
 
 const mockClaudeLocal = vi.fn(async (_opts: any) => {});
 
-vi.mock('./claudeLocal', () => ({
-  claudeLocal: mockClaudeLocal,
+vi.mock('./runtime/terminal/runTerminalSession', () => ({
+  runClaudeTerminalSession: mockClaudeLocal,
   ExitCodeError: class ExitCodeError extends Error {
     exitCode: number;
     constructor(exitCode: number) {
@@ -87,7 +87,7 @@ describe('claudeLocalLauncher (Agent Teams env)', () => {
       if (!firstOpts) firstOpts = opts;
     });
 
-    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const { launchClaudeTerminalSession: claudeLocalLauncher } = await import('./runtime/terminal/launcher');
     const result = await claudeLocalLauncher(session);
 
     expect(result).toEqual({ type: 'exit', code: 0 });

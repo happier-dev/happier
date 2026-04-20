@@ -12,7 +12,7 @@ import type {
     SDKSystemMessage,
     SDKResultMessage
 } from '@/backends/claude/sdk'
-import type { RawJSONLines } from '@/backends/claude/types'
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines'
 import type { PermissionMode } from '@/api/types'
 import { normalizeClaudeToolUseNamesInSdkMessage } from './normalizeClaudeToolUseNames'
 import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalClaudeEventTypes'

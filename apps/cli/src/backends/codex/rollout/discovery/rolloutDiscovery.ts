@@ -255,14 +255,15 @@ export async function discoverCodexRolloutFileOnce(opts: {
     }
     scored.sort((a, b) => b.score - a.score);
 
-    // When starting a brand-new Codex session, ignore stale rollouts unless the file is actively being written.
-    // Codex may continue appending to an older rollout file even for a new interactive launch.
+    // When starting a brand-new Codex session, require the rollout's own start time (session_meta.timestamp,
+    // or the mtime-derived fallback for files whose first line has not flushed yet) to be close to the
+    // launcher's startedAt. A long-running Codex session elsewhere will keep its rollout's mtime fresh while
+    // its session_meta.timestamp stays old — if we also accepted "fresh mtime" here, that unrelated session's
+    // rollout would be picked up and mirrored into this Happy session.
     const candidates = resumeId
         ? scored
-        : scored.filter(
-            (entry) =>
-                isSessionMetaFreshForStart({ sessionMeta: entry.sessionMeta, startedAtMs: opts.startedAtMs }) ||
-                entry.mtimeMs >= opts.startedAtMs - CODEX_SESSION_META_CLOCK_SKEW_MS,
+        : scored.filter((entry) =>
+            isSessionMetaFreshForStart({ sessionMeta: entry.sessionMeta, startedAtMs: opts.startedAtMs }),
           );
 
     const best = candidates[0];

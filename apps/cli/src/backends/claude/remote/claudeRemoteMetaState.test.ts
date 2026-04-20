@@ -40,9 +40,11 @@ describe('applyClaudeRemoteMetaState', () => {
   });
 
   it('ignores invalid legacy settingSources values and keeps previous value', () => {
-    const prev = { ...DEFAULT_CLAUDE_REMOTE_META_STATE, claudeRemoteSettingSources: 'project' as const } as any;
+    const prev = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, {
+      claudeRemoteSettingSourcesV2: ['project'],
+    }) as any;
     const next = applyClaudeRemoteMetaState(prev, { claudeRemoteSettingSources: 'workspace' });
-    expect((next as any).claudeRemoteSettingSources).toBe('project');
+    expect((next as any).claudeRemoteSettingSourcesV2).toEqual(['project']);
   });
 
   it('accepts claudeRemoteSettingSourcesV2 arrays when provided', () => {
@@ -51,6 +53,15 @@ describe('applyClaudeRemoteMetaState', () => {
     });
     // Normalized to stable order with invalid/dupes dropped.
     expect((next as any).claudeRemoteSettingSourcesV2).toEqual(['user', 'project', 'local']);
+  });
+
+  it('maps legacy claudeRemoteSettingSources into the canonical V2 state without persisting the legacy field', () => {
+    const next = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE as any, {
+      claudeRemoteSettingSources: 'project',
+    });
+
+    expect((next as any).claudeRemoteSettingSourcesV2).toEqual(['project']);
+    expect(Object.prototype.hasOwnProperty.call(next, 'claudeRemoteSettingSources')).toBe(false);
   });
 
   it('applies supported boolean toggles when provided', () => {

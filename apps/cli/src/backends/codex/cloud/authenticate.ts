@@ -6,11 +6,11 @@
  */
 
 import { randomBytes } from 'crypto';
-import { openBrowser } from '@/ui/openBrowser';
-import { generatePkceCodes } from '@/cloud/pkce';
-import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
-import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
-import { promptInput } from '@/terminal/prompts/promptInput';
+import { openBrowser } from '../../../ui/openBrowser';
+import { generatePkceCodes } from '../../../cloud/pkce';
+import type { CloudConnectAuthenticateOptions } from '../../../cloud/connectTypes';
+import { startOauthPkceWithPasteFallback } from '../../../cloud/oauthPkceWithPasteFallback';
+import { promptInput } from '../../../terminal/prompts/promptInput';
 
 import { createCodexCloudAuthenticator } from './createCodexCloudAuthenticator';
 import { authenticateCodexDevice, OPENAI_CODEX_DEVICE_VERIFICATION_URL } from './deviceAuth';

@@ -3,8 +3,8 @@ import { join } from 'node:path';
 
 import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
 
-import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
-import { mapWithConcurrency } from '@/api/directSessions/discovery/mapWithConcurrency';
+import { deriveDirectSessionActivityFromTimestamp } from '../../../api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
+import { mapWithConcurrency } from '../../../api/directSessions/discovery/mapWithConcurrency';
 
 import { withClaudeJsonlSessionStore } from '../transcripts/sessionStore';
 import { resolveClaudeConfigDir } from './resolveClaudeConfigDir';

@@ -1,21 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS, DEFAULT_AGENT_ID } from '@happier-dev/agents';
-import { AGENTS_CORE } from '@happier-dev/agents';
+import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore } from '@happier-dev/agents';
 
 import {
   AGENTS,
   getAcpForkContinuationHandler,
+  getConnectedServicesMaterializer,
   getDirectSessionProviderOps,
-  resolveBackendExecutionSurfaces,
+  getManagedServerLaunchSpec,
   normalizeSessionControlPermissionModeForBackendTarget,
   getProviderAttachOps,
   getProviderNativeForkHandler,
+  resolveBackendEngineAdapterResolution,
   getSessionHandoffProviderOps,
   getTerminalRuntimeOps,
   getVendorResumeSupport,
   requireCatalogEntry,
 } from './catalog';
+import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import { DEFAULT_CATALOG_AGENT_ID } from './types';
 
 describe('AGENTS', () => {
@@ -49,7 +51,7 @@ describe('AGENTS', () => {
   it('declares vendor resume support for every agent', () => {
     for (const id of AGENT_IDS) {
       const entry = requireCatalogEntry(id);
-      expect(entry.vendorResumeSupport).toBe(AGENTS_CORE[id].resume.vendorResume);
+      expect(entry.vendorResumeSupport).toBe(getAgentCore(id).resume.vendorResume);
     }
   });
 
@@ -70,7 +72,7 @@ describe('AGENTS', () => {
 
   it('keeps cloud connect config in sync with catalog entries', async () => {
     for (const id of AGENT_IDS) {
-      const core = AGENTS_CORE[id];
+      const core = getAgentCore(id);
       const entry = requireCatalogEntry(id);
 
       if (core.cloudConnect) {
@@ -102,8 +104,7 @@ describe('AGENTS', () => {
     expect(requireCatalogEntry('codex').getHeadlessTmuxArgvTransform).toBeUndefined();
   });
 
-  it('registers runnable CLI command handlers for built-in generic ACP agents', () => {
-    expect(requireCatalogEntry('customAcp').getCliCommandHandler).toBeTypeOf('function');
+  it('registers runnable CLI command handlers for canonical built-in generic ACP agents', () => {
     expect(requireCatalogEntry('kiro').getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('ohMyPi').getCliCommandHandler).toBeTypeOf('function');
   });
@@ -136,47 +137,28 @@ describe('AGENTS', () => {
     });
   });
 
+  it('loads connected-services materializers through backend catalog hooks for supporting providers', async () => {
+    await expect(getConnectedServicesMaterializer('claude')).resolves.toBeTypeOf('function');
+    await expect(getConnectedServicesMaterializer('codex')).resolves.toBeTypeOf('function');
+    await expect(getConnectedServicesMaterializer('gemini')).resolves.toBeTypeOf('function');
+    await expect(getConnectedServicesMaterializer('opencode')).resolves.toBeTypeOf('function');
+    await expect(getConnectedServicesMaterializer('pi')).resolves.toBeTypeOf('function');
+    await expect(getConnectedServicesMaterializer('ohMyPi')).resolves.toBeTypeOf('function');
+  });
+
+  it('loads managed-server launch specs through backend catalog hooks for supporting providers', async () => {
+    await expect(getManagedServerLaunchSpec('opencode')).resolves.toMatchObject({
+      command: expect.any(String),
+      args: expect.any(Array),
+    });
+  });
+
   it('loads provider-attach ops through backend catalog hooks only for supporting providers', async () => {
     await expect(getProviderAttachOps('opencode')).resolves.toMatchObject({
       evaluateEligibility: expect.any(Function),
       runAttach: expect.any(Function),
     });
     await expect(getProviderAttachOps('claude')).resolves.toBeNull();
-  });
-
-  it('loads terminal-runtime ops through backend catalog hooks only for supporting providers', async () => {
-    await expect(getTerminalRuntimeOps('codex')).resolves.toMatchObject({
-      launch: expect.any(Function),
-      bindTranscript: expect.any(Function),
-    });
-    await expect(getTerminalRuntimeOps('ohMyPi')).resolves.toMatchObject({
-      bindTranscript: expect.any(Function),
-    });
-    await expect(getTerminalRuntimeOps('claude')).resolves.toMatchObject({
-      launch: expect.any(Function),
-    });
-  });
-
-  it('resolves built-in backend execution surfaces through the existing backend catalog hooks', async () => {
-    const surfaces = await resolveBackendExecutionSurfaces('codex');
-
-    expect(surfaces.terminalRuntime).toMatchObject({
-      launch: expect.any(Function),
-      bindTranscript: expect.any(Function),
-    });
-    expect(surfaces.directSessions).toMatchObject({
-      validateSource: expect.any(Function),
-      listCandidates: expect.any(Function),
-      getActivity: expect.any(Function),
-      pageTranscript: expect.any(Function),
-      readAfterTranscript: expect.any(Function),
-      resolveTakeoverSpawnOptions: expect.any(Function),
-    });
-    expect(surfaces.attach).toBeNull();
-    expect(surfaces.sessionHandoff).toMatchObject({
-      exportBundle: expect.any(Function),
-      importBundle: expect.any(Function),
-    });
   });
 
   it('loads provider-native fork handlers through backend catalog hooks only for supporting providers', async () => {
@@ -210,16 +192,36 @@ describe('AGENTS', () => {
   it('normalizes session-control permission modes through provider-owned catalog seams', () => {
     expect(
       normalizeSessionControlPermissionModeForBackendTarget({
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         permissionMode: 'safe-yolo',
       }),
     ).toBe('acceptEdits');
 
     expect(
       normalizeSessionControlPermissionModeForBackendTarget({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         permissionMode: 'safe-yolo',
       }),
     ).toBe('safe-yolo');
+  });
+
+  it('resolves built-in backends through the canonical engine-adapter record', async () => {
+    const resolution = await resolveBackendEngineAdapterResolution('codex');
+    expect(resolution).toMatchObject({
+      backendId: 'codex',
+      providerId: 'codex',
+      provenance: 'first_party',
+      backend: {
+        id: 'codex',
+      },
+      provider: {
+        id: 'codex',
+      },
+      executionSurfaces: {
+        terminalRuntime: expect.anything(),
+      },
+      diagnostics: [],
+    });
+    expect(resolution?.selectedSource === 'system' || resolution?.selectedSource === 'managed').toBe(true);
   });
 });

@@ -1,9 +1,12 @@
-import type { TerminalRuntimeOps } from '@/backends/terminalRuntime/types';
+import type { TerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
 
-import { codexLocalLauncher, type CodexLauncherResult } from '../codexLocalLauncher';
-import { resolveCodexTerminalRuntimeTranscriptBinding } from './resolveCodexTerminalRuntimeTranscriptBinding';
+import {
+    launchCodexTerminalRuntime,
+    type CodexTerminalRuntimeLaunchResult,
+} from './launchTerminalRuntime';
+import { resolveCodexTerminalRuntimeTranscriptBinding } from './resolveTerminalTranscriptBinding';
 
-export type CodexTerminalRuntimeLaunchParams = Parameters<typeof codexLocalLauncher>[0];
+export type CodexTerminalRuntimeLaunchParams = Parameters<typeof launchCodexTerminalRuntime>[0];
 export type CodexTerminalRuntimeBindTranscriptParams = Readonly<{
     activeServerDir: string;
     candidateFilePath: string;
@@ -14,12 +17,12 @@ export type CodexTerminalRuntimeBindTranscriptParams = Readonly<{
 
 export const codexTerminalRuntimeOps: TerminalRuntimeOps<
     CodexTerminalRuntimeLaunchParams,
-    CodexLauncherResult,
+    CodexTerminalRuntimeLaunchResult,
     never,
     never,
     CodexTerminalRuntimeBindTranscriptParams
 > = {
-    launch: async (params): Promise<CodexLauncherResult> => await codexLocalLauncher(params),
+    launch: async (params): Promise<CodexTerminalRuntimeLaunchResult> => await launchCodexTerminalRuntime(params),
     bindTranscript: (params) =>
         resolveCodexTerminalRuntimeTranscriptBinding({
             activeServerDir: params.activeServerDir,

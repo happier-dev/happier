@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { decodeJwtEmail, readJsonFileSafe } from '@/capabilities/cliAuth/shared';
+import { decodeJwtEmail, readJsonFileSafe } from '../../../../capabilities/cliAuth/shared';
 
 export type CodexEnvironmentAuthMethod = 'api_key_env' | 'credentials_file';
 
@@ -9,6 +9,26 @@ export type CodexEnvironmentAuthState = Readonly<{
     method: CodexEnvironmentAuthMethod | null;
     accountLabel: string | null;
 }>;
+
+export function readCodexApiKey(env: NodeJS.ProcessEnv): string {
+    const openAiApiKey = typeof env.OPENAI_API_KEY === 'string' ? env.OPENAI_API_KEY.trim() : '';
+    if (openAiApiKey) return openAiApiKey;
+
+    const codexApiKey = typeof env.CODEX_API_KEY === 'string' ? env.CODEX_API_KEY.trim() : '';
+    return codexApiKey;
+}
+
+export function resolveCodexApiKeyAuthMethodId(
+    env: NodeJS.ProcessEnv,
+): 'openai-api-key' | 'codex-api-key' | undefined {
+    const openAiApiKey = typeof env.OPENAI_API_KEY === 'string' ? env.OPENAI_API_KEY.trim() : '';
+    if (openAiApiKey) return 'openai-api-key';
+
+    const codexApiKey = typeof env.CODEX_API_KEY === 'string' ? env.CODEX_API_KEY.trim() : '';
+    if (codexApiKey) return 'codex-api-key';
+
+    return undefined;
+}
 
 function readJwtExpMs(token: string | null): number | null {
     if (typeof token !== 'string' || !token.trim()) return null;
@@ -77,7 +97,7 @@ function readCodexAuthFileTokens(env: NodeJS.ProcessEnv): Readonly<{
 
 export function readCodexEnvironmentAuthState(env: NodeJS.ProcessEnv = process.env): CodexEnvironmentAuthState {
     const authFileTokens = readCodexAuthFileTokens(env);
-    const apiKey = typeof env.OPENAI_API_KEY === 'string' ? env.OPENAI_API_KEY.trim() : '';
+    const apiKey = readCodexApiKey(env);
 
     if (apiKey) {
         return { method: 'api_key_env', accountLabel: null };

@@ -1,7 +1,7 @@
 import type { Metadata } from '@/api/types';
-import { createProviderSessionIdMetadataUpdater } from '@/backends/shared/createProviderSessionIdMetadataUpdater';
+import { createSessionRuntimeIdentityMetadataUpdater } from '@/agent/runtime/identity';
 
-const updater = createProviderSessionIdMetadataUpdater('geminiSessionId');
+const updater = createSessionRuntimeIdentityMetadataUpdater('geminiSessionId');
 
 export function maybeUpdateGeminiSessionIdMetadata(params: {
   getGeminiSessionId: () => string | null;

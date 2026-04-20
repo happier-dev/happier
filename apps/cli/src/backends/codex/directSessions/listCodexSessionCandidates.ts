@@ -1,9 +1,9 @@
 import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
 
 import { createCodexAppServerClient } from '../appServer/client/createCodexAppServerClient';
-import { listCodexDirectSessionCandidatesViaExistingAppServerClient } from '../appServer/session/listCodexDirectSessionCandidatesViaAppServer';
-import { listCodexDirectSessionCandidatesViaRollouts } from './listCodexDirectSessionCandidatesViaRollouts';
-import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
+import { listCodexDirectSessionCandidatesViaExistingAppServerClient } from '../appServer/session/candidates';
+import { homeEntries as resolveHomeEntries } from './homeEntries';
+import { rolloutCandidates } from './rolloutCandidates';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
 
@@ -37,7 +37,7 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
   searchTerm?: string;
 }>): Promise<DirectSessionCandidateV1[]> {
   const budgetMs = resolveCodexDirectListAppServerBudgetMs(params.env);
-  const homeEntries = await resolveCodexHomeEntriesForDirectSessionsSource({
+  const homeEntries = await resolveHomeEntries({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
@@ -98,7 +98,7 @@ export async function listCodexSessionCandidates(params: Readonly<{
   const offset = decodeIndexCursor(params.cursor);
   const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
   const limit = Math.max(1, Math.trunc(params.limit));
-  const rolloutListing = await listCodexDirectSessionCandidatesViaRollouts({
+  const rolloutListing = await rolloutCandidates({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env,
@@ -123,7 +123,7 @@ export async function listCodexSessionCandidates(params: Readonly<{
   }
 
   const effectiveRolloutListing = appServerCandidates.length > 0 && offset > 0
-    ? await listCodexDirectSessionCandidatesViaRollouts({
+    ? await rolloutCandidates({
       source: params.source,
       activeServerDir: params.activeServerDir,
       env,

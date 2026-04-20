@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKAssistantMessage } from '../sdk';
-import type { EnhancedMode } from '../loop';
+import type { EnhancedMode } from '../runtime/claudeEnhancedMode';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
 vi.mock('@/lib', () => ({
@@ -43,7 +43,7 @@ describe('permission RPC routing', () => {
     });
 
     // This mirrors the production ordering risk: a later activation overwrites the `permission` handler.
-    const { ClaudeLocalPermissionBridge } = await import('../localPermissions/localPermissionBridge');
+    const { ClaudeLocalPermissionBridge } = await import('../runtime/terminal/permissions/localPermissionBridge');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
     bridge.activate();
 
@@ -62,7 +62,7 @@ describe('permission RPC routing', () => {
   it('does not let the local permission bridge steal remote approvals when it activates first', async () => {
     const { session, client } = createPermissionHandlerSessionStub('s1');
 
-    const { ClaudeLocalPermissionBridge } = await import('../localPermissions/localPermissionBridge');
+    const { ClaudeLocalPermissionBridge } = await import('../runtime/terminal/permissions/localPermissionBridge');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
     bridge.activate();
 

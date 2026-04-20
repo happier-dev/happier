@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import type { EnhancedMode } from './loop';
+import type { EnhancedMode } from './runtime/claudeEnhancedMode';
 
 function createSessionClientStub(overrides?: Partial<SessionClientPort>): SessionClientPort {
   return {
@@ -13,6 +13,7 @@ function createSessionClientStub(overrides?: Partial<SessionClientPort>): Sessio
     sendSessionEvent: vi.fn(),
     sendClaudeSessionMessage: vi.fn(),
     sendAgentMessage: vi.fn(),
+    sendAgentMessageCommitted: vi.fn(async () => {}),
     keepAlive: vi.fn(),
     getMetadataSnapshot: () => null,
     waitForMetadataUpdate: vi.fn(async () => false),
@@ -36,7 +37,7 @@ async function createSessionWithEnv(client: SessionClientPort, env: Record<strin
   for (const [k, v] of Object.entries(env)) {
     process.env[k] = v;
   }
-  const { Session } = await import('./session');
+  const { Session } = await import('./runtime/session/ClaudeSession');
   const session = new Session({
     client,
     path: '/tmp',

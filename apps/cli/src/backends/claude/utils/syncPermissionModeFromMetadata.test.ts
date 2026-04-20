@@ -5,6 +5,7 @@ import { syncClaudePermissionModeFromMetadata } from './syncPermissionModeFromMe
 
 type SessionStub = {
   client: { getMetadataSnapshot: () => Metadata | null };
+  lastPermissionModeUpdatedAt: number;
   adoptLastPermissionModeFromMetadata: (mode: PermissionMode, updatedAt: number) => boolean;
 };
 
@@ -20,6 +21,7 @@ describe('syncClaudePermissionModeFromMetadata', () => {
           permissionModeUpdatedAt: 123,
         } as unknown as Metadata),
       },
+      lastPermissionModeUpdatedAt: 0,
       adoptLastPermissionModeFromMetadata: () => true,
     };
     const permissionHandler: PermissionHandlerStub = {
@@ -40,6 +42,7 @@ describe('syncClaudePermissionModeFromMetadata', () => {
           permissionModeUpdatedAt: 123,
         } as unknown as Metadata),
       },
+      lastPermissionModeUpdatedAt: 0,
       adoptLastPermissionModeFromMetadata: () => false,
     };
     const permissionHandler: PermissionHandlerStub = {

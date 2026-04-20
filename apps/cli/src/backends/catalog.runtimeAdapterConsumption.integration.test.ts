@@ -4,14 +4,18 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { createPluginStateStore } from '@/extensions/store/state';
+import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import {
     SAMPLE_PLUGIN_BACKEND_ID,
     SAMPLE_PLUGIN_ID,
+    SAMPLE_PLUGIN_PROVIDER_ID,
     materializeSamplePluginFixture,
-} from '@/extensions/plugins/testkit/samplePluginFixture';
+} from '@/extensions/testkit/samplePackage';
 
-import { resolveBackendExecutionSurfaces } from './catalog';
+import {
+    resolveBackendEngineAdapterResolution,
+} from './catalog';
 
 describe('resolveBackendExecutionSurfaces', () => {
     it('maps plugin backend runtime-adapter descriptors into executable backend catalog surfaces', async () => {
@@ -76,7 +80,31 @@ describe('resolveBackendExecutionSurfaces', () => {
             },
         });
 
-        await expect(surfaces?.terminalRuntime?.launch?.({} as never)).resolves.toBe('integration-launch');
+        await expect(surfaces?.terminalRuntime?.launch?.({} as never)).resolves.toMatchObject({
+            sessionId: 'integration-session',
+            runtimeDescriptor: {
+                backendId: SAMPLE_PLUGIN_BACKEND_ID,
+                runtimeKind: 'native',
+                source: 'plugin',
+            },
+            runtimeCapabilities: {
+                executionRun: { supported: true },
+                sessions: { supported: true },
+            },
+            runtime: expect.objectContaining({
+                beginTurnLifecycle: expect.any(Function),
+                startOrLoadSession: expect.any(Function),
+                sendTurnPrompt: expect.any(Function),
+                steerInFlightTurn: expect.any(Function),
+                waitForTurnCompletion: expect.any(Function),
+                subscribeRuntimeMessages: expect.any(Function),
+                respondToPermission: expect.any(Function),
+                cancelTurn: expect.any(Function),
+                readSessionIdentity: expect.any(Function),
+                updateSessionRuntimeConfig: expect.any(Function),
+                resetOrDisposeRuntime: expect.any(Function),
+            }),
+        });
         await expect(surfaces?.terminalRuntime?.discoverIdentity?.({} as never)).resolves.toEqual({
             backendId: SAMPLE_PLUGIN_BACKEND_ID,
             identity: 'integration-identity',
@@ -240,6 +268,81 @@ describe('resolveBackendExecutionSurfaces', () => {
             directSessions: null,
             attach: null,
             sessionHandoff: null,
+        });
+    });
+
+    it('resolves one canonical engine-adapter record with plugin provenance, selected source facts, and executable surfaces', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-engine-resolution-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-engine-resolution-plugin-'));
+        const store = createPluginStateStore({ happyHomeDir });
+
+        await materializeSamplePluginFixture(pluginRoot);
+        await store.write({
+            t: 'happier_plugin_state_v1',
+            schemaVersion: 1,
+            plugins: {
+                [SAMPLE_PLUGIN_ID]: {
+                    source: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                        resolvedPath: pluginRoot,
+                        manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+                    },
+                    compatibility: {
+                        status: 'unknown',
+                        diagnostics: [],
+                    },
+                    install: {
+                        mode: 'link',
+                        manifestVersion: '1.0.0',
+                        manifestDigest: null,
+                        installedPath: null,
+                    },
+                    state: {
+                        enabled: true,
+                    },
+                },
+            },
+        });
+
+        const resolution = await resolveBackendEngineAdapterResolution(SAMPLE_PLUGIN_BACKEND_ID, { happyHomeDir });
+        expect(resolution).toMatchObject({
+            backendId: SAMPLE_PLUGIN_BACKEND_ID,
+            providerId: SAMPLE_PLUGIN_PROVIDER_ID,
+            source: 'plugin',
+            selectedSource: 'plugin',
+            backend: {
+                id: SAMPLE_PLUGIN_BACKEND_ID,
+                pluginId: SAMPLE_PLUGIN_ID,
+            },
+            provider: {
+                id: SAMPLE_PLUGIN_PROVIDER_ID,
+                pluginId: SAMPLE_PLUGIN_ID,
+            },
+            diagnostics: expect.arrayContaining([
+                expect.objectContaining({
+                    code: 'engine_plugin_runtime_adapter_handler_missing',
+                }),
+            ]),
+            executionSurfaces: {
+                terminalRuntime: {
+                    launch: expect.any(Function),
+                    discoverIdentity: expect.any(Function),
+                },
+                directSessions: {
+                    validateSource: expect.any(Function),
+                },
+                attach: {
+                    evaluateEligibility: expect.any(Function),
+                    runAttach: expect.any(Function),
+                },
+                sessionHandoff: {
+                    exportBundle: expect.any(Function),
+                    importBundle: expect.any(Function),
+                },
+            },
         });
     });
 });

@@ -9,7 +9,7 @@ import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 
 import { createCodexAcpBackend, type CodexAcpBackendOptions, type CodexAcpBackendResult } from '@/backends/codex/acp/backend';
-import { publishCodexSessionIdMetadata } from '@/backends/codex/utils/codexSessionIdMetadata';
+import { publishCodexSessionIdMetadata } from '@/backends/codex/identity/codexSessionIdMetadata';
 import type { PermissionMode } from '@/api/types';
 import { buildCodexAcpEnvOverrides } from '@/backends/codex/acp/env';
 import {

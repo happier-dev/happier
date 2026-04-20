@@ -1,4 +1,4 @@
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { configuration } from '@/configuration';
 
 import { extractAgentIdFromTaskResultText } from './extractAgentIdFromTaskResult';

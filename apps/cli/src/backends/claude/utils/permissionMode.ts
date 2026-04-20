@@ -11,21 +11,21 @@ export function normalizeClaudeHappyCliSessionControlPermissionMode(mode: string
 }
 
 /**
- * Map any PermissionMode (7 modes) to a Claude-compatible mode (5 modes)
+ * Map any PermissionMode (7 modes) to a Claude-compatible mode (6 modes)
  * This is the ONLY place where Codex modes are mapped to Claude equivalents.
  *
  * Mapping:
  * - yolo → bypassPermissions (both skip all permissions)
- * - safe-yolo → acceptEdits (auto-approve edits)
+ * - safe-yolo → auto (Claude's conservative auto-approve mode)
  * - read-only → dontAsk
  *
  * Claude modes pass through unchanged:
- * - default, acceptEdits, bypassPermissions, plan, dontAsk
+ * - default, acceptEdits, bypassPermissions, plan, dontAsk, auto
  */
 export function mapToClaudeMode(mode: PermissionMode): ClaudeSdkPermissionMode {
     const codexToClaudeMap: Record<string, ClaudeSdkPermissionMode> = {
         'yolo': 'bypassPermissions',
-        'safe-yolo': 'acceptEdits',
+        'safe-yolo': 'auto',
         'read-only': 'dontAsk',
     };
     return codexToClaudeMap[mode] ?? (mode as ClaudeSdkPermissionMode);

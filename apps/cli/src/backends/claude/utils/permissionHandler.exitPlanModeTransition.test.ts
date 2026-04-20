@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { EnhancedMode } from '../loop';
+import type { EnhancedMode } from '../runtime/claudeEnhancedMode';
 import type { SDKAssistantMessage } from '../sdk';
 import { createPermissionHandlerSessionStubWithMetadata } from './permissionHandler.testkit';
 

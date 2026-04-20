@@ -1,6 +1,6 @@
 import { importCodexSessionBundle } from './importCodexSessionBundle';
 import { exportCodexSessionBundle } from './exportCodexSessionBundle';
-import type { SessionHandoffProviderOps } from '@/backends/types';
+import type { SessionHandoffProviderOps } from '../../types';
 
 export const codexSessionHandoffProviderOps = {
   exportBundle: async (params) => {

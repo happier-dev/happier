@@ -4,34 +4,35 @@ import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
 
 import { checklists } from './cli/checklists';
 import { supportsCodexVendorResume } from './resume/vendorResumeSupport';
-import { codexDaemonSpawnHooks } from '@/backends/codex/daemon/spawnHooks';
-import { readCodexEnvironmentAuthState } from '@/backends/codex/cli/auth/readCodexEnvironmentAuthState';
+import { codexDaemonSpawnHooks } from './daemon/spawnHooks';
+import { readCodexEnvironmentAuthState } from './cli/auth/readCodexEnvironmentAuthState';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
   id: AGENTS_CORE.codex.id,
   cliSubcommand: AGENTS_CORE.codex.cliSubcommand,
-  getCliCommandHandler: async () => (await import('@/backends/codex/cli/command')).handleCodexCliCommand,
-  getCliCapabilityOverride: async () => (await import('@/backends/codex/cli/capability')).cliCapability,
-  getCapabilities: async () => (await import('@/backends/codex/cli/extraCapabilities')).capabilities,
-  getCliDetect: async () => (await import('@/backends/codex/cli/detect')).cliDetect,
-  getCliAuthSpec: async () => (await import('@/backends/codex/cli/auth/codexCliAuthSpec')).codexCliAuthSpec,
-  getCloudConnectTarget: async () => (await import('@/backends/codex/cloud/connect')).codexCloudConnect,
+  getCliCommandHandler: async () => (await import('./cli/command')).handleCodexCliCommand,
+  getCliCapabilityOverride: async () => (await import('./cli/capability')).cliCapability,
+  getCapabilities: async () => (await import('./cli/extraCapabilities')).capabilities,
+  getCliDetect: async () => (await import('./cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('./cli/auth/codexCliAuthSpec')).codexCliAuthSpec,
+  getCloudConnectTarget: async () => (await import('./cloud/connect')).codexCloudConnect,
   getDaemonSpawnHooks: async () => codexDaemonSpawnHooks,
-  getDirectSessionProviderOps: async () => (await import('@/backends/codex/directSessions/providerOps')).codexDirectSessionProviderOps,
-  getConnectedServicesSpawnMaterializer: async () =>
-    (await import('@/backends/codex/connectedServices/createCodexConnectedServicesSpawnMaterializer'))
-      .createCodexConnectedServicesSpawnMaterializer(),
-  getSessionHandoffProviderOps: async () => (await import('@/backends/codex/handoff/providerOps')).codexSessionHandoffProviderOps,
-  getTerminalRuntimeOps: async () => (await import('@/backends/codex/terminalRuntime/codexTerminalRuntimeOps')).codexTerminalRuntimeOps,
+  getDirectSessionProviderOps: async () => (await import('./directSessions/providerOps')).codexDirectSessionProviderOps,
+  getConnectedServicesMaterializer: async () =>
+    (await import('./connectedServices/createCodexConnectedServicesMaterializer'))
+      .createCodexConnectedServicesMaterializer(),
+  getBindings: async () => (await import('./bindings')).createCodexBindings,
+  getSessionHandoffProviderOps: async () => (await import('./handoff/providerOps')).codexSessionHandoffProviderOps,
+  getTerminalRuntimeOps: async () => (await import('./terminalRuntime/codexTerminalRuntimeOps')).codexTerminalRuntimeOps,
   vendorResumeSupport: AGENTS_CORE.codex.resume.vendorResume,
   getVendorResumeSupport: async () => supportsCodexVendorResume,
   getAcpBackendFactory: async () => {
-    const { createCodexAcpBackend } = await import('@/backends/codex/acp/backend');
+    const { createCodexAcpBackend } = await import('./acp/backend');
     return (opts) => createCodexAcpBackend(opts);
   },
-  getAcpForkContinuationHandler: async () => (await import('@/backends/codex/acp/forkContinuationHandler')).codexAcpForkContinuationHandler,
-  getProviderNativeForkHandler: async () => (await import('@/backends/codex/appServer/providerNativeForkHandler')).codexAppServerProviderNativeForkHandler,
+  getAcpForkContinuationHandler: async () => (await import('./acp/forkContinuationHandler')).codexAcpForkContinuationHandler,
+  getProviderNativeForkHandler: async () => (await import('./appServer/providerNativeForkHandler')).codexAppServerProviderNativeForkHandler,
   needsAccountSettingsForProbes: true,
   resolveModelsProbeVariant: ({ accountSettings }) => {
     // Keep dynamic model probes cache-partitioned by runtime flavor (appServer vs ACP vs MCP).
@@ -42,7 +43,7 @@ export const agent = {
     return `codex:${backendMode}:${authMethod}`;
   },
   getPreflightSessionControlsProbeAdapter: async () =>
-    (await import('@/backends/codex/preflight/codexPreflightSessionControlsProbeAdapter')).codexPreflightSessionControlsProbeAdapter,
+    (await import('./preflight/codexPreflightSessionControlsProbeAdapter')).codexPreflightSessionControlsProbeAdapter,
   checklists,
   runtimeInstallableKeys: [INSTALLABLE_KEYS.CODEX_ACP],
 } satisfies AgentCatalogEntry;

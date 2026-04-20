@@ -1,6 +1,6 @@
 import type { Metadata } from '@/api/types';
 
-import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permissions/modeFromMetadata';
 
 export function adoptModelOverrideFromMetadata(opts: Readonly<{
   currentModelId: string | undefined;

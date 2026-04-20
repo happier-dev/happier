@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { maybeUpdateCodexSessionIdMetadata, publishCodexSessionIdMetadata } from './codexSessionIdMetadata';
+import { maybeUpdateCodexSessionIdMetadata, publishCodexSessionIdMetadata } from '@/backends/codex/identity/codexSessionIdMetadata';
 
 const DEFAULT_CODEX_HOME_PATH = resolve(join(homedir(), '.codex'));
 
@@ -91,7 +91,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       {
         ...createTestMetadata({ path: '/tmp', codexSessionId: 'thread-app-server' }),
         codexBackendMode: 'appServer',
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
 	          provider: {
@@ -103,7 +103,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
 	              owner: 'codex',
 	              schemaId: 'codex.agentRuntimeDescriptorExtra',
 	              v: 1,
-	              runtimeAffinity: {
+	              runtimeHandle: {
 	                backendMode: 'appServer',
 	                vendorSessionId: 'thread-app-server',
 	                home: 'user',
@@ -142,7 +142,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       {
         ...createTestMetadata({ path: '/tmp', codexSessionId: 'thread-1' }),
         codexBackendMode: 'mcp',
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
 	          provider: {
@@ -154,7 +154,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
 	              owner: 'codex',
 	              schemaId: 'codex.agentRuntimeDescriptorExtra',
 	              v: 1,
-	              runtimeAffinity: {
+	              runtimeHandle: {
 	                backendMode: 'mcp',
 	                vendorSessionId: 'thread-1',
 	                home: 'user',
@@ -167,7 +167,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       {
         ...createTestMetadata({ path: '/tmp', codexSessionId: 'thread-1' }),
         codexBackendMode: 'appServer',
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
 	          provider: {
@@ -179,7 +179,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
 	              owner: 'codex',
 	              schemaId: 'codex.agentRuntimeDescriptorExtra',
 	              v: 1,
-	              runtimeAffinity: {
+	              runtimeHandle: {
 	                backendMode: 'appServer',
 	                vendorSessionId: 'thread-1',
 	                home: 'user',
@@ -247,7 +247,9 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     } as any);
 
     expect(updates).toHaveLength(2);
-    expect(updates[0]?.agentRuntimeDescriptorV1).not.toEqual(updates[1]?.agentRuntimeDescriptorV1);
+    expect((updates[0] as Metadata & { runtimeDescriptorV1?: unknown })?.runtimeDescriptorV1).not.toEqual(
+      (updates[1] as Metadata & { runtimeDescriptorV1?: unknown })?.runtimeDescriptorV1,
+    );
   });
 
   it('overwrites prior codexSessionId while preserving unrelated metadata', () => {
@@ -274,10 +276,13 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     maybeUpdateCodexSessionIdMetadata({
       getCodexThreadId: () => 'thread-next',
       updateHappySessionMetadata: (updater) => {
-        updates.push(updater(createTestMetadata({
-          codexSessionId: 'thread-old',
-          codexBackendMode: 'appServer',
-          agentRuntimeDescriptorV1: {
+        updates.push(updater({
+          ...createTestMetadata({
+            codexSessionId: 'thread-old',
+            codexBackendMode: 'appServer',
+            name: 'keep-name',
+          }),
+          runtimeDescriptorV1: {
             v: 1,
             providerId: 'codex',
             provider: {
@@ -285,8 +290,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
               vendorSessionId: 'thread-old',
             },
           },
-          name: 'keep-name',
-        })));
+        } as unknown as Metadata));
       },
       lastPublished,
     });
@@ -316,7 +320,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       {
         ...createTestMetadata({ machineId: 'machine-1', path: '/repo', codexSessionId: 'thread-direct' }),
         codexBackendMode: 'appServer',
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
           provider: {
@@ -328,7 +332,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
               owner: 'codex',
               schemaId: 'codex.agentRuntimeDescriptorExtra',
               v: 1,
-              runtimeAffinity: {
+              runtimeHandle: {
                 backendMode: 'appServer',
                 vendorSessionId: 'thread-direct',
                 home: 'user',
@@ -344,7 +348,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
           remoteSessionId: 'thread-direct',
           source: { kind: 'codexHome', home: 'user', homePath: '/Users/test/.codex' },
           linkedAtMs: expect.any(Number),
-          agentRuntimeDescriptorV1: {
+          runtimeDescriptorV1: {
             v: 1,
             providerId: 'codex',
             provider: {
@@ -356,7 +360,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
                 owner: 'codex',
                 schemaId: 'codex.agentRuntimeDescriptorExtra',
                 v: 1,
-                runtimeAffinity: {
+                runtimeHandle: {
                   backendMode: 'appServer',
                   vendorSessionId: 'thread-direct',
                   home: 'user',
@@ -389,7 +393,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       {
         ...createTestMetadata({ path: '/repo', codexSessionId: 'thread-connected' }),
         codexBackendMode: 'appServer',
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
           provider: {
@@ -403,7 +407,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
                 owner: 'codex',
                 schemaId: 'codex.agentRuntimeDescriptorExtra',
                 v: 1,
-                runtimeAffinity: {
+                runtimeHandle: {
                 backendMode: 'appServer',
                 vendorSessionId: 'thread-connected',
                 home: 'connectedService',

@@ -1,6 +1,6 @@
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import type { RawJSONLines } from '../../../types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { encodeClaudeRawJsonlTranscriptForwardCursor } from './claudeRawJsonlTranscriptForwardCursor';
 import { pageClaudeProjectedJsonlSessionTranscript } from './pageClaudeProjectedJsonlSessionTranscript';
 import { projectClaudeJsonlLineToRawMessage } from '../../projection/projectClaudeJsonlLineToRawMessage';

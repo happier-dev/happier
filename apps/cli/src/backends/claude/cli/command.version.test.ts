@@ -1,22 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const { runSessionCommandSpy } = vi.hoisted(() => ({
+  runSessionCommandSpy: vi.fn(),
+}));
+
+vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
+  getSessionHostBridge: () => ({
+    runSessionCommand: (...args: unknown[]) => runSessionCommandSpy(...args),
+  }),
+}));
+
 import { handleClaudeCliCommand } from './command';
 import * as authModule from '@/ui/auth';
-import * as runClaudeModule from '@/backends/claude/runClaude';
 import * as persistenceModule from '@/persistence';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import * as providerSettingsModule from '@/settings/providerSettings';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  runSessionCommandSpy.mockReset();
 });
 
 describe('handleClaudeCliCommand --version', () => {
   it('does not initialize auth/session for version-only invocation', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } as any } as any);
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({} as any);
+    const readSettingsSpy = vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({} as any);
 
     await handleClaudeCliCommand({
       args: ['--version'],
@@ -25,17 +33,17 @@ describe('handleClaudeCliCommand --version', () => {
     } as any);
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/^happier version:/));
+    expect(readSettingsSpy).not.toHaveBeenCalled();
     expect(authSpy).not.toHaveBeenCalled();
-    expect(runSpy).not.toHaveBeenCalled();
+    expect(runSessionCommandSpy).not.toHaveBeenCalled();
   });
 
-  it('fast-starts local terminal invocations without blocking on auth/setup', async () => {
+  it('routes local terminal invocations through the shared session bridge without blocking on auth/setup', async () => {
     const credentials = { token: 'x' } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
     const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
 
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -45,7 +53,7 @@ describe('handleClaudeCliCommand --version', () => {
       whenRefreshed: null,
     } as any);
 
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: [],
@@ -63,7 +71,10 @@ describe('handleClaudeCliCommand --version', () => {
         refresh: 'auto',
       }),
     );
-    expect(runSpy).toHaveBeenCalledWith(credentials, expect.any(Object));
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ credentials, startedBy: 'terminal' }),
+    );
   });
 
   it('binds existing credentials through the token-aware machine id helper', async () => {
@@ -71,7 +82,6 @@ describe('handleClaudeCliCommand --version', () => {
 
     vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
       settings: {} as any,
@@ -80,7 +90,7 @@ describe('handleClaudeCliCommand --version', () => {
       whenRefreshed: null,
     } as any);
     const ensureMachineSpy = vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
-    vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: [],
@@ -89,6 +99,10 @@ describe('handleClaudeCliCommand --version', () => {
     } as any);
 
     expect(ensureMachineSpy).toHaveBeenCalledWith(credentials);
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ credentials, startedBy: 'terminal' }),
+    );
   });
 
   it('uses fast account settings bootstrap even when forcing refresh', async () => {
@@ -96,7 +110,6 @@ describe('handleClaudeCliCommand --version', () => {
 
     vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
       settings: {} as any,
@@ -104,7 +117,7 @@ describe('handleClaudeCliCommand --version', () => {
       loadedAtMs: Date.now(),
       whenRefreshed: null,
     } as any);
-    vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['--refresh-settings'],
@@ -120,14 +133,17 @@ describe('handleClaudeCliCommand --version', () => {
         refresh: 'force',
       }),
     );
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ credentials, startedBy: 'terminal' }),
+    );
   });
 
-  it('uses fast account settings bootstrap for daemon-started Claude sessions', async () => {
+  it('uses blocking account settings bootstrap for daemon-started Claude sessions', async () => {
     const credentials = { token: 'x' } as any;
 
     vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
       settings: {} as any,
@@ -135,7 +151,7 @@ describe('handleClaudeCliCommand --version', () => {
       loadedAtMs: Date.now(),
       whenRefreshed: null,
     } as any);
-    vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['--started-by', 'daemon', '--happy-starting-mode', 'remote'],
@@ -147,18 +163,21 @@ describe('handleClaudeCliCommand --version', () => {
       expect.objectContaining({
         agentId: 'claude',
         credentials,
-      mode: 'fast',
-      refresh: 'force',
+        mode: 'blocking',
+        refresh: 'force',
       }),
+    );
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ credentials, startedBy: 'daemon', startingMode: 'remote' }),
     );
   });
 
-  it('forces a fresh blocking account settings bootstrap for terminal remote Claude starts', async () => {
+  it('does not block on account settings bootstrap for terminal remote Claude starts', async () => {
     const credentials = { token: 'x' } as any;
 
     vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
       settings: {} as any,
@@ -166,7 +185,7 @@ describe('handleClaudeCliCommand --version', () => {
       loadedAtMs: Date.now(),
       whenRefreshed: null,
     } as any);
-    vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+    runSessionCommandSpy.mockResolvedValue(undefined);
 
     await handleClaudeCliCommand({
       args: ['--happy-starting-mode', 'remote'],
@@ -178,9 +197,13 @@ describe('handleClaudeCliCommand --version', () => {
       expect.objectContaining({
         agentId: 'claude',
         credentials,
-        mode: 'blocking',
-        refresh: 'force',
+        mode: 'fast',
+        refresh: 'auto',
       }),
+    );
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ credentials, startedBy: 'terminal', startingMode: 'remote' }),
     );
   });
 
@@ -194,7 +217,6 @@ describe('handleClaudeCliCommand --version', () => {
     let refreshed = false;
     const whenRefreshed = new Promise<any>(() => {});
 
-    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockImplementation(({ settings }: any) => ({ marker: settings?.marker }));
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'cache',
       settings: cachedSettings,
@@ -203,10 +225,9 @@ describe('handleClaudeCliCommand --version', () => {
       whenRefreshed,
     } as any);
 
-    const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockImplementation(async (_credentials: any, options: any) => {
+    runSessionCommandSpy.mockImplementation(async (_backendId: string, options: any) => {
       expect(refreshed).toBe(false);
-      expect(options.accountSettings).toBe(cachedSettings);
-      expect(options.claudeRemoteMetaDefaults).toEqual({ marker: 'cached-settings' });
+      expect(options.accountSettingsContext?.settings).toBe(cachedSettings);
     });
 
     const commandPromise = handleClaudeCliCommand({
@@ -216,6 +237,6 @@ describe('handleClaudeCliCommand --version', () => {
     } as any);
 
     await commandPromise;
-    expect(runSpy).toHaveBeenCalled();
+    expect(runSessionCommandSpy).toHaveBeenCalled();
   });
 });

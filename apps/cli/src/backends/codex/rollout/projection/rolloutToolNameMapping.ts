@@ -58,7 +58,7 @@ export function canonicalizeCodexRolloutToolName(name: string): {
         case 'close_agent':
             return { canonicalToolName: name, visibility: 'ignore' };
 
-        // Agent-internal tools (not very useful as primary UI cards in local-control mirroring).
+        // Agent-internal tools (not very useful as primary UI cards in terminal-mode mirroring).
         case 'update_plan':
         case 'view_image':
         case 'request_user_input':

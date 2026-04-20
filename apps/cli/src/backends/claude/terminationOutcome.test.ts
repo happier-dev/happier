@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeRunnerTerminationOutcome } from '@/agent/runtime/runnerTerminationOutcome';
+import { computeRunnerTerminationOutcome } from '@/agent/runtime/lifecycle/runnerTerminationOutcome';
 
 describe('computeRunnerTerminationOutcome', () => {
   it('treats unhandled rejections as non-archiving, non-zero exits', () => {

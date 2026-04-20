@@ -10,6 +10,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('@/backends/auggie/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/auggie/cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('@/backends/auggie/cli/auth/auggieCliAuthSpec')).auggieCliAuthSpec,
+  getBindings: async () => (await import('@/backends/auggie/bindings/index')).createAuggieBindings(),
   vendorResumeSupport: AGENTS_CORE.auggie.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createAuggieBackend } = await import('@/backends/auggie/acp/backend');

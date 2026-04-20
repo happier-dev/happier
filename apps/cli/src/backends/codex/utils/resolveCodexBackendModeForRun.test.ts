@@ -3,31 +3,34 @@ import { describe, expect, it } from 'vitest';
 import { resolveCodexBackendModeForRun } from './resolveCodexBackendModeForRun';
 
 describe('resolveCodexBackendModeForRun', () => {
-  it('prefers explicit canonical backend modes over the legacy ACP flag', () => {
+  it('falls back to app-server when no canonical backend mode is provided and the ACP default is off', () => {
     expect(resolveCodexBackendModeForRun({
-      codexBackendMode: 'mcp',
-      experimentalCodexAcp: true,
-      experimentalCodexAcpEnabledByDefault: true,
-    })).toBe('mcp');
-    expect(resolveCodexBackendModeForRun({
-      codexBackendMode: 'appServer',
-      experimentalCodexAcp: true,
       experimentalCodexAcpEnabledByDefault: false,
     })).toBe('appServer');
   });
 
-  it('falls back to the legacy ACP flag only when no canonical backend mode is present', () => {
+  it('honors explicit codexBackendMode=acp when the env-backed experiment flag is off', () => {
     expect(resolveCodexBackendModeForRun({
-      experimentalCodexAcp: true,
+      codexBackendMode: 'acp',
       experimentalCodexAcpEnabledByDefault: false,
-    })).toBe('acp');
-    expect(resolveCodexBackendModeForRun({
-      experimentalCodexAcp: false,
-      experimentalCodexAcpEnabledByDefault: true,
     })).toBe('acp');
   });
 
-  it('uses the default fallback when neither canonical mode nor legacy ACP flag is set', () => {
+  it('prefers explicit canonical backend modes over the default ACP toggle', () => {
+    expect(resolveCodexBackendModeForRun({
+      codexBackendMode: 'mcp',
+      experimentalCodexAcpEnabledByDefault: true,
+    })).toBe('mcp');
+    expect(resolveCodexBackendModeForRun({
+      codexBackendMode: 'appServer',
+      experimentalCodexAcpEnabledByDefault: false,
+    })).toBe('appServer');
+  });
+
+  it('falls back to the default only when no explicit canonical mode is present', () => {
+    expect(resolveCodexBackendModeForRun({
+      experimentalCodexAcpEnabledByDefault: true,
+    })).toBe('acp');
     expect(resolveCodexBackendModeForRun({
       experimentalCodexAcpEnabledByDefault: true,
     })).toBe('acp');

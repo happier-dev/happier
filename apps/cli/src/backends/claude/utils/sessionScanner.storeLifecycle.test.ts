@@ -3,7 +3,7 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { RawJSONLines } from '../types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { getProjectPath } from './path';
 
 vi.mock('@/integrations/watcher/startFileWatcher', () => ({

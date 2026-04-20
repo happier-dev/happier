@@ -1,5 +1,5 @@
 import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity, resolveVendorResumeIdFromSessionMetadata, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
-import type { ProviderNativeForkHandler } from '@/backends/forking/providerNativeForkHandler';
+import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeForkHandler';
 
 import { forkCodexAppServerConversationNative } from './nativeFork';
 
@@ -33,7 +33,7 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
         codexBackendMode: 'appServer',
         ...(runtimeIdentity
           ? {
-              agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+              runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
                 backendMode: 'appServer',
                 vendorSessionId,
                 home: runtimeIdentity.home,

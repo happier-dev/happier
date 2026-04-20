@@ -1,24 +1,17 @@
 import chalk from 'chalk';
-import { z } from 'zod';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { AGENTS_CORE } from '@happier-dev/agents';
 
-import { PERMISSION_MODES, isPermissionMode } from '@/api/types';
-import { runClaude, type StartOptions } from '@/backends/claude/runClaude';
+import {
+  normalizeClaudeRuntimeStartingMode,
+  type ClaudeRuntimeMode,
+  type StartOptions,
+} from '@/backends/claude/runtime/claudeSessionRuntimeOptions';
 import { isClaudeCliJavaScriptFile } from '@/backends/claude/utils/resolveClaudeCliPath';
-import { readCredentials, readSettings } from '@/persistence';
+import { readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
-import { authAndSetupMachineIfNeeded, ensureMachineIdForCredentials } from '@/ui/auth';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
-import { resolveSessionStartAccountSettingsRefreshMode } from '@/settings/accountSettings/resolveSessionStartAccountSettingsRefreshMode';
-import { applyProfileToProcessEnv } from '@/settings/profiles/applyProfileToProcessEnv';
-import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverlay';
-import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
-import { resolveProviderOutgoingMessageMetaExtras } from '@/settings/providerSettings';
-import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
-import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
-import { promptSecret } from '@/terminal/prompts/promptSecret';
+import { authAndSetupMachineIfNeeded } from '@/ui/auth';
+import { readCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
@@ -27,9 +20,11 @@ import { readProviderCliOverride } from '@/runtime/managedTools/providerCliResol
 import { isBun } from '@/utils/runtime';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { handleResumeCommand } from '@/cli/commands/resume';
+import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { readOptionalFlagValue, readOptionalFlagValueFromAliases } from '@/cli/sessionStartArgs';
 
 function readResumeFlagValue(args: readonly string[] | null | undefined): { flagIndex: number; valueIndex: number; value: string } | null {
   const list = Array.isArray(args) ? args : [];
@@ -71,6 +66,130 @@ export function stripHappyInternalSettingsFlag(
   return stripped;
 }
 
+function expandEqualsFlags(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const raw of args) {
+    if (raw.startsWith('--profile=')) {
+      out.push('--profile', raw.slice('--profile='.length));
+      continue;
+    }
+    if (raw.startsWith('--permission-mode=')) {
+      out.push('--permission-mode', raw.slice('--permission-mode='.length));
+      continue;
+    }
+    if (raw.startsWith('--model=')) {
+      out.push('--model', raw.slice('--model='.length));
+      continue;
+    }
+    out.push(raw);
+  }
+  return out;
+}
+
+function resolveClaudeSessionRuntimeExtras(args: readonly string[]): Pick<StartOptions, 'claudeArgs' | 'jsRuntime'> {
+  return resolveClaudeSessionRuntimeExtrasInternal(args, { passThroughResume: false });
+}
+
+function resolveClaudeSessionRuntimeExtrasInternal(
+  args: readonly string[],
+  opts: Readonly<{ passThroughResume: boolean }>,
+): Pick<StartOptions, 'claudeArgs' | 'jsRuntime'> {
+  const strippedArgs = Array.isArray(args) ? args : [];
+
+  let jsRuntime: 'node' | 'bun' | undefined = undefined;
+  const claudeArgs: string[] = [];
+
+  for (let i = 0; i < strippedArgs.length; i += 1) {
+    const arg = strippedArgs[i];
+
+    if (arg === '--js-runtime') {
+      const raw = strippedArgs[i + 1];
+      i += 1;
+      if (raw === 'node' || raw === 'bun') {
+        jsRuntime = raw;
+      }
+      continue;
+    }
+
+    // Claude-specific passthrough shorthand.
+    if (arg === '--yolo') {
+      claudeArgs.push('--dangerously-skip-permissions');
+      continue;
+    }
+
+    // Do not pass Happier-owned flags down to Claude Code.
+    if (
+      arg === '--refresh-settings'
+      || arg === '--profile'
+      || arg.startsWith('--profile=')
+      || arg === '--permission-mode'
+      || arg.startsWith('--permission-mode=')
+      || arg === '--permission-mode-updated-at'
+      || arg === '--existing-session'
+      || arg === '--happy-starting-mode'
+      || arg === '--started-by'
+      || (!opts.passThroughResume && (arg === '--resume' || arg === '-r'))
+    ) {
+      // Skip paired values for flags that take an argument.
+      if (
+        arg === '--profile'
+        || arg === '--permission-mode'
+        || arg === '--permission-mode-updated-at'
+        || arg === '--existing-session'
+        || arg === '--happy-starting-mode'
+        || arg === '--started-by'
+        || (!opts.passThroughResume && (arg === '--resume' || arg === '-r'))
+      ) {
+        i += 1;
+      }
+      continue;
+    }
+
+    // Preserve model passthrough for Claude Code.
+    if (arg === '--model') {
+      claudeArgs.push(arg);
+      const raw = strippedArgs[i + 1];
+      if (typeof raw === 'string' && raw.trim().length > 0) {
+        claudeArgs.push(raw);
+        i += 1;
+      }
+      continue;
+    }
+
+    // Keep all other args for Claude Code (and best-effort pair values).
+    claudeArgs.push(arg);
+    const next = strippedArgs[i + 1];
+    if (typeof next === 'string' && !next.startsWith('-')) {
+      claudeArgs.push(next);
+      i += 1;
+    }
+  }
+
+  return {
+    ...(claudeArgs.length > 0 ? { claudeArgs } : {}),
+    ...(jsRuntime ? { jsRuntime } : {}),
+  };
+}
+
+function removeResumeFlagsForExplicitClaudeInvocation(args: readonly string[]): string[] {
+  const stripped: string[] = [];
+  const list = Array.isArray(args) ? args : [];
+
+  for (let i = 0; i < list.length; i += 1) {
+    const arg = list[i];
+    if (arg === '--resume' || arg === '-r') {
+      const next = list[i + 1];
+      if (typeof next === 'string' && !next.startsWith('-')) {
+        i += 1;
+      }
+      continue;
+    }
+    stripped.push(arg);
+  }
+
+  return stripped;
+}
+
 export async function handleClaudeCliCommand(context: CommandContext): Promise<void> {
   const args = [...context.args];
 
@@ -80,150 +199,51 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     args.shift();
   }
 
-  const strippedArgs = stripHappyInternalSettingsFlag(args);
+  const strippedArgs = expandEqualsFlags(stripHappyInternalSettingsFlag(args));
 
-  // Parse command line arguments for main command
-  const options: StartOptions = {};
   let showHelp = false;
   let showVersion = false;
-  let refreshSettings = false;
-  let profileQuery: string | null = null;
   let chromeOverride: boolean | undefined = undefined;
-  const unknownArgs: string[] = []; // Collect unknown args to pass through to claude
 
-  for (let i = 0; i < strippedArgs.length; i++) {
+  for (let i = 0; i < strippedArgs.length; i += 1) {
     const arg = strippedArgs[i];
-
     if (arg === '-h' || arg === '--help') {
       showHelp = true;
-      unknownArgs.push(arg);
-    } else if (arg === '-v' || arg === '--version') {
+      continue;
+    }
+    if (arg === '-v' || arg === '--version') {
       showVersion = true;
-      unknownArgs.push(arg);
-    } else if (arg === '--refresh-settings') {
-      refreshSettings = true;
-    } else if (arg === '--profile') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --profile (expected: profile id or name)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const normalized = typeof raw === 'string' ? raw.trim() : '';
-      if (!normalized) {
-        console.error(chalk.red('Invalid --profile value: empty'));
-        process.exit(1);
-      }
-      profileQuery = normalized;
-    } else if (arg.startsWith('--profile=')) {
-      const normalized = arg.slice('--profile='.length).trim();
-      if (!normalized) {
-        console.error(chalk.red('Invalid --profile value: empty'));
-        process.exit(1);
-      }
-      profileQuery = normalized;
-    } else if (arg === '--happy-starting-mode') {
-      options.startingMode = z.enum(['local', 'remote']).parse(strippedArgs[++i]);
-    } else if (arg === '--yolo') {
-      // Shortcut for --dangerously-skip-permissions
-      unknownArgs.push('--dangerously-skip-permissions');
-    } else if (arg === '--started-by') {
-      options.startedBy = strippedArgs[++i] as 'daemon' | 'terminal';
-    } else if (arg === '--permission-mode') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red(`Missing value for --permission-mode. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      const value = strippedArgs[++i];
-      if (!isPermissionMode(value)) {
-        console.error(chalk.red(`Invalid --permission-mode value: ${value}. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      options.permissionMode = value;
-    } else if (arg.startsWith('--permission-mode=')) {
-      const value = arg.slice('--permission-mode='.length).trim();
-      if (!value) {
-        console.error(chalk.red(`Missing value for --permission-mode. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      if (!isPermissionMode(value)) {
-        console.error(chalk.red(`Invalid --permission-mode value: ${value}. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      options.permissionMode = value;
-    } else if (arg === '--permission-mode-updated-at') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --permission-mode-updated-at (expected: unix ms timestamp)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const parsedAt = Number(raw);
-      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
-        console.error(chalk.red(`Invalid --permission-mode-updated-at value: ${raw}. Expected a positive number (unix ms)`));
-        process.exit(1);
-      }
-      options.permissionModeUpdatedAt = Math.floor(parsedAt);
-    } else if (arg === '--model') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --model (expected: model id)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const normalized = typeof raw === 'string' ? raw.trim() : '';
-      if (!normalized) {
-        console.error(chalk.red('Invalid --model value: empty'));
-        process.exit(1);
-      }
-      options.modelId = normalized;
-      unknownArgs.push('--model', normalized);
-    } else if (arg === '--model-updated-at') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --model-updated-at (expected: unix ms timestamp)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const parsedAt = Number(raw);
-      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
-        console.error(chalk.red(`Invalid --model-updated-at value: ${raw}. Expected a positive number (unix ms)`));
-        process.exit(1);
-      }
-      options.modelUpdatedAt = Math.floor(parsedAt);
-    } else if (arg === '--js-runtime') {
-      const runtime = strippedArgs[++i];
-      if (runtime !== 'node' && runtime !== 'bun') {
-        console.error(chalk.red(`Invalid --js-runtime value: ${runtime}. Must be 'node' or 'bun'`));
-        process.exit(1);
-      }
-      options.jsRuntime = runtime;
-    } else if (arg === '--existing-session') {
-      // Used by daemon to reconnect to an existing session (for inactive session resume)
-      options.existingSessionId = strippedArgs[++i];
-    } else if (arg === '--chrome') {
+      continue;
+    }
+    if (arg === '--chrome') {
       chromeOverride = true;
-    } else if (arg === '--no-chrome') {
+      continue;
+    }
+    if (arg === '--no-chrome') {
       chromeOverride = false;
-    } else {
-      unknownArgs.push(arg);
-      // Check if this arg expects a value (simplified check for common patterns)
-      if (i + 1 < strippedArgs.length && !strippedArgs[i + 1].startsWith('-')) {
-        unknownArgs.push(strippedArgs[++i]);
-      }
+      continue;
     }
   }
 
-  if (unknownArgs.length > 0) {
-    options.claudeArgs = [...(options.claudeArgs || []), ...unknownArgs];
-  }
+  const versionOnlyInvocation =
+    showVersion &&
+    strippedArgs.length > 0 &&
+    strippedArgs.every((arg) => arg === '-v' || arg === '--version');
 
-  if (typeof options.modelId === 'string' && options.modelId.trim()) {
-    options.model = options.modelId.trim();
+  if (versionOnlyInvocation) {
+    console.log(`happier version: ${packageJson.version}`);
+    return;
   }
 
   // Resolve Chrome mode: explicit flag > settings > false
   const settings = await readSettings();
   const chromeEnabled = chromeOverride ?? settings.chromeMode ?? false;
-  if (chromeEnabled && !(options.claudeArgs || []).includes('--chrome')) {
-    options.claudeArgs = [...(options.claudeArgs || []), '--chrome'];
-  }
+  const baseExtras = explicitClaudeSubcommand
+    ? resolveClaudeSessionRuntimeExtrasInternal(strippedArgs, { passThroughResume: true })
+    : resolveClaudeSessionRuntimeExtrasInternal(strippedArgs, { passThroughResume: false });
+  const claudeArgsWithChrome = chromeEnabled && !(baseExtras.claudeArgs ?? []).includes('--chrome')
+    ? [...(baseExtras.claudeArgs ?? []), '--chrome']
+    : (baseExtras.claudeArgs ?? []);
 
   if (showHelp) {
     console.log(`${buildRootHelpText()}
@@ -268,38 +288,20 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
 
   if (showVersion) {
     console.log(`happier version: ${packageJson.version}`);
-    const versionOnlyInvocation =
-      strippedArgs.length > 0 &&
-      strippedArgs.every((arg) => arg === '-v' || arg === '--version');
-    if (versionOnlyInvocation) {
-      return;
-    }
     // For mixed invocations, continue and pass --version through to Claude Code.
   }
 
-  const startedBy = options.startedBy ?? 'terminal';
-  const startingMode = options.startingMode ?? 'local';
-  const isDaemonStartedRemoteSession = startedBy === 'daemon' && startingMode === 'remote';
-  const shouldPreferFastBootstrap = (startedBy === 'terminal' && startingMode === 'local') || isDaemonStartedRemoteSession;
-  const accountSettingsBootstrapMode = shouldPreferFastBootstrap ? 'fast' : 'blocking';
-  const shouldForceAccountSettingsRefresh = refreshSettings || isDaemonStartedRemoteSession;
-
-  let credentials = await readCredentials();
-  if (!credentials) {
-    const auth = await authAndSetupMachineIfNeeded();
-    credentials = auth.credentials;
-  } else {
-    await ensureMachineIdForCredentials(credentials);
-    if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess, startedBy })) {
-      void ensureDaemonRunningForSessionCommand().catch((error) => {
-        logger.debug('[claude] Failed to auto-start daemon (non-fatal)', error);
-      });
-    }
-  }
-
   if (!explicitClaudeSubcommand) {
-    const resume = readResumeFlagValue(options.claudeArgs);
+    const resume = readResumeFlagValue(strippedArgs);
     if (resume) {
+      // Best-effort: if this looks like a Happier session id, delegate to `happier resume <id>` before
+      // routing through the generic session command path.
+      let credentials = await readCredentials();
+      if (!credentials) {
+        const auth = await authAndSetupMachineIfNeeded();
+        credentials = auth.credentials;
+      }
+
       const exists = await fetchSessionById({ token: credentials.token, sessionId: resume.value }).catch(() => null);
       if (exists) {
         await handleResumeCommand([resume.value], { terminalRuntime: context.terminalRuntime, rawArgv: context.rawArgv });
@@ -309,49 +311,41 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
   }
 
   try {
-    const snapshot = await bootstrapAccountSettingsContext({
-      agentId: 'claude',
-      credentials,
-      mode: accountSettingsBootstrapMode,
-      refresh: resolveSessionStartAccountSettingsRefreshMode({
-        mode: accountSettingsBootstrapMode,
-        refreshRequested: shouldForceAccountSettingsRefresh,
-      }),
-    });
-    const effectiveSnapshot = await resolveSessionStartAccountSettingsContext({
-      startedBy,
-      snapshot,
-    });
-    options.claudeRemoteMetaDefaults = resolveProviderOutgoingMessageMetaExtras({
-      agentId: 'claude',
-      settings: effectiveSnapshot.settings,
-      session: null,
-    });
-    options.accountSettings = effectiveSnapshot.settings;
-    if (profileQuery) {
-      const { customProfiles } = readProfilesFromAccountSettings(effectiveSnapshot.settings);
-      const profile = resolveProfileForAgent({ agentId: 'claude', query: profileQuery, customProfiles });
-      const promptSecretFn = startedBy !== 'daemon' && isInteractiveTerminal()
-        ? promptSecret
-        : null;
-      const overlay = await buildProfileEnvOverlay({
-        agentId: 'claude',
-        profile,
-        accountSettings: effectiveSnapshot.settings,
-        credentials,
-        processEnv: process.env,
-        promptSecretFn,
-        startedBy,
-      });
-      applyProfileToProcessEnv({ profileId: overlay.profileId, envOverlayExpanded: overlay.envOverlayExpanded });
+    const argsForSharedCommand = explicitClaudeSubcommand
+      ? removeResumeFlagsForExplicitClaudeInvocation(strippedArgs)
+      : strippedArgs;
 
-      if (typeof options.permissionMode !== 'string' && overlay.permissionModeSeed) {
-        options.permissionMode = overlay.permissionModeSeed;
-        options.permissionModeUpdatedAt = options.permissionModeUpdatedAt ?? Date.now();
-      }
-    }
-    options.terminalRuntime = context.terminalRuntime;
-    await runClaude(credentials, options);
+    await runBackendSessionCliCommand({
+      // The shared session command parser expects `context.args[0]` to be a command token
+      // (e.g. `codex`, `claude`) so it can safely skip it when scanning for flags.
+      context: { ...context, args: ['claude', ...argsForSharedCommand] },
+      backendIdForSessionRuntime: 'claude',
+      agentIdForDeprecatedAliases: AGENTS_CORE.claude.id,
+      agentIdForAccountSettings: AGENTS_CORE.claude.id,
+      resolveExtraOptions: (args) => {
+        const startingModeRaw = readOptionalFlagValue(args, '--happy-starting-mode');
+        const startingMode: ClaudeRuntimeMode | undefined =
+          startingModeRaw === 'terminal' || startingModeRaw === 'local' || startingModeRaw === 'remote'
+            ? normalizeClaudeRuntimeStartingMode(startingModeRaw)
+            : undefined;
+        if (startingModeRaw && typeof startingMode === 'undefined') {
+          console.error(chalk.red(`Invalid --happy-starting-mode: ${startingModeRaw}. Use "terminal" or "remote".`));
+          process.exit(1);
+        }
+
+        const directoryRaw = readOptionalFlagValueFromAliases(args, ['-C', '--cd']);
+        const directory = typeof directoryRaw === 'string' && directoryRaw.trim().length > 0
+          ? directoryRaw.trim()
+          : undefined;
+
+        return {
+          ...(claudeArgsWithChrome.length > 0 ? { claudeArgs: claudeArgsWithChrome } : {}),
+          ...(baseExtras.jsRuntime ? { jsRuntime: baseExtras.jsRuntime } : {}),
+          ...(startingMode ? { startingMode } : {}),
+          ...(directory ? { directory } : {}),
+        };
+      },
+    });
   } catch (error) {
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
     if (process.env.DEBUG) {

@@ -1,7 +1,7 @@
 import { readJsonlFileBackwardPage } from '@/api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
 import { readJsonlFileForward } from '@/api/session/fileBackedTranscripts/jsonl/readJsonlForward';
 
-import type { RawJSONLines } from '../../../types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import {
     decodeClaudeRawJsonlTranscriptForwardCursor,
     encodeClaudeRawJsonlTranscriptForwardCursor,

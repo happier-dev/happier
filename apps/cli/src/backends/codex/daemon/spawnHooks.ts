@@ -1,17 +1,24 @@
-import { validateCodexAcpSpawnAvailability } from '@/backends/codex/acp/spawnAvailability';
-import { resolveCodexAcpSpawn } from '@/backends/codex/acp/resolveCommand';
+import { validateCodexAcpSpawnAvailability } from '../acp/spawnAvailability';
+import { resolveCodexAcpSpawn } from '../acp/resolveCommand';
+import { resolveCanonicalCodexBackendMode } from './backendMode';
+import { resolveCodexVendorResumeSupportParamsForSpawn } from './spawnCompat';
 import {
-  resolveDaemonSpawnRuntimeCodexBackendMode,
-  type DaemonSpawnHooks,
-  type DaemonSpawnRuntimeSelection,
-} from '@/daemon/spawnHooks';
+    type DaemonSpawnHooks,
+    type DaemonSpawnRuntimeSelection,
+} from '../../../daemon/spawnHooks';
+
+type CodexDaemonSpawnHooks = DaemonSpawnHooks & Readonly<{
+  resolveVendorResumeSupportParams: (
+    params: Parameters<typeof resolveCodexVendorResumeSupportParamsForSpawn>[0],
+  ) => ReturnType<typeof resolveCodexVendorResumeSupportParamsForSpawn>;
+}>;
 
 function resolveCodexDaemonBackendMode(params: DaemonSpawnRuntimeSelection): 'mcp' | 'acp' | 'appServer' | null {
-  return resolveDaemonSpawnRuntimeCodexBackendMode(params) ?? null;
+  return resolveCanonicalCodexBackendMode(params) ?? null;
 }
 
-export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
-  validateSpawn: async (runtimeSelection) => {
+export const codexDaemonSpawnHooks = {
+  resolveRuntimePrerequisites: async (runtimeSelection) => {
     if (resolveCodexDaemonBackendMode(runtimeSelection) !== 'acp') return { ok: true };
 
     let resolved: { command: string; args: string[] };
@@ -46,7 +53,8 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
     };
   },
 
-  buildExtraEnvForChild: (runtimeSelection) => ({
+  augmentEnv: (runtimeSelection) => ({
     ...(resolveCodexDaemonBackendMode(runtimeSelection) === 'acp' ? { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
   }),
-};
+  resolveVendorResumeSupportParams: (params) => resolveCodexVendorResumeSupportParamsForSpawn(params),
+} satisfies CodexDaemonSpawnHooks;

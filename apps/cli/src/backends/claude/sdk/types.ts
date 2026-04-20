@@ -186,7 +186,7 @@ export interface QueryOptions {
     executableArgs?: string[]
     maxTurns?: number
     pathToClaudeCodeExecutable?: string
-    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk'
+    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'
     continue?: boolean
     resume?: string
     model?: string

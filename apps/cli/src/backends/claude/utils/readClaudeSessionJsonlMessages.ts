@@ -1,7 +1,7 @@
 import { logger } from '@/ui/logger';
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
 
-import type { RawJSONLines } from '../types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalClaudeEventTypes';
 import { parseRawJsonLinesObject } from './parseRawJsonLines';
 

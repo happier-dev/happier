@@ -1,28 +1,48 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { delimiter, resolve } from 'node:path';
 
-const { probeCodexAppServerExecutionRunAvailabilityMock } = vi.hoisted(() => ({
-  probeCodexAppServerExecutionRunAvailabilityMock: vi.fn(() => true),
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+
+const { appServerAvailabilityMock } = vi.hoisted(() => ({
+  appServerAvailabilityMock: vi.fn(() => true),
 }));
 
-vi.mock('./probeCodexAppServerExecutionRunAvailability', () => ({
-  probeCodexAppServerExecutionRunAvailability: probeCodexAppServerExecutionRunAvailabilityMock,
+vi.mock('./appServerAvailability', () => ({
+  appServerAvailability: appServerAvailabilityMock,
 }));
 
-describe('executionRunBackendFactory (codex)', () => {
+describe('createCodexExecutionRunBackend (codex)', () => {
+  function createExecutionRunHostRuntimeStub(): ExecutionRunHostRuntime {
+    return {
+      async readResumeSupport() {
+        return true;
+      },
+      async provisionSession() {
+        return { sessionId: 'codex-execution-run-session' };
+      },
+      async sendPrompt() {},
+      async cancel() {},
+      subscribeMessages() {
+        return () => undefined;
+      },
+      async dispose() {},
+    };
+  }
+
   afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    probeCodexAppServerExecutionRunAvailabilityMock.mockImplementation(() => true);
+    appServerAvailabilityMock.mockImplementation(() => true);
   });
 
   it('scrubs Codex session attach env while preserving isolated execution-run env', async () => {
     const captured: Array<Record<string, unknown>> = [];
+    const acpRuntime = createExecutionRunHostRuntimeStub();
 
     vi.doMock('@/backends/codex/acp/backend', () => ({
       createCodexAcpBackend: (options: Record<string, unknown>) => {
         captured.push(options);
-        return { backend: { dispose: async () => undefined } };
+        return { backend: acpRuntime };
       },
     }));
     vi.doMock('@/backends/codex/acp/resolveCommand', () => ({
@@ -32,9 +52,9 @@ describe('executionRunBackendFactory (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: true }),
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    const runtime = createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -58,6 +78,10 @@ describe('executionRunBackendFactory (codex)', () => {
     expect(captured[0]?.env).not.toHaveProperty('CODEX_THREAD_ID');
     expect(captured[0]?.env).not.toHaveProperty('CODEX_INTERNAL_ORIGINATOR_OVERRIDE');
     expect(captured[0]?.env).not.toHaveProperty('CODEX_SHELL');
+    await expect(runtime.readResumeSupport()).resolves.toBe(true);
+    expect(typeof runtime.provisionSession).toBe('function');
+    expect(runtime).not.toHaveProperty('startSession');
+    expect(runtime).toBe(acpRuntime);
   });
 
   it('falls back to MCP when Codex ACP is selected but codex-acp is unavailable', async () => {
@@ -70,8 +94,8 @@ describe('executionRunBackendFactory (codex)', () => {
         return { backend: { dispose: async () => undefined } };
       },
     }));
-    vi.doMock('./createCodexMcpExecutionRunBackend', () => ({
-      createCodexMcpExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./mcpBackend', () => ({
+      mcpBackend: (options: Record<string, unknown>) => {
         mcpCalls.push(options);
         return { dispose: async () => undefined };
       },
@@ -83,9 +107,9 @@ describe('executionRunBackendFactory (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: false, errorMessage: 'codex-acp is not available on PATH' }),
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -112,15 +136,16 @@ describe('executionRunBackendFactory (codex)', () => {
     const acpCalls: Array<Record<string, unknown>> = [];
     const mcpCalls: Array<Record<string, unknown>> = [];
     const spawnResolutionCalls: Array<Record<string, unknown>> = [];
+    const acpRuntime = createExecutionRunHostRuntimeStub();
 
     vi.doMock('@/backends/codex/acp/backend', () => ({
       createCodexAcpBackend: (options: Record<string, unknown>) => {
         acpCalls.push(options);
-        return { backend: { dispose: async () => undefined } };
+        return { backend: acpRuntime };
       },
     }));
-    vi.doMock('./createCodexMcpExecutionRunBackend', () => ({
-      createCodexMcpExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./mcpBackend', () => ({
+      mcpBackend: (options: Record<string, unknown>) => {
         mcpCalls.push(options);
         return { dispose: async () => undefined };
       },
@@ -138,9 +163,9 @@ describe('executionRunBackendFactory (codex)', () => {
       },
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -172,6 +197,7 @@ describe('executionRunBackendFactory (codex)', () => {
   it('creates the app-server backend when the isolated execution-run transport opts into it', async () => {
     const acpCalls: Array<Record<string, unknown>> = [];
     const appServerCalls: Array<Record<string, unknown>> = [];
+    const appServerRuntime = createExecutionRunHostRuntimeStub();
 
     vi.doMock('@/backends/codex/acp/backend', () => ({
       createCodexAcpBackend: (options: Record<string, unknown>) => {
@@ -179,16 +205,16 @@ describe('executionRunBackendFactory (codex)', () => {
         return { backend: { dispose: async () => undefined } };
       },
     }));
-    vi.doMock('./createCodexAppServerExecutionRunBackend', () => ({
-      createCodexAppServerExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./appServerBackend', () => ({
+      appServerBackend: (options: Record<string, unknown>) => {
         appServerCalls.push(options);
-        return { dispose: async () => undefined };
+        return appServerRuntime;
       },
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    const runtime = createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -214,20 +240,22 @@ describe('executionRunBackendFactory (codex)', () => {
         PATH: `${resolve('/tmp/happier-worktree', 'scripts', 'shims')}${delimiter}/tmp/isolated-bin:/usr/bin`,
       }),
     });
+    expect(runtime).toBe(appServerRuntime);
   });
 
   it('resolves HAPPIER_CODEX_BACKEND_MODE against the isolated env (not process.env) when selecting the transport', async () => {
     const mcpCalls: Array<Record<string, unknown>> = [];
     const appServerCalls: Array<Record<string, unknown>> = [];
+    const mcpRuntime = createExecutionRunHostRuntimeStub();
 
-    vi.doMock('./createCodexMcpExecutionRunBackend', () => ({
-      createCodexMcpExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./mcpBackend', () => ({
+      mcpBackend: (options: Record<string, unknown>) => {
         mcpCalls.push(options);
-        return { dispose: async () => undefined };
+        return mcpRuntime;
       },
     }));
-    vi.doMock('./createCodexAppServerExecutionRunBackend', () => ({
-      createCodexAppServerExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./appServerBackend', () => ({
+      appServerBackend: (options: Record<string, unknown>) => {
         appServerCalls.push(options);
         return { dispose: async () => undefined };
       },
@@ -239,9 +267,9 @@ describe('executionRunBackendFactory (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: true }),
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    const runtime = createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -260,6 +288,7 @@ describe('executionRunBackendFactory (codex)', () => {
 
     expect(appServerCalls).toHaveLength(0);
     expect(mcpCalls).toHaveLength(1);
+    expect(runtime).toBe(mcpRuntime);
   });
 
   it('prefers the app-server backend by default when probing succeeds', async () => {
@@ -272,16 +301,16 @@ describe('executionRunBackendFactory (codex)', () => {
         return { backend: { dispose: async () => undefined } };
       },
     }));
-    vi.doMock('./createCodexAppServerExecutionRunBackend', () => ({
-      createCodexAppServerExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./appServerBackend', () => ({
+      appServerBackend: (options: Record<string, unknown>) => {
         appServerCalls.push(options);
         return { dispose: async () => undefined };
       },
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -318,14 +347,14 @@ describe('executionRunBackendFactory (codex)', () => {
         return { backend: { dispose: async () => undefined } };
       },
     }));
-    vi.doMock('./createCodexAppServerExecutionRunBackend', () => ({
-      createCodexAppServerExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./appServerBackend', () => ({
+      appServerBackend: (options: Record<string, unknown>) => {
         appServerCalls.push(options);
         return { dispose: async () => undefined };
       },
     }));
-    vi.doMock('./createCodexMcpExecutionRunBackend', () => ({
-      createCodexMcpExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./mcpBackend', () => ({
+      mcpBackend: (options: Record<string, unknown>) => {
         mcpCalls.push(options);
         return { dispose: async () => undefined };
       },
@@ -337,9 +366,9 @@ describe('executionRunBackendFactory (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: true }),
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -370,16 +399,16 @@ describe('executionRunBackendFactory (codex)', () => {
         return { backend: { dispose: async () => undefined } };
       },
     }));
-    vi.doMock('./createCodexAppServerExecutionRunBackend', () => ({
-      createCodexAppServerExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./appServerBackend', () => ({
+      appServerBackend: (options: Record<string, unknown>) => {
         appServerCalls.push(options);
         return { dispose: async () => undefined };
       },
     }));
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    executionRunBackendFactory({
+    createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',
@@ -408,15 +437,16 @@ describe('executionRunBackendFactory (codex)', () => {
   it('falls back to ACP when the isolated execution-run transport opts into app-server but probing fails', async () => {
     const acpCalls: Array<Record<string, unknown>> = [];
     const appServerCalls: Array<Record<string, unknown>> = [];
+    const acpRuntime = createExecutionRunHostRuntimeStub();
 
     vi.doMock('@/backends/codex/acp/backend', () => ({
       createCodexAcpBackend: (options: Record<string, unknown>) => {
         acpCalls.push(options);
-        return { backend: { dispose: async () => undefined } };
+        return { backend: acpRuntime };
       },
     }));
-    vi.doMock('./createCodexAppServerExecutionRunBackend', () => ({
-      createCodexAppServerExecutionRunBackend: (options: Record<string, unknown>) => {
+    vi.doMock('./appServerBackend', () => ({
+      appServerBackend: (options: Record<string, unknown>) => {
         appServerCalls.push(options);
         return { dispose: async () => undefined };
       },
@@ -428,11 +458,11 @@ describe('executionRunBackendFactory (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: true }),
     }));
 
-    probeCodexAppServerExecutionRunAvailabilityMock.mockReturnValue(false);
+    appServerAvailabilityMock.mockReturnValue(false);
 
-    const { executionRunBackendFactory } = await import('./executionRunBackendFactory');
+    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
 
-    await executionRunBackendFactory({
+    await createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
       backendId: 'codex',
       permissionMode: 'read_only',

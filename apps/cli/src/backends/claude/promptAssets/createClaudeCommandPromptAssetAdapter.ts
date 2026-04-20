@@ -1,5 +1,5 @@
-import type { PromptAssetAdapter } from '@/promptAssets/types';
-import { createMarkdownDocPromptAssetAdapter } from '@/promptAssets/adapters/markdownDoc/createMarkdownDocPromptAssetAdapter';
+import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import { createMarkdownDocPromptAssetAdapter } from '@/prompts/assets/adapters/markdownDoc/createMarkdownDocPromptAssetAdapter';
 
 export function createClaudeCommandPromptAssetAdapter(params?: Readonly<{
   homedir?: () => string;
