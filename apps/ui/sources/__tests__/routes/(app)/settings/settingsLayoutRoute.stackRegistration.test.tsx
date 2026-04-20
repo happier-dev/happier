@@ -110,6 +110,15 @@ vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => true,
 }));
 
+vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
+    PROVIDER_SETTINGS_DESCRIPTORS: [],
+    PROVIDER_SETTINGS_PLUGINS: [],
+    PROVIDER_SETTINGS_BEHAVIORS: [],
+    getProviderSettingsDescriptor: () => null,
+    getProviderSettingsBehavior: () => null,
+    getProviderSettingsPlugin: () => null,
+}));
+
 afterEach(() => {
     standardCleanup();
 });
@@ -127,5 +136,6 @@ describe('SettingsLayoutRoute stack registration', () => {
         expect(screenNames).not.toContain('providers/index');
         expect(screenNames).toContain('providers/[providerId]');
         expect(screenNames).toContain('plugins');
+        expect(screenNames).toContain('plugins/[pluginId]');
     });
 });

@@ -3,7 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import type { ProviderSettingsDescriptor, ProviderSettingsRuntime } from '@/agents/providers/shared/providerSettingsPlugin';
+import type { ProviderSettingsBehavior, ProviderSettingsDescriptor } from '@/agents/providers/shared/providerSettingsPlugin';
+import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
@@ -26,9 +28,27 @@ const routerPushSpy = vi.fn();
 const mockProviderSettingsDescriptor = vi.hoisted(
     () => vi.fn<(providerId: string) => ProviderSettingsDescriptor | null>(() => null),
 );
-const mockProviderSettingsRuntime = vi.hoisted(
-    () => vi.fn<(providerId: string) => ProviderSettingsRuntime | null>(() => null),
+const mockProviderSettingsBehavior = vi.hoisted(
+    () => vi.fn<(providerId: string) => ProviderSettingsBehavior | null>(() => null),
 );
+const mockProviderCatalogProjection = vi.hoisted(
+    () => vi.fn<(providerId: string, params?: Record<string, unknown>) => {
+        providerId: string;
+        providerAgentId: string | null;
+        iconAgentId: string | null;
+        title: string;
+        subtitle: string | null;
+        iconName: string;
+        isBuiltIn: boolean;
+        backendTargetKey: string | null;
+        enabled: boolean | null;
+        descriptor: ProviderSettingsDescriptor | null;
+        behavior: ProviderSettingsBehavior | null;
+        authPlugin: any;
+        backendEntry: any;
+    } | null>(() => null),
+);
+const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
 
 const machineCapabilitiesInvokeMock = vi.fn(async () => ({
     supported: true,
@@ -91,7 +111,12 @@ let activeServerSnapshot: ActiveServerSnapshot = {
     serverUrl: 'http://localhost:3000',
     generation: 1,
 };
-let activeServerSubscriber: ((snapshot: ActiveServerSnapshot) => void) | null = null;
+let activeServerSubscribers = new Set<(snapshot: ActiveServerSnapshot) => void>();
+function emitActiveServerSnapshot(snapshot: ActiveServerSnapshot) {
+    for (const subscriber of activeServerSubscribers) {
+        subscriber(snapshot);
+    }
+}
 const passThrough = (componentName: string) => createPassThroughModule([componentName]);
 
 installSessionSettingsEntryModuleMocks({
@@ -237,17 +262,20 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshot,
     subscribeActiveServer: (listener: (snapshot: ActiveServerSnapshot) => void) => {
-        activeServerSubscriber = listener;
+        activeServerSubscribers.add(listener);
         return () => {
-            if (activeServerSubscriber === listener) {
-                activeServerSubscriber = null;
-            }
+            activeServerSubscribers.delete(listener);
         };
     },
 }));
 
 vi.mock('@/sync/domains/server/selection/serverSelectionResolution', () => ({
     getEffectiveServerSelectionFromRawSettings: () => ({ serverIds: ['server1'] }),
+}));
+
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    machineContributionRegistryProjectionDescribe: (...args: unknown[]) =>
+        machineContributionRegistryProjectionDescribeMock(...args),
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
@@ -288,9 +316,9 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
                     detectKey: agentId,
                     installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
                 },
-                connectedService: { name: 'cloud' },
+                uiConnectedService: { serviceId: null, label: 'cloud', connectRoute: null },
                 localControl: { supported: false },
-                ui: { agentPickerIconName: 'code-slash' },
+                ui: { agentPickerIconName: 'sparkles-outline' },
             };
         }
 
@@ -320,31 +348,59 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
                 detectKey: agentId,
                 installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
             },
-            connectedService: { name: agentId === 'customAcp' ? 'Custom ACP' : 'cloud' },
+            uiConnectedService: {
+                serviceId: null,
+                label: agentId === 'customAcp' ? 'Custom ACP' : 'cloud',
+                connectRoute: null,
+            },
             localControl: { supported: false },
-            ui: { agentPickerIconName: agentId === 'customAcp' ? 'git-network-outline' : 'code-slash' },
+            ui: { agentPickerIconName: agentId === 'customAcp' ? 'git-network-outline' : 'code-slash-outline' },
         };
     };
     return {
         ...actual,
+        AGENT_IDS: ['legacy.codex', 'legacy.customAcp', 'legacy.opencode'],
         isAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode' || v === 'claude',
         getAgentCore: (agentId: string) => createMockAgentCore(agentId),
     };
 });
 
-vi.mock('@/agents/providers/registry/providerSettingsRegistry', () => ({
+vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
     PROVIDER_SETTINGS_DESCRIPTORS: [],
     PROVIDER_SETTINGS_PLUGINS: [],
     getProviderSettingsDescriptor: (providerId: string) => mockProviderSettingsDescriptor(providerId),
-    getProviderSettingsRuntime: (providerId: string) => mockProviderSettingsRuntime(providerId),
+    getProviderSettingsBehavior: (providerId: string) => mockProviderSettingsBehavior(providerId),
     getProviderSettingsPlugin: (providerId: string) => {
         const descriptor = mockProviderSettingsDescriptor(providerId);
-        const runtime = mockProviderSettingsRuntime(providerId);
-        return descriptor && runtime ? { ...descriptor, ...runtime } : null;
+        const behavior = mockProviderSettingsBehavior(providerId);
+        return descriptor && behavior ? { ...descriptor, ...behavior } : null;
     },
 }));
 
-vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
+vi.mock('@/agents/backendCatalog/providerCatalogProjection', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/backendCatalog/providerCatalogProjection')>();
+    return {
+        ...actual,
+        getResolvedProviderCatalogEntries: (params: Record<string, unknown>) => {
+            const entries = actual.getResolvedProviderCatalogEntries(
+                params as Parameters<typeof actual.getResolvedProviderCatalogEntries>[0],
+            );
+            const currentProviderId = typeof mockProviderId === 'string' ? mockProviderId.trim().toLowerCase() : '';
+            if (!currentProviderId) {
+                return entries;
+            }
+            const mockedProjection = mockProviderCatalogProjection(currentProviderId, params);
+            if (!mockedProjection || entries.some((entry) => entry.providerId === mockedProjection.providerId)) {
+                return entries;
+            }
+            return [...entries, mockedProjection];
+        },
+        resolveProviderCatalogProjection: (providerId: string, params?: Record<string, unknown>) =>
+            mockProviderCatalogProjection(providerId, params) ?? actual.resolveProviderCatalogProjection(providerId, params as Parameters<typeof actual.resolveProviderCatalogProjection>[1]),
+    };
+});
+
+vi.mock('@/agents/providers/catalog/providerLocalAuthCatalog', () => ({
     getProviderLocalAuthPlugin: () => ({
         providerId: 'codex',
         support: 'login_terminal',
@@ -413,7 +469,7 @@ vi.mock('@/components/settings/providers/authentication/useProviderAuthenticatio
             canLaunchLogin: true,
             machineId: null,
             machineHomeDir: null,
-            loginLaunch: null,
+            loginLaunch: providerId ? { initialCommand: `${providerId} login` } : null,
             authStatus,
             canCheckNow: true,
             loginActionKind: authStatus?.state === 'logged_in' ? 'reauthenticate' : 'login',
@@ -433,6 +489,7 @@ describe('ProviderSettingsScreen', () => {
     });
 
     beforeEach(() => {
+        clearDaemonMergedProjectionCacheForTests();
         mockProviderId = 'codex';
         shouldThrowOnAppPaneScope = false;
         tauriDesktopState.value = true;
@@ -491,7 +548,7 @@ describe('ProviderSettingsScreen', () => {
             serverUrl: 'http://localhost:3000',
             generation: 1,
         };
-        activeServerSubscriber = null;
+        activeServerSubscribers = new Set();
         useCLIDetectionMock.mockReset();
         useCLIDetectionMock.mockImplementation(() => cliDetectionState);
         useCapabilityInstallabilityMock.mockReset();
@@ -499,12 +556,231 @@ describe('ProviderSettingsScreen', () => {
         routerPushSpy.mockReset();
         mockProviderSettingsDescriptor.mockReset();
         mockProviderSettingsDescriptor.mockReturnValue(null);
-        mockProviderSettingsRuntime.mockReset();
-        mockProviderSettingsRuntime.mockReturnValue(null);
+        mockProviderSettingsBehavior.mockReset();
+        mockProviderSettingsBehavior.mockReturnValue(null);
+        mockProviderCatalogProjection.mockReset();
+        mockProviderCatalogProjection.mockImplementation((providerId: string, params?: Record<string, unknown>) => {
+            const descriptor = mockProviderSettingsDescriptor(providerId);
+            const behavior = mockProviderSettingsBehavior(providerId);
+            const isBuiltIn = providerId === 'claude' || providerId === 'codex' || providerId === 'opencode' || providerId === 'customAcp';
+            if (!isBuiltIn) {
+                return null;
+            }
+            return {
+                providerId,
+                providerAgentId: isBuiltIn ? providerId : null,
+                iconAgentId: isBuiltIn ? providerId : null,
+                title: descriptor ? (typeof descriptor.title === 'string' ? descriptor.title : descriptor.title.key) : providerId,
+                subtitle: descriptor?.providerId ?? providerId,
+                iconName: isBuiltIn ? 'code-slash-outline' : 'layers-outline',
+                isBuiltIn,
+                backendTargetKey: isBuiltIn ? `agent:${providerId}` : null,
+                enabled: isBuiltIn ? true : null,
+                descriptor,
+                behavior,
+                authPlugin: providerId === 'codex'
+                    ? {
+                        providerId,
+                        support: 'login_terminal',
+                        docsUrl: 'https://example.com/codex',
+                        buildLoginLaunch: () => ({ initialCommand: 'codex login' }),
+                    }
+                    : null,
+                backendEntry: null,
+            };
+        });
+        machineContributionRegistryProjectionDescribeMock.mockReset();
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: false,
+            reason: 'not-supported',
+        });
+    });
+
+    it('uses daemon merged projection inputs when resolving a plugin provider settings screen', async () => {
+        mockProviderId = 'acme.review.provider';
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        });
+
+        await renderProviderSettingsScreen();
+
+        // Flush the projection RPC -> state -> re-render before checking the projection call-site.
+        await act(async () => {});
+        await flushHookEffects();
+
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m1', expect.objectContaining({
+            serverId: 'server1',
+        }));
+        expect(mockProviderCatalogProjection).toHaveBeenCalledWith(
+            'acme.review.provider',
+            expect.objectContaining({
+                mergedProviderProjectionById: expect.objectContaining({
+                    'acme.review.provider': expect.objectContaining({
+                        title: 'Acme Review Provider',
+                    }),
+                }),
+                mergedBackendProjectionById: expect.objectContaining({
+                    'acme.review.backend': expect.objectContaining({
+                        title: 'Acme Review Backend',
+                        providerAgentId: 'claude',
+                        iconAgentId: 'codex',
+                    }),
+                }),
+            }),
+        );
+
+        machineContributionRegistryProjectionDescribeMock.mockClear();
+
+        await act(async () => {
+            activeServerSnapshot = {
+                serverId: 'server2',
+                serverUrl: 'http://localhost:4000',
+                generation: 2,
+            };
+            emitActiveServerSnapshot(activeServerSnapshot);
+        });
+        await flushHookEffects();
+
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m1', expect.objectContaining({
+            serverId: 'server2',
+        }));
+    });
+
+    it('refetches daemon projection inputs for the selected machine instead of pinning the first machine', async () => {
+        mockProviderId = 'acme.review.provider';
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        const contextBar = screen.findByType('ContextBar' as any);
+        machineContributionRegistryProjectionDescribeMock.mockClear();
+
+        await act(async () => {
+            contextBar.props.machine.onSelect('m2');
+        });
+        await flushHookEffects();
+
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m2', expect.objectContaining({
+            serverId: 'server1',
+        }));
+    });
+
+    it('renders the full provider settings/auth surface for a daemon-projected plugin provider backed by a built-in provider', async () => {
+        mockProviderId = 'acme.review.provider';
+        mockProviderSettingsDescriptor.mockImplementation((providerId) => {
+            if (providerId === 'claude') {
+                return {
+                    providerId: 'claude',
+                    title: 'Claude',
+                    icon: { ionName: 'sparkles-outline', color: 'blue' },
+                    settings: {},
+                    uiSections: [],
+                };
+            }
+            return null;
+        });
+        mockProviderSettingsBehavior.mockImplementation((providerId) => (
+            providerId === 'claude'
+                ? { providerId: 'claude' }
+                : null
+        ));
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        expect(screen.findByTestId('settings-provider-auth-status')).toBeTruthy();
+        expect(screen.findAllByType('ProviderCliInstallItem' as any)).toHaveLength(1);
+        const items = screen.findAllByType('Item' as any);
+        expect(items.some((node: any) => node.props?.title === 'Acme Review Provider')).toBe(true);
+        expect(items.some((node: any) => node.props?.title === 'settingsProviders.notAvailable')).toBe(false);
+        const projectedIdentityRow = items.find((node: any) => node.props?.title === 'Acme Review Provider');
+        expect(projectedIdentityRow?.props?.icon?.props?.name).toBe('code-slash-outline');
+    });
+
+    it('renders the projected provider detail screen even when the provider has no built-in runtime carrier', async () => {
+        mockProviderId = 'acme.headless.provider';
+        mockProviderCatalogProjection.mockReturnValue({
+            providerId: 'acme.headless.provider',
+            providerAgentId: null,
+            iconAgentId: 'claude',
+            title: 'Acme Headless Provider',
+            subtitle: 'Plugin provider',
+            iconName: 'layers-outline',
+            isBuiltIn: false,
+            backendTargetKey: null,
+            enabled: null,
+            descriptor: {
+                providerId: 'acme.headless.provider',
+                title: 'Acme Headless Provider',
+                icon: { ionName: 'layers-outline', color: '#999999' },
+                settings: {},
+                uiSections: [],
+            },
+            behavior: {
+                providerId: 'acme.headless.provider',
+            },
+            authPlugin: null,
+            backendEntry: null,
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        const items = screen.findAllByType('Item' as any);
+        expect(items.some((node: any) => node.props?.title === 'Acme Headless Provider')).toBe(true);
+        expect(items.some((node: any) => node.props?.title === 'settingsProviders.notAvailable')).toBe(false);
+        const projectedIdentityRow = items.find((node: any) => node.props?.title === 'Acme Headless Provider');
+        expect(projectedIdentityRow?.props?.icon?.props?.name).toBe('sparkles-outline');
+    });
+
+    it('does not synthesize a built-in target key for plugin-backed provider controls when projection truth is missing', async () => {
+        mockProviderId = 'acme.review.provider';
+        mockProviderCatalogProjection.mockReturnValue({
+            providerId: 'acme.review.provider',
+            providerAgentId: 'claude',
+            iconAgentId: 'codex',
+            title: 'Acme Review Provider',
+            subtitle: 'Plugin provider',
+            iconName: 'layers-outline',
+            isBuiltIn: false,
+            backendTargetKey: null,
+            enabled: null,
+            descriptor: {
+                providerId: 'claude',
+                title: 'Claude',
+                icon: { ionName: 'sparkles-outline', color: 'blue' },
+                settings: {},
+                uiSections: [],
+            },
+            behavior: {
+                providerId: 'claude',
+            },
+            authPlugin: null,
+            backendEntry: null,
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        const enabledRow = screen.findAllByType('Item' as any).find((node: any) => node.props?.title === 'settingsProviders.enabledTitle');
+        expect(enabledRow).toBeUndefined();
     });
 
     it('surfaces provider CLI install via capability installer item', async () => {
         const screen = await renderProviderSettingsScreen();
+        expect(mockProviderCatalogProjection).toHaveBeenCalledWith(
+            'codex',
+            expect.objectContaining({
+                enabledAgentIds: [],
+            }),
+        );
         const installer = screen.findByType('ProviderCliInstallItem' as any);
         expect(installer.props.machineId).toBe('m1');
         expect(installer.props.serverId).toBe('server1');
@@ -609,7 +885,7 @@ describe('ProviderSettingsScreen', () => {
                 serverUrl: 'http://localhost:4000',
                 generation: 2,
             };
-            activeServerSubscriber?.(activeServerSnapshot);
+            emitActiveServerSnapshot(activeServerSnapshot);
         });
         await flushHookEffects();
 
@@ -828,6 +1104,26 @@ describe('ProviderSettingsScreen', () => {
         expect(redirect.props.href).toBe('/(app)/settings/providers');
     });
 
+    it('redirects the legacy custom ACP provider route to the canonical projected provider when merged projection resolves one', async () => {
+        mockProviderId = 'customAcp';
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        const redirect = screen.findByType('Redirect' as any);
+        expect(redirect.props.href).toEqual({
+            pathname: '/(app)/settings/providers/[providerId]',
+            params: {
+                providerId: 'acme.review.provider',
+            },
+        });
+    });
+
     it('reads and writes the OpenCode server url per active server', async () => {
         mockProviderId = 'opencode';
         settingsState.opencodeServerBaseUrl = 'http://127.0.0.1:4999/';
@@ -857,10 +1153,9 @@ describe('ProviderSettingsScreen', () => {
                 },
             ],
         });
-        mockProviderSettingsRuntime.mockReturnValue({
+        mockProviderSettingsBehavior.mockReturnValue({
             providerId: 'opencode',
             ExtraSectionsComponent: passThrough('RuntimeSections').RuntimeSections,
-            buildOutgoingMessageMetaExtras: () => ({}),
         });
 
         const screen = await renderProviderSettingsScreen();
@@ -886,7 +1181,7 @@ describe('ProviderSettingsScreen', () => {
                 serverUrl: 'http://localhost:4000',
                 generation: 2,
             };
-            activeServerSubscriber?.(activeServerSnapshot);
+            emitActiveServerSnapshot(activeServerSnapshot);
         });
         await flushHookEffects();
 
@@ -916,9 +1211,8 @@ describe('ProviderSettingsScreen', () => {
                 },
             ],
         });
-        mockProviderSettingsRuntime.mockReturnValue({
+        mockProviderSettingsBehavior.mockReturnValue({
             providerId: 'opencode',
-            buildOutgoingMessageMetaExtras: () => ({}),
         });
 
         const screen = await renderProviderSettingsScreen();
@@ -927,12 +1221,43 @@ describe('ProviderSettingsScreen', () => {
         expect(textInputs[0]?.props.placeholder).toBe('common.default');
     });
 
+    it('renders a descriptor-backed fallback for non-built-in provider ids without requiring pane context', async () => {
+        mockProviderId = 'acme.review.backend';
+        shouldThrowOnAppPaneScope = true;
+        mockProviderSettingsDescriptor.mockReturnValue(null);
+        mockProviderSettingsBehavior.mockReturnValue(null);
+        mockProviderCatalogProjection.mockReturnValue({
+            providerId: 'acme.review.backend',
+            providerAgentId: null,
+            iconAgentId: 'claude',
+            title: 'Acme Review Backend',
+            subtitle: 'acme.review.backend',
+            iconName: 'code-slash-outline',
+            isBuiltIn: false,
+            backendTargetKey: null,
+            enabled: null,
+            descriptor: null,
+            behavior: null,
+            authPlugin: null,
+            backendEntry: null,
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        const items = screen.findAllByType('Item' as any);
+        expect(items.some((node: any) => node.props?.title === 'Acme Review Backend')).toBe(true);
+        expect(items.some((node: any) => node.props?.title === 'settingsProviders.notFoundTitle')).toBe(false);
+        const fallbackIdentityRow = items.find((node: any) => node.props?.title === 'Acme Review Backend');
+        expect(fallbackIdentityRow?.props?.icon?.props?.name).toBe('sparkles-outline');
+    });
+
     it('renders the not found screen without requiring pane context', async () => {
         mockProviderId = 'unknown';
         shouldThrowOnAppPaneScope = true;
         const screen = await renderProviderSettingsScreen();
-        const groups = screen.findAllByType('ItemGroup' as any);
-        expect(groups.length).toBeGreaterThan(0);
+        const textNodes = screen.findAllByType('Text' as any);
+        expect(textNodes.some((node: any) => node.props?.children === 'settingsProviders.notFoundTitle')).toBe(true);
+        expect(textNodes.some((node: any) => node.props?.children === 'settingsProviders.notFoundSubtitle')).toBe(true);
+        expect(textNodes.some((node: any) => node.props?.children === 'Unknown')).toBe(false);
     });
 
     it('renders provider-specific extra sections from runtime behavior separately from settings descriptors', async () => {
@@ -944,10 +1269,9 @@ describe('ProviderSettingsScreen', () => {
             settings: {},
             uiSections: [],
         });
-        mockProviderSettingsRuntime.mockReturnValue({
+        mockProviderSettingsBehavior.mockReturnValue({
             providerId: 'opencode',
             ExtraSectionsComponent: passThrough('RuntimeSections').RuntimeSections,
-            buildOutgoingMessageMetaExtras: () => ({}),
         });
 
         const screen = await renderProviderSettingsScreen();

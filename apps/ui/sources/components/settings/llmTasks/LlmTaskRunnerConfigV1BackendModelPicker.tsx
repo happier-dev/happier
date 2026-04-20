@@ -4,12 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { buildBackendTargetKey, type AcpCatalogSettingsV1, type BackendTargetRefV1, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import type { AcpCatalogSettingsV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
@@ -21,6 +21,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { useAllMachines } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -46,30 +47,45 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   const [openMenu, setOpenMenu] = React.useState<null | 'backend' | 'model'>(null);
 
   const modelId = normalizeNonEmptyString(props.value?.modelId) ?? 'default';
-  const backendEntries = React.useMemo(() => {
-    return getResolvedBackendCatalogEntries({
-      enabledAgentIds,
-      acpCatalogSettingsV1: acpCatalogSettings ?? { v: 2, backends: [] },
-      backendEnabledByTargetKey,
-    });
-  }, [acpCatalogSettings, backendEnabledByTargetKey, enabledAgentIds]);
-  const selectedBackendEntry = React.useMemo(() => {
-    const target = props.value?.backendTarget;
-    if (!target) return null;
-    const targetKey = buildBackendTargetKey(target);
-    return backendEntries.find((entry) => entry.targetKey === targetKey) ?? null;
-  }, [backendEntries, props.value?.backendTarget]);
-
-  const selectedBackendTargetForModelOptions = React.useMemo<BackendTargetRefV1>(() => {
-    return selectedBackendEntry?.target ?? { kind: 'builtInAgent', agentId: DEFAULT_AGENT_ID };
-  }, [selectedBackendEntry]);
-
   const preflightMachineId = React.useMemo(() => {
     return resolvePreferredMachineId({
       machines,
       recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
     });
   }, [machines, recentMachinePaths]);
+  const daemonMergedProjection = useDaemonMergedProjectionInputs({
+    machineId: preflightMachineId,
+    serverId: String(getActiveServerSnapshot().serverId ?? '').trim() || null,
+    enabled: Boolean(preflightMachineId),
+    staleMs: 60_000,
+  });
+  const backendEntries = React.useMemo(() => {
+    return getResolvedBackendCatalogEntries({
+      enabledAgentIds,
+      acpCatalogSettingsV1: acpCatalogSettings ?? { v: 2, backends: [] },
+      backendEnabledByTargetKey,
+      discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
+      mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
+      mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
+    });
+  }, [
+    acpCatalogSettings,
+    backendEnabledByTargetKey,
+    daemonMergedProjection.inputs?.discoveredBackendIds,
+    daemonMergedProjection.inputs?.mergedBackendProjectionById,
+    daemonMergedProjection.inputs?.mergedProviderProjectionById,
+    enabledAgentIds,
+  ]);
+  const selectedBackendEntry = React.useMemo(() => {
+    const target = props.value?.backendTarget;
+    if (!target) return null;
+    const targetKey = resolveBackendTargetKeyV2(target as any);
+    return backendEntries.find((entry) => entry.backendTargetKey === targetKey) ?? null;
+  }, [backendEntries, props.value?.backendTarget]);
+
+  const selectedBackendTargetForModelOptions = React.useMemo(() => {
+    return selectedBackendEntry?.backendTarget ?? null;
+  }, [selectedBackendEntry]);
 
   const preflightModels = useNewSessionPreflightModelsState({
     backendTarget: selectedBackendTargetForModelOptions,
@@ -78,32 +94,17 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   });
 
   const backendMenuItems = React.useMemo(() => {
-    const builtInItems = new Map(
-      getAgentDropdownMenuItems({
-        agentIds: enabledAgentIds as any,
-        iconColor: theme.colors.textSecondary,
-      }).map((item) => [item.id, item]),
-    );
-
     return backendEntries.map((entry) => {
-      if (entry.family === 'builtInAgent' && entry.builtInAgentId) {
-        const item = builtInItems.get(entry.builtInAgentId);
-        if (item) {
-          return {
-            ...item,
-            id: entry.targetKey,
-          };
-        }
-      }
-
+      const displayAgentId = entry.iconAgentId ?? entry.providerAgentId ?? entry.builtInAgentId;
+      const iconName = displayAgentId ? getAgentCore(displayAgentId).ui?.agentPickerIconName : 'layers-outline';
       return {
-        id: entry.targetKey,
+        id: entry.backendTargetKey,
         title: entry.title,
         subtitle: entry.subtitle ?? undefined,
-        icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />,
+        icon: <Ionicons name={iconName as any} size={22} color={theme.colors.textSecondary} />,
       };
     });
-  }, [backendEntries, enabledAgentIds, theme.colors.textSecondary]);
+  }, [backendEntries, theme.colors.textSecondary]);
 
   const selectableModelMenuItems = React.useMemo(() => {
     return getModelDropdownMenuItems({
@@ -153,7 +154,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
         variant="selectable"
         search={true}
         searchPlaceholder={t('settingsSession.replayResume.summaryRunner.searchBackendsPlaceholder')}
-        selectedId={selectedBackendEntry?.targetKey ?? ''}
+        selectedId={selectedBackendEntry?.backendTargetKey ?? ''}
         showCategoryTitles={false}
         matchTriggerWidth={true}
         connectToTrigger={true}
@@ -173,7 +174,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
             setOpenMenu(null);
             return;
           }
-          const nextBackendEntry = backendEntries.find((entry) => entry.targetKey === targetKey) ?? null;
+          const nextBackendEntry = backendEntries.find((entry) => entry.backendTargetKey === targetKey) ?? null;
           if (!nextBackendEntry) {
             props.onChange(null);
             setOpenMenu(null);
@@ -181,7 +182,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
           }
           props.onChange({
             v: 1,
-            backendTarget: nextBackendEntry.target,
+            backendTarget: nextBackendEntry.backendTarget,
             modelId: 'default',
             permissionMode: 'no_tools',
           } as any);
@@ -236,7 +237,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
               const nextModelId = String(raw).trim();
               props.onChange({
                 v: 1,
-                backendTarget: selectedBackendEntry.target,
+                backendTarget: selectedBackendEntry.backendTarget,
                 modelId: nextModelId || 'default',
                 permissionMode: 'no_tools',
               } as any);
@@ -248,7 +249,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
           if (!nextModelId) return;
           props.onChange({
             v: 1,
-            backendTarget: selectedBackendEntry.target,
+            backendTarget: selectedBackendEntry.backendTarget,
             modelId: nextModelId,
             permissionMode: 'no_tools',
           } as any);

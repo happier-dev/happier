@@ -47,7 +47,7 @@ const machineExecutionRunsListSpy = vi.fn(async (_machineId: string, _opts?: Rec
             callId: 'call_1',
             sidechainId: 'side_1',
             intent: 'review',
-            backendId: 'claude',
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             runClass: 'bounded',
             ioMode: 'request_response',
             retentionPolicy: 'ephemeral',
@@ -382,8 +382,11 @@ describe('Session Run Details Screen', () => {
         const machineIdArg = machineExecutionRunsListSpy.mock.calls[0]?.[0];
         expect(typeof machineIdArg).toBe('string');
         expect(machineIdArg.length).toBeGreaterThan(0);
-        expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.daemonProcessLine).toContain('pid 123');
-        expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.daemonProcessLine).toContain('cpu 12.5');
+        await vi.waitFor(() => {
+            const daemonProcessLine = screen.findByType('SessionExecutionRunInfoCard' as any).props.daemonProcessLine;
+            expect(daemonProcessLine).toContain('pid 123');
+            expect(daemonProcessLine).toContain('cpu 12.5');
+        });
     });
 
     it('renders structured meta using the structured message registry when available', async () => {

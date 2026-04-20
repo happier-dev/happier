@@ -1,3 +1,4 @@
+import { ExtensionMarketplaceEntryV1Schema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export type PluginMarketplaceCatalogEntry = Readonly<{
@@ -16,11 +17,15 @@ export type PluginMarketplaceCatalog = Readonly<{
 
 const PluginMarketplaceCatalogEntrySchema = z.object({
     id: z.string().trim().min(1),
-    displayName: z.string().trim().min(1).optional(),
-    title: z.string().trim().min(1).optional(),
-    description: z.string().trim().min(1).optional(),
-    version: z.string().trim().min(1).optional(),
-}).passthrough();
+    manifestId: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    version: z.string().trim().min(1).optional().nullable(),
+    description: z.string().trim().min(1).optional().nullable(),
+    sourceUrl: z.string().trim().min(1),
+    packageUrl: z.string().trim().min(1).optional().nullable(),
+    digest: z.string().trim().min(1).optional().nullable(),
+    categories: z.array(z.string().trim().min(1)).default([]),
+}).strict().transform((value) => ExtensionMarketplaceEntryV1Schema.parse(value));
 
 const PluginMarketplaceCatalogDocumentSchema = z.object({
     t: z.literal('happier_plugin_marketplace_catalog_v1'),
@@ -29,11 +34,7 @@ const PluginMarketplaceCatalogDocumentSchema = z.object({
     title: z.string().trim().min(1),
     description: z.string().trim().min(1).nullable().optional(),
     entries: z.array(PluginMarketplaceCatalogEntrySchema).default([]),
-}).passthrough();
-
-function resolveEntryTitle(entry: z.infer<typeof PluginMarketplaceCatalogEntrySchema>): string {
-    return entry.displayName ?? entry.title ?? entry.id;
-}
+}).strict();
 
 export async function readPluginMarketplaceCatalog(sourceUrl: string): Promise<PluginMarketplaceCatalog> {
     const response = await fetch(sourceUrl, {
@@ -56,8 +57,8 @@ export async function readPluginMarketplaceCatalog(sourceUrl: string): Promise<P
         title: parsed.data.title,
         description: parsed.data.description ?? null,
         entries: parsed.data.entries.map((entry) => ({
-            id: entry.id,
-            title: resolveEntryTitle(entry),
+            id: entry.manifestId,
+            title: entry.title,
             description: entry.description ?? null,
             version: entry.version ?? null,
         })),

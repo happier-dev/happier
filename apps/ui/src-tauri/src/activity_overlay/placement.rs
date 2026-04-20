@@ -299,7 +299,10 @@ mod tests {
         )
         .expect("expected a resolved monitor");
 
-        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::MainWindow);
+        assert_eq!(
+            resolved.source,
+            DesktopActivityOverlayMonitorSource::MainWindow
+        );
         assert!((resolved.rect.x - 200.0).abs() < 0.001);
     }
 
@@ -323,7 +326,10 @@ mod tests {
         )
         .expect("expected a resolved monitor");
 
-        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::OverlayWindow);
+        assert_eq!(
+            resolved.source,
+            DesktopActivityOverlayMonitorSource::OverlayWindow
+        );
         assert!((resolved.rect.x - 3000.0).abs() < 0.001);
     }
 
@@ -352,7 +358,10 @@ mod tests {
         )
         .expect("expected a resolved monitor");
 
-        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::OverlayWindow);
+        assert_eq!(
+            resolved.source,
+            DesktopActivityOverlayMonitorSource::OverlayWindow
+        );
         assert!((resolved.rect.x - 3000.0).abs() < 0.001);
     }
 }

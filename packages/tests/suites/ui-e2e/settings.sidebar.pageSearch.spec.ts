@@ -32,7 +32,16 @@ test.describe('ui e2e: settings sidebar', () => {
     let uiBaseUrl: string | null = null;
 
     test.beforeAll(async () => {
-        test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
+        const uiWebEnv = {
+            ...process.env,
+            EXPO_PUBLIC_DEBUG: '1',
+            EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-sidebar-${run.runId}`,
+            HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
+            HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '900000',
+            HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '300000',
+        };
+
+        test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
         await mkdir(suiteDir, { recursive: true });
 
         server = await startServerLight({
@@ -46,10 +55,8 @@ test.describe('ui e2e: settings sidebar', () => {
         ui = await startUiWeb({
             testDir: suiteDir,
             env: {
-                ...process.env,
-                EXPO_PUBLIC_DEBUG: '1',
+                ...uiWebEnv,
                 EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-                EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-sidebar-${run.runId}`,
             },
         });
 

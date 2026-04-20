@@ -163,7 +163,7 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
 }
 
 #[cfg(desktop)]
-fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
         window.unminimize()?;
         window.show()?;

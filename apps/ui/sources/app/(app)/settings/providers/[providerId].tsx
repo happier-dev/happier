@@ -17,15 +17,15 @@ import { BadgeGrid, type BadgeGridItem } from '@/components/ui/layout/BadgeGrid'
 import { useAllMachines, useMachineListByServerId, useSettings } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useApplySettings } from '@/sync/store/settingsWriters';
-import { isAgentId, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
-    getProviderSettingsDescriptor,
-    getProviderSettingsRuntime,
-} from '@/agents/providers/registry/providerSettingsRegistry';
-import { getProviderLocalAuthPlugin } from '@/agents/providers/registry/providerLocalAuthRegistry';
+    getResolvedProviderCatalogEntries,
+    resolveProviderCatalogProjection,
+    type ResolvedProviderCatalogEntry,
+} from '@/agents/backendCatalog/providerCatalogProjection';
 import type { ProviderSettingFieldDef, TranslatableText } from '@/agents/providers/shared/providerSettingsPlugin';
 import { t } from '@/text';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { getAgentSessionModeDescriptor, getAgentStaticModels, getProviderCliRuntimeSpec, isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
 import {
     buildCatalogModelList,
@@ -43,13 +43,44 @@ import { scheduleProviderAuthenticationRefreshes } from '@/components/settings/p
 import { useProviderAuthenticationState } from '@/components/settings/providers/authentication/useProviderAuthenticationState';
 import { resolveEffectiveConfiguredRuntimeControlSurface } from '@/sync/domains/session/control/effectiveRuntimeControlSurface';
 import { buildProviderSettingsFieldPatch, readProviderSettingsFieldValue } from '@/components/settings/providers/providerSettingsFieldBinding';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { ContextBar } from '@/components/contextBar/ContextBar';
 import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 
 const Ionicons = SafeIonicons;
+
+function resolveLegacyCompatProviderRouteRedirect(params: Readonly<{
+    providerId: string;
+    daemonMergedProjectionInputs?: {
+        mergedProviderProjectionById?: Readonly<Record<string, unknown>> | null;
+        mergedBackendProjectionById?: Readonly<Record<string, { providerId?: unknown }>> | null;
+    } | null;
+}>): string | null {
+    if (!isLegacyCompatAgentType(params.providerId)) {
+        return null;
+    }
+
+    const providerIds = new Set<string>();
+    for (const providerId of Object.keys(params.daemonMergedProjectionInputs?.mergedProviderProjectionById ?? {})) {
+        const normalizedProviderId = providerId.trim();
+        if (!normalizedProviderId || isLegacyCompatAgentType(normalizedProviderId)) {
+            continue;
+        }
+        providerIds.add(normalizedProviderId);
+    }
+    for (const projection of Object.values(params.daemonMergedProjectionInputs?.mergedBackendProjectionById ?? {})) {
+        const normalizedProviderId = String(projection.providerId ?? '').trim();
+        if (!normalizedProviderId || isLegacyCompatAgentType(normalizedProviderId)) {
+            continue;
+        }
+        providerIds.add(normalizedProviderId);
+    }
+
+    return providerIds.size === 1 ? [...providerIds][0] ?? null : null;
+}
 
 function resolveProviderSettingsText(input: TranslatableText | undefined): string | undefined {
     if (input === undefined) return undefined;
@@ -58,6 +89,10 @@ function resolveProviderSettingsText(input: TranslatableText | undefined): strin
 }
 
 const PROVIDER_AUTH_TERMINAL_TAB_ID = 'provider-auth-terminal';
+
+function resolveProjectionIconName(projection: ResolvedProviderCatalogEntry): string {
+    return projection.iconAgentId ? getAgentCore(projection.iconAgentId).ui.agentPickerIconName : projection.iconName;
+}
 
 function resolveActiveServerMachineIds(params: Readonly<{
     capabilityServerId: string | null;
@@ -225,16 +260,94 @@ const ProviderSettingsNotFound = React.memo(function ProviderSettingsNotFound(pr
     );
 });
 
+const ProviderSettingsFallbackScreenInner = React.memo(function ProviderSettingsFallbackScreenInner(props: Readonly<{
+    projection: ResolvedProviderCatalogEntry;
+}>) {
+    const { theme } = useUnistyles();
+    const settings = useSettings();
+    const applySettings = useApplySettings();
+    const providerTargetKey = props.projection.backendTargetKey;
+    const backendEnabledByTargetKey = settings.backendEnabledByTargetKey;
+    const backendEnabled = providerTargetKey ? backendEnabledByTargetKey?.[providerTargetKey] !== false : null;
+    const setBackendEnabled = React.useCallback((next: boolean) => {
+        if (!providerTargetKey) return;
+        applySettings({
+            backendEnabledByTargetKey: {
+                ...(backendEnabledByTargetKey ?? {}),
+                [providerTargetKey]: next,
+            },
+        });
+    }, [applySettings, backendEnabledByTargetKey, providerTargetKey]);
+    const title = props.projection.title;
+    const subtitle = props.projection.subtitle ?? props.projection.providerId;
+    const ExtraSectionsComponent = props.projection.behavior?.ExtraSectionsComponent ?? null;
+    const iconName = resolveProjectionIconName(props.projection);
+
+    return (
+        <ItemList style={{ paddingTop: 0 }}>
+            <ItemGroup title={title} footer={t('settingsProviders.footer')}>
+                <Item
+                    title={title}
+                    subtitle={subtitle}
+                    icon={<Ionicons name={iconName as any} size={29} color={theme.colors.textSecondary} />}
+                    mode="info"
+                />
+                <Item
+                    title={t('settingsProviders.enabledTitle')}
+                    subtitle={t('settingsProviders.enabledSubtitle')}
+                    icon={<Ionicons name="toggle-outline" size={29} color={theme.colors.textSecondary} />}
+                    rightElement={backendEnabled === null ? undefined : <Switch value={backendEnabled} onValueChange={setBackendEnabled} />}
+                    showChevron={false}
+                    onPress={() => {
+                        if (backendEnabled === null) return;
+                        setBackendEnabled(!backendEnabled);
+                    }}
+                />
+            </ItemGroup>
+            {ExtraSectionsComponent ? <ExtraSectionsComponent providerId={props.projection.providerId} /> : null}
+            <ItemGroup title={t('settingsProviders.configuration')} footer={t('settingsProviders.notFoundSubtitle')}>
+                <Item
+                    title={props.projection.isBuiltIn ? t('settingsProviders.notAvailable') : props.projection.title}
+                    subtitle={props.projection.isBuiltIn ? t('settingsProviders.notFoundSubtitle') : subtitle}
+                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                    mode="info"
+                />
+            </ItemGroup>
+        </ItemList>
+    );
+});
+
 const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenInner(props: Readonly<{
-    providerId: AgentId;
-    core: ProviderSettingsCore;
-    descriptor: ReturnType<typeof getProviderSettingsDescriptor>;
-    runtime: ReturnType<typeof getProviderSettingsRuntime>;
-    authPlugin: ReturnType<typeof getProviderLocalAuthPlugin>;
+    providerId: string;
+    runtimeProviderId: AgentId | null;
+    core: ProviderSettingsCore | null;
+    projection: ResolvedProviderCatalogEntry;
+    descriptor: ResolvedProviderCatalogEntry['descriptor'];
+    behavior: ResolvedProviderCatalogEntry['behavior'];
+    authPlugin: ResolvedProviderCatalogEntry['authPlugin'];
+    activeServerId: string | null;
+    capabilityServerId: string | null;
+    activeServerMachines: readonly Machine[];
+    selectedMachineId: string | null;
+    setSelectedMachineId: (machineId: string | null) => void;
 }>) {
     const { theme } = useUnistyles();
     const supportsDesktopControls = isTauriDesktop();
-    const { providerId, core, descriptor, runtime, authPlugin } = props;
+    const {
+        providerId,
+        runtimeProviderId,
+        core,
+        projection,
+        descriptor,
+        behavior,
+        authPlugin,
+        activeServerId,
+        capabilityServerId,
+        activeServerMachines,
+        selectedMachineId,
+        setSelectedMachineId,
+    } = props;
+    const providerIconName = resolveProjectionIconName(projection);
     const settings = useSettings();
     const paneScopeId = React.useMemo(
         () => `settings:provider:${providerId}`,
@@ -251,12 +364,13 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         applySettings({ [key]: value } as Partial<typeof settings>);
     }, [applySettings]);
 
-    const sessionModeDescriptor = getAgentSessionModeDescriptor(providerId);
-    const providerCliRuntimeSpec = getProviderCliRuntimeSpec(providerId);
-    const providerTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: providerId });
+    const sessionModeDescriptor = runtimeProviderId ? getAgentSessionModeDescriptor(runtimeProviderId) : null;
+    const providerCliRuntimeSpec = runtimeProviderId ? getProviderCliRuntimeSpec(runtimeProviderId) : null;
+    const providerTargetKey = projection.backendTargetKey;
     const backendEnabledByTargetKey = settings.backendEnabledByTargetKey;
-    const backendEnabled = backendEnabledByTargetKey?.[providerTargetKey] !== false;
+    const backendEnabled = providerTargetKey ? backendEnabledByTargetKey?.[providerTargetKey] !== false : null;
     const setBackendEnabled = (next: boolean) => {
+        if (!providerTargetKey) return;
         applySettings({
             backendEnabledByTargetKey: {
                 ...(backendEnabledByTargetKey ?? {}),
@@ -266,8 +380,9 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     };
 
     const defaultPermissionByTargetKey = settings.sessionDefaultPermissionModeByTargetKey;
-    const permissionMode = defaultPermissionByTargetKey?.[providerTargetKey] ?? 'default';
+    const permissionMode = providerTargetKey ? (defaultPermissionByTargetKey?.[providerTargetKey] ?? 'default') : 'default';
     const setPermissionMode = (next: PermissionMode) => {
+        if (!providerTargetKey) return;
         applySettings({
             sessionDefaultPermissionModeByTargetKey: {
                 ...(defaultPermissionByTargetKey ?? {}),
@@ -278,8 +393,11 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
 
     const backendCliSourcePreferenceByTargetKey = settings.backendCliSourcePreferenceByTargetKey;
     const providerCliSourcePreference =
-        backendCliSourcePreferenceByTargetKey?.[providerTargetKey] ?? providerCliRuntimeSpec.sourcePreferenceDefault;
+        providerTargetKey && providerCliRuntimeSpec
+            ? backendCliSourcePreferenceByTargetKey?.[providerTargetKey] ?? providerCliRuntimeSpec.sourcePreferenceDefault
+            : 'system-first';
     const setProviderCliSourcePreference = (next: 'system-first' | 'managed-first') => {
+        if (!providerTargetKey) return;
         applySettings({
             backendCliSourcePreferenceByTargetKey: {
                 ...(backendCliSourcePreferenceByTargetKey ?? {}),
@@ -289,13 +407,15 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     };
 
     const effectiveRuntimeControlSurface = React.useMemo(
-        () => resolveEffectiveConfiguredRuntimeControlSurface({
-            agentId: providerId,
-            accountSettings: settings as Record<string, unknown>,
-        }),
-        [providerId, settings],
+        () => runtimeProviderId
+            ? resolveEffectiveConfiguredRuntimeControlSurface({
+                agentId: runtimeProviderId,
+                accountSettings: settings as Record<string, unknown>,
+            })
+            : null,
+        [runtimeProviderId, settings],
     );
-    const runtimeVendorResumeSupport = effectiveRuntimeControlSurface.resume.vendorResume;
+    const runtimeVendorResumeSupport = effectiveRuntimeControlSurface?.resume.vendorResume;
     const resumeSupportKind = describeResumeSupportKind({
         supportsVendorResume: runtimeVendorResumeSupport === 'supported' || runtimeVendorResumeSupport === 'experimental',
         experimental: runtimeVendorResumeSupport === 'experimental',
@@ -305,7 +425,9 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         supportedExperimental: t('settingsProviders.resumeSupportSupportedExperimental'),
         notSupported: t('settingsProviders.resumeSupportNotSupported'),
     }[resumeSupportKind];
-    const { sessionModeKind, runtimeSwitchKind } = classifySessionModeDescriptor(sessionModeDescriptor);
+    const { sessionModeKind, runtimeSwitchKind } = sessionModeDescriptor
+        ? classifySessionModeDescriptor(sessionModeDescriptor)
+        : { sessionModeKind: 'none', runtimeSwitchKind: 'none' as const };
     const sessionModeSupport = {
         none: t('settingsProviders.sessionModeNone'),
         acpPolicyPresets: t('settingsProviders.sessionModeAcpPolicyPresets'),
@@ -319,79 +441,36 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         providerNative: t('settingsProviders.runtimeSwitchProviderNative'),
     }[runtimeSwitchKind];
     const catalogModelList = buildCatalogModelList({
-        defaultMode: core.model.defaultMode,
-        allowedModes: core.model.allowedModes,
-        staticModels: getAgentStaticModels(core.id),
+        defaultMode: core?.model.defaultMode ?? 'chat',
+        allowedModes: core?.model.allowedModes ?? ['chat'],
+        staticModels: core ? getAgentStaticModels(core.id) : [],
     });
-    const defaultModelLabel = catalogModelList[0] ?? core.model.defaultMode;
+    const defaultModelLabel = catalogModelList[0] ?? core?.model.defaultMode ?? t('settingsProviders.notAvailable');
     const catalogModelListText = catalogModelList.length > 0
         ? catalogModelList.join(', ')
         : t('settingsProviders.catalogModelListEmpty');
-    const dynamicProbe = core.model.dynamicProbe === 'static-only'
+    const dynamicProbe = core?.model.dynamicProbe === 'static-only'
         ? t('settingsProviders.dynamicModelProbeStaticOnly')
         : t('settingsProviders.dynamicModelProbeAuto');
-    const nonAcpApplyScope = core.model.nonAcpApplyScope === 'spawn_only'
+    const nonAcpApplyScope = core?.model.nonAcpApplyScope === 'spawn_only'
         ? t('settingsProviders.nonAcpApplyScopeSpawnOnly')
         : t('settingsProviders.nonAcpApplyScopeNextPrompt');
-    const acpApplyBehavior = core.model.acpApplyBehavior === 'set_model'
+    const acpApplyBehavior = core?.model.acpApplyBehavior === 'set_model'
         ? t('settingsProviders.acpApplyBehaviorSetModel')
-        : core.model.acpApplyBehavior === 'restart_session'
+        : core?.model.acpApplyBehavior === 'restart_session'
             ? t('settingsProviders.acpApplyBehaviorRestartSession')
             : t('settingsProviders.notAvailable');
-    const installInfo = core.cli.installBanner.installKind === 'command'
-        ? (core.cli.installBanner.installCommand ?? t('settingsProviders.installInfoSeeSetupGuide'))
-        : t('settingsProviders.installInfoUseProviderCliInstaller');
+    const installInfo = !core
+        ? t('settingsProviders.notAvailable')
+        : core.cli.installBanner.installKind === 'command'
+            ? (core.cli.installBanner.installCommand ?? t('settingsProviders.installInfoSeeSetupGuide'))
+            : t('settingsProviders.installInfoUseProviderCliInstaller');
 
-    const machines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    type MachineRecord = (typeof machines)[number];
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
-    React.useEffect(() => {
-        return subscribeActiveServer(setActiveServerSnapshot);
-    }, []);
-    const activeServerId = React.useMemo(
-        () => {
-            const value = activeServerSnapshot.serverId;
-            return typeof value === 'string' && value.trim().length > 0 ? value : null;
-        },
-        [activeServerSnapshot.serverId],
-    );
-    const capabilityServerId = React.useMemo(
-        () => String(activeServerSnapshot.serverId ?? '').trim() || null,
-        [activeServerSnapshot.serverId],
-    );
-    const activeServerMachineIds = React.useMemo(() => {
-        return resolveActiveServerMachineIds({
-            capabilityServerId,
-            machineListByServerId,
-            machines,
-        });
-    }, [capabilityServerId, machineListByServerId, machines]);
-    const activeServerMachines = React.useMemo(() => {
-        if (activeServerMachineIds.length === 0) return [] as MachineRecord[];
-        const machineMap = new Map(machines.map((machine) => [machine.id, machine] as const));
-        return activeServerMachineIds
-            .map((machineId: string) => machineMap.get(machineId) ?? null)
-            .filter((machine: MachineRecord | null): machine is MachineRecord => machine !== null);
-    }, [activeServerMachineIds, machines]);
-    const defaultMachineId = activeServerMachines[0]?.id ?? null;
-    const {
-        machineId: selectedMachineId,
-        setMachineId: setSelectedMachineId,
-    } = useContextBarSelection({
-        selectionKey: `providerSettings.${providerId}`,
-        defaultMachineId,
-    });
-    React.useEffect(() => {
-        if (selectedMachineId && activeServerMachineIds.includes(selectedMachineId)) {
-            return;
-        }
-        setSelectedMachineId(defaultMachineId);
-    }, [activeServerMachineIds, defaultMachineId, selectedMachineId, setSelectedMachineId]);
-    const primaryMachine = machines.find((m) => m.id === selectedMachineId) ?? null;
+    type MachineRecord = (typeof activeServerMachines)[number];
+    const primaryMachine = activeServerMachines.find((machine) => machine.id === selectedMachineId) ?? null;
     const automaticLoginStatusAgentIds = React.useMemo(
-        () => (isAgentAuthProbeSafeForBackgroundChecks(providerId) ? [providerId] : []),
-        [providerId],
+        () => (runtimeProviderId && isAgentAuthProbeSafeForBackgroundChecks(runtimeProviderId) ? [runtimeProviderId] : []),
+        [runtimeProviderId],
     );
     const machineItems = React.useMemo((): DropdownMenuItem[] => {
         return activeServerMachines.map((machine: MachineRecord) => ({
@@ -403,26 +482,26 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     }, [activeServerMachines, theme.colors.textSecondary]);
     const cliAvailability = useCLIDetection(primaryMachine?.id ?? null, {
         autoDetect: true,
-        agentIds: [providerId],
-        includeLoginStatus: true,
+        agentIds: runtimeProviderId ? [runtimeProviderId] : [],
+        includeLoginStatus: Boolean(runtimeProviderId),
         includeLoginStatusForAgentIds: automaticLoginStatusAgentIds,
         serverId: capabilityServerId,
     });
     const providerAuthentication = useProviderAuthenticationState({
-        providerId,
+        providerId: runtimeProviderId,
         cliAvailability,
         authPlugin,
         primaryMachine,
     });
-    const providerCliAvailable = cliAvailability.available[providerId];
-    const providerCliManagedInstalled = cliAvailability.resolutionSource[providerId] === 'managed';
+    const providerCliAvailable = runtimeProviderId ? cliAvailability.available[runtimeProviderId] : null;
+    const providerCliManagedInstalled = runtimeProviderId ? cliAvailability.resolutionSource[runtimeProviderId] === 'managed' : false;
     const cliInstallability = useCapabilityInstallability({
         machineId: primaryMachine?.id ?? null,
         serverId: capabilityServerId,
-        capabilityId: `cli.${core.cli.detectKey}` as any,
+        capabilityId: runtimeProviderId && core ? `cli.${core.cli.detectKey}` as any : null,
         timeoutMs: 5000,
     });
-    const ExtraSectionsComponent = runtime?.ExtraSectionsComponent ?? null;
+    const ExtraSectionsComponent = behavior?.ExtraSectionsComponent ?? null;
     const primaryMachineLabel = primaryMachine?.metadata?.displayName ?? primaryMachine?.metadata?.host ?? primaryMachine?.id ?? null;
     const detectedCliStatus = providerCliAvailable === true
         ? t('machine.detectedCliDetected')
@@ -472,8 +551,8 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         {
             id: 'localControl',
             label: t('settingsProviders.localControlTitle'),
-            status: effectiveRuntimeControlSurface.localControl?.supported === true ? 'positive' : 'negative',
-            detail: effectiveRuntimeControlSurface.localControl?.supported === true ? t('settingsProviders.supported') : t('settingsProviders.notSupported'),
+            status: effectiveRuntimeControlSurface?.localControl?.supported === true ? 'positive' : 'negative',
+            detail: effectiveRuntimeControlSurface?.localControl?.supported === true ? t('settingsProviders.supported') : t('settingsProviders.notSupported'),
         },
     ];
     const authTerminalOpen =
@@ -484,13 +563,14 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         cancelPendingAuthRefreshesRef.current?.();
         cancelPendingAuthRefreshesRef.current = scheduleProviderAuthenticationRefreshes({
             refresh: () => {
+                if (!runtimeProviderId) return;
                 cliAvailability.refresh({
                     bypassCache: true,
-                    includeLoginStatusForAgentIds: [providerId],
+                    includeLoginStatusForAgentIds: [runtimeProviderId],
                 });
             },
         });
-    }, [cliAvailability, providerId]);
+    }, [cliAvailability, runtimeProviderId]);
     const closeProviderAuthTerminal = React.useCallback(() => {
         pane.closeBottom();
         triggerProviderAuthRefreshes();
@@ -533,28 +613,40 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         onSelect: setSelectedMachineId,
                     }}
                 />
-                <ItemGroup title={t('settingsProviders.configuration')} footer={t(core.subtitleKey)}>
-                    <Item
-                        title={primaryMachineLabel ? `${primaryMachineLabel} · ${detectedCliStatus}` : detectedCliStatus}
-                        subtitle={core.availability.experimental ? t('settingsProviders.channelExperimental') : t('settingsProviders.channelStable')}
-                        icon={<Ionicons name={statusIconName as any} size={29} color={statusIconColor} />}
+                <ItemGroup title={t('settingsProviders.configuration')} footer={core ? t(core.subtitleKey) : t('settingsProviders.footer')}>
+                <Item
+                    title={projection.title}
+                    subtitle={projection.subtitle ?? projection.providerId}
+                    icon={<Ionicons name={providerIconName as any} size={29} color={theme.colors.textSecondary} />}
+                    mode="info"
+                />
+                <Item
+                    title={primaryMachineLabel ? `${primaryMachineLabel} · ${detectedCliStatus}` : detectedCliStatus}
+                    subtitle={projection.channel === 'experimental' ? t('settingsProviders.channelExperimental') : t('settingsProviders.channelStable')}
+                    icon={<Ionicons name={statusIconName as any} size={29} color={statusIconColor} />}
                         mode="info"
                     />
-                    <Item
-                        title={t('settingsProviders.enabledTitle')}
-                        subtitle={t('settingsProviders.enabledSubtitle')}
-                        icon={<Ionicons name="toggle-outline" size={29} color={theme.colors.textSecondary} />}
-                        rightElement={<Switch value={backendEnabled} onValueChange={setBackendEnabled} />}
-                        showChevron={false}
-                        onPress={() => setBackendEnabled(!backendEnabled)}
-                    />
+                    {providerTargetKey ? (
+                        <Item
+                            title={t('settingsProviders.enabledTitle')}
+                            subtitle={t('settingsProviders.enabledSubtitle')}
+                            icon={<Ionicons name="toggle-outline" size={29} color={theme.colors.textSecondary} />}
+                            rightElement={<Switch value={backendEnabled ?? undefined} onValueChange={setBackendEnabled} />}
+                            showChevron={false}
+                            onPress={() => {
+                                if (backendEnabled === null) return;
+                                setBackendEnabled(!backendEnabled);
+                            }}
+                        />
+                    ) : null}
                 </ItemGroup>
 
-                <ItemGroup
-                    title={t('settingsSession.permissions.title')}
-                    footer={t('settingsSession.permissions.backendFooter')}
-                >
-                    <DropdownMenu
+                {runtimeProviderId && providerTargetKey ? (
+                    <ItemGroup
+                        title={t('settingsSession.permissions.title')}
+                        footer={t('settingsSession.permissions.backendFooter')}
+                    >
+                        <DropdownMenu
                         open={openMenu === 'permissionMode'}
                         onOpenChange={(next) => setOpenMenu(next ? 'permissionMode' : null)}
                         variant="selectable"
@@ -567,10 +659,10 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         popoverBoundaryRef={popoverBoundaryRef}
                         itemTrigger={{
                             title: t('settingsSession.permissions.defaultPermissionModeTitle'),
-                            subtitle: getPermissionModeLabelForAgentType(providerId, permissionMode),
+                            subtitle: getPermissionModeLabelForAgentType(runtimeProviderId, permissionMode),
                             icon: <Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.success} />,
                         }}
-                        items={getPermissionModeOptionsForAgentType(providerId).map((opt) => ({
+                        items={getPermissionModeOptionsForAgentType(runtimeProviderId).map((opt) => ({
                             id: opt.value,
                             title: opt.label,
                             subtitle: opt.description,
@@ -581,20 +673,25 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                             ),
                         }))}
                         onSelect={(id) => {
-                            const nextMode = getPermissionModeOptionsForAgentType(providerId).find((opt) => opt.value === id)?.value;
+                            const nextMode = getPermissionModeOptionsForAgentType(runtimeProviderId).find((opt) => opt.value === id)?.value;
                             if (nextMode) setPermissionMode(nextMode);
                             setOpenMenu(null);
                         }}
                     />
-                </ItemGroup>
+                    </ItemGroup>
+                ) : null}
 
                     <ProviderAuthenticationCard
                         providerId={providerId}
+                        runtimeProviderId={runtimeProviderId}
                         state={providerAuthentication}
                         showActions={supportsDesktopControls}
-                        onCheckNow={() => cliAvailability.refresh({ bypassCache: true, includeLoginStatusForAgentIds: [providerId] })}
+                        onCheckNow={() => {
+                            if (!runtimeProviderId) return;
+                            cliAvailability.refresh({ bypassCache: true, includeLoginStatusForAgentIds: [runtimeProviderId] });
+                        }}
                         onLaunchLogin={() => {
-                            if (!providerAuthentication.canLaunchLogin || !supportsDesktopControls) return;
+                            if (!providerAuthentication.canLaunchLogin || !supportsDesktopControls || !runtimeProviderId) return;
                             pane.openBottom({ tabId: PROVIDER_AUTH_TERMINAL_TAB_ID });
                         }}
                     />
@@ -862,31 +959,33 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.textSecondary} />}
                         mode="info"
                     />
-                    <Item
-                        testID="settings-provider-detected-cli"
-                        title={t('settingsProviders.detectedCliTitle')}
-                        subtitle={`${core.cli.detectKey} • ${detectedCliStatus}`}
-                        icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
+                    {core ? (
+                        <Item
+                            testID="settings-provider-detected-cli"
+                            title={t('settingsProviders.detectedCliTitle')}
+                            subtitle={`${core.cli.detectKey} • ${detectedCliStatus}`}
+                            icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.textSecondary} />}
+                            mode="info"
+                        />
+                    ) : null}
                     <Item
                         title={t('settingsProviders.installSetupTitle')}
                         subtitle={installSetupSubtitle}
                         icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
                         mode="info"
                     />
-                    {supportsDesktopControls ? (
+                    {supportsDesktopControls && core ? (
                         <ProviderCliInstallItem
                             machineId={primaryMachine?.id ?? null}
                             serverId={capabilityServerId}
                             capabilityId={`cli.${core.cli.detectKey}` as any}
-                            providerTitle={t(core.displayNameKey)}
+                            providerTitle={projection.title}
                             installed={providerCliAvailable}
                             managedInstalled={providerCliManagedInstalled}
                             installability={cliInstallability}
                         />
                     ) : null}
-                    {supportsDesktopControls && providerCliRuntimeSpec.managedInstall ? (
+                    {supportsDesktopControls && providerCliRuntimeSpec?.managedInstall ? (
                         <DropdownMenu
                             open={openMenu === 'cliSourcePreference'}
                             onOpenChange={(next) => setOpenMenu(next ? 'cliSourcePreference' : null)}
@@ -935,7 +1034,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                             }}
                         />
                     ) : null}
-                    {core.cli.installBanner.guideUrl ? (
+                    {core?.cli.installBanner.guideUrl ? (
                         <Item
                             title={t('settingsProviders.setupGuideUrlTitle')}
                             subtitle={core.cli.installBanner.guideUrl}
@@ -944,68 +1043,74 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                             copy={core.cli.installBanner.guideUrl}
                         />
                     ) : null}
-                    <Item
-                        title={t('settingsProviders.connectedServiceTitle')}
-                        subtitle={core.connectedService.name}
-                        icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
+                    {core ? (
+                        <Item
+                            title={t('settingsProviders.connectedServiceTitle')}
+                            subtitle={core.uiConnectedService.label}
+                            icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.textSecondary} />}
+                            mode="info"
+                        />
+                    ) : null}
                 </ItemGroup>
 
-                <ItemGroup title={t('settingsProviders.capabilities')}>
-                    <BadgeGrid items={capabilityBadges} columns={2} />
-                </ItemGroup>
+                {core ? (
+                    <>
+                        <ItemGroup title={t('settingsProviders.capabilities')}>
+                            <BadgeGrid items={capabilityBadges} columns={2} />
+                        </ItemGroup>
 
-                <ItemGroup title={t('settingsProviders.models')}>
-                    <Item
-                        title={t('settingsProviders.modelSelectionTitle')}
-                        subtitle={core.model.supportsSelection ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
-                        icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settingsProviders.freeformModelIdsTitle')}
-                        subtitle={core.model.supportsFreeform ? t('settingsProviders.allowed') : t('settingsProviders.notAllowed')}
-                        icon={<Ionicons name="create-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settingsProviders.defaultModelTitle')}
-                        subtitle={defaultModelLabel}
-                        icon={<Ionicons name="star-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settingsProviders.catalogModelListTitle')}
-                        subtitle={catalogModelListText}
-                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settingsProviders.dynamicModelProbeTitle')}
-                        subtitle={dynamicProbe}
-                        icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settingsProviders.nonAcpApplyScopeTitle')}
-                        subtitle={nonAcpApplyScope}
-                        icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settingsProviders.acpApplyBehaviorTitle')}
-                        subtitle={acpApplyBehavior}
-                        icon={<Ionicons name="sync-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settingsProviders.acpConfigOptionTitle')}
-                        subtitle={core.model.acpModelConfigOptionId ?? t('settingsProviders.notAvailable')}
-                        icon={<Ionicons name="settings-outline" size={29} color={theme.colors.textSecondary} />}
-                        mode="info"
-                    />
-                </ItemGroup>
+                        <ItemGroup title={t('settingsProviders.models')}>
+                            <Item
+                                title={t('settingsProviders.modelSelectionTitle')}
+                                subtitle={core.model.supportsSelection ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
+                                icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                            <Item
+                                title={t('settingsProviders.freeformModelIdsTitle')}
+                                subtitle={core.model.supportsFreeform ? t('settingsProviders.allowed') : t('settingsProviders.notAllowed')}
+                                icon={<Ionicons name="create-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                            <Item
+                                title={t('settingsProviders.defaultModelTitle')}
+                                subtitle={defaultModelLabel}
+                                icon={<Ionicons name="star-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                            <Item
+                                title={t('settingsProviders.catalogModelListTitle')}
+                                subtitle={catalogModelListText}
+                                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                            <Item
+                                title={t('settingsProviders.dynamicModelProbeTitle')}
+                                subtitle={dynamicProbe}
+                                icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                            <Item
+                                title={t('settingsProviders.nonAcpApplyScopeTitle')}
+                                subtitle={nonAcpApplyScope}
+                                icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                            <Item
+                                title={t('settingsProviders.acpApplyBehaviorTitle')}
+                                subtitle={acpApplyBehavior}
+                                icon={<Ionicons name="sync-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                            <Item
+                                title={t('settingsProviders.acpConfigOptionTitle')}
+                                subtitle={core.model.acpModelConfigOptionId ?? t('settingsProviders.notAvailable')}
+                                icon={<Ionicons name="settings-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                            />
+                        </ItemGroup>
+                    </>
+                ) : null}
             </ItemList>
     );
 
@@ -1019,9 +1124,9 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                     scopeId={paneScopeId}
                     main={main}
                     bottomPane={
-                        authTerminalOpen ? (
+                        authTerminalOpen && providerAuthentication.loginLaunch && runtimeProviderId ? (
                             <ProviderAuthenticationTerminalPane
-                                providerId={providerId}
+                                providerId={runtimeProviderId}
                                 machineId={providerAuthentication.machineId}
                                 machineHomeDir={providerAuthentication.machineHomeDir}
                                 loginLaunch={providerAuthentication.loginLaunch}
@@ -1042,29 +1147,133 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
 export default React.memo(function ProviderSettingsScreen() {
     const { theme } = useUnistyles();
     const params = useLocalSearchParams();
+    const settings = useSettings();
+    const machines = useAllMachines();
+    const machineListByServerId = useMachineListByServerId();
+    const activeServerSnapshot = useActiveServerSnapshot();
+    const activeServerId = React.useMemo(() => {
+        const value = activeServerSnapshot.serverId;
+        return typeof value === 'string' && value.trim().length > 0 ? value : null;
+    }, [activeServerSnapshot.serverId]);
+    const capabilityServerId = React.useMemo(
+        () => String(activeServerSnapshot.serverId ?? '').trim() || null,
+        [activeServerSnapshot.serverId],
+    );
     const rawProviderId = params.providerId;
-    const providerId = typeof rawProviderId === 'string' && isAgentId(rawProviderId) ? (rawProviderId as AgentId) : null;
+    const normalizedProviderId = typeof rawProviderId === 'string' ? rawProviderId.trim() : '';
 
-    if (providerId === 'customAcp') {
+    const activeServerMachineIds = React.useMemo(() => {
+        return resolveActiveServerMachineIds({
+            capabilityServerId,
+            machineListByServerId,
+            machines,
+        });
+    }, [capabilityServerId, machineListByServerId, machines]);
+    const activeServerMachines = React.useMemo(() => {
+        if (activeServerMachineIds.length === 0) return [] as typeof machines;
+        const machineMap = new Map(machines.map((machine) => [machine.id, machine] as const));
+        return activeServerMachineIds
+            .map((machineId: string) => machineMap.get(machineId) ?? null)
+            .filter((machine): machine is (typeof machines)[number] => machine !== null);
+    }, [activeServerMachineIds, machines]);
+    const defaultMachineId = activeServerMachines[0]?.id ?? null;
+    const {
+        machineId: selectedMachineId,
+        setMachineId: setSelectedMachineId,
+    } = useContextBarSelection({
+        selectionKey: `providerSettings.${normalizedProviderId}`,
+        defaultMachineId,
+    });
+    React.useEffect(() => {
+        if (selectedMachineId && activeServerMachineIds.includes(selectedMachineId)) {
+            return;
+        }
+        setSelectedMachineId(defaultMachineId);
+    }, [activeServerMachineIds, defaultMachineId, selectedMachineId, setSelectedMachineId]);
+    const projectionMachineId = selectedMachineId ?? defaultMachineId;
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: projectionMachineId,
+        serverId: activeServerId,
+        enabled: Boolean(projectionMachineId && activeServerId),
+    });
+    const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready' ? daemonMergedProjection.inputs : null;
+    const legacyCompatProviderRedirectId = React.useMemo(() => resolveLegacyCompatProviderRouteRedirect({
+        providerId: normalizedProviderId,
+        daemonMergedProjectionInputs,
+    }), [daemonMergedProjectionInputs, normalizedProviderId]);
+    const waitingForLegacyCompatProjection = isLegacyCompatAgentType(normalizedProviderId)
+        && daemonMergedProjection.phase === 'loading'
+        && Boolean(projectionMachineId && activeServerId);
+
+    if (waitingForLegacyCompatProjection) {
+        return null;
+    }
+    if (isLegacyCompatAgentType(normalizedProviderId)) {
+        if (legacyCompatProviderRedirectId) {
+            return (
+                <Redirect
+                    href={{
+                        pathname: '/(app)/settings/providers/[providerId]',
+                        params: { providerId: legacyCompatProviderRedirectId },
+                    } as any}
+                />
+            );
+        }
         return <Redirect href={'/(app)/settings/providers' as any} />;
     }
 
-    const core = providerId ? getAgentCore(providerId) : null;
-    const descriptor = providerId ? getProviderSettingsDescriptor(providerId) : null;
-    const runtime = providerId ? getProviderSettingsRuntime(providerId) : null;
-    const authPlugin = providerId ? getProviderLocalAuthPlugin(providerId) : null;
-
-    if (!providerId || !core) {
+    const providerProjectionParams = React.useMemo(() => ({
+        enabledAgentIds: [],
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+        mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
+        mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
+    }), [
+        daemonMergedProjectionInputs?.mergedBackendProjectionById,
+        daemonMergedProjectionInputs?.mergedProviderProjectionById,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+    ]);
+    const knownProviderIds = React.useMemo(() => {
+        return new Set(
+            getResolvedProviderCatalogEntries(providerProjectionParams).map((entry) => entry.providerId),
+        );
+    }, [providerProjectionParams]);
+    const projection = React.useMemo(() => {
+        if (!normalizedProviderId || !knownProviderIds.has(normalizedProviderId)) return null;
+        return resolveProviderCatalogProjection(normalizedProviderId, providerProjectionParams);
+    }, [
+        knownProviderIds,
+        normalizedProviderId,
+        providerProjectionParams,
+    ]);
+    if (!normalizedProviderId) {
         return <ProviderSettingsNotFound theme={theme} />;
+    }
+
+    if (!projection) {
+        return <ProviderSettingsNotFound theme={theme} />;
+    }
+
+    const runtimeProviderId = projection.providerAgentId ?? null;
+    if (!projection.descriptor && !projection.behavior && !runtimeProviderId) {
+        return <ProviderSettingsFallbackScreenInner projection={projection} />;
     }
 
     return (
         <ProviderSettingsScreenInner
-            providerId={providerId}
-            core={core}
-            descriptor={descriptor}
-            runtime={runtime}
-            authPlugin={authPlugin}
+            providerId={normalizedProviderId}
+            runtimeProviderId={runtimeProviderId}
+            core={runtimeProviderId ? getAgentCore(runtimeProviderId) : null}
+            projection={projection}
+            descriptor={projection.descriptor}
+            behavior={projection.behavior}
+            authPlugin={projection.authPlugin}
+            activeServerId={activeServerId}
+            capabilityServerId={capabilityServerId}
+            activeServerMachines={activeServerMachines}
+            selectedMachineId={selectedMachineId}
+            setSelectedMachineId={setSelectedMachineId}
         />
     );
 });

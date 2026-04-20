@@ -228,6 +228,7 @@ describe('/settings/desktop route', () => {
                 effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
                 anchor: 'top_center',
                 placementMode: 'anchored',
+                requestedHostMode: 'floating',
                 hostMode: 'floating',
                 displayContext: null,
                 effectiveOffsetX: 0,
@@ -245,6 +246,6 @@ describe('/settings/desktop route', () => {
 
         expect(screen.findAllByTestId('app-crash-restart')).toHaveLength(0);
         expect(screen.findByTestId('settings-desktop-overlay-presentation-mode')).toBeTruthy();
-        expect(screen.findByTestId('settings-desktop-overlay-density')).toBeTruthy();
+        expect(screen.findByTestId('settings-desktop-overlay-visibility-mode')).toBeTruthy();
     });
 });

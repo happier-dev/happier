@@ -25,7 +25,8 @@ import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/co
 import { buildSecretRequirementRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/navigation/buildProfileEditPickerRouteParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 export default React.memo(function ProfilePickerScreen() {
@@ -56,38 +57,49 @@ export default React.memo(function ProfilePickerScreen() {
     const profileId = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const secretRequirementResultId = typeof params.secretRequirementResultId === 'string' ? params.secretRequirementResultId : '';
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: machineId ?? null,
+        serverId: spawnServerId,
+        enabled: Boolean(machineId),
+        staleMs: 60_000,
+    });
     const preferredBackendTarget = React.useMemo(() => {
-        return resolvePreferredBackendTargetFromSettings({
+        return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
+        daemonMergedProjection.inputs,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
-        settings.backendEnabledByTargetKey,
-        settings.acpCatalogSettingsV1,
     ]);
-    const roundTripFallbackTarget = React.useMemo(() => {
-        return resolveRouteCloseoutFallbackTarget({
+    const roundTripBackendParams = React.useMemo(() => {
+        const roundTripFallbackTarget = resolveRouteCloseoutFallbackTarget({
             agentType: params.agentType,
             backendTarget: params.backendTarget,
             backendTargetKey: params.backendTargetKey,
             preferredBackendTarget,
         });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
-    const roundTripBackendParams = React.useMemo(() => {
         return buildBackendTargetRouteParams({
             backendTarget: params.backendTarget,
             backendTargetKey: params.backendTargetKey,
             agentType: params.agentType,
             fallbackTarget: roundTripFallbackTarget,
         });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
-    const currentRouteParams = React.useMemo(() => {
-        return pickNewSessionRouteParams(params);
-    }, [params]);
+    }, [
+        params.agentType,
+        params.backendTarget,
+        params.backendTargetKey,
+        preferredBackendTarget,
+    ]);
     const setParamsOnPreviousAndClose = React.useCallback((next: { profileId: string; secretId?: string; secretSessionOnlyId?: string }) => {
         const returnMode = setNewSessionPickerReturnParams({
             navigation,
@@ -173,7 +185,7 @@ export default React.memo(function ProfilePickerScreen() {
         clearParam();
     }, [navigation, secretBindingsByProfileId, secretRequirementResultId, setParamsOnPreviousAndClose, setSecretBindingsByProfileId]);
 
-    const openSecretModal = React.useCallback((profile: AIBackendProfile, envVarName: string) => {
+    const openSecretModal = React.useCallback(async (profile: AIBackendProfile, envVarName: string) => {
         const requiredSecretName = envVarName.trim().toUpperCase();
         if (!requiredSecretName) return;
 
@@ -296,7 +308,7 @@ export default React.memo(function ProfilePickerScreen() {
         if (!satisfaction.isSatisfied) {
             const missing = satisfaction.items.find((i) => i.required && !i.isSatisfied)?.envVarName ?? null;
             if (missing) {
-                openSecretModal(profile, missing);
+                await openSecretModal(profile, missing);
                 return;
             }
         }

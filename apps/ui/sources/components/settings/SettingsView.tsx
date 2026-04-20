@@ -43,7 +43,8 @@ import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopSettingsEntry } from '@/components/settings/desktop/DesktopSettingsEntry';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
-import { useScannedAuthUrlProcessor } from '@/app/(app)/scan/useScannedAuthUrlProcessor';
+import { useScannedAuthUrlProcessor } from '@/hooks/auth/useScannedAuthUrlProcessor';
+import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 
 const Ionicons = SafeIonicons;
 
@@ -89,6 +90,14 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const anthropicAgentId = resolveAgentIdFromConnectedServiceId('anthropic') ?? DEFAULT_AGENT_ID;
     const anthropicAgentCore = getAgentCore(anthropicAgentId);
+    const anthropicConnectedService = anthropicAgentCore.uiConnectedService ?? null;
+    const anthropicServiceLabel = React.useMemo(() => {
+        const serviceId = anthropicConnectedService?.serviceId;
+        if (serviceId) {
+            return resolveConnectedServiceDisplayName(serviceId, t);
+        }
+        return anthropicConnectedService?.label ?? resolveConnectedServiceDisplayName('anthropic', t);
+    }, [anthropicConnectedService?.label, anthropicConnectedService?.serviceId]);
 
     const showHiddenSettingsButtons = devModeEnabled;
     const showDesktopSettings = isTauriDesktop();
@@ -181,7 +190,7 @@ export const SettingsView = React.memo(function SettingsView() {
 
     // Anthropic connection
     const [connectingAnthropic, connectAnthropic] = useHappyAction(async () => {
-        const route = anthropicAgentCore.connectedService.connectRoute;
+        const route = anthropicConnectedService?.connectRoute;
         if (route) {
             pushRoute(route);
         }
@@ -189,7 +198,7 @@ export const SettingsView = React.memo(function SettingsView() {
 
     // Anthropic disconnection
       const [disconnectingAnthropic, handleDisconnectAnthropic] = useHappyAction(async () => {
-          const serviceName = anthropicAgentCore.connectedService.name;
+          const serviceName = anthropicServiceLabel;
           const confirmed = await Modal.confirm(
               t('modals.disconnectService', { service: serviceName }),
             t('modals.disconnectServiceConfirm', { service: serviceName }),
@@ -315,7 +324,7 @@ export const SettingsView = React.memo(function SettingsView() {
 
                     <ItemGroup title={t('settings.connectedAccounts')}>
                         <Item
-                            title={anthropicAgentCore.connectedService.name}
+                            title={anthropicServiceLabel}
                             subtitle={isAnthropicConnected
                                 ? t('settingsAccount.statusActive')
                                 : t('settings.connectAccount')

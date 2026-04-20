@@ -18,6 +18,9 @@ const inboxState = vi.hoisted(() => ({
 const sessionsAttentionState = vi.hoisted(() => ({
     hasAttention: false,
 }));
+const expoImageState = vi.hoisted(() => ({
+    image: 'Image' as unknown,
+}));
 
 installNavigationCommonModuleMocks({
     reactNative: async () => {
@@ -41,7 +44,9 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('expo-image', () => ({
-    Image: 'Image',
+    get Image() {
+        return expoImageState.image;
+    },
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -81,6 +86,8 @@ describe('MainAppTabBar', () => {
         friendRequestsState.items = [];
         inboxState.hasContent = false;
         sessionsAttentionState.hasAttention = false;
+        expoImageState.image = 'Image';
+        vi.resetModules();
     });
 
     it('renders tabs in settings, friends, projects, sessions, inbox order', async () => {
@@ -124,5 +131,14 @@ describe('MainAppTabBar', () => {
 
         expect(sessionsTab).toBeTruthy();
         expect(hasIndicatorDot(sessionsTab!)).toBe(true);
+    });
+
+    it('renders without crashing when expo-image omits Image', async () => {
+        expoImageState.image = undefined;
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+
+        await expect(
+            renderScreen(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />),
+        ).resolves.toBeTruthy();
     });
 });

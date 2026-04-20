@@ -27,15 +27,15 @@ import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
 import { SettingsAnalyticsRuntime } from '@/track/settingsAnalytics/SettingsAnalyticsRuntime';
 import { syncRestore } from '@/sync/sync';
-import { storage } from '@/sync/domains/state/storage';
-import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
+import { storage, useLocalSetting } from '@/sync/domains/state/storage';
+import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
-import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanner';
+import { AppUpdateStatusTag } from '@/components/ui/feedback/AppUpdateStatusTag';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 // import * as SystemUI from 'expo-system-ui';
 import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/system/remoteLogger';
@@ -56,7 +56,14 @@ import { resolveForegroundNotificationBehavior } from '@/activity/notifications/
 import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
 import { installTauriMcpBridgeOnce } from '@/desktop/mcp/maybeInstallTauriMcpBridge';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
+import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/desktopChrome/DesktopShellUpdateIndicatorHost';
+import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
+import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { useIsTablet } from '@/utils/platform/responsive';
+import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
+import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -285,7 +292,7 @@ Notifications.setNotificationHandler({
         const notifSessionId = typeof data?.sessionId === 'string' ? data.sessionId : null;
 
         // Same-session suppression: user already sees real-time updates.
-        if (notifSessionId && notifSessionId === getActiveViewingSessionId()) {
+        if (notifSessionId && isSessionSurfaceVisible(notifSessionId)) {
             return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
         }
 
@@ -597,15 +604,17 @@ async function loadFonts() {
 
 function RootLayout() {
     const { theme } = useUnistyles();
+    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     useWebUiFontScale();
     usePierreDiffWorkerPoolWarmup();
     const navigationTheme = React.useMemo(() => {
+        const background = isDesktopOverlayWindow ? 'transparent' : theme.colors.groupped.background;
         if (theme.dark) {
             return {
                 ...DarkTheme,
                 colors: {
                     ...DarkTheme.colors,
-                    background: theme.colors.groupped.background,
+                    background,
                 }
             }
         }
@@ -613,10 +622,10 @@ function RootLayout() {
             ...DefaultTheme,
             colors: {
                 ...DefaultTheme.colors,
-                background: theme.colors.groupped.background,
+                background,
             }
         };
-    }, [theme.dark]);
+    }, [isDesktopOverlayWindow, theme.colors.groupped.background, theme.dark]);
 
     const onRestart = React.useCallback(() => {
         if (Platform.OS === 'web') {
@@ -652,6 +661,10 @@ function AppBoot(props: {
     //
     const router = useRouter();
     const pathname = usePathname();
+    const chromeSafeArea = useChromeSafeAreaInsets();
+    const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
+    const isTablet = useIsTablet();
+    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(null);
     const restartBugReportCheckedRef = React.useRef(false);
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
@@ -669,7 +682,7 @@ function AppBoot(props: {
                 }
                 await sodium.ready;
                 credentials = await resolveBootCredentials(Platform.OS);
-                if (credentials) {
+                if (credentials && !isDesktopOverlayWindow) {
                     try {
                         await syncRestore(credentials);
                     } catch (error) {
@@ -688,7 +701,7 @@ function AppBoot(props: {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [isDesktopOverlayWindow]);
 
     React.useEffect(() => {
         if (!initState) return;
@@ -736,13 +749,39 @@ function AppBoot(props: {
     // Boot
     //
 
+    const appShellChromeHost = resolveAppShellChromeHost({
+        isAuthenticated: initState.credentials != null,
+        isTauriDesktop: isTauriDesktop(),
+        isTablet,
+        editorFocusModeEnabled: editorFocusModeEnabled === true,
+        isTerminalConnectRoute,
+    });
+    const effectiveAppShellChromeHost = isDesktopOverlayWindow ? 'none' : appShellChromeHost;
+
     const appShell = (
-        <>
-            {!isTerminalConnectRoute ? <DesktopUpdateBanner /> : null}
+        <View style={{ flex: 1, position: 'relative' }}>
+            {effectiveAppShellChromeHost === 'focus-mode-fallback' || effectiveAppShellChromeHost === 'narrow-desktop-fallback' ? (
+                <DesktopFallbackShellChrome
+                    chromeSafeArea={chromeSafeArea}
+                    host={effectiveAppShellChromeHost}
+                />
+            ) : effectiveAppShellChromeHost === 'web-top-right' ? (
+                <View
+                    pointerEvents="box-none"
+                    style={{
+                        position: 'absolute',
+                        top: chromeSafeArea.top + 12,
+                        right: chromeSafeArea.right + 16,
+                        zIndex: 10,
+                    }}
+                >
+                    <AppUpdateStatusTag testID="root-shell-app-update-status-tag" />
+                </View>
+            ) : null}
             <View style={{ flex: 1 }}>
                 <SidebarNavigator />
             </View>
-        </>
+        </View>
     );
 
     let providers = (
@@ -794,6 +833,42 @@ function AppBoot(props: {
                 {providers}
             </AppCrashRecoveryBoundary>
         </>
+    );
+}
+
+function DesktopFallbackShellChrome(props: Readonly<{
+    chromeSafeArea: Readonly<{ top: number; left: number }>;
+    host: 'focus-mode-fallback' | 'narrow-desktop-fallback';
+}>) {
+    const resolvedDesktopWindowControls = useResolvedDesktopWindowControls({
+        variant: 'expanded',
+    });
+
+    return (
+        <View
+            pointerEvents="box-none"
+            style={{
+                position: 'absolute',
+                top: props.chromeSafeArea.top + 12,
+                left: props.chromeSafeArea.left + 16,
+                zIndex: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+            }}
+            testID={
+                props.host === 'focus-mode-fallback'
+                    ? 'desktop-focus-mode-shell-chrome'
+                    : 'desktop-narrow-shell-chrome'
+            }
+        >
+            <DesktopShellWindowControlsHost>
+                {resolvedDesktopWindowControls}
+            </DesktopShellWindowControlsHost>
+            <DesktopShellUpdateIndicatorHost>
+                <AppUpdateStatusTag testID="root-shell-app-update-status-tag" />
+            </DesktopShellUpdateIndicatorHost>
+        </View>
     );
 }
 

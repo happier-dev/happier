@@ -2,11 +2,11 @@ use super::host_mode::DesktopActivityOverlayDisplayContext;
 use super::placement::Rect;
 
 #[cfg(target_os = "macos")]
-use objc2::MainThreadMarker;
-#[cfg(target_os = "macos")]
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2::runtime::AnyObject;
+#[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSScreen;
 #[cfg(target_os = "macos")]
@@ -189,6 +189,8 @@ mod tests {
             height: 1117.0,
         };
 
-        assert!(rect_match_distance(builtin_like, monitor) < rect_match_distance(external, monitor));
+        assert!(
+            rect_match_distance(builtin_like, monitor) < rect_match_distance(external, monitor)
+        );
     }
 }

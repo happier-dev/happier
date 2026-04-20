@@ -3,6 +3,7 @@ import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 
 import { PATH_BROWSER_MODAL_TEST_ID } from './pathBrowserTestIds';
 
@@ -123,9 +124,13 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: (props: any) => React.createElement('Octicons', props),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), prompt: vi.fn(async () => null) },
-}));
+const modalMock = createModalModuleMock({
+    spies: {
+        prompt: async () => null,
+    },
+});
+
+vi.mock('@/modal', () => modalMock.module);
 
 describe('MachinePathBrowserView (iOS safe-area)', () => {
     it('pads the modal header by the iOS safe-area inset when chrome is not provided', async () => {

@@ -27,30 +27,40 @@ describe('createDesktopActivityOverlayChromeStyle', () => {
         expect(notchExpanded).toMatchObject({
             borderWidth: 0,
             borderColor: 'transparent',
-            borderTopLeftRadius: 18,
-            borderTopRightRadius: 18,
-            borderBottomLeftRadius: 28,
-            borderBottomRightRadius: 28,
+            borderTopLeftRadius: 19,
+            borderTopRightRadius: 19,
+            borderBottomLeftRadius: 24,
+            borderBottomRightRadius: 24,
             backgroundColor: 'transparent',
         });
     });
 
-    it('keeps the premium chrome flat enough to avoid a floating-card silhouette', () => {
-        const style = createDesktopActivityOverlayChromeStyle(darkTheme as never, {
+    it('keeps the premium chrome top-edge flush in notch mode instead of reading like a floating card', () => {
+        const expandedStyle = createDesktopActivityOverlayChromeStyle(darkTheme as never, {
             visualMode: 'notch_integrated',
             tone: 'expanded',
         });
+        const collapsedStyle = createDesktopActivityOverlayChromeStyle(darkTheme as never, {
+            visualMode: 'notch_integrated',
+            tone: 'collapsed',
+        });
 
-        expect(style).toMatchObject({
+        expect(expandedStyle).toMatchObject({
             borderWidth: 0,
             borderColor: 'transparent',
-            borderTopLeftRadius: 18,
-            borderTopRightRadius: 18,
-            borderBottomLeftRadius: 28,
-            borderBottomRightRadius: 28,
+            borderTopLeftRadius: 19,
+            borderTopRightRadius: 19,
+            borderBottomLeftRadius: 24,
+            borderBottomRightRadius: 24,
             backgroundColor: 'transparent',
         });
-        expect(Object.keys(style).filter((key) => key === 'boxShadow' || key.startsWith('shadow') || key === 'elevation')).toEqual([]);
+        expect(collapsedStyle).toMatchObject({
+            borderTopLeftRadius: 6,
+            borderTopRightRadius: 6,
+            borderBottomLeftRadius: 14,
+            borderBottomRightRadius: 14,
+        });
+        expect(Object.keys(expandedStyle).filter((key) => key === 'boxShadow' || key.startsWith('shadow') || key === 'elevation')).toEqual([]);
     });
 
     it('keeps interior controls nearly fused into the shell instead of reading like separate slabs', () => {

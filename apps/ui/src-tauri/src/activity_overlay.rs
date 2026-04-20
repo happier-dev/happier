@@ -6,51 +6,60 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(desktop)]
 use tauri::{
-    App, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, State, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder,
+    App, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, State, WebviewWindow,
 };
 
 #[cfg(desktop)]
-mod placement;
+mod diagnostics;
 #[cfg(desktop)]
 mod host_mode;
 #[cfg(desktop)]
 mod host_window;
 #[cfg(desktop)]
-mod panel_host;
-#[cfg(desktop)]
 mod macos_display_context;
 #[cfg(desktop)]
+mod monitor_resolution;
+#[cfg(desktop)]
+mod panel_host;
+#[cfg(desktop)]
+mod placement;
+#[cfg(desktop)]
 mod storage;
+#[cfg(desktop)]
+mod window_lifecycle;
 
 #[cfg(desktop)]
+use self::diagnostics::{
+    build_overlay_placement_diagnostics, DesktopActivityOverlayHostFallbackReason,
+    DesktopActivityOverlayNativeHostPath, DesktopActivityOverlayPlacementDiagnosticsPayload,
+};
+#[cfg(desktop)]
 use self::host_mode::{
-    resolve_desktop_activity_overlay_host_mode, resolve_overlay_placement_for_host_mode,
+    resolve_desktop_activity_overlay_host_mode_resolution, resolve_overlay_placement_for_host_mode,
     DesktopActivityOverlayDisplayContext, DesktopActivityOverlayHostMode,
 };
 #[cfg(desktop)]
 use self::host_window::{
-    apply_macos_overlay_activation_policy,
-    apply_macos_overlay_window_collection_behavior,
-    resolve_macos_overlay_window_builder_defaults,
+    apply_macos_overlay_activation_policy, apply_macos_overlay_window_collection_behavior,
     resolve_macos_overlay_window_host_settings,
     should_apply_raw_macos_overlay_window_collection_behavior,
 };
 #[cfg(desktop)]
-use self::panel_host::{apply_macos_overlay_panel_host, apply_macos_overlay_panel_position};
-#[cfg(desktop)]
 use self::macos_display_context::resolve_overlay_display_context_for_monitor;
 #[cfg(desktop)]
-use self::placement::{
-    clamp, resolve_overlay_anchor_monitor_resolution_for_placement_mode, sanitize_dimension,
-    sanitize_offset,
-    DesktopActivityOverlayMonitorSource, OverlayPlacementRect, Rect,
-    ResolvedOverlayAnchorMonitorRect,
-};
+use self::monitor_resolution::resolve_anchor_monitor_resolution;
+#[cfg(desktop)]
+use self::panel_host::{apply_macos_overlay_panel_host, apply_macos_overlay_panel_position};
+#[cfg(desktop)]
+use self::placement::{clamp, sanitize_dimension, sanitize_offset, Rect};
 #[cfg(desktop)]
 use self::storage::{
     clear_persisted_drag_offsets, persist_drag_offsets, read_persisted_drag_offsets,
     resolve_drag_offsets_path, sanitize_drag_offsets, PersistedOverlayDragOffsets,
+};
+#[cfg(desktop)]
+use self::window_lifecycle::{
+    ensure_overlay_window, park_overlay_window_offscreen, show_overlay_window_without_activation,
 };
 
 #[cfg(desktop)]
@@ -72,93 +81,6 @@ const OVERLAY_SAFE_PADDING_PX: f64 = 12.0;
 const OVERLAY_PARK_OFFSCREEN_DISTANCE_PX: f64 = 10_000.0;
 
 #[cfg(desktop)]
-fn resolve_monitor_logical_scale_factor(monitor_scale_factor: f64, fallback_scale_factor: f64) -> f64 {
-    let monitor_scale_factor = if monitor_scale_factor.is_finite() && monitor_scale_factor > 0.000_1 {
-        monitor_scale_factor
-    } else {
-        fallback_scale_factor
-    };
-    monitor_scale_factor.max(0.000_1)
-}
-
-#[cfg(desktop)]
-fn logical_rect_from_physical_bounds(
-    position_x: i32,
-    position_y: i32,
-    width: u32,
-    height: u32,
-    scale_factor: f64,
-) -> Rect {
-    Rect {
-        x: position_x as f64 / scale_factor,
-        y: position_y as f64 / scale_factor,
-        width: width as f64 / scale_factor,
-        height: height as f64 / scale_factor,
-    }
-}
-
-#[cfg(desktop)]
-fn monitor_to_logical_rect(monitor: &tauri::Monitor, fallback_scale_factor: f64) -> Rect {
-    logical_rect_from_physical_bounds(
-        monitor.position().x,
-        monitor.position().y,
-        monitor.size().width,
-        monitor.size().height,
-        resolve_monitor_logical_scale_factor(monitor.scale_factor(), fallback_scale_factor),
-    )
-}
-
-#[cfg(desktop)]
-fn resolve_anchor_monitor_resolution<R: Runtime>(
-    app: &AppHandle<R>,
-    overlay_window: &WebviewWindow<R>,
-    placement_mode: DesktopActivityOverlayPlacementMode,
-) -> Result<ResolvedOverlayAnchorMonitorRect, String> {
-    // Tauri monitor position/size are physical pixels; window position/size below is expressed in
-    // logical pixels. If we don't normalize, the overlay anchor math will drift (notably on Retina),
-    // making "top_center" look like "top_right".
-    let overlay_scale_factor = overlay_window.scale_factor().unwrap_or(1.0).max(0.000_1);
-    let main_window = app.get_webview_window(MAIN_WINDOW_LABEL);
-    let main_scale_factor = main_window
-        .as_ref()
-        .and_then(|window| window.scale_factor().ok())
-        .unwrap_or(overlay_scale_factor)
-        .max(0.000_1);
-
-    let main_window_monitor = main_window
-        .and_then(|window| window.current_monitor().ok().flatten())
-        .map(|monitor| monitor_to_logical_rect(&monitor, main_scale_factor));
-    let overlay_window_monitor = overlay_window
-        .current_monitor()
-        .map_err(|error| error.to_string())?
-        .map(|monitor| monitor_to_logical_rect(&monitor, overlay_scale_factor));
-    let primary_monitor = app
-        .get_webview_window(MAIN_WINDOW_LABEL)
-        .and_then(|window| {
-            let scale_factor = window.scale_factor().unwrap_or(overlay_scale_factor).max(0.000_1);
-            window
-                .primary_monitor()
-                .ok()
-                .flatten()
-                .map(|monitor| monitor_to_logical_rect(&monitor, scale_factor))
-        })
-        .or_else(|| {
-            overlay_window
-                .primary_monitor()
-                .ok()
-                .flatten()
-                .map(|monitor| monitor_to_logical_rect(&monitor, overlay_scale_factor))
-        });
-
-    resolve_overlay_anchor_monitor_resolution_for_placement_mode(
-        placement_mode,
-        main_window_monitor,
-        overlay_window_monitor,
-        primary_monitor,
-    )
-}
-
-#[cfg(desktop)]
 #[derive(Clone, Default)]
 pub struct ActivityOverlayState(Arc<Mutex<ActivityOverlayRuntimeState>>);
 
@@ -170,6 +92,15 @@ struct ActivityOverlayRuntimeState {
     desired_expanded: Option<bool>,
     drag_offsets: PersistedOverlayDragOffsets,
     drag_offsets_loaded: bool,
+    last_display_context: Option<DesktopActivityOverlayDisplayContext>,
+    runtime_host_fallback: Option<ActivityOverlayRuntimeHostFallback>,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ActivityOverlayRuntimeHostFallback {
+    display_context: DesktopActivityOverlayDisplayContext,
+    reason: DesktopActivityOverlayHostFallbackReason,
 }
 
 #[cfg(desktop)]
@@ -211,24 +142,6 @@ impl DesktopActivityOverlayWindowStatePayload {
             placement_diagnostics,
         }
     }
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayPlacementDiagnosticsPayload {
-    pub monitor_source: DesktopActivityOverlayMonitorSource,
-    pub effective_monitor: Rect,
-    pub anchor: DesktopActivityOverlayAnchor,
-    pub placement_mode: DesktopActivityOverlayPlacementMode,
-    pub host_mode: DesktopActivityOverlayHostMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_context: Option<DesktopActivityOverlayDisplayContext>,
-    pub effective_offset_x: f64,
-    pub effective_offset_y: f64,
-    pub computed_position: OverlayPlacementRect,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub applied_native_frame: Option<Rect>,
 }
 
 #[cfg(desktop)]
@@ -570,14 +483,19 @@ fn apply_overlay_state<R: Runtime>(
     app: &AppHandle<R>,
     state: &State<'_, ActivityOverlayState>,
 ) -> Result<(), String> {
-    let (payload, drag_offsets) = {
+    let (payload, drag_offsets, cached_display_context, runtime_host_fallback) = {
         let guard = state
             .0
             .lock()
             .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
         let payload = guard.last_sync_payload.clone();
         let drag_offsets = guard.drag_offsets;
-        (payload, drag_offsets)
+        (
+            payload,
+            drag_offsets,
+            guard.last_display_context,
+            guard.runtime_host_fallback,
+        )
     };
 
     let Some(payload) = payload else {
@@ -593,10 +511,9 @@ fn apply_overlay_state<R: Runtime>(
             .0
             .lock()
             .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        guard.last_window_state = Some(DesktopActivityOverlayWindowStatePayload::from_sync_payload(
-            &payload,
-            None,
-        ));
+        guard.last_window_state = Some(
+            DesktopActivityOverlayWindowStatePayload::from_sync_payload(&payload, None),
+        );
         return Ok(());
     }
 
@@ -621,24 +538,57 @@ fn apply_overlay_state<R: Runtime>(
 
     let width = sanitize_dimension(dimensions.width, 340.0, 1.0, 4096.0);
     let height = sanitize_dimension(dimensions.height, 72.0, 1.0, 4096.0);
-    let monitor_resolution = resolve_anchor_monitor_resolution(app, &window, payload.policy.placement_mode)?;
+    let monitor_resolution =
+        resolve_anchor_monitor_resolution(app, &window, payload.policy.placement_mode)?;
     let monitor = monitor_resolution.rect;
     let (offset_x, offset_y) = resolve_effective_overlay_offsets(&payload.policy, drag_offsets);
-    let display_context = resolve_overlay_display_context_for_monitor(&app, monitor);
-    let host_mode = resolve_desktop_activity_overlay_host_mode(
+    let display_context = resolve_effective_overlay_display_context(
+        resolve_overlay_display_context_for_monitor(app, monitor),
+        cached_display_context,
+        monitor,
+    );
+    let mut host_mode_resolution = resolve_desktop_activity_overlay_host_mode_resolution(
         payload.policy.presentation_mode,
         payload.policy.placement_mode,
         payload.policy.anchor,
         display_context.clone(),
     );
-    window
-        .set_always_on_top(resolve_overlay_tauri_always_on_top(
-            payload.policy.always_on_top,
-            host_mode,
-        ))
-        .map_err(|error| error.to_string())?;
-    apply_overlay_host_window_settings(&window, host_mode, display_context.clone())?;
-    let placement = resolve_overlay_placement_for_host_mode(
+    host_mode_resolution = resolve_host_mode_resolution_with_runtime_fallback(
+        host_mode_resolution,
+        runtime_host_fallback,
+        display_context,
+    );
+    let mut host_mode = host_mode_resolution.effective_mode;
+    let mut next_runtime_host_fallback =
+        if matches!(
+            host_mode_resolution.requested_mode,
+            DesktopActivityOverlayHostMode::NotchIntegrated
+        ) {
+            runtime_host_fallback.filter(|fallback| {
+                runtime_host_fallback_matches_display_context(*fallback, display_context)
+            })
+        } else {
+            None
+        };
+    let mut native_host_path =
+        match apply_overlay_host_window_settings(&window, host_mode, display_context.clone()) {
+            Ok(path) => path,
+            Err(error) if matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated) => {
+                let _ = error;
+                host_mode_resolution = host_mode_resolution.with_runtime_fallback(
+                    DesktopActivityOverlayHostFallbackReason::PanelHostApplyFailed,
+                );
+                host_mode = host_mode_resolution.effective_mode;
+                next_runtime_host_fallback = build_runtime_host_fallback(
+                    display_context,
+                    DesktopActivityOverlayHostFallbackReason::PanelHostApplyFailed,
+                );
+                apply_overlay_host_window_settings(&window, host_mode, display_context.clone())?
+            }
+            Err(error) => return Err(error),
+        };
+
+    let mut placement = resolve_overlay_placement_for_host_mode(
         monitor,
         Rect {
             x: 0.0,
@@ -653,15 +603,63 @@ fn apply_overlay_state<R: Runtime>(
         host_mode,
         display_context.clone(),
     );
+    let mut applied_native_frame = None;
 
-    let applied_native_frame = apply_macos_overlay_panel_position(
-        &window,
-        host_mode,
-        display_context.clone(),
-        placement,
-        width,
-        height,
-    )?;
+    if matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated) {
+        match apply_macos_overlay_panel_position(
+            &window,
+            host_mode,
+            display_context.clone(),
+            placement,
+            width,
+            height,
+        ) {
+            Ok(frame) => {
+                native_host_path = DesktopActivityOverlayNativeHostPath::Panel;
+                applied_native_frame = Some(frame);
+            }
+            Err(_) => {
+                host_mode_resolution = host_mode_resolution.with_runtime_fallback(
+                    DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
+                );
+                host_mode = host_mode_resolution.effective_mode;
+                next_runtime_host_fallback = build_runtime_host_fallback(
+                    display_context,
+                    DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
+                );
+                native_host_path = apply_overlay_host_window_settings(
+                    &window,
+                    host_mode,
+                    display_context.clone(),
+                )?;
+                placement = resolve_overlay_placement_for_host_mode(
+                    monitor,
+                    Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width,
+                        height,
+                    },
+                    payload.policy.anchor,
+                    offset_x,
+                    offset_y,
+                    OVERLAY_SAFE_PADDING_PX,
+                    host_mode,
+                    display_context.clone(),
+                );
+            }
+        }
+    }
+
+    if should_apply_overlay_tauri_always_on_top(host_mode) {
+        window
+            .set_always_on_top(resolve_overlay_tauri_always_on_top(
+                payload.policy.always_on_top,
+                host_mode,
+            ))
+            .map_err(|error| error.to_string())?;
+    }
+
     if applied_native_frame.is_none() {
         window
             .set_size(LogicalSize::new(width, height))
@@ -670,7 +668,7 @@ fn apply_overlay_state<R: Runtime>(
             .set_position(LogicalPosition::new(placement.x, placement.y))
             .map_err(|error| error.to_string())?;
     }
-    window.show().map_err(|error| error.to_string())?;
+    show_overlay_window_without_activation(&window)?;
 
     let window_state = DesktopActivityOverlayWindowStatePayload::from_sync_payload(
         &payload,
@@ -679,10 +677,13 @@ fn apply_overlay_state<R: Runtime>(
             placement,
             payload.policy.anchor,
             payload.policy.placement_mode,
+            host_mode_resolution.requested_mode,
             host_mode,
+            host_mode_resolution.fallback_reason,
             display_context,
             offset_x,
             offset_y,
+            native_host_path,
             applied_native_frame,
         )),
     );
@@ -692,6 +693,10 @@ fn apply_overlay_state<R: Runtime>(
         .0
         .lock()
         .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
+    if let Some(display_context) = display_context {
+        guard.last_display_context = Some(display_context);
+    }
+    guard.runtime_host_fallback = next_runtime_host_fallback;
     guard.last_window_state = Some(window_state);
     Ok(())
 }
@@ -701,10 +706,10 @@ fn apply_overlay_host_window_settings<R: Runtime>(
     window: &WebviewWindow<R>,
     host_mode: DesktopActivityOverlayHostMode,
     display_context: Option<DesktopActivityOverlayDisplayContext>,
-) -> Result<(), String> {
+) -> Result<DesktopActivityOverlayNativeHostPath, String> {
     let Some(settings) = resolve_macos_overlay_window_host_settings(host_mode, display_context)
     else {
-        return Ok(());
+        return Ok(DesktopActivityOverlayNativeHostPath::Window);
     };
 
     apply_macos_overlay_activation_policy(window.app_handle(), settings)?;
@@ -717,8 +722,10 @@ fn apply_overlay_host_window_settings<R: Runtime>(
     apply_macos_overlay_panel_host(window, settings)?;
     if should_apply_raw_macos_overlay_window_collection_behavior(settings) {
         apply_macos_overlay_window_collection_behavior(window, settings)?;
+        Ok(DesktopActivityOverlayNativeHostPath::Window)
+    } else {
+        Ok(DesktopActivityOverlayNativeHostPath::Panel)
     }
-    Ok(())
 }
 
 #[cfg(desktop)]
@@ -727,6 +734,11 @@ fn resolve_overlay_tauri_always_on_top(
     host_mode: DesktopActivityOverlayHostMode,
 ) -> bool {
     policy_always_on_top && !matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated)
+}
+
+#[cfg(desktop)]
+fn should_apply_overlay_tauri_always_on_top(host_mode: DesktopActivityOverlayHostMode) -> bool {
+    !matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated)
 }
 
 #[cfg(desktop)]
@@ -741,32 +753,6 @@ fn apply_desired_expanded_override(
     payload.expanded = desired;
     // Apply once: subsequent sync updates already carry the real runtime expanded state.
     state.desired_expanded = None;
-}
-
-#[cfg(desktop)]
-fn build_overlay_placement_diagnostics(
-    monitor_resolution: ResolvedOverlayAnchorMonitorRect,
-    placement: OverlayPlacementRect,
-    anchor: DesktopActivityOverlayAnchor,
-    placement_mode: DesktopActivityOverlayPlacementMode,
-    host_mode: DesktopActivityOverlayHostMode,
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
-    effective_offset_x: f64,
-    effective_offset_y: f64,
-    applied_native_frame: Option<Rect>,
-) -> DesktopActivityOverlayPlacementDiagnosticsPayload {
-    DesktopActivityOverlayPlacementDiagnosticsPayload {
-        monitor_source: monitor_resolution.source,
-        effective_monitor: monitor_resolution.rect,
-        anchor,
-        placement_mode,
-        host_mode,
-        display_context,
-        effective_offset_x,
-        effective_offset_y,
-        computed_position: placement,
-        applied_native_frame,
-    }
 }
 
 #[cfg(desktop)]
@@ -791,131 +777,6 @@ fn resolve_overlay_window_visibility_action(
     // Keep the webview alive (even when we don't want the overlay visible) so automation and state
     // transitions do not lose the overlay window's CDP target mid-run.
     OverlayWindowVisibilityAction::ParkOffscreen
-}
-
-#[cfg(desktop)]
-fn park_overlay_window_offscreen<R: Runtime>(
-    app: &AppHandle<R>,
-    window: &WebviewWindow<R>,
-) -> Result<(), String> {
-    // Avoid failures when the OS temporarily can't resolve monitors (for example during startup).
-    let monitor_rect = resolve_parking_monitor_rect(app, window);
-
-    let base_x = if monitor_rect.width > 0.0 {
-        monitor_rect.x + monitor_rect.width
-    } else {
-        monitor_rect.x
-    };
-    let base_y = if monitor_rect.height > 0.0 {
-        monitor_rect.y + monitor_rect.height
-    } else {
-        monitor_rect.y
-    };
-
-    // Keep the window extremely small even if the OS clamps position back onto a visible monitor.
-    window
-        .set_size(LogicalSize::new(1.0, 1.0))
-        .map_err(|error| error.to_string())?;
-    window
-        .set_position(LogicalPosition::new(
-            base_x + OVERLAY_PARK_OFFSCREEN_DISTANCE_PX,
-            base_y + OVERLAY_PARK_OFFSCREEN_DISTANCE_PX,
-        ))
-        .map_err(|error| error.to_string())?;
-    window.show().map_err(|error| error.to_string())
-}
-
-#[cfg(desktop)]
-fn resolve_parking_monitor_rect<R: Runtime>(
-    app: &AppHandle<R>,
-    overlay_window: &WebviewWindow<R>,
-) -> Rect {
-    let overlay_scale_factor = overlay_window.scale_factor().unwrap_or(1.0).max(0.000_1);
-
-    let from_overlay = overlay_window
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .map(|monitor| monitor_to_logical_rect(&monitor, overlay_scale_factor));
-
-    let from_main = app
-        .get_webview_window(MAIN_WINDOW_LABEL)
-        .and_then(|main| {
-            let main_scale_factor = main
-                .scale_factor()
-                .unwrap_or(overlay_scale_factor)
-                .max(0.000_1);
-            main.primary_monitor()
-                .ok()
-                .flatten()
-                .map(|monitor| monitor_to_logical_rect(&monitor, main_scale_factor))
-        });
-
-    from_main
-        .or(from_overlay)
-        .unwrap_or(Rect {
-            x: 0.0,
-            y: 0.0,
-            width: 0.0,
-            height: 0.0,
-        })
-}
-
-#[cfg(desktop)]
-fn ensure_overlay_window<R: Runtime>(
-    app: &AppHandle<R>,
-    always_on_top: bool,
-) -> Result<WebviewWindow<R>, String> {
-    if let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
-        return Ok(window);
-    }
-
-    let builder = WebviewWindowBuilder::new(
-        app,
-        OVERLAY_WINDOW_LABEL,
-        WebviewUrl::App(OVERLAY_WINDOW_ROUTE.into()),
-    )
-    .title("Happier Activity Overlay")
-    .decorations(false)
-    .resizable(false)
-    .always_on_top(always_on_top)
-    .transparent(true)
-    .visible(false)
-    .skip_taskbar(true);
-
-    #[cfg(target_os = "macos")]
-    let builder = if let Some(defaults) = resolve_macos_overlay_window_builder_defaults(true) {
-        builder
-            .accept_first_mouse(defaults.accept_first_mouse)
-            .title_bar_style(defaults.title_bar_style)
-            .hidden_title(defaults.hidden_title)
-            .shadow(defaults.shadow)
-    } else {
-        builder
-    };
-
-    let window = builder.build().map_err(|error| error.to_string())?;
-    navigate_overlay_window_to_route(&window)?;
-    Ok(window)
-}
-
-#[cfg(desktop)]
-fn build_overlay_window_navigation_url(current_url: &tauri::Url) -> Result<tauri::Url, String> {
-    let mut next = current_url.clone();
-    next.set_path("/desktop/activity-overlay");
-    next.set_query(Some("desktopOverlayWindow=1"));
-    Ok(next)
-}
-
-#[cfg(desktop)]
-fn navigate_overlay_window_to_route<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
-    let current_url = window.url().map_err(|error| error.to_string())?;
-    let target_url = build_overlay_window_navigation_url(&current_url)?;
-    if current_url.as_str() == target_url.as_str() {
-        return Ok(());
-    }
-
-    window.navigate(target_url).map_err(|error| error.to_string())
 }
 
 #[cfg(desktop)]
@@ -952,9 +813,91 @@ fn resolve_effective_overlay_offsets(
     )
 }
 
+#[cfg(desktop)]
+fn resolve_effective_overlay_display_context(
+    resolved_display_context: Option<DesktopActivityOverlayDisplayContext>,
+    cached_display_context: Option<DesktopActivityOverlayDisplayContext>,
+    monitor: Rect,
+) -> Option<DesktopActivityOverlayDisplayContext> {
+    if let Some(display_context) = resolved_display_context {
+        return Some(display_context);
+    }
+
+    cached_display_context.filter(|display_context| {
+        rect_matches_for_runtime_display_context(display_context.screen_frame, monitor)
+    })
+}
+
+#[cfg(desktop)]
+fn rect_matches_for_runtime_display_context(left: Rect, right: Rect) -> bool {
+    (left.x - right.x).abs() <= 1.0
+        && (left.y - right.y).abs() <= 1.0
+        && (left.width - right.width).abs() <= 1.0
+        && (left.height - right.height).abs() <= 1.0
+}
+
+#[cfg(desktop)]
+fn resolve_host_mode_resolution_with_runtime_fallback(
+    resolution: self::host_mode::DesktopActivityOverlayHostModeResolution,
+    runtime_fallback: Option<ActivityOverlayRuntimeHostFallback>,
+    display_context: Option<DesktopActivityOverlayDisplayContext>,
+) -> self::host_mode::DesktopActivityOverlayHostModeResolution {
+    if !matches!(
+        resolution.effective_mode,
+        DesktopActivityOverlayHostMode::NotchIntegrated
+    ) {
+        return resolution;
+    }
+
+    let Some(runtime_fallback) = runtime_fallback else {
+        return resolution;
+    };
+
+    if !runtime_host_fallback_matches_display_context(runtime_fallback, display_context) {
+        return resolution;
+    }
+
+    resolution.with_runtime_fallback(runtime_fallback.reason)
+}
+
+#[cfg(desktop)]
+fn runtime_host_fallback_matches_display_context(
+    runtime_fallback: ActivityOverlayRuntimeHostFallback,
+    display_context: Option<DesktopActivityOverlayDisplayContext>,
+) -> bool {
+    let Some(display_context) = display_context else {
+        return false;
+    };
+
+    rect_matches_for_runtime_display_context(
+        runtime_fallback.display_context.screen_frame,
+        display_context.screen_frame,
+    ) && runtime_fallback.display_context.is_macos == display_context.is_macos
+        && runtime_fallback.display_context.is_builtin_display == display_context.is_builtin_display
+        && runtime_fallback.display_context.has_physical_notch == display_context.has_physical_notch
+}
+
+#[cfg(desktop)]
+fn build_runtime_host_fallback(
+    display_context: Option<DesktopActivityOverlayDisplayContext>,
+    reason: DesktopActivityOverlayHostFallbackReason,
+) -> Option<ActivityOverlayRuntimeHostFallback> {
+    display_context.map(|display_context| ActivityOverlayRuntimeHostFallback {
+        display_context,
+        reason,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activity_overlay::monitor_resolution::{
+        logical_rect_from_physical_bounds, resolve_monitor_logical_scale_factor,
+    };
+    use crate::activity_overlay::placement::{
+        DesktopActivityOverlayMonitorSource, OverlayPlacementRect, ResolvedOverlayAnchorMonitorRect,
+    };
+    use crate::activity_overlay::window_lifecycle::build_overlay_window_navigation_url;
 
     #[test]
     fn validates_overlay_command_caller_against_allowed_labels() {
@@ -968,11 +911,42 @@ mod tests {
     #[test]
     fn builds_the_overlay_window_navigation_url_with_the_overlay_route_and_marker() {
         let current_url = tauri::Url::parse("http://localhost:8081/").expect("valid url");
-        let next_url = build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
+        let next_url =
+            build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
 
         assert_eq!(
             next_url.as_str(),
             "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1"
+        );
+    }
+
+    #[test]
+    fn builds_the_overlay_window_navigation_url_preserving_existing_server_scope() {
+        let current_url = tauri::Url::parse(
+            "http://localhost:8081/?server=http%3A%2F%2F127.0.0.1%3A3009",
+        )
+        .expect("valid url");
+        let next_url =
+            build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
+
+        assert_eq!(
+            next_url.as_str(),
+            "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1&server=http%3A%2F%2F127.0.0.1%3A3009"
+        );
+    }
+
+    #[test]
+    fn builds_the_overlay_window_navigation_url_normalizing_existing_overlay_marker() {
+        let current_url = tauri::Url::parse(
+            "http://localhost:8081/settings?desktopOverlayWindow=0&server=http%3A%2F%2F127.0.0.1%3A3009",
+        )
+        .expect("valid url");
+        let next_url =
+            build_overlay_window_navigation_url(&current_url).expect("expected overlay url");
+
+        assert_eq!(
+            next_url.as_str(),
+            "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1&server=http%3A%2F%2F127.0.0.1%3A3009"
         );
     }
 
@@ -1130,6 +1104,9 @@ mod tests {
             false,
             DesktopActivityOverlayHostMode::NotchIntegrated,
         ));
+        assert!(!should_apply_overlay_tauri_always_on_top(
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+        ));
     }
 
     #[test]
@@ -1140,6 +1117,9 @@ mod tests {
         ));
         assert!(!resolve_overlay_tauri_always_on_top(
             false,
+            DesktopActivityOverlayHostMode::Floating,
+        ));
+        assert!(should_apply_overlay_tauri_always_on_top(
             DesktopActivityOverlayHostMode::Floating,
         ));
     }
@@ -1236,17 +1216,29 @@ mod tests {
             DesktopActivityOverlayAnchor::TopCenter,
             DesktopActivityOverlayPlacementMode::Custom,
             DesktopActivityOverlayHostMode::Floating,
+            DesktopActivityOverlayHostMode::Floating,
+            None,
             None,
             12.0,
             -8.0,
+            DesktopActivityOverlayNativeHostPath::Window,
             None,
         );
 
-        assert_eq!(diagnostics.monitor_source, DesktopActivityOverlayMonitorSource::OverlayWindow);
+        assert_eq!(
+            diagnostics.monitor_source,
+            DesktopActivityOverlayMonitorSource::OverlayWindow
+        );
         assert!((diagnostics.effective_monitor.x - 3000.0).abs() < 0.001);
         assert_eq!(diagnostics.anchor, DesktopActivityOverlayAnchor::TopCenter);
-        assert_eq!(diagnostics.placement_mode, DesktopActivityOverlayPlacementMode::Custom);
-        assert_eq!(diagnostics.host_mode, DesktopActivityOverlayHostMode::Floating);
+        assert_eq!(
+            diagnostics.placement_mode,
+            DesktopActivityOverlayPlacementMode::Custom
+        );
+        assert_eq!(
+            diagnostics.host_mode,
+            DesktopActivityOverlayHostMode::Floating
+        );
         assert_eq!(diagnostics.display_context, None);
         assert!((diagnostics.effective_offset_x - 12.0).abs() < 0.001);
         assert!((diagnostics.effective_offset_y + 8.0).abs() < 0.001);
@@ -1309,9 +1301,12 @@ mod tests {
             DesktopActivityOverlayAnchor::TopCenter,
             DesktopActivityOverlayPlacementMode::Anchored,
             DesktopActivityOverlayHostMode::Floating,
+            DesktopActivityOverlayHostMode::Floating,
+            None,
             None,
             0.0,
             0.0,
+            DesktopActivityOverlayNativeHostPath::Window,
             None,
         );
 
@@ -1391,9 +1386,12 @@ mod tests {
             DesktopActivityOverlayAnchor::TopCenter,
             DesktopActivityOverlayPlacementMode::Anchored,
             DesktopActivityOverlayHostMode::NotchIntegrated,
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+            None,
             Some(display_context),
             0.0,
             0.0,
+            DesktopActivityOverlayNativeHostPath::Panel,
             Some(Rect {
                 x: 576.0,
                 y: 914.0,
@@ -1428,6 +1426,239 @@ mod tests {
     }
 
     #[test]
+    fn carries_requested_host_mode_fallback_reason_and_native_host_path_into_diagnostics() {
+        let display_context = DesktopActivityOverlayDisplayContext {
+            is_macos: true,
+            is_builtin_display: true,
+            has_physical_notch: true,
+            safe_area_top: 74.0,
+            screen_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            visible_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 908.0,
+            },
+        };
+        let diagnostics = build_overlay_placement_diagnostics(
+            ResolvedOverlayAnchorMonitorRect {
+                source: DesktopActivityOverlayMonitorSource::Primary,
+                rect: display_context.screen_frame,
+            },
+            OverlayPlacementRect { x: 576.0, y: 12.0 },
+            DesktopActivityOverlayAnchor::TopCenter,
+            DesktopActivityOverlayPlacementMode::Anchored,
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+            DesktopActivityOverlayHostMode::Floating,
+            Some(DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable),
+            Some(display_context),
+            0.0,
+            0.0,
+            DesktopActivityOverlayNativeHostPath::Window,
+            None,
+        );
+
+        assert_eq!(
+            diagnostics.requested_host_mode,
+            DesktopActivityOverlayHostMode::NotchIntegrated
+        );
+        assert_eq!(
+            diagnostics.host_mode,
+            DesktopActivityOverlayHostMode::Floating
+        );
+        assert_eq!(
+            diagnostics.host_fallback_reason,
+            Some(DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable)
+        );
+        assert_eq!(
+            diagnostics.native_host_path,
+            DesktopActivityOverlayNativeHostPath::Window
+        );
+    }
+
+    #[test]
+    fn reuses_last_display_context_when_resolution_is_temporarily_unavailable() {
+        let display_context = DesktopActivityOverlayDisplayContext {
+            is_macos: true,
+            is_builtin_display: true,
+            has_physical_notch: true,
+            safe_area_top: 74.0,
+            screen_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            visible_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 908.0,
+            },
+        };
+
+        assert_eq!(
+            resolve_effective_overlay_display_context(
+                None,
+                Some(display_context),
+                display_context.screen_frame,
+            ),
+            Some(display_context),
+        );
+    }
+
+    #[test]
+    fn drops_last_display_context_when_monitor_changes() {
+        let display_context = DesktopActivityOverlayDisplayContext {
+            is_macos: true,
+            is_builtin_display: true,
+            has_physical_notch: true,
+            safe_area_top: 74.0,
+            screen_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            visible_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 908.0,
+            },
+        };
+
+        assert_eq!(
+            resolve_effective_overlay_display_context(
+                None,
+                Some(display_context),
+                Rect {
+                    x: 1512.0,
+                    y: 0.0,
+                    width: 1728.0,
+                    height: 1117.0,
+                },
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn keeps_runtime_panel_fallback_sticky_for_the_same_display_context() {
+        let display_context = DesktopActivityOverlayDisplayContext {
+            is_macos: true,
+            is_builtin_display: true,
+            has_physical_notch: true,
+            safe_area_top: 74.0,
+            screen_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            visible_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 908.0,
+            },
+        };
+        let resolution = resolve_desktop_activity_overlay_host_mode_resolution(
+            DesktopActivityOverlayPresentationMode::Automatic,
+            DesktopActivityOverlayPlacementMode::Anchored,
+            DesktopActivityOverlayAnchor::TopCenter,
+            Some(display_context),
+        );
+        let runtime_fallback = ActivityOverlayRuntimeHostFallback {
+            display_context,
+            reason: DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
+        };
+
+        let sticky_resolution = resolve_host_mode_resolution_with_runtime_fallback(
+            resolution,
+            Some(runtime_fallback),
+            Some(display_context),
+        );
+
+        assert_eq!(
+            sticky_resolution.requested_mode,
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+        );
+        assert_eq!(
+            sticky_resolution.effective_mode,
+            DesktopActivityOverlayHostMode::Floating,
+        );
+        assert_eq!(
+            sticky_resolution.fallback_reason,
+            Some(DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable),
+        );
+    }
+
+    #[test]
+    fn ignores_runtime_panel_fallback_after_display_context_changes() {
+        let original_context = DesktopActivityOverlayDisplayContext {
+            is_macos: true,
+            is_builtin_display: true,
+            has_physical_notch: true,
+            safe_area_top: 74.0,
+            screen_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            visible_frame: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 908.0,
+            },
+        };
+        let next_context = DesktopActivityOverlayDisplayContext {
+            screen_frame: Rect {
+                x: 1512.0,
+                y: 0.0,
+                width: 1728.0,
+                height: 1117.0,
+            },
+            visible_frame: Rect {
+                x: 1512.0,
+                y: 0.0,
+                width: 1728.0,
+                height: 1043.0,
+            },
+            ..original_context
+        };
+        let resolution = resolve_desktop_activity_overlay_host_mode_resolution(
+            DesktopActivityOverlayPresentationMode::Automatic,
+            DesktopActivityOverlayPlacementMode::Anchored,
+            DesktopActivityOverlayAnchor::TopCenter,
+            Some(next_context),
+        );
+        let runtime_fallback = ActivityOverlayRuntimeHostFallback {
+            display_context: original_context,
+            reason: DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
+        };
+
+        let sticky_resolution = resolve_host_mode_resolution_with_runtime_fallback(
+            resolution,
+            Some(runtime_fallback),
+            Some(next_context),
+        );
+
+        assert_eq!(
+            sticky_resolution.effective_mode,
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+        );
+        assert_eq!(sticky_resolution.fallback_reason, None);
+    }
+
+    #[test]
     fn applies_desired_expanded_override_on_first_sync_and_clears_it() {
         let mut state = ActivityOverlayRuntimeState {
             last_sync_payload: None,
@@ -1435,6 +1666,8 @@ mod tests {
             desired_expanded: Some(true),
             drag_offsets: PersistedOverlayDragOffsets::default(),
             drag_offsets_loaded: true,
+            last_display_context: None,
+            runtime_host_fallback: None,
         };
 
         let mut payload = DesktopActivityOverlaySyncPayload {

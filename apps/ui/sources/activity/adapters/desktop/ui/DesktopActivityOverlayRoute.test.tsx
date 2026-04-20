@@ -2,14 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-    findTestInstanceByTypeContainingText,
-    flushHookEffects,
-    pressTestInstance,
-    renderScreen,
-} from '@/dev/testkit';
+import { flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
 import type { DesktopActivityOverlayWindowStatePayload } from '../runtime/desktopActivityOverlayBridge';
+import { resolveDesktopActivityOverlayCardActionInstanceTestID } from './shared/desktopActivityOverlaySelectors.mjs';
 
 const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
 const isDesktopActivityOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => true));
@@ -79,6 +75,7 @@ function createWindowState(
                 statusText: 'Needs attention',
                 defaultTarget: 'open-primary-session',
                 sessionCount: 2,
+                primaryCardKind: 'session_overview',
             },
             expanded: {
                 title: 'Active sessions',
@@ -89,6 +86,20 @@ function createWindowState(
                         subtitle: 'Repo',
                         statusText: 'Needs attention',
                         previewText: null,
+                    },
+                ],
+                cards: [
+                    {
+                        id: 'session-overview-1',
+                        kind: 'session_overview',
+                        sessionId: 'session-1',
+                        title: 'Session One',
+                        subtitle: 'Repo',
+                        statusText: 'Needs attention',
+                        previewText: null,
+                        attentionState: 'permission_required',
+                        active: true,
+                        updatedAt: 1,
                     },
                 ],
             },
@@ -144,6 +155,7 @@ describe('DesktopActivityOverlayRoute', () => {
         listenDesktopActivityOverlayWindowStateMock.mockReset();
         setDesktopActivityOverlayExpandedMock.mockReset();
         emitDesktopActivityOverlayInteractionMock.mockReset();
+        vi.useRealTimers();
     });
 
     it('renders a loading placeholder before the overlay state arrives', async () => {
@@ -159,9 +171,7 @@ describe('DesktopActivityOverlayRoute', () => {
 
     it('renders the hidden container when the overlay window state is not visible', async () => {
         isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({ visible: false }),
-        );
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createWindowState({ visible: false }));
         listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
 
         const screen = await renderRoute();
@@ -169,163 +179,14 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(screen.findByTestId('desktop-activity-overlay-hidden')).toBeTruthy();
     });
 
-    it('expands the collapsed overlay when the click action is set to expand', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState(),
-        );
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-
-        screen.pressByTestId('desktop-activity-overlay-collapsed');
-
-        expect(setDesktopActivityOverlayExpandedMock).toHaveBeenCalledWith(true);
-        expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
-            actionIdentifier: 'overlay-set-expanded',
-            data: { expanded: true },
-        });
-    });
-
-    it('expands the collapsed overlay on hover when the expanded behavior is set to hover', async () => {
+    it('always expands the collapsed overlay on press, even when legacy interaction knobs disagree', async () => {
         isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
         getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
             createWindowState({
                 policy: {
                     ...createWindowState().policy,
                     expandedBehavior: 'hover',
-                },
-            }),
-        );
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-        const collapsed = screen.findByTestId('desktop-activity-overlay-collapsed');
-        expect(collapsed).toBeTruthy();
-
-        await act(async () => {
-            collapsed?.props.onHoverIn?.();
-        });
-
-        expect(setDesktopActivityOverlayExpandedMock).toHaveBeenCalledWith(true);
-        expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
-            actionIdentifier: 'overlay-set-expanded',
-            data: { expanded: true },
-        });
-    });
-
-    it('does not expand the collapsed overlay on click when expand behavior is hover', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({
-                policy: {
-                    ...createWindowState().policy,
-                    expandedBehavior: 'hover',
-                },
-            }),
-        );
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-
-        screen.pressByTestId('desktop-activity-overlay-collapsed');
-
-        expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
-        expect(emitDesktopActivityOverlayInteractionMock).not.toHaveBeenCalled();
-    });
-
-    it('keeps the collapsed overlay non-interactive when that setting is disabled', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({
-                policy: {
-                    ...createWindowState().policy,
                     interactiveCollapsed: false,
-                },
-            }),
-        );
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-        const collapsed = screen.findByTestId('desktop-activity-overlay-collapsed');
-        expect(collapsed).toBeTruthy();
-
-        screen.pressByTestId('desktop-activity-overlay-collapsed');
-        await act(async () => {
-            collapsed?.props.onHoverIn?.();
-        });
-
-        expect(collapsed?.props.disabled).toBe(true);
-        expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
-        expect(emitDesktopActivityOverlayInteractionMock).not.toHaveBeenCalled();
-    });
-
-    it('opens the primary session directly when the collapsed click action is configured for it', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({
-                model: {
-                    ...createWindowState().model,
-                    collapsed: {
-                        ...createWindowState().model.collapsed,
-                        defaultTarget: 'open-session:session-1',
-                    },
-                },
-                policy: {
-                    ...createWindowState().policy,
-                    clickAction: 'open_primary_session',
-                },
-            }),
-        );
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-
-        screen.pressByTestId('desktop-activity-overlay-collapsed');
-
-        expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
-            actionIdentifier: 'open-session:session-1',
-            data: { primarySessionId: 'session-1' },
-        });
-        expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
-    });
-
-    it('opens the primary session target even when the shared default target resolves to inbox', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({
-                model: {
-                    ...createWindowState().model,
-                    collapsed: {
-                        ...createWindowState().model.collapsed,
-                        defaultTarget: 'open-inbox',
-                    },
-                },
-                policy: {
-                    ...createWindowState().policy,
-                    clickAction: 'open_primary_session',
-                },
-            }),
-        );
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-
-        screen.pressByTestId('desktop-activity-overlay-collapsed');
-
-        expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
-            actionIdentifier: 'open-session:session-1',
-            data: { primarySessionId: 'session-1' },
-        });
-        expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
-    });
-
-    it('opens the inbox directly when the collapsed click action is configured for the sessions list', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({
-                policy: {
-                    ...createWindowState().policy,
                     clickAction: 'open_sessions',
                 },
             }),
@@ -336,18 +197,72 @@ describe('DesktopActivityOverlayRoute', () => {
 
         screen.pressByTestId('desktop-activity-overlay-collapsed');
 
+        expect(setDesktopActivityOverlayExpandedMock).toHaveBeenCalledWith(true);
         expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
-            actionIdentifier: 'open-inbox',
-            data: {},
+            actionIdentifier: 'overlay-set-expanded',
+            data: { expanded: true },
+        });
+    });
+
+    it('only auto-expands after a sustained hover in notch mode', async () => {
+        vi.useFakeTimers();
+        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
+            createWindowState({
+                policy: {
+                    ...createWindowState().policy,
+                    presentationMode: 'notch_integrated',
+                    expandedBehavior: 'click',
+                },
+            }),
+        );
+        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
+
+        const screen = await renderRoute();
+        const collapsedSurface = screen.findByTestId('desktop-activity-overlay-collapsed');
+
+        await act(async () => {
+            invokeTestInstanceHandler(
+                collapsedSurface,
+                'onHoverIn',
+                undefined,
+                'desktop-activity-overlay-collapsed',
+            );
+            await vi.advanceTimersByTimeAsync(999);
         });
         expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+            invokeTestInstanceHandler(
+                collapsedSurface,
+                'onHoverOut',
+                undefined,
+                'desktop-activity-overlay-collapsed',
+            );
+            await vi.advanceTimersByTimeAsync(2);
+        });
+        expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+            invokeTestInstanceHandler(
+                collapsedSurface,
+                'onHoverIn',
+                undefined,
+                'desktop-activity-overlay-collapsed',
+            );
+            await vi.advanceTimersByTimeAsync(1_000);
+        });
+
+        expect(setDesktopActivityOverlayExpandedMock).toHaveBeenCalledWith(true);
+        expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
+            actionIdentifier: 'overlay-set-expanded',
+            data: { expanded: true },
+        });
     });
 
     it('re-renders when the overlay window listener publishes a new expanded state', async () => {
         isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({ expanded: false }),
-        );
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createWindowState({ expanded: false }));
 
         let windowStateHandler: ((payload: DesktopActivityOverlayWindowStatePayload) => void) | null = null;
         listenDesktopActivityOverlayWindowStateMock.mockImplementation(async (handler) => {
@@ -364,20 +279,19 @@ describe('DesktopActivityOverlayRoute', () => {
         });
 
         expect(screen.findByTestId('desktop-activity-overlay-collapsed')).toBeNull();
-        expect(screen.findByTestId('desktop-activity-overlay-expanded-action-collapse')).toBeTruthy();
+        expect(screen.findByTestId('desktop-activity-overlay-expanded')).toBeTruthy();
+        expect(screen.findByTestId('desktop-activity-overlay-expanded-action-collapse')).toBeNull();
     });
 
-    it('routes expanded overlay actions through the shared interaction bridge', async () => {
+    it('routes expanded overlay surface and row actions through the shared interaction bridge', async () => {
         isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
-            createWindowState({ expanded: true }),
-        );
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createWindowState({ expanded: true }));
         listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
 
         const screen = await renderRoute();
 
         await act(async () => {
-            screen.pressByTestId('desktop-activity-overlay-expanded-action-collapse');
+            screen.pressByTestId('desktop-activity-overlay-expanded');
         });
         expect(setDesktopActivityOverlayExpandedMock).toHaveBeenCalledWith(false);
         expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
@@ -388,24 +302,57 @@ describe('DesktopActivityOverlayRoute', () => {
         emitDesktopActivityOverlayInteractionMock.mockClear();
 
         await act(async () => {
-            pressTestInstance(
-                findTestInstanceByTypeContainingText(screen, 'Pressable', 'Session One'),
-                'expanded overlay session row',
-            );
+            screen.pressByTestId('desktop-activity-overlay-session-row-session-1');
         });
         expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
             actionIdentifier: 'open-session:session-1',
             data: { sessionId: 'session-1' },
         });
+    });
 
-        emitDesktopActivityOverlayInteractionMock.mockClear();
+    it('routes direct expanded card actions through the shared interaction bridge', async () => {
+        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
+        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
+            ...createWindowState({ expanded: true }),
+            model: {
+                ...createWindowState({ expanded: true }).model,
+                collapsed: {
+                    ...createWindowState({ expanded: true }).model.collapsed,
+                    title: 'Permission required',
+                    primaryCardKind: 'permission_request',
+                },
+                expanded: {
+                    ...createWindowState({ expanded: true }).model.expanded,
+                    rows: [],
+                    cards: [
+                        {
+                            id: 'permission-1',
+                            kind: 'permission_request',
+                            requestId: 'permission-1',
+                            sessionId: 'session-1',
+                            title: 'Edit src/auth/middleware.ts',
+                            summary: 'Approval is required before continuing.',
+                            toolLabel: 'Claude asks',
+                            questionText: null,
+                            count: 1,
+                            openActionIdentifier: 'open-session:session-1',
+                            allowActionIdentifier: 'approve-permission',
+                        },
+                    ],
+                },
+            } as unknown as DesktopActivityOverlayWindowStatePayload['model'],
+        });
+        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
+
+        const screen = await renderRoute();
 
         await act(async () => {
-            screen.pressByTestId('desktop-activity-overlay-expanded-action-open-inbox');
+            screen.pressByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-1', 'allow'));
         });
+
         expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
-            actionIdentifier: 'open-inbox',
-            data: {},
+            actionIdentifier: 'approve-permission',
+            data: { requestId: 'permission-1', sessionId: 'session-1' },
         });
     });
 
@@ -443,9 +390,7 @@ describe('DesktopActivityOverlayRoute', () => {
                 remove: () => {},
             }),
             getElementById: (id: string) => (id === 'root' ? fakeRoot : null),
-            head: {
-                appendChild: () => {},
-            },
+            head: { appendChild: () => {} },
             documentElement: {
                 style: {
                     backgroundColor: 'rgb(255, 255, 255)',
@@ -509,12 +454,8 @@ describe('DesktopActivityOverlayRoute', () => {
             createElement: () => {
                 throw new Error('createElement should not be called when the style element already exists');
             },
-            getElementById: (id: string) => (id === 'desktop-activity-overlay-transparent-style'
-                ? existingStyleElement
-                : null),
-            head: {
-                appendChild: () => {},
-            },
+            getElementById: (id: string) => (id === 'desktop-activity-overlay-transparent-style' ? existingStyleElement : null),
+            head: { appendChild: () => {} },
             documentElement: {
                 style: {
                     backgroundColor: 'rgb(255, 255, 255)',
@@ -558,6 +499,7 @@ describe('DesktopActivityOverlayRoute', () => {
                     effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
                     anchor: 'top_center',
                     placementMode: 'anchored',
+                    requestedHostMode: 'floating',
                     hostMode: 'notch_integrated',
                     displayContext: null,
                     effectiveOffsetX: 0,
@@ -578,7 +520,7 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(screen.findByTestId('desktop-activity-overlay-expanded-notch')).toBeTruthy();
     });
 
-    it('keeps automatic pill chrome floating when host diagnostics are unavailable', async () => {
+    it('keeps automatic chrome floating when host diagnostics are unavailable', async () => {
         isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
         getDesktopActivityOverlayWindowStateMock.mockResolvedValue(
             createWindowState({

@@ -1,15 +1,14 @@
-use super::host_window::{
-    DesktopActivityOverlayMacWindowHostSettings, DesktopActivityOverlayMacWindowLevelOverride,
-};
 use super::host_mode::{DesktopActivityOverlayDisplayContext, DesktopActivityOverlayHostMode};
+use super::host_window::{
+    DesktopActivityOverlayMacHostPath, DesktopActivityOverlayMacWindowHostSettings,
+    DesktopActivityOverlayMacWindowLevelOverride,
+};
 use super::placement::{OverlayPlacementRect, Rect};
 
 #[cfg(target_os = "macos")]
 use tauri::{Manager, Runtime, WebviewWindow};
 #[cfg(target_os = "macos")]
-use tauri_nspanel::{
-    tauri_panel, CollectionBehavior, ManagerExt, StyleMask, WebviewWindowExt,
-};
+use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, StyleMask, WebviewWindowExt};
 
 #[cfg(target_os = "macos")]
 tauri_panel! {
@@ -55,9 +54,7 @@ fn resolve_panel_collection_behavior(
 }
 
 #[cfg(target_os = "macos")]
-fn resolve_panel_style_mask(
-    settings: DesktopActivityOverlayMacWindowHostSettings,
-) -> StyleMask {
+fn resolve_panel_style_mask(settings: DesktopActivityOverlayMacWindowHostSettings) -> StyleMask {
     let mut style_mask = StyleMask::empty().borderless();
 
     if settings.nonactivating_panel {
@@ -72,7 +69,7 @@ pub(crate) fn apply_macos_overlay_panel_host<R: Runtime>(
     window: &WebviewWindow<R>,
     settings: DesktopActivityOverlayMacWindowHostSettings,
 ) -> Result<(), String> {
-    if !settings.prefer_panel_host {
+    if !matches!(settings.host_path, DesktopActivityOverlayMacHostPath::Panel) {
         return Ok(());
     }
 
@@ -144,18 +141,20 @@ pub(crate) fn apply_macos_overlay_panel_position<R: Runtime>(
     placement: OverlayPlacementRect,
     width: f64,
     height: f64,
-) -> Result<Option<Rect>, String> {
+) -> Result<Rect, String> {
     if !matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated) {
-        return Ok(None);
+        return Err("Panel positioning requires notch-integrated host mode".to_string());
     }
 
     let Some(display_context) = display_context else {
-        return Ok(None);
+        return Err("Panel positioning requires a resolved display context".to_string());
     };
 
     let panel = match window.app_handle().get_webview_panel(window.label()) {
         Ok(panel) => panel,
-        Err(_) => return Ok(None),
+        Err(_) => window
+            .to_panel::<DesktopActivityOverlayPanel<R>>()
+            .map_err(|error| error.to_string())?,
     };
     let top_left = resolve_macos_overlay_panel_top_left_point(placement, display_context);
     let content_rect = resolve_macos_overlay_panel_content_rect(top_left, width, height);
@@ -183,7 +182,8 @@ pub(crate) fn apply_macos_overlay_panel_position<R: Runtime>(
         })
         .map_err(|error| error.to_string())?;
 
-    Ok(rx.recv().ok())
+    rx.recv()
+        .map_err(|_| "Panel positioning did not return a native frame".to_string())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -202,8 +202,8 @@ pub(crate) fn apply_macos_overlay_panel_position<R: tauri::Runtime>(
     _placement: OverlayPlacementRect,
     _width: f64,
     _height: f64,
-) -> Result<Option<Rect>, String> {
-    Ok(None)
+) -> Result<Rect, String> {
+    Err("Panel positioning is unavailable outside macOS".to_string())
 }
 
 #[cfg(test)]
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn notch_integrated_panel_style_mask_is_borderless_and_nonactivating() {
         let style_mask = resolve_panel_style_mask(DesktopActivityOverlayMacWindowHostSettings {
-            prefer_panel_host: true,
+            host_path: DesktopActivityOverlayMacHostPath::Panel,
             prefer_accessory_activation_policy: true,
             visible_on_all_workspaces: true,
             shadow: false,

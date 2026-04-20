@@ -7,10 +7,13 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    useWindowDimensions: () => ({ width: 390, height: 844 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: { OS: 'web', select: (spec: Record<string, unknown>) => spec.web ?? spec.default },
+        useWindowDimensions: () => ({ width: 390, height: 844 }),
+    });
+});
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => true,

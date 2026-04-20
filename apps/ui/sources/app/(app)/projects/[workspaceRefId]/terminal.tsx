@@ -15,7 +15,8 @@ import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/Pr
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
-import { useLegacyDetailsRouteRedirect } from '@/components/workspaceCockpit/useLegacyDetailsRouteRedirect';
+import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
+import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { t } from '@/text';
@@ -44,9 +45,13 @@ export default function ProjectTerminalScreenRoute() {
 
     const scopeId = buildProjectPaneScopeId(workspaceRef.id);
     const pane = useAppPaneScope(scopeId);
-    const activeDetailsKey = pane.scopeState?.details?.activeTabKey ?? null;
-    const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
-    const detailsTabs = pane.scopeState?.details?.tabs ?? [];
+    const detailsState = pane.scopeState?.details ?? null;
+    const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
+        detailsTabs: detailsState?.tabs,
+        activeDetailsKey: detailsState?.activeTabKey ?? null,
+        detailsGroups: detailsState?.groups,
+    }), [detailsState?.activeTabKey, detailsState?.groups, detailsState?.tabs]);
+    const detailsIsOpen = detailsState?.isOpen ?? false;
     const {
         resolvedActiveRootPath,
         resolvedActiveWorktreeId,
@@ -82,13 +87,12 @@ export default function ProjectTerminalScreenRoute() {
         routeActions.navigateToSegment({ segment: 'details', method: 'push' });
     }, [routeActions]);
 
-    useLegacyDetailsRouteRedirect({
+    useFullscreenDetailsRouteAutoRedirect({
         resetKey: workspaceRef.id,
         enabled: !cockpitEnabled,
         isFocused,
         detailsIsOpen,
-        activeDetailsKey,
-        detailsTabs,
+        detailsSelection,
         onNavigate: handleNavigateToDetails,
     });
 

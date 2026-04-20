@@ -2,12 +2,14 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const windowDimsState = vi.hoisted(() => ({ width: 1600, height: 900 }));
 const setSettingsNavSidebarEnabled = vi.hoisted(() => vi.fn());
 const declaredScreenNames = vi.hoisted(() => [] as string[]);
+const routerMock = createExpoRouterMock();
 
 vi.mock('@/components/settings/shell/SettingsSidebar', () => ({
     // Simulate a bad export in production bundles, which previously crashed /settings.
@@ -19,6 +21,7 @@ vi.mock('@/components/ui/panels/ResizableDockedPane', () => ({
 }));
 
 vi.mock('expo-router', () => ({
+    ...routerMock.module,
     Stack: Object.assign(
         (props: any) => React.createElement('Stack', { testID: 'settings-layout-stack' }, props.children),
         {

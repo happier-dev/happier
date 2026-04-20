@@ -60,20 +60,26 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     getResolvedBackendCatalogEntries: () => [
         {
-            target: { kind: 'builtInAgent', agentId: 'claude' },
-            targetKey: 'agent:claude',
-            family: 'builtInAgent',
+            backendTarget: { kind: 'backend', backendId: 'claude' },
+            backendTargetKey: 'backend:claude',
+            kind: 'builtInAgent',
+            backendId: 'claude',
+            providerId: 'claude',
+            providerAgentId: 'claude',
             builtInAgentId: 'claude',
             iconAgentId: 'claude',
             title: 'Claude',
             subtitle: 'claude',
         },
         {
-            target: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
-            targetKey: 'acpBackend:custom-preset',
-            family: 'configuredAcpBackend',
+            backendTarget: { kind: 'backend', backendId: 'custom-preset', configuredBackendId: 'custom-preset' },
+            backendTargetKey: 'backend:custom-preset:configured:custom-preset',
+            kind: 'configuredBackend',
+            backendId: 'custom-preset',
+            providerId: 'custom-preset',
+            providerAgentId: null,
             builtInAgentId: null,
-            iconAgentId: 'customAcp',
+            iconAgentId: null,
             title: 'Custom Review Bot',
             subtitle: 'Custom ACP',
         },
@@ -174,7 +180,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                     id: 'guidance_2',
                     description: 'Delegate UI tasks',
                     enabled: true,
-                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'claude' },
                 }}
                 onResolve={onResolve}
                 onClose={onClose}
@@ -193,7 +199,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                 entry: expect.objectContaining({
                     id: 'guidance_2',
                     description: 'Delegate UI tasks',
-                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'claude' },
                 }),
             }),
         );
@@ -214,7 +220,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                     id: 'guidance_3',
                     description: 'Review custom ACP changes',
                     enabled: true,
-                    suggestedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'custom-preset', configuredBackendId: 'custom-preset' },
                 }}
                 onResolve={onResolve}
                 onClose={onClose}
@@ -223,12 +229,12 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
 
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
         expect(dropdowns).toHaveLength(3);
-        expect(dropdowns[0]!.props.selectedId).toBe('acpBackend:custom-preset');
+        expect(dropdowns[0]!.props.selectedId).toBe('backend:custom-preset:configured:custom-preset');
         expect(dropdowns[1]!.props.selectedId).toBe('');
 
         expect(useNewSessionPreflightModelsState).toHaveBeenCalledWith(
             expect.objectContaining({
-                backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
+                backendTarget: { kind: 'backend', backendId: 'custom-preset', configuredBackendId: 'custom-preset' },
             }),
         );
 
@@ -241,8 +247,37 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
             expect.objectContaining({
                 kind: 'save',
                 entry: expect.objectContaining({
-                    suggestedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'custom-preset', configuredBackendId: 'custom-preset' },
                 }),
+            }),
+        );
+    });
+
+    it('does not seed a built-in backend target when no backend is selected', async () => {
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+
+        const { useNewSessionPreflightModelsState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState');
+        const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
+
+        await renderScreen(
+            <SubAgentGuidanceRuleEditorModalHarness
+                component={SubAgentGuidanceRuleEditorModal as any}
+                mode="create"
+                entry={{
+                    id: 'guidance_4',
+                    description: 'Review session guidance',
+                    enabled: true,
+                }}
+                onResolve={onResolve}
+                onClose={onClose}
+            />,
+        );
+
+        expect(useNewSessionPreflightModelsState).toHaveBeenCalledWith(
+            expect.objectContaining({
+                backendTarget: null,
+                selectedMachineId: null,
             }),
         );
     });

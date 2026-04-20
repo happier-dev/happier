@@ -58,6 +58,6 @@ describe('DesktopAppSettingsScreen (missing vector icons)', () => {
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-visibility-mode')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-presentation-mode')).toBeTruthy();
-        expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeTruthy();
+        expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeNull();
     });
 });

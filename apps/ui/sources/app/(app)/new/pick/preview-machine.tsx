@@ -11,9 +11,11 @@ import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 
 export default React.memo(function PreviewMachinePickerScreen() {
     const { theme } = useUnistyles();
@@ -35,38 +37,32 @@ export default React.memo(function PreviewMachinePickerScreen() {
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;
     const activeServerId = getActiveServerId();
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
+    const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId) ?? activeServerId;
+    const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: machineIdParam,
+        serverId: spawnServerId,
+        enabled: Boolean(machineIdParam),
+        staleMs: 60_000,
+    });
     const preferredBackendTarget = React.useMemo(() => {
-        return resolvePreferredBackendTargetFromSettings({
+        return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
+        daemonMergedProjection.inputs,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
-        settings.backendEnabledByTargetKey,
-        settings.acpCatalogSettingsV1,
     ]);
-    const roundTripFallbackTarget = React.useMemo(() => {
-        return resolveRouteCloseoutFallbackTarget({
-            agentType: params.agentType,
-            backendTarget: params.backendTarget,
-            backendTargetKey: params.backendTargetKey,
-            preferredBackendTarget,
-        });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
-    const roundTripBackendParams = React.useMemo(() => {
-        return buildBackendTargetRouteParams({
-            agentType: params.agentType,
-            backendTarget: params.backendTarget,
-            backendTargetKey: params.backendTargetKey,
-            fallbackTarget: roundTripFallbackTarget,
-        });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
-    const currentRouteParams = React.useMemo(() => {
-        return pickNewSessionRouteParams(params);
-    }, [params]);
 
     const headerLeft = React.useCallback(() => (
         <Pressable
@@ -104,6 +100,18 @@ export default React.memo(function PreviewMachinePickerScreen() {
     }, [favoriteMachines, setFavoriteMachines]);
 
     const setPreviewMachineIdOnPreviousRoute = React.useCallback((previewMachineId: string) => {
+        const roundTripFallbackTarget = resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+        const roundTripBackendParams = buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
         return setNewSessionPickerReturnParams({
             navigation: navigation as any,
             router,
@@ -120,7 +128,23 @@ export default React.memo(function PreviewMachinePickerScreen() {
                 previewMachineId,
             },
         });
-    }, [currentRouteParams, navigation, params.dataId, params.machineId, params.spawnServerId, roundTripBackendParams, router]);
+    }, [
+        currentRouteParams,
+        navigation,
+        params.agentType,
+        params.backendTarget,
+        params.backendTargetKey,
+        params.dataId,
+        params.machineId,
+        params.spawnServerId,
+        router,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        preferredBackendTarget,
+        spawnServerId,
+    ]);
 
     return (
         <>

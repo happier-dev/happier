@@ -5,34 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 
-const expoRouterMock = vi.hoisted(() => {
-    const push = vi.fn();
-    const replace = vi.fn();
-    const back = vi.fn();
-    const router = { push, replace, back };
-    return {
-        spies: { push, replace, back },
-        module: {
-            router,
-            useRouter: () => router,
-            useNavigation: () => null,
-            useSegments: () => [],
-            usePathname: () => '/',
-            useLocalSearchParams: () => ({}),
-            useGlobalSearchParams: () => ({}),
-            Stack: Object.assign(
-                function Stack(props: { children?: React.ReactNode }) {
-                    return React.createElement(React.Fragment, null, props.children ?? null);
-                },
-                {
-                    Screen: (props: Record<string, unknown>) => React.createElement('StackScreen', props),
-                },
-            ),
-            Link: 'Link' as any,
-            Redirect: (props: Record<string, unknown>) => React.createElement('Redirect', props),
-        },
-    };
-});
+const routerMock = vi.hoisted(() => ({
+    spies: {
+        push: vi.fn(),
+        replace: vi.fn(),
+        back: vi.fn(),
+        setParams: vi.fn(),
+    },
+    module: null as unknown,
+}));
 const activeServerSnapshotMock = vi.hoisted(() => ({
     serverId: 'relay-profile',
     serverUrl: 'https://relay.example.test',
@@ -88,7 +69,14 @@ const setupThisComputerWizardStepMock = vi.hoisted(() => ({
     forceBackHidden: false,
 }));
 
-vi.mock('expo-router', () => expoRouterMock.module);
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const mock = createExpoRouterMock({
+        router: routerMock.spies,
+    });
+    routerMock.module = mock.module;
+    return mock.module;
+});
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshotMock,
     subscribeActiveServer: () => () => {},
@@ -253,8 +241,8 @@ vi.mock('react-native-safe-area-context', () => ({
 
 describe('SetupWizardSurface', () => {
     beforeEach(() => {
-        expoRouterMock.spies.push.mockReset();
-        expoRouterMock.spies.replace.mockReset();
+        routerMock.spies.push.mockReset();
+        routerMock.spies.replace.mockReset();
         activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
         activeServerSwitchMocks.upsertActivateAndSwitchServer.mockClear();
         pendingSetupIntentMocks.getPendingSetupIntent.mockReset();
@@ -287,7 +275,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/setup');
+        expect(routerMock.spies.replace).toHaveBeenCalledWith('/setup');
     });
 
     it('hides the back button when the active step requests it', async () => {
@@ -1245,7 +1233,7 @@ describe('SetupWizardSurface', () => {
 
         expect(activeServerSwitchMocks.upsertActivateAndSwitchServer).toHaveBeenCalledTimes(0);
         expect(pendingSetupIntentMocks.setPendingSetupIntent).toHaveBeenCalledTimes(0);
-        expect(expoRouterMock.spies.replace).toHaveBeenCalledTimes(0);
+        expect(routerMock.spies.replace).toHaveBeenCalledTimes(0);
 
         expect(screen.findAllByType('ProviderSetupFlow' as never)).toHaveLength(0);
     });
@@ -1304,7 +1292,7 @@ describe('SetupWizardSurface', () => {
 
         expect(activeServerSwitchMocks.upsertActivateAndSwitchServer).toHaveBeenCalledTimes(1);
         expect(pendingSetupIntentMocks.setPendingSetupIntent).toHaveBeenCalledTimes(1);
-        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
+        expect(routerMock.spies.replace).toHaveBeenCalledWith('/');
     });
 
     it('guides the user from remote setup into the remote SSH step', async () => {
@@ -1433,7 +1421,7 @@ describe('SetupWizardSurface', () => {
             machineId: 'mach-1',
             remoteSetupIntent: 'remoteRelayHost',
         }));
-        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
+        expect(routerMock.spies.replace).toHaveBeenCalledWith('/');
     });
 
     it('switches remote relay hosting through the configured share URL once relay access provides one', async () => {

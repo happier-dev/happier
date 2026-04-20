@@ -4,10 +4,33 @@ import { useAppPaneContext } from '../AppPaneProvider';
 import type { DetailsTab } from '../model/appPaneReducer';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { resolveDetailsTabOpenAs, type LastPreviewOpen } from './resolveDetailsTabOpenAs';
+import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
+import type {
+    DetailsWorkspaceAxis,
+    DetailsWorkspacePlacement,
+} from '../details/workspace/detailsWorkspaceTypes';
+import type { PaneScopeState } from '../model/appPaneReducer';
 
-export type AppPaneScopeApi = Readonly<{
+type AppPaneScopeDetailsStateView = {
+    isOpen: boolean;
+    tabState: Readonly<Record<string, unknown>>;
+    tabs: ReturnType<typeof buildDetailsWorkspaceStateView>['tabs'];
+    activeTabKey: string | null;
+    groups?: ReturnType<typeof buildDetailsWorkspaceStateView>['groups'];
+    root?: ReturnType<typeof buildDetailsWorkspaceStateView>['root'];
+    focusedGroupId?: string | null;
+    maximizedGroupId?: string | null;
+};
+
+type AppPaneScopeStateView = {
+    right: PaneScopeState['right'];
+    details: AppPaneScopeDetailsStateView;
+    bottom: PaneScopeState['bottom'];
+};
+
+export type AppPaneScopeApi = {
     scopeId: string;
-    scopeState: ReturnType<typeof getScopeState>;
+    scopeState: AppPaneScopeStateView | null;
     openRight: (options?: Readonly<{ tabId?: string }>) => void;
     closeRight: () => void;
     setRightTab: (tabId: string) => void;
@@ -23,10 +46,26 @@ export type AppPaneScopeApi = Readonly<{
     closeDetails: () => void;
     closeDetailsTab: (tabKey: string) => void;
     setActiveDetailsTab: (tabKey: string) => void;
-}>;
+    splitDetailsGroup?: (options: Readonly<{
+        axis: DetailsWorkspaceAxis;
+        groupId?: string;
+        placement?: DetailsWorkspacePlacement;
+    }>) => void;
+    setDetailsSplitRatio?: (splitId: string, ratio: number) => void;
+    moveDetailsTabToGroup?: (tabKey: string, targetGroupId: string) => void;
+    focusDetailsGroup?: (groupId: string) => void;
+    setMaximizedDetailsGroup?: (groupId: string | null) => void;
+    closeDetailsGroup?: (groupId: string) => void;
+};
 
-function getScopeState(state: ReturnType<typeof useAppPaneContext>['state'], scopeId: string) {
-    return state.scopes[scopeId] ?? null;
+function getScopeState(state: ReturnType<typeof useAppPaneContext>['state'], scopeId: string): AppPaneScopeStateView | null {
+    const scopeState = state.scopes[scopeId] ?? null;
+    if (!scopeState) return null;
+    return {
+        right: scopeState.right,
+        details: buildDetailsWorkspaceStateView(scopeState.details),
+        bottom: scopeState.bottom,
+    };
 }
 
 export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
@@ -115,6 +154,40 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         dispatch({ type: 'setActiveDetailsTab', scopeId, tabKey });
     }, [dispatch, scopeId]);
 
+    const splitDetailsGroup = React.useCallback((options: Readonly<{
+        axis: DetailsWorkspaceAxis;
+        groupId?: string;
+        placement?: DetailsWorkspacePlacement;
+    }>) => {
+        dispatch({
+            type: 'splitDetailsGroup',
+            scopeId,
+            axis: options.axis,
+            groupId: options.groupId,
+            placement: options.placement,
+        });
+    }, [dispatch, scopeId]);
+
+    const setDetailsSplitRatio = React.useCallback((splitId: string, ratio: number) => {
+        dispatch({ type: 'setDetailsSplitRatio', scopeId, splitId, ratio });
+    }, [dispatch, scopeId]);
+
+    const moveDetailsTabToGroup = React.useCallback((tabKey: string, targetGroupId: string) => {
+        dispatch({ type: 'moveDetailsTabToGroup', scopeId, tabKey, targetGroupId });
+    }, [dispatch, scopeId]);
+
+    const focusDetailsGroup = React.useCallback((groupId: string) => {
+        dispatch({ type: 'focusDetailsGroup', scopeId, groupId });
+    }, [dispatch, scopeId]);
+
+    const setMaximizedDetailsGroup = React.useCallback((groupId: string | null) => {
+        dispatch({ type: 'setMaximizedDetailsGroup', scopeId, groupId });
+    }, [dispatch, scopeId]);
+
+    const closeDetailsGroup = React.useCallback((groupId: string) => {
+        dispatch({ type: 'closeDetailsGroup', scopeId, groupId });
+    }, [dispatch, scopeId]);
+
     return {
         scopeId,
         scopeState,
@@ -133,5 +206,11 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         closeDetails,
         closeDetailsTab,
         setActiveDetailsTab,
+        splitDetailsGroup,
+        setDetailsSplitRatio,
+        moveDetailsTabToGroup,
+        focusDetailsGroup,
+        setMaximizedDetailsGroup,
+        closeDetailsGroup,
     };
 }

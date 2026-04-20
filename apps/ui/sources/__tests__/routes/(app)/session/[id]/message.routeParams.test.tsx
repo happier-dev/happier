@@ -3,6 +3,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,12 +63,14 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     useMessage: (sessionId: string, messageId: string) => useMessageSpy(sessionId, messageId),
     useResolvedSessionMessageRouteId: (sessionId: string, routeId: string) => useResolvedRouteIdSpy(sessionId, routeId),
     useSession: (sessionId: string) => useSessionSpy(sessionId),
     useSessionTranscriptIds: (sessionId: string) => useTranscriptIdsSpy(sessionId),
-}));
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/components/sessions/transcript/details/SessionMessageDetailsView', () => ({
     createSessionMessageDetailsStyles: () => ({ routeContent: {}, loadingContainer: {} }),

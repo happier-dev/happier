@@ -133,11 +133,14 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         const selected = new Set(selectedIds);
         const installService = selected.has('setup.thisComputer.installService');
         return buildLocalMachineSetupSystemTaskSpec({
+            activeRelayUrl: preflight.activeRelayUrl ?? undefined,
+            activeWebappUrl: preflight.activeWebappUrl ?? undefined,
+            activeLocalRelayUrl: preflight.activeLocalRelayUrl,
             installService,
             startService: installService && selected.has('setup.thisComputer.startService'),
             verifyService: installService && selected.has('setup.thisComputer.verifyService'),
         });
-    }, []);
+    }, [preflight.activeLocalRelayUrl, preflight.activeRelayUrl, preflight.activeWebappUrl]);
     const runExecutionPlan = React.useCallback(async (spec: ReturnType<typeof buildLocalMachineSetupSystemTaskSpec>) => {
         await start(spec);
     }, [start]);

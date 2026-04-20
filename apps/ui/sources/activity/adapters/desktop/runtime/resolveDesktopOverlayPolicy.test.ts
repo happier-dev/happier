@@ -58,8 +58,8 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.alwaysOnTop).toBe(false);
         expect(policy.autoHideEnabled).toBe(false);
         expect(policy.autoHideDelayMs).toBe(10000);
-        expect(policy.expandedBehavior).toBe('hover');
-        expect(policy.interactiveCollapsed).toBe(false);
+        expect(policy.expandedBehavior).toBe('click');
+        expect(policy.interactiveCollapsed).toBe(true);
         expect(policy.presentationMode).toBe('floating_overlay');
         expect(policy.placementMode).toBe('custom');
         expect(policy.anchor).toBe('bottom_right');
@@ -67,11 +67,11 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.offsetY).toBe(-16);
         expect(policy.enableDragReposition).toBe(true);
         expect(policy.lockPosition).toBe(false);
-        expect(policy.density).toBe('comfortable');
-        expect(policy.compactStyle).toBe('panel');
-        expect(policy.showSessionCount).toBe(false);
+        expect(policy.density).toBe('compact');
+        expect(policy.compactStyle).toBe('pill');
+        expect(policy.showSessionCount).toBe(true);
         expect(policy.showPreviewText).toBe(true);
-        expect(policy.clickAction).toBe('open_primary_session');
+        expect(policy.clickAction).toBe('expand_overlay');
     });
 
     it('falls back to click when the expanded behavior is invalid', () => {
@@ -112,31 +112,34 @@ describe('resolveDesktopOverlayPolicy', () => {
             }),
         );
         expect(hiddenWhenDisabled.showOverlayConfiguration).toBe(false);
+        expect(hiddenWhenDisabled.showAttentionFilterControls).toBe(false);
         expect(hiddenWhenDisabled.showAutoHideDelay).toBe(false);
-        expect(hiddenWhenDisabled.showCollapsedClickAction).toBe(false);
-        expect(hiddenWhenDisabled.showExpandedBehavior).toBe(false);
         expect(hiddenWhenDisabled.showCustomPlacementControls).toBe(false);
         expect(hiddenWhenDisabled.showFloatingPlacementControls).toBe(false);
 
-        const hiddenWhenCollapsedInteractionIsOff = resolveDesktopOverlaySettingsVisibilityState(
+        const shownInAttentionOnlyMode = resolveDesktopOverlaySettingsVisibilityState(
             resolveDesktopOverlayPolicy({
                 desktopOverlayEnabled: true,
-                desktopOverlayInteractiveCollapsed: false,
-                desktopOverlayClickAction: 'expand_overlay',
+                desktopOverlayVisibilityMode: 'attention_only',
             }),
         );
-        expect(hiddenWhenCollapsedInteractionIsOff.showCollapsedClickAction).toBe(false);
-        expect(hiddenWhenCollapsedInteractionIsOff.showExpandedBehavior).toBe(false);
+        expect(shownInAttentionOnlyMode.showAttentionFilterControls).toBe(true);
 
-        const hiddenWhenClickDoesNotExpand = resolveDesktopOverlaySettingsVisibilityState(
+        const hiddenInActiveSessionsMode = resolveDesktopOverlaySettingsVisibilityState(
             resolveDesktopOverlayPolicy({
                 desktopOverlayEnabled: true,
-                desktopOverlayInteractiveCollapsed: true,
-                desktopOverlayClickAction: 'open_sessions',
+                desktopOverlayVisibilityMode: 'active_sessions',
             }),
         );
-        expect(hiddenWhenClickDoesNotExpand.showCollapsedClickAction).toBe(true);
-        expect(hiddenWhenClickDoesNotExpand.showExpandedBehavior).toBe(false);
+        expect(hiddenInActiveSessionsMode.showAttentionFilterControls).toBe(false);
+
+        const hiddenInAlwaysVisibleMode = resolveDesktopOverlaySettingsVisibilityState(
+            resolveDesktopOverlayPolicy({
+                desktopOverlayEnabled: true,
+                desktopOverlayVisibilityMode: 'always_when_enabled',
+            }),
+        );
+        expect(hiddenInAlwaysVisibleMode.showAttentionFilterControls).toBe(false);
 
         const hiddenWhenNotchIntegrated = resolveDesktopOverlaySettingsVisibilityState(
             resolveDesktopOverlayPolicy({

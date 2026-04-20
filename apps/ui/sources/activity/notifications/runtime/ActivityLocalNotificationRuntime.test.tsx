@@ -18,7 +18,7 @@ const reactNativeRuntime = vi.hoisted(() => ({
 }));
 
 let isTauriDesktopValue = false;
-let activeViewingSessionIdValue: string | null = null;
+let visibleSessionIdsValue: string[] = [];
 let localSettingsValue: Record<string, unknown> = {
     localNotificationsEnabled: true,
     localNotificationsShowReady: true,
@@ -72,8 +72,8 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => 'https://stack.example.test',
 }));
 
-vi.mock('@/sync/domains/session/activeViewingSession', () => ({
-    getActiveViewingSessionId: () => activeViewingSessionIdValue,
+vi.mock('@/sync/domains/session/sessionSurfaceVisibility', () => ({
+    isSessionSurfaceVisible: (sessionId: string) => visibleSessionIdsValue.includes(sessionId),
 }));
 
 vi.mock('@/utils/platform/tauri', () => ({
@@ -92,7 +92,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     afterEach(async () => {
         reactNativeRuntime.platformOs = 'ios';
         isTauriDesktopValue = false;
-        activeViewingSessionIdValue = null;
+        visibleSessionIdsValue = [];
         localSettingsValue = {
             localNotificationsEnabled: true,
             localNotificationsShowReady: true,
@@ -181,7 +181,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     });
 
     it('suppresses same-session notifications while the session is already open', async () => {
-        activeViewingSessionIdValue = 'session-1';
+        visibleSessionIdsValue = ['session-1'];
 
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
@@ -202,7 +202,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     });
 
     it('suppresses reused ready notifications for the active direct-session view', async () => {
-        activeViewingSessionIdValue = 'session-1';
+        visibleSessionIdsValue = ['session-1'];
         sessionsByIdValue = {
             'session-1': {
                 id: 'session-1',
@@ -229,6 +229,27 @@ describe('ActivityLocalNotificationRuntime', () => {
 
         await act(async () => {
             notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('suppresses notifications for visible background sessions even when a different leaf is focused', async () => {
+        visibleSessionIdsValue = ['session-1', 'session-2'];
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-2', []);
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();

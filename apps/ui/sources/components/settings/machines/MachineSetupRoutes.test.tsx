@@ -2,16 +2,12 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
-const expoRouterMock = vi.hoisted(() => {
-    const push = vi.fn();
-    const router = { push };
-    return {
-        spies: { push },
-        module: {
-            useRouter: () => router,
-        },
-    };
+const expoRouterMock = createExpoRouterMock({
+    router: {
+        push: vi.fn(),
+    },
 });
 
 vi.mock('expo-router', () => expoRouterMock.module);

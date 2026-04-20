@@ -3,6 +3,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,9 +70,11 @@ vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     useSession: (sessionId: string) => useSessionSpy(sessionId),
-}));
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 describe('session runs route', () => {
     beforeEach(() => {

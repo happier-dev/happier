@@ -9,6 +9,13 @@ import { installPanelCommonModuleMocks } from './panelTestHelpers';
 
 installPanelCommonModuleMocks();
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
 describe('ResizableDockedPane (web pointer drag)', () => {
     it('commits width as the user drags (resizeEdge=right)', async () => {
         const events: string[] = [];
@@ -46,7 +53,7 @@ describe('ResizableDockedPane (web pointer drag)', () => {
         const webHandle = findFirstByType(tree!, 'Pressable');
         expect(webHandle).toBeTruthy();
         expect(typeof webHandle!.props.onPressIn).toBe('function');
-        expect(webHandle!.props.style?.zIndex).toBeGreaterThanOrEqual(100);
+        expect(flattenStyle(webHandle!.props.style).zIndex).toBeGreaterThanOrEqual(100);
 
         await act(async () => {
             invokeTestInstanceHandler(webHandle!, 'onPressIn', {
@@ -260,6 +267,33 @@ describe('ResizableDockedPane (web pointer drag)', () => {
 
         expect(findAllByType(tree!, 'Pressable')).toHaveLength(0);
         expect(findAllByType(tree!, 'ViewStub')).toHaveLength(1);
+    });
+
+    it('renders the shared column resize handle frame for docked panes', async () => {
+        const { ResizableDockedPane } = await import('./ResizableDockedPane');
+
+        const tree = (await renderScreen(
+            <ResizableDockedPane
+                widthPx={320}
+                minWidthPx={200}
+                maxWidthPx={480}
+                resizeEdge="right"
+                onCommitWidthPx={vi.fn()}
+            >
+                <ViewStub />
+            </ResizableDockedPane>,
+        )).tree;
+
+        const webHandle = findFirstByType(tree, 'Pressable');
+        expect(webHandle).toBeTruthy();
+        if (!webHandle) {
+            throw new Error('expected resizable docked pane handle');
+        }
+        expect(webHandle.findAllByType('View')).toHaveLength(0);
+        expect(flattenStyle(webHandle.props.style)).toEqual(expect.objectContaining({
+            width: 10,
+            cursor: 'col-resize',
+        }));
     });
 
     it('still supports dragging when the web press event lacks coordinates', async () => {

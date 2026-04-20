@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
+    flushHookEffects,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
@@ -23,6 +24,7 @@ import {
 } from './profileSecretRequirementTestHarness';
 import type { ProfilesListProps } from '@/components/profiles/ProfilesList';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 enableReactActEnvironment();
 
@@ -35,18 +37,27 @@ const routeParamsState = vi.hoisted(() => ({
         dataId: 'draft-1',
         machineId: 'm1',
         agentType: 'customAcp',
-        backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
-        backendTargetKey: 'acpBackend:review-bot',
+        backendTarget: JSON.stringify({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+        backendTargetKey: 'backend:review-bot:configured:review-bot',
         spawnServerId: 'server-2',
     } as Record<string, string>,
 }));
 const settingsState = vi.hoisted(() => ({
     current: {
         lastUsedAgent: 'customAcp',
-        lastUsedBackendTarget: null as { kind: 'configuredAcpBackend'; backendId: string } | null,
+        lastUsedBackendTarget: null as BackendTargetRefV2 | null,
         backendEnabledByTargetKey: null as Record<string, boolean> | null,
         acpCatalogSettingsV1: null as unknown,
     },
+}));
+type MachineContributionRegistryProjectionDescribeFn =
+    typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
+const {
+    machineContributionRegistryProjectionDescribe,
+} = vi.hoisted(() => ({
+    machineContributionRegistryProjectionDescribe: vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+        async () => ({ supported: false, reason: 'not-supported' }),
+    ),
 }));
 
 async function installProfileSecretRequirementModuleMocks() {
@@ -136,6 +147,11 @@ async function installProfileSecretRequirementModuleMocks() {
         machinePreviewEnv: vi.fn(async () => ({ supported: false })),
     }));
 
+    vi.doMock('@/sync/ops/machineContributionRegistryProjection', () => ({
+        machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
+            machineContributionRegistryProjectionDescribe(...args),
+    }));
+
     vi.doMock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
         const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
         return {
@@ -183,8 +199,8 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
             dataId: 'draft-1',
             machineId: 'm1',
             agentType: 'customAcp',
-            backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
-            backendTargetKey: 'acpBackend:review-bot',
+            backendTarget: JSON.stringify({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+            backendTargetKey: 'backend:review-bot:configured:review-bot',
             spawnServerId: 'server-2',
         };
         settingsState.current = {
@@ -196,6 +212,8 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
 
         resetProfileSecretRequirementHarness();
         routerMock.push.mockClear();
+        machineContributionRegistryProjectionDescribe.mockReset();
+        machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
         navigationMock.getState = () => ({
             index: PICKER_NAV_STATE.index,
             routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
@@ -205,6 +223,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
 
         const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
         await renderScreen(React.createElement(ProfilePickerScreen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
 
         const onPressProfile = getCapturedProfilePressHandler();
 
@@ -240,7 +259,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
         };
         settingsState.current = {
             lastUsedAgent: 'customAcp',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
             backendEnabledByTargetKey: null,
             acpCatalogSettingsV1: {
                 v: 2,
@@ -290,6 +309,81 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
             params: expect.objectContaining({
                 backendTarget: expect.stringContaining('"configuredBackendId":"review-bot"'),
                 backendTargetKey: 'backend:review-bot:configured:review-bot',
+                dataId: 'draft-1',
+                machineId: 'm1',
+                spawnServerId: 'server-2',
+            }),
+        });
+    });
+
+    it('falls back to the preferred built-in target when route params only carry legacy customAcp and no explicit backend target is stored', async () => {
+        routeParamsState.value = {
+            selectedId: '',
+            dataId: 'draft-1',
+            machineId: 'm1',
+            agentType: 'customAcp',
+            spawnServerId: 'server-2',
+        };
+        settingsState.current = {
+            lastUsedAgent: 'customAcp',
+            lastUsedBackendTarget: null,
+            backendEnabledByTargetKey: null,
+            acpCatalogSettingsV1: null,
+        };
+        machineContributionRegistryProjectionDescribe.mockReset();
+        machineContributionRegistryProjectionDescribe.mockResolvedValue({
+            supported: true,
+            projection: {
+                v: 1,
+                providersById: {
+                    'acme.review.provider': {
+                        id: 'acme.review.provider',
+                        providerId: 'acme.review.provider',
+                        title: 'Acme Review Provider',
+                        channel: 'plugin',
+                        isBuiltIn: false,
+                        settingsBackendId: 'acme.review.backend',
+                    },
+                },
+                backendsById: {
+                    'acme.review.backend': {
+                        id: 'acme.review.backend',
+                        backendId: 'acme.review.backend',
+                        providerId: 'acme.review.provider',
+                        title: 'Acme Review Backend',
+                    },
+                },
+            },
+        });
+
+        resetProfileSecretRequirementHarness();
+        routerMock.push.mockClear();
+        navigationMock.getState = () => ({
+            index: PICKER_NAV_STATE.index,
+            routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
+        });
+
+        await installProfileSecretRequirementModuleMocks();
+
+        const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
+        await renderScreen(React.createElement(ProfilePickerScreen));
+
+        const onPressProfile = getCapturedProfilePressHandler();
+
+        await act(async () => {
+            await onPressProfile(missingRequiredSecretScenario.profile);
+        });
+
+        expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith('m1', expect.objectContaining({
+            serverId: 'server-2',
+            timeoutMs: 10_000,
+        }));
+        expect(routerMock.push).toHaveBeenCalledWith({
+            pathname: '/new/pick/secret-requirement',
+            params: expect.objectContaining({
+                agentType: 'claude',
+                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
+                backendTargetKey: 'backend:claude',
                 dataId: 'draft-1',
                 machineId: 'm1',
                 spawnServerId: 'server-2',

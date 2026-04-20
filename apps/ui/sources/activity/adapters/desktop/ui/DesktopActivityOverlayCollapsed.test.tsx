@@ -37,6 +37,7 @@ describe('DesktopActivityOverlayCollapsed', () => {
                     expanded: {
                         title: 'Sessions',
                         rows: [],
+                        cards: [],
                     },
                     window: {
                         collapsed: { width: 340, height: 72 },
@@ -44,7 +45,6 @@ describe('DesktopActivityOverlayCollapsed', () => {
                     },
                 }}
                 visualMode="floating_overlay"
-                interactive
                 dragHandlers={{}}
                 onPress={onPress}
             />,
@@ -60,7 +60,7 @@ describe('DesktopActivityOverlayCollapsed', () => {
         expect(onPress).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the notch-integrated collapsed surface dense while preserving the brand mark and count', async () => {
+    it('keeps the notch-integrated collapsed surface dense while still surfacing the primary title and status', async () => {
         const { DesktopActivityOverlayCollapsed } = await import('./DesktopActivityOverlayCollapsed');
 
         const screen = await renderScreen(
@@ -78,14 +78,14 @@ describe('DesktopActivityOverlayCollapsed', () => {
                     expanded: {
                         title: 'Sessions',
                         rows: [],
+                        cards: [],
                     },
                     window: {
-                        collapsed: { width: 240, height: 42 },
+                        collapsed: { width: 224, height: 38 },
                         expanded: { width: 420, height: 220 },
                     },
                 }}
                 visualMode="notch_integrated"
-                interactive
                 dragHandlers={{}}
                 onPress={() => {}}
             />,
@@ -93,8 +93,8 @@ describe('DesktopActivityOverlayCollapsed', () => {
 
         expect(screen.findByTestId('desktop-activity-overlay-collapsed-brand-mark')).toBeTruthy();
         expect(screen.getTextContent()).toContain('3');
-        expect(screen.getTextContent()).not.toContain('Primary session');
-        expect(screen.getTextContent()).not.toContain('Needs attention');
+        expect(screen.getTextContent()).toContain('Primary session');
+        expect(screen.getTextContent()).toContain('Needs attention');
     });
 
     it('renders the notch-integrated chrome surface when visual mode is notch integrated', async () => {
@@ -115,14 +115,14 @@ describe('DesktopActivityOverlayCollapsed', () => {
                     expanded: {
                         title: 'Sessions',
                         rows: [],
+                        cards: [],
                     },
                     window: {
-                        collapsed: { width: 340, height: 72 },
+                        collapsed: { width: 224, height: 38 },
                         expanded: { width: 420, height: 220 },
                     },
                 }}
                 visualMode="notch_integrated"
-                interactive
                 dragHandlers={{}}
                 onPress={() => {}}
             />,
@@ -149,6 +149,7 @@ describe('DesktopActivityOverlayCollapsed', () => {
                     expanded: {
                         title: 'Sessions',
                         rows: [],
+                        cards: [],
                     },
                     window: {
                         collapsed: { width: 388, height: 76 },
@@ -156,7 +157,6 @@ describe('DesktopActivityOverlayCollapsed', () => {
                     },
                 }}
                 visualMode="floating_overlay"
-                interactive
                 dragHandlers={{}}
                 onPress={() => {}}
             />,

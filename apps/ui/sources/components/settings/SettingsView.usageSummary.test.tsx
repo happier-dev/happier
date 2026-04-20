@@ -63,6 +63,11 @@ installSettingsViewCommonModuleMocks({
                 if (key === 'sessionUseTmux') return false;
                 return null;
             },
+            useLocalSetting: () => null,
+            useLocalSettingMutable: (key: string) => {
+                if (key === 'devModeEnabled') return [true, vi.fn()] as const;
+                return [null, vi.fn()] as const;
+            },
             useEntitlement: () => false,
             useProfile: () => ({
                 id: 'prof_1',
@@ -205,7 +210,7 @@ vi.mock('@/sync/api/account/apiVendorTokens', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'gemini'],
     DEFAULT_AGENT_ID: 'agent_default',
-    getAgentCore: () => ({ connectedService: { name: 'Anthropic', connectRoute: null } }),
+    getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
@@ -251,6 +256,18 @@ describe('SettingsView usage summary strip', () => {
 
         expect(screen.getTextContent()).toContain('common.loading');
         expect(screen.getTextContent()).not.toContain('usage.noData');
+    });
+
+    it('renders connected-service labels through translation keys in the settings surface', async () => {
+        usageSummaryState.summary = null;
+        usageSummaryState.errorMessage = null;
+        usageSummaryState.isLoading = false;
+
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findAllByProps({ title: 'connectedServices.serviceNames.anthropic' }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ title: 'Anthropic' })).toHaveLength(0);
     });
 
     it('renders the usage summary strip above the account shortcuts', async () => {

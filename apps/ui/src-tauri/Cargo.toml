@@ -45,3 +45,7 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.
 
 [dev-dependencies]
 tempfile = "3.20"
+
+[patch.crates-io]
+tauri-plugin-mcp-bridge = { path = "vendor/tauri-plugin-mcp-bridge" }
+wry = { path = "vendor/wry" }

@@ -128,8 +128,7 @@ pub(crate) fn build_desktop_web_runtime_config_init_script_from_env() -> Option<
 #[cfg(test)]
 mod tests {
     use super::{
-        build_desktop_web_runtime_config_init_script,
-        resolve_desktop_web_runtime_config_with,
+        build_desktop_web_runtime_config_init_script, resolve_desktop_web_runtime_config_with,
         DesktopWebRuntimeConfig,
     };
     use std::collections::HashMap;

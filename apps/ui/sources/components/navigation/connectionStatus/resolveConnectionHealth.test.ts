@@ -68,6 +68,17 @@ describe('resolveConnectionHealth', () => {
         expect(result.kind).toBe('server_unreachable');
     });
 
+    it('returns auth_required for terminal auth sync errors before generic server errors', () => {
+        const result = resolveConnectionHealth({
+            socketStatus: 'error',
+            syncErrorKind: 'auth',
+            hasSyncError: true,
+            machineGroups: [{ machineCount: 2, onlineCount: 2, status: 'idle' }],
+        });
+
+        expect(result.kind).toBe('auth_required');
+    });
+
     it('aggregates machine groups for multi-server selections', () => {
         const result = resolveConnectionHealth({
             socketStatus: 'connected',

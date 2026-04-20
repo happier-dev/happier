@@ -5,7 +5,6 @@ import { buildWebDesktopRelayHostHandoffSteps } from '../../commands/webDesktopH
 import {
     WizardGuidedHandoff,
     WizardGuidedHandoffDownloadCta,
-    WizardGuidedHandoffNote,
     WizardGuidedHandoffTerminal,
 } from '../../ui/WizardGuidedHandoff';
 

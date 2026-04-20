@@ -5,22 +5,31 @@ import { parseActivityInteraction } from '@/activity/actions/parseActivityIntera
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import { buildDesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
 import { buildDesktopActivityOverlaySnapshot } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlaySnapshot';
-import { useAllSessions, useLocalSettings } from '@/sync/domains/state/storage';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import type { ActionId } from '@happier-dev/protocol';
+import { useLocalSettings } from '@/sync/domains/state/storage';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
     listenDesktopActivityOverlayInteraction,
     setDesktopActivityOverlayExpanded,
+    showDesktopMainWindow,
     syncDesktopActivityOverlay,
 } from './desktopActivityOverlayBridge';
 import { isDesktopActivityOverlayWindowContext } from './isDesktopActivityOverlayWindowContext';
 import { resolveDesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
+import { useDesktopActivityOverlaySource } from './useDesktopActivityOverlaySource';
 
 type InteractionPayload = Readonly<{
     actionIdentifier: string;
     data?: Record<string, unknown>;
 }>;
+
+const DESKTOP_OVERLAY_DIRECT_ACTION_IDS = new Set([
+    'session.permission.respond',
+    'session.user_action.answer',
+]);
 
 function readExpandedFromInteraction(payload: InteractionPayload): boolean | null {
     const data = payload.data;
@@ -30,10 +39,16 @@ function readExpandedFromInteraction(payload: InteractionPayload): boolean | nul
     return typeof data.expanded === 'boolean' ? data.expanded : null;
 }
 
+function readSessionIdFromInteraction(payload: InteractionPayload): string | null {
+    const sessionId = payload.data?.sessionId;
+    return typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
+}
+
 export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null {
-    const sessions = useAllSessions();
+    const source = useDesktopActivityOverlaySource();
     const localSettings = useLocalSettings();
     const [isExpanded, setIsExpanded] = React.useState(false);
+    const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
 
     const isDesktop = isTauriDesktop();
     const isOverlayWindow = isDesktopActivityOverlayWindowContext();
@@ -47,11 +62,11 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
     );
     const snapshot = React.useMemo(
         () => buildDesktopActivityOverlaySnapshot({
-            sessions,
+            source,
             activityPolicy,
             desktopPolicy,
         }),
-        [activityPolicy, desktopPolicy, sessions],
+        [activityPolicy, desktopPolicy, source],
     );
     const model = React.useMemo(
         () => buildDesktopActivityOverlayModel({
@@ -140,6 +155,16 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                 });
                 return;
             }
+            if (DESKTOP_OVERLAY_DIRECT_ACTION_IDS.has(actionIdentifier)) {
+                const defaultSessionId = readSessionIdFromInteraction(payload) ?? snapshot.primary?.sessionId ?? null;
+                fireAndForget(actionExecutor.execute(actionIdentifier as ActionId, payload.data ?? {}, {
+                    surface: 'desktop_overlay',
+                    defaultSessionId,
+                }), {
+                    tag: 'DesktopActivityOverlayRuntime.executeDirectAction',
+                });
+                return;
+            }
 
             const parsed = parseActivityInteraction({
                 actionIdentifier,
@@ -148,10 +173,26 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                     primarySessionId: snapshot.primary?.sessionId ?? null,
                 },
             });
+            if (parsed?.permissionAction) {
+                fireAndForget(actionExecutor.execute('session.permission.respond', {
+                    sessionId: parsed.permissionAction.sessionId,
+                    requestId: parsed.permissionAction.requestId,
+                    decision: parsed.permissionAction.action,
+                }, {
+                    surface: 'desktop_overlay',
+                    defaultSessionId: parsed.permissionAction.sessionId,
+                }), {
+                    tag: 'DesktopActivityOverlayRuntime.executePermissionAction',
+                });
+                return;
+            }
             if (!parsed?.route) {
                 return;
             }
 
+            fireAndForget(showDesktopMainWindow(), {
+                tag: 'DesktopActivityOverlayRuntime.showMainWindow.beforeRoute',
+            });
             router.push(parsed.route);
             setIsExpanded(false);
             fireAndForget(setDesktopActivityOverlayExpanded(false), {
@@ -169,7 +210,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             disposed = true;
             unlisten?.();
         };
-    }, [isDesktop, isOverlayWindow, snapshot.defaultTarget, snapshot.primary?.sessionId]);
+    }, [actionExecutor, isDesktop, isOverlayWindow, snapshot.defaultTarget, snapshot.primary?.sessionId]);
 
     return null;
 }

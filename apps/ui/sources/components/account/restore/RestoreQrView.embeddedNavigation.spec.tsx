@@ -3,31 +3,34 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/flows/qrWait';
 import type { QRAuthKeyPair } from '@/auth/flows/qrStart';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: {
-        OS: 'web',
-        select: (options: {
-            web?: unknown;
-            default?: unknown;
-            ios?: unknown;
-            android?: unknown;
-        }) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        View: 'View',
+        ScrollView: 'ScrollView',
+        ActivityIndicator: 'ActivityIndicator',
+        Platform: { OS: 'web', select: (spec: Record<string, unknown>) => spec.web ?? spec.default },
+    });
+});
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({}),
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-}));
+const expoRouterMock = createExpoRouterMock({
+    params: {},
+    router: {
+        push: vi.fn(),
+        back: vi.fn(),
+    },
+});
+
+vi.mock('expo-router', () => expoRouterMock.module);
 
 const restoreQrViewState = vi.hoisted(() => ({
     loginSpy: vi.fn(async () => {}),
@@ -60,15 +63,11 @@ vi.mock('@/encryption/base64', () => ({
     encodeBase64: () => 'encoded',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-    },
-}));
+const modalMock = createModalModuleMock();
+vi.mock('@/modal', () => modalMock.module);
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+const textMock = createTextModuleMock({ translate: (key: string) => key });
+vi.mock('@/text', () => textMock);
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');

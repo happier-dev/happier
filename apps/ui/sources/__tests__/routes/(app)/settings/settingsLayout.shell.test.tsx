@@ -2,8 +2,11 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const routerMock = createExpoRouterMock();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -11,6 +14,7 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('expo-router', () => ({
+    ...routerMock.module,
     Stack: Object.assign(
         (props: any) => React.createElement('Stack', { testID: 'settings-layout-stack' }, props.children),
         { Screen: (props: any) => React.createElement('Stack.Screen', { name: props?.name ?? '' }) },

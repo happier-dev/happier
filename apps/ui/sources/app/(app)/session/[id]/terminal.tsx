@@ -9,7 +9,8 @@ import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
-import { useLegacyDetailsRouteRedirect } from '@/components/workspaceCockpit/useLegacyDetailsRouteRedirect';
+import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
+import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
@@ -39,9 +40,13 @@ export default function TerminalScreenRoute() {
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
 
-    const activeDetailsKey = pane.scopeState?.details?.activeTabKey ?? null;
-    const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
-    const detailsTabs = pane.scopeState?.details?.tabs ?? [];
+    const detailsState = pane.scopeState?.details ?? null;
+    const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
+        detailsTabs: detailsState?.tabs,
+        activeDetailsKey: detailsState?.activeTabKey ?? null,
+        detailsGroups: detailsState?.groups,
+    }), [detailsState?.activeTabKey, detailsState?.groups, detailsState?.tabs]);
+    const detailsIsOpen = detailsState?.isOpen ?? false;
 
     // Navigate back if terminal tab is unavailable (feature disabled or docked elsewhere)
     React.useEffect(() => {
@@ -66,18 +71,17 @@ export default function TerminalScreenRoute() {
             pathname: '/session/[id]/details',
             params: routeScope.withParams({
                 id: sessionId,
-                ...buildActiveDetailsRouteParams(detailsTabs, key),
+                ...buildActiveDetailsRouteParams(detailsSelection.tabs, key),
             }),
         } as any);
-    }, [detailsTabs, routeScope, router, sessionId]);
+    }, [detailsSelection.tabs, routeScope, router, sessionId]);
 
-    useLegacyDetailsRouteRedirect({
+    useFullscreenDetailsRouteAutoRedirect({
         resetKey: sessionId,
         enabled: Boolean(sessionId) && !cockpitEnabled,
         isFocused,
         detailsIsOpen,
-        activeDetailsKey,
-        detailsTabs,
+        detailsSelection,
         onNavigate: handleNavigateToDetails,
     });
 

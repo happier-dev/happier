@@ -17,6 +17,8 @@ describe('buildThisComputerChecklistDiagnosticsPayload', () => {
             selectedIds: ['setup.thisComputer.configureRelay'],
             preflight: {
                 activeRelayUrl: rawRelayUrl,
+                activeWebappUrl: rawRelayUrl,
+                activeLocalRelayUrl: null,
                 serviceInstalled: true,
                 daemonRunning: true,
                 machineId: rawMachineId,

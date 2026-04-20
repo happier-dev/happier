@@ -112,7 +112,12 @@ pub fn resolve_hsetup_path(app: &AppHandle) -> Result<PathBuf, String> {
     );
 
     if let Ok(resource_dir) = app.path().resource_dir() {
-        extend_candidates_with_resource_dir(&mut candidates, &resource_dir, HSETUP_FILENAME, base_filename);
+        extend_candidates_with_resource_dir(
+            &mut candidates,
+            &resource_dir,
+            HSETUP_FILENAME,
+            base_filename,
+        );
     }
 
     if let Ok(current_exe) = std::env::current_exe() {
@@ -167,9 +172,10 @@ mod tests {
             "hsetup-x86_64-unknown-linux-gnu",
             "hsetup",
         );
-        assert!(candidates
-            .iter()
-            .any(|path| path == &resource_dir.join("binaries").join("hsetup-x86_64-unknown-linux-gnu")));
+        assert!(candidates.iter().any(|path| path
+            == &resource_dir
+                .join("binaries")
+                .join("hsetup-x86_64-unknown-linux-gnu")));
         assert!(candidates
             .iter()
             .any(|path| path == &resource_dir.join("binaries").join("hsetup")));

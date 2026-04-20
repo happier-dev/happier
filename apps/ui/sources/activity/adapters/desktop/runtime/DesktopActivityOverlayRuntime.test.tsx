@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
 const isDesktopOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => false));
@@ -24,7 +25,18 @@ const sessionsState = vi.hoisted(() => ({
                 homeDir: '/Users/tester',
             },
         },
-    ],
+    ] as Array<Record<string, unknown>>,
+}));
+const sessionListIndexState = vi.hoisted(() => ({
+    value: {
+        'server-1': [
+            {
+                type: 'session',
+                sessionId: 'session-1',
+                serverId: 'server-1',
+            },
+        ],
+    } as Record<string, ReadonlyArray<{ type: 'session'; sessionId: string; serverId: string }>>,
 }));
 const localSettingsState = vi.hoisted(() => ({
     value: {
@@ -45,7 +57,19 @@ const listenDesktopActivityOverlayInteractionMock = vi.hoisted(
 const setDesktopActivityOverlayExpandedMock = vi.hoisted(
     () => vi.fn<(expanded: boolean) => Promise<void>>(async () => {}),
 );
+const showDesktopMainWindowMock = vi.hoisted(
+    () => vi.fn<() => Promise<void>>(async () => {}),
+);
 const routerPushMock = vi.hoisted(() => vi.fn());
+const actionExecutorExecuteMock = vi.hoisted(
+    () => vi.fn<(actionId: string, input: unknown, context: unknown) => Promise<{ ok: true; result: unknown }>>(async () => ({ ok: true, result: { ok: true } })),
+);
+
+const expoRouterMock = createExpoRouterMock({
+    router: {
+        push: (value: unknown) => routerPushMock(value),
+    },
+});
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => isTauriDesktopMock(),
@@ -57,8 +81,32 @@ vi.mock('./isDesktopActivityOverlayWindowContext', () => ({
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const storageState = () => ({
+        isDataReady: true,
+        sessions: Object.fromEntries(
+            sessionsState.value.map((session) => [session.id, session]),
+        ),
+        sessionListIndexByServerId: sessionListIndexState.value,
+        sessionListRenderables: {},
+        concurrentSessionListCacheByServerId: {},
+        localSettings: localSettingsState.value,
+    });
+    const storage = Object.assign(
+        ((selector?: (state: ReturnType<typeof storageState>) => unknown) =>
+            typeof selector === 'function' ? selector(storageState()) : storageState()),
+        {
+            getState: () => storageState(),
+            getInitialState: () => storageState(),
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        },
+    );
     return createStorageModuleStub({
-        useAllSessions: () => sessionsState.value,
+        storage,
+        useAllSessions: () => {
+            throw new Error('DesktopActivityOverlayRuntime should not use useAllSessions');
+        },
         useLocalSettings: () => localSettingsState.value,
     });
 });
@@ -70,13 +118,24 @@ vi.mock('./desktopActivityOverlayBridge', async () => {
         syncDesktopActivityOverlay: (payload: unknown) => syncDesktopActivityOverlayMock(payload),
         listenDesktopActivityOverlayInteraction: (handler: (payload: unknown) => void) => listenDesktopActivityOverlayInteractionMock(handler),
         setDesktopActivityOverlayExpanded: (expanded: boolean) => setDesktopActivityOverlayExpandedMock(expanded),
+        showDesktopMainWindow: () => showDesktopMainWindowMock(),
     };
 });
 
-vi.mock('expo-router', () => ({
-    router: {
-        push: (value: unknown) => routerPushMock(value),
-    },
+vi.mock('expo-router', () => expoRouterMock.module);
+
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
+    createDefaultActionExecutor: () => ({
+        execute: (actionId: string, input: unknown, context: unknown) => actionExecutorExecuteMock(actionId, input, context),
+    }),
+}));
+
+vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries', () => ({
+    useConnectedServiceQuotaSummaries: () => ({
+        summaries: [],
+        isRefreshing: false,
+        hasConnectedProfiles: false,
+    }),
 }));
 
 describe('DesktopActivityOverlayRuntime', () => {
@@ -86,10 +145,13 @@ describe('DesktopActivityOverlayRuntime', () => {
         syncDesktopActivityOverlayMock.mockImplementation(async () => {});
         listenDesktopActivityOverlayInteractionMock.mockImplementation(async () => () => {});
         setDesktopActivityOverlayExpandedMock.mockImplementation(async () => {});
+        showDesktopMainWindowMock.mockImplementation(async () => {});
+        actionExecutorExecuteMock.mockImplementation(async () => ({ ok: true, result: { ok: true } }));
 
         sessionsState.value = [
             {
                 id: 'session-1',
+                serverId: 'server-1',
                 seq: 4,
                 lastViewedSessionSeq: 2,
                 active: true,
@@ -105,6 +167,15 @@ describe('DesktopActivityOverlayRuntime', () => {
                 },
             },
         ];
+        sessionListIndexState.value = {
+            'server-1': [
+                {
+                    type: 'session',
+                    sessionId: 'session-1',
+                    serverId: 'server-1',
+                },
+            ],
+        };
         localSettingsState.value = {
             activitySurfacesEnabled: true,
             iosLiveActivitiesEnabled: true,
@@ -118,6 +189,9 @@ describe('DesktopActivityOverlayRuntime', () => {
         isTauriDesktopMock.mockReset();
         isDesktopOverlayWindowContextMock.mockReset();
         sessionsState.value = [];
+        sessionListIndexState.value = {
+            'server-1': [],
+        };
         localSettingsState.value = {
             activitySurfacesEnabled: true,
             iosLiveActivitiesEnabled: true,
@@ -127,7 +201,9 @@ describe('DesktopActivityOverlayRuntime', () => {
         syncDesktopActivityOverlayMock.mockReset();
         listenDesktopActivityOverlayInteractionMock.mockReset();
         setDesktopActivityOverlayExpandedMock.mockReset();
+        showDesktopMainWindowMock.mockReset();
         routerPushMock.mockReset();
+        actionExecutorExecuteMock.mockReset();
         vi.useRealTimers();
     });
 
@@ -148,6 +224,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         sessionsState.value = [
             {
                 id: 'session-1',
+                serverId: 'server-1',
                 seq: 4,
                 lastViewedSessionSeq: 2,
                 active: true,
@@ -164,21 +241,36 @@ describe('DesktopActivityOverlayRuntime', () => {
             },
             {
                 id: 'session-2',
+                serverId: 'server-1',
                 seq: 5,
-                lastViewedSessionSeq: 5,
-                active: true,
-                presence: 'online',
-                thinking: true,
+                lastViewedSessionSeq: 1,
+                active: false,
+                presence: 1,
+                thinking: false,
                 pendingPermissionRequestCount: 0,
-                pendingUserActionRequestCount: 0,
+                pendingUserActionRequestCount: 1,
                 metadata: {
-                    summary: { text: 'Thinking session', updatedAt: 2 },
+                    summary: { text: 'Question session', updatedAt: 2 },
                     path: '/Users/tester/project-two',
                     host: 'tester.local',
                     homeDir: '/Users/tester',
                 },
             },
         ];
+        sessionListIndexState.value = {
+            'server-1': [
+                {
+                    type: 'session',
+                    sessionId: 'session-1',
+                    serverId: 'server-1',
+                },
+                {
+                    type: 'session',
+                    sessionId: 'session-2',
+                    serverId: 'server-1',
+                },
+            ],
+        };
         localSettingsState.value = {
             ...localSettingsState.value,
             widgetsPresetMode: 'attention',
@@ -237,8 +329,78 @@ describe('DesktopActivityOverlayRuntime', () => {
             });
         });
 
+        expect(showDesktopMainWindowMock).toHaveBeenCalledTimes(1);
         expect(routerPushMock).toHaveBeenCalledWith('/session/session-1');
+        expect(showDesktopMainWindowMock.mock.invocationCallOrder[0]).toBeLessThan(
+            routerPushMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
         expect(setDesktopActivityOverlayExpandedMock).toHaveBeenCalledWith(false);
+    });
+
+    it('executes direct permission and user-action overlay interactions through the canonical action executor', async () => {
+        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
+        await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
+
+        const handler = listenDesktopActivityOverlayInteractionMock.mock.calls[0]?.[0] as
+            | ((payload: { actionIdentifier: string; data?: Record<string, unknown> }) => void)
+            | undefined;
+
+        expect(handler).toBeTypeOf('function');
+
+        await act(async () => {
+            handler?.({
+                actionIdentifier: 'session.permission.respond',
+                data: {
+                    sessionId: 'session-1',
+                    requestId: 'permission-1',
+                    decision: 'allow',
+                },
+            });
+            handler?.({
+                actionIdentifier: 'session.user_action.answer',
+                data: {
+                    sessionId: 'session-1',
+                    requestId: 'question-1',
+                    answers: [
+                        {
+                            question: 'Which deployment target?',
+                            answer: 'Production',
+                        },
+                    ],
+                },
+            });
+        });
+
+        expect(actionExecutorExecuteMock).toHaveBeenCalledWith(
+            'session.permission.respond',
+            expect.objectContaining({
+                sessionId: 'session-1',
+                requestId: 'permission-1',
+                decision: 'allow',
+            }),
+            expect.objectContaining({
+                surface: 'desktop_overlay',
+                defaultSessionId: 'session-1',
+            }),
+        );
+        expect(actionExecutorExecuteMock).toHaveBeenCalledWith(
+            'session.user_action.answer',
+            expect.objectContaining({
+                sessionId: 'session-1',
+                requestId: 'question-1',
+                answers: [
+                    {
+                        question: 'Which deployment target?',
+                        answer: 'Production',
+                    },
+                ],
+            }),
+            expect.objectContaining({
+                surface: 'desktop_overlay',
+                defaultSessionId: 'session-1',
+            }),
+        );
+        expect(routerPushMock).not.toHaveBeenCalled();
     });
 
     it('uses the canonical shared default target when the interaction has no explicit action identifier', async () => {

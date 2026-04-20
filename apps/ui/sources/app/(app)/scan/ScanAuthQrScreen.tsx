@@ -8,7 +8,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
-import { useScannedAuthUrlProcessor } from './useScannedAuthUrlProcessor';
+import { useScannedAuthUrlProcessor } from '@/hooks/auth/useScannedAuthUrlProcessor';
 
 type ScanAuthQrScreenProps = Readonly<{
     allowedUrlKind: 'account' | 'terminal';

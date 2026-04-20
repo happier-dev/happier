@@ -286,6 +286,36 @@ describe('project route details lifecycle', () => {
         expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
+    it('stays on the fullscreen project details route when the focused split group is empty but another group still has tabs', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'files', tabState: {} },
+            details: {
+                isOpen: true,
+                tabs: [],
+                activeTabKey: null,
+                tabState: {},
+                focusedGroupId: 'group:2',
+                groups: [
+                    {
+                        id: 'group:1',
+                        activeTabKey: 'file:a',
+                        tabs: [{ key: 'file:a', kind: 'file', resource: { kind: 'file', path: 'a' } }],
+                    },
+                    {
+                        id: 'group:2',
+                        activeTabKey: null,
+                        tabs: [],
+                    },
+                ],
+            },
+        };
+
+        await renderScreen(<ProjectDetailsRoute />);
+
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+    });
+
     it('forwards explicit worktree overview mode to the details main panel', async () => {
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',

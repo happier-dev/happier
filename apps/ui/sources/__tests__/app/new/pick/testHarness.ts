@@ -1,5 +1,5 @@
 import React from 'react';
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 
 import {
     createExpoRouterMock,
@@ -72,6 +72,11 @@ const pickerCommonModuleMocksState = vi.hoisted(() => ({
 
 export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksOptions = {}) {
     pickerCommonModuleMocksState.options = options;
+
+    beforeEach(async () => {
+        const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+        clearDaemonMergedProjectionCacheForTests();
+    });
 
     vi.mock('@/text', async () => {
         const activeOptions = pickerCommonModuleMocksState.options;
@@ -215,4 +220,11 @@ export function cloneNavigationState(state: PickerNavigationState): PickerNaviga
             ...(route.params ? { params: route.params } : {}),
         })),
     };
+}
+
+export function parseJsonRouteParam(value: unknown): unknown {
+    if (typeof value !== 'string') {
+        throw new Error(`Expected JSON route param string, got ${typeof value}`);
+    }
+    return JSON.parse(value);
 }

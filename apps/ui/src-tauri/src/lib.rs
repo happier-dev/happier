@@ -11,6 +11,9 @@ mod system_tasks;
 mod window_sizing;
 
 #[cfg(desktop)]
+mod window_chrome;
+
+#[cfg(desktop)]
 mod activity_overlay;
 
 #[cfg(desktop)]
@@ -18,6 +21,9 @@ mod web_runtime_config;
 
 #[cfg(desktop)]
 mod desktop_boot_credentials;
+
+#[cfg(debug_assertions)]
+mod mcp_bridge;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,7 +41,7 @@ pub fn run() {
 
     #[cfg(debug_assertions)]
     {
-        builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+        builder = builder.plugin(mcp_bridge::build_debug_mcp_bridge_plugin());
     }
 
     #[cfg(target_os = "macos")]
@@ -62,6 +68,13 @@ pub fn run() {
                 system_tasks::get_system_task_snapshot,
                 system_tasks::system_tasks_open_log_path,
                 system_tasks::respond_system_task_prompt,
+                window_chrome::desktop_get_window_chrome_policy,
+                window_chrome::desktop_get_window_state,
+                window_chrome::desktop_minimize_window,
+                window_chrome::desktop_toggle_window_maximize,
+                window_chrome::desktop_close_window,
+                window_chrome::desktop_show_main_window,
+                window_chrome::desktop_start_window_dragging,
                 window_sizing::desktop_set_window_mode,
                 desktop_boot_credentials::desktop_read_stack_boot_credentials,
                 activity_overlay::desktop_activity_overlay_sync,
@@ -79,6 +92,7 @@ pub fn run() {
             {
                 autostart::register(app)?;
                 tray::register(app)?;
+                window_chrome::register(app)?;
                 window_sizing::register(app)?;
                 activity_overlay::register(app)?;
             }

@@ -11,7 +11,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { PaneDetailsTabsPanel } from '@/components/appShell/panes/details/PaneDetailsTabsPanel';
+import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAllMachines, useLocalSetting, useLocalSettingMutable, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
@@ -406,7 +406,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     ]);
 
     return (
-        <PaneDetailsTabsPanel
+        <DetailsSplitWorkspace
             pane={pane}
             paddingTop={insets.top}
             headerPaddingTop={10}

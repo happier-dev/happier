@@ -21,6 +21,8 @@ import { useProjectMobileRoutePersistence } from '@/components/projects/detail/u
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
 import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
+import { useFullscreenDetailsRouteController } from '@/components/workspaceCockpit/useFullscreenDetailsRouteController';
+import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { t } from '@/text';
 
@@ -52,11 +54,14 @@ export default function ProjectDetailsScreenRoute() {
 
     const scopeId = buildProjectPaneScopeId(workspaceRef.id);
     const pane = useAppPaneScope(scopeId);
-    const detailsTabs = pane.scopeState?.details?.tabs ?? [];
-    const hasDetails = detailsTabs.length > 0;
-    const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
-    const hasMountedRef = React.useRef(false);
-    const prevDetailsIsOpenRef = React.useRef(detailsIsOpen);
+    const detailsState = pane.scopeState?.details ?? null;
+    const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
+        detailsTabs: detailsState?.tabs,
+        activeDetailsKey: detailsState?.activeTabKey ?? null,
+        detailsGroups: detailsState?.groups,
+    }), [detailsState?.activeTabKey, detailsState?.groups, detailsState?.tabs]);
+    const hasDetails = detailsSelection.hasAnyDetails;
+    const detailsIsOpen = detailsState?.isOpen ?? false;
     const fallbackSegment = resolveProjectRouteSegment(pane.scopeState?.right?.activeTabId, null);
     const persistedSurface = showWorktrees
         ? 'overview'
@@ -132,42 +137,19 @@ export default function ProjectDetailsScreenRoute() {
             fallbackHref: routeActions.buildHref({ segment: fallbackSegment }),
         });
     }, [fallbackSegment, navigation, routeActions, router]);
-
-    React.useEffect(() => {
-        hasMountedRef.current = true;
-        return () => {
-            hasMountedRef.current = false;
-            if (!cockpitEnabled) {
-                pane.closeDetails();
-            }
-        };
-    }, [cockpitEnabled, pane]);
-
-    React.useEffect(() => {
-        if (!isFocused) return;
-        if (!hasMountedRef.current) return;
-        if (showWorktrees) return;
-        if (cockpitEnabled) return;
-        if (hasDetails) return;
-        returnToProject();
-    }, [cockpitEnabled, hasDetails, isFocused, returnToProject, showWorktrees]);
-
-    React.useEffect(() => {
-        if (!isFocused) return;
-        if (!hasMountedRef.current) return;
-        if (showWorktrees) return;
-        if (cockpitEnabled) return;
-        if (prevDetailsIsOpenRef.current && !detailsIsOpen) returnToProject();
-        prevDetailsIsOpenRef.current = detailsIsOpen;
-    }, [cockpitEnabled, detailsIsOpen, isFocused, returnToProject, showWorktrees]);
-
-    const onRequestClose = React.useCallback(() => {
-        if (!detailsIsOpen) {
-            returnToProject();
-            return;
-        }
-        pane.closeDetails();
-    }, [detailsIsOpen, pane, returnToProject]);
+    const { onRequestClose } = useFullscreenDetailsRouteController({
+        resetKey: workspaceRef.id,
+        enabled: !cockpitEnabled,
+        isFocused,
+        hydrated: true,
+        detailsIsOpen,
+        hasDetails,
+        keepRouteWhenEmpty: showWorktrees,
+        keepRouteWhenDetailsClose: showWorktrees,
+        onDismissRoute: returnToProject,
+        onCloseDetails: pane.closeDetails,
+        onUnmount: cockpitEnabled ? undefined : pane.closeDetails,
+    });
 
     return (
         <View testID="project-details-screen" style={{ flex: 1 }}>

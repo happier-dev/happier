@@ -23,10 +23,6 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 import {
     ANCHOR_OPTIONS,
     AUTO_HIDE_DELAY_OPTIONS,
-    COLLAPSED_CLICK_ACTION_OPTIONS,
-    COMPACT_STYLE_OPTIONS,
-    DENSITY_OPTIONS,
-    EXPANDED_BEHAVIOR_OPTIONS,
     PLACEMENT_MODE_OPTIONS,
     PRESENTATION_MODE_OPTIONS,
     VISIBILITY_MODE_OPTIONS,
@@ -150,42 +146,46 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                             choices={VISIBILITY_MODE_OPTIONS}
                             onSelect={(value) => setLocalSetting({ desktopOverlayVisibilityMode: value })}
                         />
-                        <Item
-                            title={t('settingsDesktop.overlay.showWhenRunningTitle')}
-                            subtitle={t('settingsDesktop.overlay.showWhenRunningSubtitle')}
-                            icon={<DesktopSettingsIonicon name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
-                            rightElement={(
-                                <Switch
-                                    value={desktopPolicy.showWhenRunning}
-                                    onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenRunning: Boolean(value) })}
+                        {settingsVisibility.showAttentionFilterControls ? (
+                            <>
+                                <Item
+                                    title={t('settingsDesktop.overlay.showWhenRunningTitle')}
+                                    subtitle={t('settingsDesktop.overlay.showWhenRunningSubtitle')}
+                                    icon={<DesktopSettingsIonicon name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                                    rightElement={(
+                                        <Switch
+                                            value={desktopPolicy.showWhenRunning}
+                                            onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenRunning: Boolean(value) })}
+                                        />
+                                    )}
+                                    showChevron={false}
                                 />
-                            )}
-                            showChevron={false}
-                        />
-                        <Item
-                            title={t('settingsDesktop.overlay.showWhenAttentionRequiredTitle')}
-                            subtitle={t('settingsDesktop.overlay.showWhenAttentionRequiredSubtitle')}
-                            icon={<DesktopSettingsIonicon name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
-                            rightElement={(
-                                <Switch
-                                    value={desktopPolicy.showWhenAttentionRequired}
-                                    onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenAttentionRequired: Boolean(value) })}
+                                <Item
+                                    title={t('settingsDesktop.overlay.showWhenAttentionRequiredTitle')}
+                                    subtitle={t('settingsDesktop.overlay.showWhenAttentionRequiredSubtitle')}
+                                    icon={<DesktopSettingsIonicon name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                                    rightElement={(
+                                        <Switch
+                                            value={desktopPolicy.showWhenAttentionRequired}
+                                            onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenAttentionRequired: Boolean(value) })}
+                                        />
+                                    )}
+                                    showChevron={false}
                                 />
-                            )}
-                            showChevron={false}
-                        />
-                        <Item
-                            title={t('settingsDesktop.overlay.showWhenReadyTitle')}
-                            subtitle={t('settingsDesktop.overlay.showWhenReadySubtitle')}
-                            icon={<DesktopSettingsIonicon name="checkmark-circle-outline" size={29} color={theme.colors.textSecondary} />}
-                            rightElement={(
-                                <Switch
-                                    value={desktopPolicy.showWhenReady}
-                                    onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenReady: Boolean(value) })}
+                                <Item
+                                    title={t('settingsDesktop.overlay.showWhenReadyTitle')}
+                                    subtitle={t('settingsDesktop.overlay.showWhenReadySubtitle')}
+                                    icon={<DesktopSettingsIonicon name="checkmark-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                                    rightElement={(
+                                        <Switch
+                                            value={desktopPolicy.showWhenReady}
+                                            onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenReady: Boolean(value) })}
+                                        />
+                                    )}
+                                    showChevron={false}
                                 />
-                            )}
-                            showChevron={false}
-                        />
+                            </>
+                        ) : null}
                         <Item
                             title={t('settingsDesktop.overlay.alwaysOnTopTitle')}
                             subtitle={t('settingsDesktop.overlay.alwaysOnTopSubtitle')}
@@ -228,40 +228,6 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                             selectedValue={desktopPolicy.autoHideDelayMs}
                             choices={AUTO_HIDE_DELAY_OPTIONS}
                             onSelect={(value) => setLocalSetting({ desktopOverlayAutoHideDelayMs: Number(value) })}
-                        />
-                    ) : null}
-                    <Item
-                        title={t('settingsDesktop.overlay.interactiveCollapsedTitle')}
-                        subtitle={t('settingsDesktop.overlay.interactiveCollapsedSubtitle')}
-                        icon={<DesktopSettingsIonicon name="finger-print-outline" size={29} color={theme.colors.textSecondary} />}
-                        rightElement={(
-                            <Switch
-                                value={desktopPolicy.interactiveCollapsed}
-                                onValueChange={(value) => setLocalSetting({ desktopOverlayInteractiveCollapsed: Boolean(value) })}
-                            />
-                        )}
-                        showChevron={false}
-                    />
-                    {settingsVisibility.showCollapsedClickAction ? (
-                        <DesktopOverlayChoiceDropdownRow
-                            testID="settings-desktop-overlay-collapsed-click-action"
-                            title={t('settingsDesktop.overlay.collapsedClickActionTitle')}
-                            subtitle={t('settingsDesktop.overlay.collapsedClickActionSubtitle')}
-                            icon={<DesktopSettingsIonicon name="return-down-forward-outline" size={29} color={theme.colors.textSecondary} />}
-                            selectedValue={desktopPolicy.clickAction}
-                            choices={COLLAPSED_CLICK_ACTION_OPTIONS}
-                            onSelect={(value) => setLocalSetting({ desktopOverlayClickAction: value })}
-                        />
-                    ) : null}
-                    {settingsVisibility.showExpandedBehavior ? (
-                        <DesktopOverlayChoiceDropdownRow
-                            testID="settings-desktop-overlay-expanded-behavior"
-                            title={t('settingsDesktop.overlay.expandedBehaviorTitle')}
-                            subtitle={t('settingsDesktop.overlay.expandedBehaviorSubtitle')}
-                            icon={<DesktopSettingsIonicon name="expand-outline" size={29} color={theme.colors.textSecondary} />}
-                            selectedValue={desktopPolicy.expandedBehavior}
-                            choices={EXPANDED_BEHAVIOR_OPTIONS}
-                            onSelect={(value) => setLocalSetting({ desktopOverlayExpandedBehavior: value })}
                         />
                     ) : null}
                 </ItemGroup>
@@ -363,36 +329,6 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
                     title={t('settingsDesktop.overlay.presentationTitle')}
                     footer={t('settingsDesktop.overlay.presentationFooter')}
                 >
-                    <DesktopOverlayChoiceDropdownRow
-                        testID="settings-desktop-overlay-density"
-                        title={t('settingsDesktop.overlay.densityTitle')}
-                        subtitle={t('settingsDesktop.overlay.densitySubtitle')}
-                        icon={<DesktopSettingsIonicon name="resize-outline" size={29} color={theme.colors.textSecondary} />}
-                        selectedValue={desktopPolicy.density}
-                        choices={DENSITY_OPTIONS}
-                        onSelect={(value) => setLocalSetting({ desktopOverlayDensity: value })}
-                    />
-                    <DesktopOverlayChoiceDropdownRow
-                        testID="settings-desktop-overlay-compact-style"
-                        title={t('settingsDesktop.overlay.compactStyleTitle')}
-                        subtitle={t('settingsDesktop.overlay.compactStyleSubtitle')}
-                        icon={<DesktopSettingsIonicon name="square-outline" size={29} color={theme.colors.textSecondary} />}
-                        selectedValue={desktopPolicy.compactStyle}
-                        choices={COMPACT_STYLE_OPTIONS}
-                        onSelect={(value) => setLocalSetting({ desktopOverlayCompactStyle: value })}
-                    />
-                    <Item
-                        title={t('settingsDesktop.overlay.showSessionCountTitle')}
-                        subtitle={t('settingsDesktop.overlay.showSessionCountSubtitle')}
-                        icon={<DesktopSettingsIonicon name="people-outline" size={29} color={theme.colors.textSecondary} />}
-                        rightElement={(
-                            <Switch
-                                value={desktopPolicy.showSessionCount}
-                                onValueChange={(value) => setLocalSetting({ desktopOverlayShowSessionCount: Boolean(value) })}
-                            />
-                        )}
-                        showChevron={false}
-                    />
                     <Item
                         title={t('settingsDesktop.overlay.showPreviewTextTitle')}
                         subtitle={t('settingsDesktop.overlay.showPreviewTextSubtitle')}

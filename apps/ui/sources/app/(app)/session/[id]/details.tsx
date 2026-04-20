@@ -6,14 +6,37 @@ import { useIsFocused } from '@react-navigation/native';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
-import { applySessionPaneUrlState, parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import {
+    applySessionPaneUrlState,
+    buildActiveDetailsRouteParams,
+    parseSessionPaneUrlState,
+} from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
+import { useFullscreenDetailsRouteController } from '@/components/workspaceCockpit/useFullscreenDetailsRouteController';
+import { useFullscreenDetailsRouteParamSync } from '@/components/workspaceCockpit/useFullscreenDetailsRouteParamSync';
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
+import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+
+type SessionDetailsRouteParamsShape = Readonly<{
+    details?: string;
+    path?: string;
+    sha?: string;
+    terminalInstanceId?: string;
+}>;
+
+function createDetailsRouteParamsSignature(params: SessionDetailsRouteParamsShape): string {
+    return [
+        params.details ?? '',
+        params.path ?? '',
+        params.sha ?? '',
+        params.terminalInstanceId ?? '',
+    ].join('|');
+}
 
 export default function SessionDetailsScreenRoute() {
     const router = useRouter();
@@ -31,64 +54,89 @@ export default function SessionDetailsScreenRoute() {
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
+    const detailsState = pane.scopeState?.details ?? null;
+    const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
+        detailsTabs: detailsState?.tabs,
+        activeDetailsKey: detailsState?.activeTabKey ?? null,
+        detailsGroups: detailsState?.groups,
+    }), [detailsState?.activeTabKey, detailsState?.groups, detailsState?.tabs]);
     const parsedRouteDetailsState = parseSessionPaneUrlState(params as Record<string, unknown>);
     const routeDetailsState = parsedRouteDetailsState?.details ? { details: parsedRouteDetailsState.details } : null;
-
-    const detailsTabs = pane.scopeState?.details?.tabs ?? [];
-    const hasDetails = detailsTabs.length > 0;
-    const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
-    const hasMountedRef = React.useRef(false);
-    const prevDetailsIsOpenRef = React.useRef(detailsIsOpen);
+    const hasDetails = detailsSelection.hasAnyDetails;
+    const detailsIsOpen = detailsState?.isOpen ?? false;
+    const routeDetailsParams = React.useMemo<SessionDetailsRouteParamsShape>(() => ({
+        details: typeof params.details === 'string' ? params.details : undefined,
+        path: typeof params.path === 'string' ? params.path : undefined,
+        sha: typeof params.sha === 'string' ? params.sha : undefined,
+        terminalInstanceId: typeof (params as { terminalInstanceId?: unknown }).terminalInstanceId === 'string'
+            ? (params as { terminalInstanceId?: string }).terminalInstanceId
+            : undefined,
+    }), [params]);
+    const selectedDetailsParams = React.useMemo<SessionDetailsRouteParamsShape>(() => {
+        const next = buildActiveDetailsRouteParams(detailsSelection.tabs, detailsSelection.activeKey);
+        return {
+            details: next.details,
+            path: next.path,
+            sha: next.sha,
+            terminalInstanceId: next.terminalInstanceId,
+        };
+    }, [detailsSelection.activeKey, detailsSelection.tabs]);
+    const routeDetailsSignature = React.useMemo(
+        () => createDetailsRouteParamsSignature(routeDetailsParams),
+        [routeDetailsParams],
+    );
+    const selectedDetailsSignature = React.useMemo(
+        () => createDetailsRouteParamsSignature(selectedDetailsParams),
+        [selectedDetailsParams],
+    );
     const returnToSession = React.useCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
     }, [navigation, routeScope, router, sessionId]);
 
-    React.useEffect(() => {
-        hasMountedRef.current = true;
-        return () => {
-            hasMountedRef.current = false;
-        };
-    }, []);
+    useFullscreenDetailsRouteParamSync({
+        resetKey: sessionId,
+        enabled: Boolean(sessionId),
+        isFocused,
+        hydrated: sessionHydrated,
+        hasRouteSelection: Boolean(routeDetailsState),
+        hasSelectedSelection: Boolean(selectedDetailsParams.details),
+        routeSelectionSignature: routeDetailsSignature,
+        selectedSelectionSignature: selectedDetailsSignature,
+        onApplyRouteSelection: React.useCallback(() => {
+            if (!routeDetailsState) {
+                return;
+            }
+            applySessionPaneUrlState(pane, routeDetailsState);
+        }, [pane, routeDetailsState]),
+        onWriteSelectedSelection: React.useCallback(() => {
+            router.setParams({
+                details: selectedDetailsParams.details,
+                path: selectedDetailsParams.path,
+                sha: selectedDetailsParams.sha,
+                terminalInstanceId: selectedDetailsParams.terminalInstanceId,
+            });
+        }, [
+            router,
+            selectedDetailsParams.details,
+            selectedDetailsParams.path,
+            selectedDetailsParams.sha,
+            selectedDetailsParams.terminalInstanceId,
+        ]),
+    });
 
-    React.useEffect(() => {
-        if (!sessionId) return;
-        if (!isFocused) return;
-        if (!sessionHydrated) return;
-        if (hasDetails) return;
-        if (!routeDetailsState) return;
-        applySessionPaneUrlState(pane, routeDetailsState);
-    }, [hasDetails, isFocused, pane, routeDetailsState, sessionHydrated, sessionId]);
-
-    React.useEffect(() => {
-        if (!sessionId) return;
-        if (!isFocused) return;
-        if (!sessionHydrated) return;
-        // If there is no active details content, this screen has nothing to show.
-        // Navigate back to the previous screen (typically the session or sidebar screen).
-        if (!hasMountedRef.current) return;
-        if (cockpitEnabled) return;
-        if (!hasDetails && routeDetailsState) return;
-        if (!hasDetails) returnToSession();
-    }, [cockpitEnabled, hasDetails, isFocused, returnToSession, routeDetailsState, sessionHydrated, sessionId]);
-
-    React.useEffect(() => {
-        if (!sessionId) return;
-        if (!isFocused) return;
-        if (!sessionHydrated) return;
-        if (!hasMountedRef.current) return;
-        if (cockpitEnabled) return;
-        // When the details pane is closed in pane state, treat this fullscreen route as dismissed.
-        if (prevDetailsIsOpenRef.current && !detailsIsOpen) returnToSession();
-        prevDetailsIsOpenRef.current = detailsIsOpen;
-    }, [cockpitEnabled, detailsIsOpen, isFocused, returnToSession, sessionHydrated, sessionId]);
-
-    const onRequestClose = React.useCallback(() => {
-        if (!detailsIsOpen) {
-            returnToSession();
-            return;
-        }
-        pane.closeDetails();
-    }, [detailsIsOpen, pane, returnToSession]);
+    const { onRequestClose } = useFullscreenDetailsRouteController({
+        resetKey: sessionId,
+        enabled: Boolean(sessionId) && !cockpitEnabled,
+        isFocused,
+        hydrated: sessionHydrated,
+        detailsIsOpen,
+        hasDetails,
+        keepRouteWhenEmpty: Boolean(routeDetailsState),
+        keepRouteWhenDetailsClose: false,
+        onDismissRoute: returnToSession,
+        onCloseDetails: pane.closeDetails,
+        onUnmount: cockpitEnabled ? undefined : pane.closeDetails,
+    });
 
     usePersistSessionMobileSurface({
         sessionId,

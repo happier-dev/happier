@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
 const isDesktopOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => false));
@@ -23,7 +24,18 @@ const sessionsState = vi.hoisted(() => ({
                 homeDir: '/Users/tester',
             },
         },
-    ],
+    ] as Array<Record<string, unknown>>,
+}));
+const sessionListIndexState = vi.hoisted(() => ({
+    value: {
+        'server-1': [
+            {
+                type: 'session',
+                sessionId: 'session-web-1',
+                serverId: 'server-1',
+            },
+        ],
+    } as Record<string, ReadonlyArray<{ type: 'session'; sessionId: string; serverId: string }>>,
 }));
 const localSettingsState = vi.hoisted(() => ({
     value: {
@@ -43,6 +55,12 @@ const setDesktopActivityOverlayExpandedMock = vi.hoisted(
 );
 const routerPushMock = vi.hoisted(() => vi.fn());
 
+const expoRouterMock = createExpoRouterMock({
+    router: {
+        push: (value: unknown) => routerPushMock(value),
+    },
+});
+
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => isTauriDesktopMock(),
 }));
@@ -53,8 +71,32 @@ vi.mock('./isDesktopActivityOverlayWindowContext', () => ({
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const storageState = () => ({
+        isDataReady: true,
+        sessions: Object.fromEntries(
+            sessionsState.value.map((session) => [session.id, session]),
+        ),
+        sessionListIndexByServerId: sessionListIndexState.value,
+        sessionListRenderables: {},
+        concurrentSessionListCacheByServerId: {},
+        localSettings: localSettingsState.value,
+    });
+    const storage = Object.assign(
+        ((selector?: (state: ReturnType<typeof storageState>) => unknown) =>
+            typeof selector === 'function' ? selector(storageState()) : storageState()),
+        {
+            getState: () => storageState(),
+            getInitialState: () => storageState(),
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        },
+    );
     return createStorageModuleStub({
-        useAllSessions: () => sessionsState.value,
+        storage,
+        useAllSessions: () => {
+            throw new Error('DesktopActivityOverlayRuntime.web should not use useAllSessions');
+        },
         useLocalSettings: () => localSettingsState.value,
     });
 });
@@ -69,10 +111,14 @@ vi.mock('./desktopActivityOverlayBridge', async () => {
     };
 });
 
-vi.mock('expo-router', () => ({
-    router: {
-        push: (value: unknown) => routerPushMock(value),
-    },
+vi.mock('expo-router', () => expoRouterMock.module);
+
+vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries', () => ({
+    useConnectedServiceQuotaSummaries: () => ({
+        summaries: [],
+        isRefreshing: false,
+        hasConnectedProfiles: false,
+    }),
 }));
 
 describe('DesktopActivityOverlayRuntime.web', () => {
@@ -82,6 +128,34 @@ describe('DesktopActivityOverlayRuntime.web', () => {
         syncDesktopActivityOverlayMock.mockImplementation(async () => {});
         listenDesktopActivityOverlayInteractionMock.mockImplementation(async () => () => {});
         setDesktopActivityOverlayExpandedMock.mockImplementation(async () => {});
+        sessionsState.value = [
+            {
+                id: 'session-web-1',
+                serverId: 'server-1',
+                seq: 2,
+                lastViewedSessionSeq: 0,
+                active: true,
+                presence: 'online',
+                thinking: false,
+                pendingPermissionRequestCount: 1,
+                pendingUserActionRequestCount: 0,
+                metadata: {
+                    summary: { text: 'Desktop overlay web runtime', updatedAt: 1 },
+                    path: '/Users/tester/project',
+                    host: 'tester.local',
+                    homeDir: '/Users/tester',
+                },
+            },
+        ];
+        sessionListIndexState.value = {
+            'server-1': [
+                {
+                    type: 'session',
+                    sessionId: 'session-web-1',
+                    serverId: 'server-1',
+                },
+            ],
+        };
     });
 
     afterEach(() => {

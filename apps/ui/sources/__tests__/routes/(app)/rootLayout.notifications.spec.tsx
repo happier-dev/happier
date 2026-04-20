@@ -35,6 +35,7 @@ const mockState = await vi.hoisted(async () => {
         pendingNotificationNavValue: null as { serverUrl: string; route: string } | null,
         pendingTerminalConnectValue: null as { publicKeyB64Url: string; serverUrl: string } | null,
         pushSpy: vi.fn(),
+        replaceSpy: vi.fn(),
         serverProfilesValue: [] as { id: string; serverUrl: string }[],
         sessionAllowSpy: vi.fn((..._args: unknown[]) => Promise.resolve()),
         sessionDenySpy: vi.fn((..._args: unknown[]) => Promise.resolve()),
@@ -63,7 +64,7 @@ installRootLayoutRouteCommonModuleMocks({
             segments: ['(app)'],
             router: {
                 push: mockState.pushSpy,
-                replace: vi.fn(),
+                replace: mockState.replaceSpy,
                 back: vi.fn(),
                 setParams: vi.fn(),
             },
@@ -199,6 +200,7 @@ afterEach(async () => {
     mockState.clearPendingTerminalConnectSpy.mockClear();
     mockState.clearPendingNotificationNavSpy.mockClear();
     mockState.clearPendingNotificationActionSpy.mockClear();
+    mockState.replaceSpy.mockClear();
     mockState.sessionAllowSpy.mockClear();
     mockState.sessionDenySpy.mockClear();
     vi.restoreAllMocks();
@@ -225,7 +227,8 @@ describe('App RootLayout notifications', () => {
 
         await renderRootLayout();
 
-        expect(mockState.pushSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fapi.happier.dev');
+        expect(mockState.replaceSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fapi.happier.dev');
+        expect(mockState.pushSpy).not.toHaveBeenCalled();
         expect(mockState.upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
     });
 
@@ -247,7 +250,8 @@ describe('App RootLayout notifications', () => {
             scope: 'device',
             refreshAuth: expect.any(Function),
         });
-        expect(mockState.pushSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fcompany.example.test');
+        expect(mockState.replaceSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fcompany.example.test');
+        expect(mockState.pushSpy).not.toHaveBeenCalled();
     });
 
     it('navigates to the session when a notification contains sessionId', async () => {

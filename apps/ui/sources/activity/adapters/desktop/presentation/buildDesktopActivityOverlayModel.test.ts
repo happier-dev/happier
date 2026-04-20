@@ -9,6 +9,7 @@ function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {})
     const base: DesktopActivityOverlaySnapshot = {
         version: 1,
         generatedAt: 1_700_000_000_000,
+        state: 'content',
         counts: {
             unread: 1,
             permissionRequired: 1,
@@ -22,12 +23,19 @@ function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {})
             runningCount: 1,
             permissionCount: 1,
         },
+        permissionRequests: [],
+        userQuestions: [],
+        quotaSummaries: [],
+        completionStates: [],
         primary: {
             sessionId: 'session-primary',
             title: 'Primary session',
             subtitle: 'agent on machine',
             statusText: 'Permission required',
             previewText: null,
+            attentionState: 'permission_required',
+            active: true,
+            updatedAt: 10,
         },
         sessions: [
             {
@@ -36,6 +44,9 @@ function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {})
                 subtitle: 'agent on machine',
                 statusText: 'Permission required',
                 previewText: null,
+                attentionState: 'permission_required',
+                active: true,
+                updatedAt: 10,
             },
             {
                 sessionId: 'session-secondary',
@@ -43,6 +54,9 @@ function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {})
                 subtitle: 'agent on machine',
                 statusText: 'Running',
                 previewText: null,
+                attentionState: 'thinking',
+                active: true,
+                updatedAt: 9,
             },
         ],
         defaultTarget: 'open-primary-session',
@@ -103,8 +117,60 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.collapsed.defaultTarget).toBe('open-primary-session');
         expect(model.collapsed.sessionCount).toBe(2);
         expect(model.expanded.rows).toHaveLength(2);
+        expect(model.expanded.cards).toEqual([
+            expect.objectContaining({
+                kind: 'multi_session_list',
+                rows: [
+                    expect.objectContaining({ sessionId: 'session-primary' }),
+                    expect.objectContaining({ sessionId: 'session-secondary' }),
+                ],
+            }),
+        ]);
         expect(model.window.collapsed.width).toBeGreaterThan(200);
         expect(model.window.expanded.height).toBeGreaterThan(model.window.collapsed.height);
+        expect(model.window.expanded.height).toBeLessThanOrEqual(176);
+    });
+
+    it('uses one passive expanded composition without duplicating the primary session', () => {
+        const singleSessionModel = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({
+                sessions: [
+                    {
+                        sessionId: 'session-primary',
+                        title: 'Primary session',
+                        subtitle: 'agent on machine',
+                        statusText: 'Ready',
+                        previewText: null,
+                        attentionState: 'pending',
+                        active: true,
+                        updatedAt: 10,
+                    },
+                ],
+            }),
+            policy: createPolicy(),
+            isExpanded: true,
+        });
+        const multiSessionModel = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot(),
+            policy: createPolicy(),
+            isExpanded: true,
+        });
+
+        expect(singleSessionModel.expanded.cards).toEqual([
+            expect.objectContaining({
+                kind: 'session_overview',
+                sessionId: 'session-primary',
+            }),
+        ]);
+        expect(multiSessionModel.expanded.cards).toEqual([
+            expect.objectContaining({
+                kind: 'multi_session_list',
+                rows: [
+                    expect.objectContaining({ sessionId: 'session-primary' }),
+                    expect.objectContaining({ sessionId: 'session-secondary' }),
+                ],
+            }),
+        ]);
     });
 
     it('keeps pill collapsed windows tighter than panel collapsed windows for the same density', () => {
@@ -147,8 +213,7 @@ describe('buildDesktopActivityOverlayModel', () => {
             isExpanded: false,
         });
 
-        expect(pillModel.window.collapsed.width).toBeLessThanOrEqual(312);
-        expect(pillModel.window.collapsed.height).toBeLessThanOrEqual(60);
+        expect(pillModel.window.collapsed).toEqual({ width: 224, height: 38 });
         expect(panelModel.window.collapsed.height).toBeLessThanOrEqual(68);
     });
 
@@ -168,6 +233,7 @@ describe('buildDesktopActivityOverlayModel', () => {
     it('uses empty fallback copy when there is no primary session', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({
+                state: 'idle',
                 counts: {
                     unread: 0,
                     permissionRequired: 0,
@@ -176,6 +242,9 @@ describe('buildDesktopActivityOverlayModel', () => {
                     thinking: 0,
                     totalAttention: 0,
                 },
+                permissionRequests: [],
+                userQuestions: [],
+                quotaSummaries: [],
                 primary: null,
                 sessions: [],
             }),
@@ -187,6 +256,11 @@ describe('buildDesktopActivityOverlayModel', () => {
 
         expect(model.visible).toBe(true);
         expect(model.collapsed.title).toBe('No active sessions');
+        expect(model.expanded.cards).toEqual([
+            expect.objectContaining({
+                kind: 'idle_state',
+            }),
+        ]);
         expect(model.expanded.rows).toHaveLength(0);
     });
 
@@ -252,5 +326,161 @@ describe('buildDesktopActivityOverlayModel', () => {
         });
 
         expect(model.visible).toBe(true);
+    });
+
+    it('prioritizes permission request cards ahead of passive session overview cards', () => {
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({
+                permissionRequests: [
+                    {
+                        kind: 'permission_request',
+                        requestId: 'perm-1',
+                        sessionId: 'session-primary',
+                        title: 'Approve command',
+                        summary: 'npm test',
+                        toolLabel: 'Bash',
+                        questionText: null,
+                        count: 1,
+                        openActionIdentifier: 'open-session:session-primary',
+                        allowActionIdentifier: 'session.permission.respond',
+                        denyActionIdentifier: 'session.permission.respond',
+                        directOptions: [],
+                    },
+                ],
+            }),
+            policy: createPolicy(),
+            isExpanded: true,
+        });
+
+        expect(model.expanded.cards?.[0]).toEqual(expect.objectContaining({
+            kind: 'permission_request',
+            id: 'permission:perm-1',
+        }));
+        expect(model.collapsed.title).toBe('Approve command');
+        expect(model.collapsed.statusText).toBe('npm test');
+        expect(model.collapsed.primaryCardKind).toBe('permission_request');
+    });
+
+    it('surfaces direct user-question actions, quota summaries, and completion cards in priority order', () => {
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({
+                userQuestions: [
+                    {
+                        kind: 'user_question',
+                        requestId: 'question-1',
+                        sessionId: 'session-primary',
+                        title: 'Which deployment target?',
+                        summary: 'Choose a target',
+                        toolLabel: 'AskUserQuestion',
+                        questionText: 'Which deployment target?',
+                        count: 1,
+                        openActionIdentifier: 'open-session:session-primary',
+                        directOptions: [
+                            {
+                                id: 'production',
+                                label: 'Production',
+                                description: 'Deploy to production',
+                                actionIdentifier: 'session.user_action.answer',
+                                answers: [
+                                    {
+                                        question: 'Which deployment target?',
+                                        answer: 'Production',
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+                quotaSummaries: [
+                    {
+                        id: 'claude:default',
+                        title: 'Claude',
+                        summary: '12% remaining',
+                    },
+                ],
+                completionStates: [
+                    {
+                        sessionId: 'session-primary',
+                        title: 'Primary session',
+                        summary: 'Turn finished. Open the session to continue.',
+                        openActionIdentifier: 'open-session:session-primary',
+                    },
+                ],
+            }),
+            policy: createPolicy({
+                visibilityMode: 'active_sessions',
+            }),
+            isExpanded: true,
+        });
+
+        expect(model.expanded.cards?.[0]).toEqual(expect.objectContaining({
+            kind: 'user_question',
+            id: 'question:question-1',
+            actions: [
+                expect.objectContaining({
+                    actionIdentifier: 'session.user_action.answer',
+                    data: expect.objectContaining({
+                        requestId: 'question-1',
+                        sessionId: 'session-primary',
+                    }),
+                }),
+                expect.objectContaining({
+                    actionIdentifier: 'open-session:session-primary',
+                }),
+            ],
+        }));
+        expect(model.expanded.cards).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: 'quota_summary',
+                id: 'quota:claude:default',
+            }),
+            expect.objectContaining({
+                kind: 'completion_state',
+                id: 'completion:session-primary',
+            }),
+        ]));
+        expect(model.expanded.cards).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'session_overview' }),
+            expect.objectContaining({ kind: 'multi_session_list' }),
+        ]));
+        expect(model.collapsed.title).toBe('Which deployment target?');
+        expect(model.collapsed.accentText).toBe('AskUserQuestion');
+    });
+
+    it('does not crash when a legacy user-question snapshot is missing direct options', () => {
+        const legacyUserQuestion = {
+            kind: 'user_question',
+            requestId: 'question-legacy',
+            sessionId: 'session-primary',
+            title: 'Which deployment target?',
+            summary: 'Choose a target',
+            toolLabel: 'AskUserQuestion',
+            questionText: 'Which deployment target?',
+            count: 1,
+            openActionIdentifier: 'open-session:session-primary',
+        };
+
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({
+                userQuestions: [
+                    // Boundary fixture: live persisted/bridged payloads can omit fields despite the TS contract.
+                    legacyUserQuestion as unknown as DesktopActivityOverlaySnapshot['userQuestions'][number],
+                ],
+            }),
+            policy: createPolicy({
+                visibilityMode: 'active_sessions',
+            }),
+            isExpanded: true,
+        });
+
+        expect(model.expanded.cards?.[0]).toEqual(expect.objectContaining({
+            kind: 'user_question',
+            id: 'question:question-legacy',
+            actions: [
+                expect.objectContaining({
+                    actionIdentifier: 'open-session:session-primary',
+                }),
+            ],
+        }));
     });
 });

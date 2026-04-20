@@ -137,6 +137,7 @@ describe('/ (welcome) setup continuation', () => {
 
     afterEach(() => {
         standardCleanup();
+        globalThis.localStorage?.removeItem('happier.voice.e2e.fixture');
     });
 
     it('keeps authenticated Tauri desktop users on / and opens the setup wizard overlay when a setup auth continuation is pending', async () => {
@@ -311,6 +312,71 @@ describe('/ (welcome) setup continuation', () => {
             needsAuth: true,
             machineId: null,
         };
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+    });
+
+    it('does not auto-open the setup wizard overlay on web when a voice e2e fixture query param is present', async () => {
+        tauriDesktopState.value = false;
+        connectionHealthState.value = 0;
+        getPendingSetupIntentMock.mockReturnValue(null);
+
+        // The UI e2e harness drives the voice surface via `?happier_voice_e2e_fixture=...`.
+        expoRouterMock.state.router.setParams({ happier_voice_e2e_fixture: 'local_auto_return_listening' });
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
+    });
+
+    it('suppresses the setup wizard overlay on web when a voice e2e fixture query param is present, even if a setup auth continuation is pending', async () => {
+        tauriDesktopState.value = false;
+        connectionHealthState.value = 0;
+        getPendingSetupIntentMock.mockReturnValue({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test',
+        });
+        expoRouterMock.state.router.setParams({ happier_voice_e2e_fixture: 'local_auto_return_listening' });
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
+    });
+
+    it('does not auto-open the setup wizard overlay on web when a voice e2e fixture is persisted in localStorage', async () => {
+        tauriDesktopState.value = false;
+        connectionHealthState.value = 0;
+        getPendingSetupIntentMock.mockReturnValue(null);
+        globalThis.localStorage?.setItem('happier.voice.e2e.fixture', 'local_auto_return_listening');
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
+    });
+
+    it('does not open the setup wizard overlay during a voice e2e fixture even when a setup continuation is pending', async () => {
+        tauriDesktopState.value = false;
+        connectionHealthState.value = 0;
+        getPendingSetupIntentMock.mockReturnValue({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test',
+        });
+        globalThis.localStorage?.setItem('happier.voice.e2e.fixture', 'local_auto_return_listening');
 
         const Screen = (await import('@/app/(app)/index')).default;
         const screen = await renderScreen(React.createElement(Screen));

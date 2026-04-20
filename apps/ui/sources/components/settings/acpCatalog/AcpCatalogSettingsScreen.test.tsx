@@ -130,6 +130,7 @@ describe('AcpCatalogSettingsScreen', () => {
 
         const builtInKiroRow = screen.findRow('settings.acpCatalog.builtIn.kiro');
         const builtInCustomAcpRow = screen.findRow('settings.acpCatalog.builtIn.customAcp');
+        const builtInOhMyPiRow = screen.findRow('settings.acpCatalog.builtIn.ohMyPi');
         const backendRow = screen.findRow('settings.acpCatalog.backend.custom-kiro');
         const addBackendRow = screen.findRow('settings.acpCatalog.addBackend');
         const addPresetRow = screen.findRow('settings.acpCatalog.addPreset');
@@ -137,6 +138,7 @@ describe('AcpCatalogSettingsScreen', () => {
 
         expect(builtInKiroRow).toBeTruthy();
         expect(builtInCustomAcpRow).toBeNull();
+        expect(builtInOhMyPiRow).toBeTruthy();
         expect(backendRow).toBeTruthy();
         expect(backendRow?.props.title).toBe('Custom Kiro');
         expect(addBackendRow).toBeTruthy();

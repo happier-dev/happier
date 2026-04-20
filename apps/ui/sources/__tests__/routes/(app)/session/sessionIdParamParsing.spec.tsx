@@ -48,6 +48,26 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     },
 }));
 
+vi.mock('@/sync/domains/auth/useAuth', () => ({
+    useAuth: () => ({
+        isAuthenticated: true,
+        credentials: { token: 'test-token', secret: 'test-secret' },
+        refreshFromActiveServer: vi.fn(async () => {}),
+    }),
+}));
+
+vi.mock('@/auth/context/AuthContext', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/auth/context/AuthContext')>();
+    return {
+        ...actual,
+        useAuth: () => ({
+            isAuthenticated: true,
+            credentials: { token: 'test-token', secret: 'test-secret' },
+            refreshFromActiveServer: vi.fn(async () => {}),
+        }),
+    };
+});
+
 async function renderSessionScreenTree() {
     routerMock.state.params = searchParams;
     const Screen = (await import('@/app/(app)/session/[id]')).default;

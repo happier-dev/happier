@@ -9,6 +9,13 @@ import { installPanelCommonModuleMocks } from '../panelTestHelpers';
 
 installPanelCommonModuleMocks();
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
 describe('ResizableDockedPaneVertical (web pointer drag)', () => {
     it('commits height as the user drags (resizeEdge=bottom)', async () => {
         const onCommitHeightPx = vi.fn();
@@ -188,6 +195,39 @@ describe('ResizableDockedPaneVertical (web pointer drag)', () => {
                 exceededMaxPx: false,
             }),
         );
+    });
+
+    it('renders the shared row resize handle grip for docked panes', async () => {
+        const { ResizableDockedPaneVertical } = await import('./ResizableDockedPaneVertical');
+
+        const tree = (await renderScreen(
+            <ResizableDockedPaneVertical
+                heightPx={320}
+                minHeightPx={200}
+                maxHeightPx={480}
+                resizeEdge="bottom"
+                onCommitHeightPx={vi.fn()}
+            >
+                <ViewStub />
+            </ResizableDockedPaneVertical>,
+        )).tree;
+
+        const webHandle = findFirstByType(tree, 'Pressable');
+        expect(webHandle).toBeTruthy();
+        if (!webHandle) {
+            throw new Error('expected resizable docked pane vertical handle');
+        }
+        const grip = webHandle.findByType('View');
+
+        expect(flattenStyle(webHandle.props.style)).toEqual(expect.objectContaining({
+            height: 18,
+            cursor: 'row-resize',
+        }));
+        expect(grip.props.style).toEqual(expect.objectContaining({
+            width: 56,
+            height: 5,
+            borderRadius: 999,
+        }));
     });
 });
 

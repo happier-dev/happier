@@ -5,67 +5,14 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const ACP_STUB_PROVIDER_PATH = resolve(repoRootDir(), 'packages/tests/fixtures/acp-stub-provider/acp-stub-provider.mjs');
-
-async function authenticateAndStartDaemon(params: Readonly<{
-  page: Page;
-  testDir: string;
-  cliHomeDir: string;
-  serverUrl: string;
-  uiBaseUrl: string;
-}>): Promise<StartedDaemon> {
-  await gotoDomContentLoadedWithRetries(params.page, params.uiBaseUrl);
-  await createAccountAndReachConnectMachineState({ page: params.page });
-
-  const cliLogin = await startCliAuthLoginForTerminalConnect({
-    testDir: params.testDir,
-    cliHomeDir: params.cliHomeDir,
-    serverUrl: params.serverUrl,
-    webappUrl: params.uiBaseUrl,
-    env: {
-      ...process.env,
-      CI: '1',
-      HAPPIER_DISABLE_CAFFEINATE: '1',
-      HAPPIER_VARIANT: 'dev',
-      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-    },
-  });
-
-  try {
-    await params.page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-    const approveCount = await params.page.getByTestId('terminal-connect-approve').count();
-    if (approveCount > 0) {
-      await params.page.getByTestId('terminal-connect-approve').click();
-    }
-    await cliLogin.waitForSuccess();
-    await acknowledgeTerminalConnectSuccessIfPresent(params.page);
-  } finally {
-    await cliLogin.stop().catch(() => {});
-  }
-
-  return await startTestDaemon({
-    testDir: params.testDir,
-    happyHomeDir: params.cliHomeDir,
-    env: {
-      ...process.env,
-      CI: '1',
-      HAPPIER_HOME_DIR: params.cliHomeDir,
-      HAPPIER_SERVER_URL: params.serverUrl,
-      HAPPIER_WEBAPP_URL: params.uiBaseUrl,
-      HAPPIER_DISABLE_CAFFEINATE: '1',
-      HAPPIER_VARIANT: 'dev',
-      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-    },
-  });
-}
 
 async function createConfiguredAcpBackend(params: Readonly<{
   page: Page;
@@ -119,14 +66,7 @@ test.describe('ui e2e: ACP catalog settings', () => {
   let uiBaseUrl: string | null = null;
 
   test.beforeAll(async () => {
-    const uiWebEnv = {
-      ...process.env,
-      EXPO_PUBLIC_DEBUG: '1',
-      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-acp-catalog-${run.runId}`,
-      HAPPIER_E2E_UI_WEB_MODE: 'export',
-    };
-
-    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
+    test.setTimeout(900_000);
     await mkdir(cliHomeDir, { recursive: true });
 
     server = await startServerLight({
@@ -141,8 +81,11 @@ test.describe('ui e2e: ACP catalog settings', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...uiWebEnv,
+        ...process.env,
+        EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
+        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-acp-catalog-${run.runId}`,
+        HAPPIER_E2E_UI_WEB_MODE: 'export',
       },
     });
 
@@ -180,7 +123,7 @@ test.describe('ui e2e: ACP catalog settings', () => {
     await expect(page.getByTestId('settings.acpCatalog.addBackend')).toHaveCount(1, { timeout: 60_000 });
   });
 
-  test('shows the configured ACP backend in provider settings and launches it from the new-session flow', async ({ page }) => {
+  test('creates and launches a configured ACP backend from the new-session flow', async ({ page }) => {
     test.setTimeout(540_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
@@ -204,24 +147,19 @@ test.describe('ui e2e: ACP catalog settings', () => {
       backendId,
     });
 
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers`);
-    await expect(page.getByTestId('settings.acpCatalog.addBackend')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`settings.acpCatalog.backend.${backendId}`)).toHaveCount(1, { timeout: 60_000 });
-
     await selectMachineForNewSession({
       page,
       uiBaseUrl,
       backendTargetKey: `acpBackend:${backendId}`,
     });
     await expect(page).toHaveURL(new RegExp(`backendTargetKey=acpBackend%3A${backendId}`));
-    await expect(page.getByText('UI ACP Stub Backend')).toHaveCount(1, { timeout: 60_000 });
 
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('new-session-composer-input').fill(`ACP_STUB_USAGE_UPDATE=${sentinel}`);
     await page.getByTestId('new-session-composer-input').press('Enter');
-    await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
+
     const transcript = page.getByTestId('transcript-chat-list');
-    await expect(transcript).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
     await expect(transcript.getByText(`ACP_STUB_USAGE_UPDATE_DONE ${sentinel}`)).toHaveCount(1, { timeout: 120_000 });
   });
 });

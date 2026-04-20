@@ -10,6 +10,7 @@ import { DesktopActivityOverlayLeadingIndicator } from './DesktopActivityOverlay
 import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
 
 export function DesktopActivityOverlaySessionRow(props: Readonly<{
+    testID?: string;
     visualMode: DesktopActivityOverlayVisualMode;
     isLast?: boolean;
     title: string;
@@ -22,6 +23,7 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
 
     return (
         <Pressable
+            testID={props.testID}
             onPress={props.onPress}
             style={(state) => {
                 const { pressed } = state;

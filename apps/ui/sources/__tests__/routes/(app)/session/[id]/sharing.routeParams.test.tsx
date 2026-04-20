@@ -3,6 +3,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,10 +52,12 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string, reason: string) => hydrateSessionSpy(sessionId, reason),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     useSession: (sessionId: string) => useSessionSpy(sessionId),
     useIsDataReady: () => true,
-}));
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 describe('session sharing route', () => {
     beforeEach(() => {

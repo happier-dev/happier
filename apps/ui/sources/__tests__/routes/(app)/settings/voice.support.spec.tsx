@@ -5,6 +5,7 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
 import {
     getVoiceSettingsRouteModalMockRef,
     installVoiceSettingsRouteModuleMocks,
@@ -126,7 +127,7 @@ const voiceState: any = {
             },
             byo: { agentId: null, apiKey: null },
         },
-        local_direct: {
+	        local_direct: {
             stt: { baseUrl: null, apiKey: null, model: 'whisper-1', useDeviceStt: false },
             tts: {
                 provider: 'openai_compat',
@@ -135,9 +136,15 @@ const voiceState: any = {
                 autoSpeakReplies: true,
                 bargeInEnabled: true
             },
-            networkTimeoutMs: 15000,
-            handsFree: { enabled: false, endpointing: { silenceMs: 450, minSpeechMs: 120 } },
-        },
+	            networkTimeoutMs: 15000,
+	            handsFree: {
+	                enabled: false,
+	                endpointing: {
+	                    silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+	                    minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
+	                },
+	            },
+	        },
         local_conversation: {
             conversationMode: 'direct_session',
             stt: { baseUrl: null, apiKey: null, model: 'whisper-1', useDeviceStt: false },
@@ -147,10 +154,16 @@ const voiceState: any = {
                 kokoro: { assetSetId: null, voiceId: null, speed: null },
                 autoSpeakReplies: true,
                 bargeInEnabled: true
-            },
-            networkTimeoutMs: 15000,
-            handsFree: { enabled: false, endpointing: { silenceMs: 450, minSpeechMs: 120 } },
-            agent: {
+	            },
+	            networkTimeoutMs: 15000,
+	            handsFree: {
+	                enabled: false,
+	                endpointing: {
+	                    silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+	                    minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
+	                },
+	            },
+	            agent: {
                 backend: 'daemon',
                 agentSource: 'session',
                 agentId: 'claude',
@@ -244,6 +257,32 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.ttsProvider')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.local.autoSpeak')).toBeTruthy();
+    });
+
+    it('renders the web local-neural daemon fallback controls without crashing', async () => {
+        voiceState.providerId = 'local_conversation';
+        voiceState.adapters.local_conversation.conversationMode = 'agent';
+        voiceState.adapters.local_conversation.tts = {
+            provider: 'local_neural',
+            autoSpeakReplies: true,
+            bargeInEnabled: true,
+            openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+            googleCloud: null,
+            localNeural: {
+                model: 'kokoro',
+                assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+                voiceId: 'af_heart',
+                speed: 1,
+                execution: 'device',
+            },
+        };
+
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+
+        expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.daemonInference.execution.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.local.daemonInference.service.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.local.daemonInference.model.title')).toBeTruthy();
     });
 
     it('uses screen-level popover boundaries for dropdowns', async () => {

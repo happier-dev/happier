@@ -11,11 +11,13 @@ import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -41,38 +43,32 @@ export default React.memo(function PathPickerScreen() {
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const settings = useSettings() ?? settingsDefaults;
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
+    const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
+    const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: machineIdParam,
+        serverId: spawnServerId,
+        enabled: Boolean(machineIdParam),
+        staleMs: 60_000,
+    });
     const preferredBackendTarget = React.useMemo(() => {
-        return resolvePreferredBackendTargetFromSettings({
+        return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
+        daemonMergedProjection.inputs,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
-        settings.backendEnabledByTargetKey,
-        settings.acpCatalogSettingsV1,
     ]);
-    const roundTripFallbackTarget = React.useMemo(() => {
-        return resolveRouteCloseoutFallbackTarget({
-            agentType: params.agentType,
-            backendTarget: params.backendTarget,
-            backendTargetKey: params.backendTargetKey,
-            preferredBackendTarget,
-        });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
-    const roundTripBackendParams = React.useMemo(() => {
-        return buildBackendTargetRouteParams({
-            agentType: params.agentType,
-            backendTarget: params.backendTarget,
-            backendTargetKey: params.backendTargetKey,
-            fallbackTarget: roundTripFallbackTarget,
-        });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
-    const currentRouteParams = React.useMemo(() => {
-        return pickNewSessionRouteParams(params);
-    }, [params]);
 
     const initialPath = typeof params.selectedPath === 'string' && params.selectedPath.length > 0
         ? params.selectedPath
@@ -113,9 +109,18 @@ export default React.memo(function PathPickerScreen() {
         const rawPath = typeof pathOverride === 'string' ? pathOverride : customPathRef.current;
         const pathToUse = rawPath.trim() || machineHomeDir;
         const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
-        const spawnServerId = typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0
-            ? params.spawnServerId
-            : undefined;
+        const roundTripFallbackTarget = resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+        const roundTripBackendParams = buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
         const returnMode = setNewSessionPickerReturnParams({
             navigation,
             router,
@@ -135,7 +140,19 @@ export default React.memo(function PathPickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [currentRouteParams, machineHomeDir, navigation, params.dataId, params.machineId, params.spawnServerId, roundTripBackendParams, router]);
+    }, [
+        currentRouteParams,
+        machineHomeDir,
+        navigation,
+        params.agentType,
+        params.backendTarget,
+        params.backendTargetKey,
+        params.dataId,
+        params.machineId,
+        router,
+        preferredBackendTarget,
+        spawnServerId,
+    ]);
 
     const handleBackPress = React.useCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: '/new' });

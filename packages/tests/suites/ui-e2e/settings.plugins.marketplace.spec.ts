@@ -18,16 +18,14 @@ function buildCatalogResponse(params: Readonly<{
     title: string;
     description: string;
     entries: ReadonlyArray<{
-        id: string;
-        displayName?: string;
+        pluginId: string;
+        title: string;
         description?: string;
         version?: string;
-        source?: {
-            kind: 'archive';
-            locator: string;
-            trustPolicy: 'local_trusted';
-            installPolicy: 'managed_install';
-        };
+        entryId?: string;
+        sourceUrl?: string;
+        packageUrl?: string;
+        categories?: readonly string[];
     }>;
 }>): object {
     return {
@@ -36,7 +34,16 @@ function buildCatalogResponse(params: Readonly<{
         sourceUrl: params.sourceUrl,
         title: params.title,
         description: params.description,
-        entries: params.entries,
+        entries: params.entries.map((entry) => ({
+            id: entry.entryId ?? `marketplace.${entry.pluginId}`,
+            manifestId: entry.pluginId,
+            title: entry.title,
+            description: entry.description,
+            version: entry.version,
+            sourceUrl: entry.sourceUrl ?? `${params.sourceUrl}#${entry.pluginId}`,
+            packageUrl: entry.packageUrl ?? `${params.sourceUrl.replace(/\/catalog\.json$/, '')}/${entry.pluginId}.tgz`,
+            categories: entry.categories ?? [],
+        })),
     };
 }
 
@@ -68,6 +75,7 @@ test.describe('ui e2e: settings plugin marketplace', () => {
             HAPPIER_E2E_UI_WEB_MODE: 'export',
             HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
             HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
+            HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '900000',
             HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '300000',
         };
 
@@ -145,16 +153,11 @@ test.describe('ui e2e: settings plugin marketplace', () => {
                     description: 'Descriptor-only plugin discovery',
                     entries: [
                         {
-                            id: 'sample-plugin',
-                            displayName: 'Sample Plugin',
+                            pluginId: 'sample-plugin',
+                            title: 'Sample Plugin',
                             description: 'Shows descriptor metadata',
                             version: '1.2.3',
-                            source: {
-                                kind: 'archive',
-                                locator: `${uiBaseUrl}/sample-plugin.tgz`,
-                                trustPolicy: 'local_trusted',
-                                installPolicy: 'managed_install',
-                            },
+                            packageUrl: `${uiBaseUrl}/sample-plugin.tgz`,
                         },
                     ],
                 })),
@@ -176,16 +179,11 @@ test.describe('ui e2e: settings plugin marketplace', () => {
                     description: 'Descriptor-only plugin discovery refresh',
                     entries: [
                         {
-                            id: 'replacement-plugin',
-                            displayName: 'Replacement Plugin',
+                            pluginId: 'replacement-plugin',
+                            title: 'Replacement Plugin',
                             description: 'Shows the refreshed catalog',
                             version: '2.0.0',
-                            source: {
-                                kind: 'archive',
-                                locator: `${uiBaseUrl}/replacement-plugin.tgz`,
-                                trustPolicy: 'local_trusted',
-                                installPolicy: 'managed_install',
-                            },
+                            packageUrl: `${uiBaseUrl}/replacement-plugin.tgz`,
                         },
                     ],
                 })),

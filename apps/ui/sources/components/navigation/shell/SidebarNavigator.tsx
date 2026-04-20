@@ -111,7 +111,14 @@ export const SidebarNavigator = React.memo(() => {
     const stackNavigationOptions = React.useMemo(() => ({
         lazy: false,
         headerShown: false,
-    }), []);
+        ...(isDesktopOverlayWindow
+            ? {
+                contentStyle: {
+                    backgroundColor: 'transparent',
+                },
+            }
+            : null),
+    }), [isDesktopOverlayWindow]);
 
     const drawerNavigationOptions = React.useMemo(() => {
         const base = {

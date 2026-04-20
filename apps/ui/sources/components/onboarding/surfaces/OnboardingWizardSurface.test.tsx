@@ -3,6 +3,8 @@ import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 
@@ -52,34 +54,12 @@ vi.mock('@/components/onboarding/steps/relayAccess/RelayAccessTailscalePrerequis
     },
 }));
 
-const expoRouterMock = vi.hoisted(() => {
-    const push = vi.fn();
-    const replace = vi.fn();
-    return {
-        spies: {
-            push,
-            replace,
-        },
-        module: {
-            router: {
-                push,
-                replace,
-            },
-            useRouter: () => ({
-                push,
-                replace,
-            }),
-            useLocalSearchParams: () => ({}),
-            useNavigation: () => null,
-            usePathname: () => '/',
-            useSegments: () => [],
-            Redirect: () => null,
-            Link: 'Link',
-            Stack: {
-                Screen: () => null,
-            },
-        },
-    };
+const expoRouterMock = createExpoRouterMock({
+    params: {},
+    router: {
+        push: vi.fn(),
+        replace: vi.fn(),
+    },
 });
 
 const setPendingSetupIntentMock = vi.hoisted(() => vi.fn<(value: PendingSetupIntent) => void>());
@@ -229,23 +209,19 @@ const remoteSshChecklistMock = vi.hoisted(() => {
     };
 });
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
         Platform: {
-            ...actual.Platform,
             get OS() {
                 return reactNativeMockState.os;
             },
         },
         AppState: {
-            ...actual.AppState,
-            get currentState() {
-                return 'active';
-            },
+            currentState: 'active',
+            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
         },
-    };
+    });
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -440,12 +416,14 @@ vi.mock('@expo/vector-icons/Ionicons', () => ({
 vi.mock('@/components/qr/QrCodeScannerView', () => ({
     QrCodeScannerView: (props: Record<string, unknown>) => React.createElement('QrCodeScannerView', props),
 }));
-vi.mock('@/modal', () => ({
-    Modal: {
+const modalMock = createModalModuleMock({
+    spies: {
         confirm: (title: string, message?: string, options?: unknown) => modalConfirmMock(title, message, options),
-        alert: vi.fn(async () => undefined),
+        alert: () => undefined,
     },
-}));
+});
+
+vi.mock('@/modal', () => modalMock.module);
 vi.mock('@/components/serverProfiles/removeServerProfileUiAction', () => ({
     removeServerProfileUiAction: (params: unknown) => removeServerProfileUiActionMock(params),
 }));
@@ -555,6 +533,25 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.next');
+    });
+
+    it('renders a shell chrome accessory when the pre-auth host provides one', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface as any, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                shellChrome: React.createElement('ShellChrome'),
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findAllByType('ShellChrome' as never)).toHaveLength(1);
     });
 
     it('uses the physical screen size (not the window size) for web QR-scanner heuristics on desktop shells', async () => {

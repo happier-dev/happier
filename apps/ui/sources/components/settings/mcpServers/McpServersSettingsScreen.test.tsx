@@ -246,9 +246,7 @@ describe('McpServersSettingsScreen', () => {
         expect(screen.findRow('settings.mcpServers.preview.refresh')).toBeTruthy();
 
         const agentDropdown = screen.find((node) => node.props?.itemTrigger?.title === 'settings.mcpServersPreviewAgentTitle');
-        expect(agentDropdown!.props.items.map((item: { id: string }) => item.id)).toEqual(
-            expect.arrayContaining([...listMcpPreviewAgentIds()]),
-        );
+        expect(agentDropdown!.props.items.map((item: { id: string }) => item.id)).toEqual(listMcpPreviewAgentIds());
 
         await selectHeaderTab(screen, 'configured');
         expect(screen.findRow('settings.mcpServers.addServer')).toBeTruthy();

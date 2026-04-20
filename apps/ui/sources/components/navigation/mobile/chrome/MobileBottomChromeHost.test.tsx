@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -48,11 +50,18 @@ const routerState = vi.hoisted(() => ({
     replace: vi.fn(),
 }));
 
-vi.mock('expo-router', () => ({
-    usePathname: () => pathState.pathname,
-    useGlobalSearchParams: () => searchParamsState,
-    useRouter: () => routerState,
-}));
+const expoRouterMock = createExpoRouterMock({
+    pathname: () => pathState.pathname,
+    params: () => ({
+        mobileSurface: searchParamsState.mobileSurface,
+        worktreeId: searchParamsState.worktreeId,
+    }),
+    router: {
+        replace: (value: unknown) => routerState.replace(value),
+    },
+});
+
+vi.mock('expo-router', () => expoRouterMock.module);
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => authState,
@@ -62,7 +71,7 @@ vi.mock('./MainAppTabStateProvider', () => ({
     useMainAppTabState: () => tabState,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     useLocalSetting: (key: string) => React.useSyncExternalStore(
         (listener) => {
             storageListeners.listeners.add(listener);
@@ -106,7 +115,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
         }
         return [null, vi.fn()];
     },
-}));
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 function readSettingValue(key: string): unknown {
     if (key === 'mobileWorkspaceExperienceV1') {

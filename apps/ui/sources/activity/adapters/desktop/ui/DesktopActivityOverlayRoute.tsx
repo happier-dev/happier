@@ -18,6 +18,8 @@ import { DesktopActivityOverlayExpanded } from './DesktopActivityOverlayExpanded
 import { DesktopActivityOverlayMotionFrame } from './DesktopActivityOverlayMotionFrame';
 import { resolveDesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
 
+const DESKTOP_ACTIVITY_OVERLAY_HOVER_EXPAND_DELAY_MS = 1_000;
+
 function emitInteraction(actionIdentifier: string, data: Record<string, unknown> = {}) {
     fireAndForget(
         emitDesktopActivityOverlayInteraction({
@@ -129,7 +131,22 @@ function useDesktopOverlayTransparentDocumentBackground(enabled: boolean) {
 export function DesktopActivityOverlayRoute(): React.ReactElement {
     const state = useDesktopActivityOverlayState();
     const inOverlayWindowContext = isDesktopActivityOverlayWindowContext();
+    const hoverExpandTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     useDesktopOverlayTransparentDocumentBackground(inOverlayWindowContext);
+    const clearHoverExpandTimeout = React.useCallback(() => {
+        if (hoverExpandTimeoutRef.current !== null) {
+            clearTimeout(hoverExpandTimeoutRef.current);
+            hoverExpandTimeoutRef.current = null;
+        }
+    }, []);
+
+    React.useEffect(() => clearHoverExpandTimeout, [clearHoverExpandTimeout]);
+
+    React.useEffect(() => {
+        if (!state?.visible || state.expanded) {
+            clearHoverExpandTimeout();
+        }
+    }, [clearHoverExpandTimeout, state?.expanded, state?.visible]);
 
     const dragHandlers = useDesktopOverlayDragController({
         enabled: Boolean(
@@ -160,60 +177,42 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
         );
     }
 
-    const collapsedIsInteractive = state.policy.interactiveCollapsed;
     const visualMode = resolveDesktopActivityOverlayVisualMode({
         presentationMode: state.policy.presentationMode,
-        compactStyle: state.policy.compactStyle,
         hostMode: state.placementDiagnostics?.hostMode ?? null,
     });
-    const expandsOnClick =
-        state.policy.clickAction === 'expand_overlay'
-        && state.policy.expandedBehavior === 'click';
-    const expandsOnHover =
-        state.policy.clickAction === 'expand_overlay'
-        && state.policy.expandedBehavior === 'hover';
 
     const expandOverlay = () => {
+        clearHoverExpandTimeout();
         fireAndForget(setDesktopActivityOverlayExpanded(true), {
             tag: 'DesktopActivityOverlayRoute.expand',
         });
         emitInteraction('overlay-set-expanded', { expanded: true });
     };
 
-    const onCollapsedPress = () => {
-        if (!collapsedIsInteractive) {
-            return;
-        }
+    const hoverExpandEnabled = visualMode === 'notch_integrated' || state.policy.expandedBehavior === 'hover';
 
-        switch (state.policy.clickAction) {
-            case 'open_primary_session': {
-                const primarySessionId = state.model.expanded.rows[0]?.sessionId ?? null;
-                if (!primarySessionId) {
-                    emitInteraction('open-inbox');
-                    return;
-                }
-                emitInteraction(`open-session:${primarySessionId}`, {
-                    primarySessionId,
-                });
-                return;
-            }
-            case 'open_sessions': {
-                emitInteraction('open-inbox');
-                return;
-            }
-            case 'expand_overlay':
-            default: {
-                if (!expandsOnClick) {
-                    return;
-                }
-                expandOverlay();
-            }
-        }
+    const onCollapsedPress = () => {
+        expandOverlay();
     };
+
+    const onCollapsedHoverIn = hoverExpandEnabled
+        ? () => {
+            clearHoverExpandTimeout();
+            hoverExpandTimeoutRef.current = setTimeout(() => {
+                hoverExpandTimeoutRef.current = null;
+                expandOverlay();
+            }, DESKTOP_ACTIVITY_OVERLAY_HOVER_EXPAND_DELAY_MS);
+        }
+        : undefined;
+    const onCollapsedHoverOut = hoverExpandEnabled ? clearHoverExpandTimeout : undefined;
 
     if (state.expanded) {
         return (
             <View style={styles.container}>
+                <Text testID="desktop-activity-overlay-diagnostics" style={styles.diagnosticsText}>
+                    {JSON.stringify(state.placementDiagnostics ?? null)}
+                </Text>
                 <DesktopActivityOverlayMotionFrame key="expanded" visible={state.visible} expanded>
                 <DesktopActivityOverlayExpanded
                     model={state.model}
@@ -230,6 +229,9 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
                         onOpenInbox={() => {
                             emitInteraction('open-inbox');
                         }}
+                        onAction={(action) => {
+                            emitInteraction(action.actionIdentifier, { ...(action.data ?? {}) });
+                        }}
                     />
                 </DesktopActivityOverlayMotionFrame>
             </View>
@@ -238,14 +240,17 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
 
     return (
         <View style={styles.container}>
+            <Text testID="desktop-activity-overlay-diagnostics" style={styles.diagnosticsText}>
+                {JSON.stringify(state.placementDiagnostics ?? null)}
+            </Text>
             <DesktopActivityOverlayMotionFrame key="collapsed" visible={state.visible} expanded={false}>
                 <DesktopActivityOverlayCollapsed
                     model={state.model}
                     visualMode={visualMode}
-                    interactive={collapsedIsInteractive}
                     dragHandlers={dragHandlers}
                     onPress={onCollapsedPress}
-                    onHoverIn={collapsedIsInteractive && expandsOnHover ? expandOverlay : undefined}
+                    onHoverIn={onCollapsedHoverIn}
+                    onHoverOut={onCollapsedHoverOut}
                 />
             </DesktopActivityOverlayMotionFrame>
         </View>
@@ -272,5 +277,13 @@ const styles = StyleSheet.create({
     loadingText: {
         fontSize: 12,
         opacity: 0.8,
+    },
+    diagnosticsText: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        opacity: 0,
+        pointerEvents: 'none',
+        fontSize: 1,
     },
 });

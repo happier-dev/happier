@@ -140,11 +140,15 @@ vi.mock('@/components/sessions/new/components/NewSessionWizard', () => ({
     NewSessionWizard: 'NewSessionWizard',
 }));
 
-vi.mock('@/components/ui/popover', () => ({
-    PopoverBoundaryProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
-    PopoverPortalTargetProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
-    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/ui/popover')>();
+    return {
+        ...actual,
+        PopoverBoundaryProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
+        PopoverPortalTargetProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
+        PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    };
+});
 
 afterEach(() => {
     mockState.persistedDraft = null;

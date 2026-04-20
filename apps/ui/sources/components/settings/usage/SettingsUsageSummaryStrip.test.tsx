@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 function getNodeTextContent(node: unknown): string {
     if (node == null) {
@@ -19,8 +20,8 @@ function getNodeTextContent(node: unknown): string {
     return '';
 }
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+const textMock = createTextModuleMock({
+    translate: (key: string, params?: Record<string, unknown>) => {
         if (key === 'usage.summary.currentStreakSubtitle' && typeof params?.count === 'number') {
             return `Active on ${params.count} days`;
         }
@@ -29,7 +30,9 @@ vi.mock('@/text', () => ({
         }
         return key;
     },
-}));
+});
+
+vi.mock('@/text', () => textMock);
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemGroup', null, children),

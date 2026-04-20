@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import Svg, { Path } from 'react-native-svg';
 
 import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
 
@@ -9,62 +10,37 @@ export function DesktopActivityOverlayBrandMark(props: Readonly<{
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const pixelColor = props.visualMode === 'notch_integrated'
+    const markFill = props.visualMode === 'notch_integrated'
         ? theme.colors.accent.orange
         : theme.colors.overlay.text;
+    const smileCutout = theme.colors.overlay.scrimStrong;
 
     return (
         <View testID={props.testID} style={styles.root}>
-            <View style={[styles.pixel, styles.pixelTopLeft, { backgroundColor: pixelColor }]} />
-            <View style={[styles.pixel, styles.pixelTopRight, { backgroundColor: pixelColor }]} />
-            <View style={[styles.pixel, styles.pixelCenter, { backgroundColor: pixelColor }]} />
-            <View style={[styles.pixel, styles.pixelLowerLeft, { backgroundColor: pixelColor }]} />
-            <View style={[styles.pixel, styles.pixelLowerRight, { backgroundColor: pixelColor }]} />
-            <View style={[styles.pixel, styles.pixelFootLeft, { backgroundColor: pixelColor }]} />
-            <View style={[styles.pixel, styles.pixelFootRight, { backgroundColor: pixelColor }]} />
+            <Svg width="100%" height="100%" viewBox="0 0 24 24" fill="none">
+                <Path
+                    fill={markFill}
+                    fillRule="evenodd"
+                    clipRule="evenodd"
+                    d="M4.25 1.5C2.73122 1.5 1.5 2.73122 1.5 4.25V19.75C1.5 21.2688 2.73122 22.5 4.25 22.5H19.75C21.2688 22.5 22.5 21.2688 22.5 19.75V4.25C22.5 2.73122 21.2688 1.5 19.75 1.5H14.75V7C14.75 8.51878 13.5188 9.75 12 9.75C10.4812 9.75 9.25 8.51878 9.25 7V1.5H4.25ZM10.75 1.5H13.25V7C13.25 7.69036 12.6904 8.25 12 8.25C11.3096 8.25 10.75 7.69036 10.75 7V1.5Z"
+                />
+                <Path
+                    d="M6.8 14.25C8.15 16.3 9.85 17.35 12 17.35C14.15 17.35 15.85 16.3 17.2 14.25"
+                    stroke={smileCutout}
+                    strokeWidth={2.4}
+                    strokeLinecap="round"
+                />
+            </Svg>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     root: {
-        width: 12,
-        height: 12,
-        position: 'relative',
+        width: 13,
+        height: 13,
         flexShrink: 0,
-    },
-    pixel: {
-        position: 'absolute',
-        width: 3,
-        height: 3,
-        borderRadius: 1,
-    },
-    pixelTopLeft: {
-        left: 1,
-        top: 0,
-    },
-    pixelTopRight: {
-        right: 1,
-        top: 0,
-    },
-    pixelCenter: {
-        left: 4.5,
-        top: 3,
-    },
-    pixelLowerLeft: {
-        left: 0,
-        top: 5.5,
-    },
-    pixelLowerRight: {
-        right: 0,
-        top: 5.5,
-    },
-    pixelFootLeft: {
-        left: 2,
-        bottom: 0,
-    },
-    pixelFootRight: {
-        right: 2,
-        bottom: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });

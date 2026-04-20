@@ -93,4 +93,12 @@ describe('desktopActivityOverlayBridge', () => {
 
         expect(invokeTauriMock).toHaveBeenCalledWith('desktop_activity_overlay_reset_position', undefined);
     });
+
+    it('reveals the main window through tauri invoke before route-driven overlay interactions', async () => {
+        const { showDesktopMainWindow } = await import('./desktopActivityOverlayBridge');
+
+        await showDesktopMainWindow();
+
+        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_show_main_window', undefined);
+    });
 });

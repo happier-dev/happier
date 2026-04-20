@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useActiveSelectionMachineGroups } from '@/components/settings/machines/hooks/useActiveSelectionMachineGroups';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import {
     useAllMachines,
     useMachineListByServerId,
@@ -63,6 +64,9 @@ export function useConnectionHealth() {
             serverSelectionActiveTargetId,
         },
     });
+    const activeSyncError = React.useMemo(() => {
+        return selectSyncErrorForServer(syncError, activeServerSnapshot.serverId);
+    }, [activeServerSnapshot.serverId, syncError]);
 
     const primaryMachineLabel = React.useMemo(() => {
         const byId = new Map<string, (typeof activeSelectionMachineGroups.visibleMachineGroups)[number]['machines'][number]>();
@@ -87,7 +91,8 @@ export function useConnectionHealth() {
         return resolveConnectionHealth({
             socketStatus: socketStatus.status,
             endpointStatus: endpointConnectivity.status,
-            hasSyncError: Boolean(syncError),
+            hasSyncError: Boolean(activeSyncError),
+            syncErrorKind: activeSyncError?.kind,
             machineGroups: activeSelectionMachineGroups.visibleMachineGroups.map((group) => {
                 if (group.status === 'loading' || group.status === 'signedOut') {
                     return {
@@ -107,7 +112,7 @@ export function useConnectionHealth() {
                 };
             }),
         });
-    }, [activeSelectionMachineGroups.visibleMachineGroups, endpointConnectivity.status, socketStatus.status, syncError]);
+    }, [activeSelectionMachineGroups.visibleMachineGroups, activeSyncError, endpointConnectivity.status, socketStatus.status]);
 
     const presentation = React.useMemo(() => {
         return resolveConnectionHealthPresentation(health, {

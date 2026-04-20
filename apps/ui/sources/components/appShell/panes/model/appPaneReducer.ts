@@ -1,19 +1,32 @@
+import type {
+    DetailsTab,
+    DetailsTabOpenMode,
+    DetailsTabState,
+    DetailsWorkspaceAxis,
+    DetailsWorkspacePlacement,
+    PaneDetailsState,
+} from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
+import {
+    applyCloseDetails,
+    applyCloseDetailsGroup,
+    applyCloseDetailsTab,
+    applyFocusDetailsGroup,
+    applyMoveDetailsTabToGroup,
+    applyOpenDetailsTab,
+    applyPinDetailsTab,
+    applySetActiveDetailsTab,
+    applySetDetailsTabState,
+    applySetDetailsSplitRatio,
+    applySetMaximizedDetailsGroup,
+    applySplitDetailsGroup,
+    applyUnpinDetailsTab,
+    arePaneDetailsStatesEqual,
+    createEmptyPaneDetailsState,
+} from '@/components/appShell/panes/details/workspace/detailsWorkspaceReducer';
+
+export type { DetailsTab, DetailsTabOpenMode, DetailsTabState, PaneDetailsState };
+
 export type PaneId = 'right' | 'details' | 'bottom';
-
-export type DetailsTabOpenMode = 'preview' | 'pinned';
-
-export type DetailsTab = Readonly<{
-    key: string;
-    kind: string;
-    title: string;
-    subtitle?: string | null;
-    resource: unknown;
-}>;
-
-export type DetailsTabState = Readonly<DetailsTab & {
-    isPreview: boolean;
-    isPinned: boolean;
-}>;
 
 export type PaneScopeState = Readonly<{
     right: {
@@ -21,12 +34,7 @@ export type PaneScopeState = Readonly<{
         activeTabId: string | null;
         tabState: Readonly<Record<string, unknown>>;
     };
-    details: {
-        isOpen: boolean;
-        tabs: ReadonlyArray<DetailsTabState>;
-        activeTabKey: string | null;
-        tabState: Readonly<Record<string, unknown>>;
-    };
+    details: PaneDetailsState;
     bottom: {
         isOpen: boolean;
         activeTabId: string | null;
@@ -60,7 +68,19 @@ export type AppPaneAction =
     | { type: 'unpinDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'closeDetails'; scopeId: string }
     | { type: 'closeDetailsTab'; scopeId: string; tabKey: string }
-    | { type: 'setActiveDetailsTab'; scopeId: string; tabKey: string };
+    | { type: 'setActiveDetailsTab'; scopeId: string; tabKey: string }
+    | {
+        type: 'splitDetailsGroup';
+        scopeId: string;
+        axis: DetailsWorkspaceAxis;
+        groupId?: string;
+        placement?: DetailsWorkspacePlacement;
+    }
+    | { type: 'setDetailsSplitRatio'; scopeId: string; splitId: string; ratio: number }
+    | { type: 'moveDetailsTabToGroup'; scopeId: string; tabKey: string; targetGroupId: string }
+    | { type: 'focusDetailsGroup'; scopeId: string; groupId: string }
+    | { type: 'setMaximizedDetailsGroup'; scopeId: string; groupId: string | null }
+    | { type: 'closeDetailsGroup'; scopeId: string; groupId: string };
 
 export function createAppPaneState(options: Readonly<{
     maxScopesInMemory: number;
@@ -78,7 +98,7 @@ export function createAppPaneState(options: Readonly<{
 function createEmptyScopeState(): PaneScopeState {
     return {
         right: { isOpen: false, activeTabId: null, tabState: {} },
-        details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
+        details: createEmptyPaneDetailsState(),
         bottom: { isOpen: false, activeTabId: null, tabState: {} },
     };
 }
@@ -89,8 +109,7 @@ function isEmptyScopeState(scope: PaneScopeState): boolean {
         && scope.right.activeTabId == null
         && Object.keys(scope.right.tabState).length === 0
         && scope.details.isOpen === false
-        && scope.details.tabs.length === 0
-        && scope.details.activeTabKey == null
+        && Object.keys(scope.details.tabsByKey).length === 0
         && Object.keys(scope.details.tabState).length === 0
         && scope.bottom.isOpen === false
         && scope.bottom.activeTabId == null
@@ -112,39 +131,12 @@ function areTabStateRecordsEqual(
     return true;
 }
 
-function areDetailsTabsEqual(
-    left: ReadonlyArray<DetailsTabState>,
-    right: ReadonlyArray<DetailsTabState>,
-): boolean {
-    if (left.length !== right.length) return false;
-    for (let i = 0; i < left.length; i += 1) {
-        const leftTab = left[i];
-        const rightTab = right[i];
-        if (!leftTab || !rightTab) return false;
-        if (
-            leftTab.key !== rightTab.key
-            || leftTab.kind !== rightTab.kind
-            || leftTab.title !== rightTab.title
-            || leftTab.subtitle !== rightTab.subtitle
-            || !Object.is(leftTab.resource, rightTab.resource)
-            || leftTab.isPreview !== rightTab.isPreview
-            || leftTab.isPinned !== rightTab.isPinned
-        ) {
-            return false;
-        }
-    }
-    return true;
-}
-
 function arePaneScopeStatesEqual(left: PaneScopeState, right: PaneScopeState): boolean {
     return (
         left.right.isOpen === right.right.isOpen
         && left.right.activeTabId === right.right.activeTabId
         && areTabStateRecordsEqual(left.right.tabState, right.right.tabState)
-        && left.details.isOpen === right.details.isOpen
-        && left.details.activeTabKey === right.details.activeTabKey
-        && areDetailsTabsEqual(left.details.tabs, right.details.tabs)
-        && areTabStateRecordsEqual(left.details.tabState, right.details.tabState)
+        && arePaneDetailsStatesEqual(left.details, right.details)
         && left.bottom.isOpen === right.bottom.isOpen
         && left.bottom.activeTabId === right.bottom.activeTabId
         && areTabStateRecordsEqual(left.bottom.tabState, right.bottom.tabState)
@@ -174,17 +166,6 @@ function upsertScope(state: AppPaneState, scopeId: string, mutate: (prev: PaneSc
     const prev = state.scopes[scopeId] ?? createEmptyScopeState();
     const nextScopes = { ...state.scopes, [scopeId]: mutate(prev) };
     return { ...state, scopes: nextScopes };
-}
-
-function setDetailsTabs(scope: PaneScopeState, nextTabs: ReadonlyArray<DetailsTabState>, nextActiveKey: string | null): PaneScopeState {
-    return {
-        ...scope,
-        details: {
-            ...scope.details,
-            tabs: nextTabs,
-            activeTabKey: nextActiveKey,
-        },
-    };
 }
 
 export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPaneState {
@@ -318,135 +299,75 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 },
             }));
         }
-        case 'openDetailsTab': {
-            return upsertScope(state, action.scopeId, (prev) => {
-                const existingIndex = prev.details.tabs.findIndex((t) => t.key === action.tab.key);
-                if (existingIndex >= 0) {
-                    const existing = prev.details.tabs[existingIndex]!;
-                    const pinned = action.openAs === 'pinned' ? true : existing.isPinned;
-                    const preview = pinned ? false : existing.isPreview;
-                    const nextTabs = prev.details.tabs.map((t, index) => (
-                        index === existingIndex
-                            ? {
-                                ...action.tab,
-                                isPinned: pinned,
-                                isPreview: preview,
-                            }
-                            : t
-                    ));
-                    return {
-                        ...prev,
-                        details: { ...prev.details, isOpen: true, tabs: nextTabs, activeTabKey: action.tab.key },
-                    };
-                }
-
-                let nextTabs = prev.details.tabs;
-                if (action.openAs === 'preview') {
-                    nextTabs = nextTabs.filter((t) => !t.isPreview);
-                }
-
-                const nextTab: DetailsTabState = {
-                    ...action.tab,
-                    isPinned: action.openAs === 'pinned',
-                    isPreview: action.openAs === 'preview',
-                };
-                nextTabs = [...nextTabs, nextTab];
-                return setDetailsTabs({ ...prev, details: { ...prev.details, isOpen: true } }, nextTabs, nextTab.key);
-            });
-        }
-        case 'setDetailsTabState': {
-            return upsertScope(state, action.scopeId, (prev) => {
-                const nextState = action.nextState;
-                if (nextState == null) {
-                    if (!(action.tabKey in prev.details.tabState)) return prev;
-                    const { [action.tabKey]: _deleted, ...rest } = prev.details.tabState;
-                    return { ...prev, details: { ...prev.details, tabState: rest } };
-                }
-                return {
-                    ...prev,
-                    details: {
-                        ...prev.details,
-                        tabState: {
-                            ...prev.details.tabState,
-                            [action.tabKey]: nextState,
-                        },
-                    },
-                };
-            });
-        }
-        case 'pinDetailsTab': {
-            return upsertScope(state, action.scopeId, (prev) => {
-                const index = prev.details.tabs.findIndex((t) => t.key === action.tabKey);
-                if (index < 0) return prev;
-                const nextTabs = prev.details.tabs.map((t, i) => (i === index ? { ...t, isPinned: true, isPreview: false } : t));
-                return { ...prev, details: { ...prev.details, tabs: nextTabs } };
-            });
-        }
-        case 'unpinDetailsTab': {
-            return upsertScope(state, action.scopeId, (prev) => {
-                const index = prev.details.tabs.findIndex((t) => t.key === action.tabKey);
-                if (index < 0) return prev;
-
-                // Revert the tab into the preview slot (unpinned + preview) and preserve the
-                // invariant that only one preview tab exists at a time.
-                const nextTabsWithTarget = prev.details.tabs.map((t, i) => (i === index
-                    ? { ...t, isPinned: false, isPreview: true }
-                    : t));
-
-                const removedPreviewKeys = new Set<string>();
-                for (const tab of nextTabsWithTarget) {
-                    if (tab.key === action.tabKey) continue;
-                    if (tab.isPinned) continue;
-                    if (!tab.isPreview) continue;
-                    removedPreviewKeys.add(tab.key);
-                }
-
-                let nextTabs = nextTabsWithTarget;
-                let nextTabState = prev.details.tabState;
-                if (removedPreviewKeys.size > 0) {
-                    nextTabs = nextTabsWithTarget.filter((t) => !removedPreviewKeys.has(t.key));
-                    const mutableState = { ...prev.details.tabState } as Record<string, unknown>;
-                    for (const key of removedPreviewKeys) {
-                        delete mutableState[key];
-                    }
-                    nextTabState = mutableState;
-                }
-
-                const nextActive = action.tabKey;
-                return setDetailsTabs(
-                    { ...prev, details: { ...prev.details, tabState: nextTabState } },
-                    nextTabs,
-                    nextActive,
-                );
-            });
-        }
-        case 'closeDetails': {
-            return upsertScope(state, action.scopeId, (prev) => ({ ...prev, details: { ...prev.details, isOpen: false } }));
-        }
-        case 'closeDetailsTab': {
-            return upsertScope(state, action.scopeId, (prev) => {
-                const index = prev.details.tabs.findIndex((t) => t.key === action.tabKey);
-                if (index < 0) return prev;
-                const nextTabs = prev.details.tabs.filter((t) => t.key !== action.tabKey);
-                const { [action.tabKey]: _deletedTabState, ...remainingTabState } = prev.details.tabState;
-                const nextActive =
-                    prev.details.activeTabKey === action.tabKey
-                        ? (nextTabs[index - 1]?.key ?? nextTabs[index]?.key ?? nextTabs.at(-1)?.key ?? null)
-                        : prev.details.activeTabKey;
-                const isOpen = nextTabs.length > 0 ? prev.details.isOpen : false;
-                return setDetailsTabs(
-                    { ...prev, details: { ...prev.details, isOpen, tabState: remainingTabState } },
-                    nextTabs,
-                    nextActive
-                );
-            });
-        }
-        case 'setActiveDetailsTab': {
-            return upsertScope(state, action.scopeId, (prev) => {
-                if (!prev.details.tabs.some((t) => t.key === action.tabKey)) return prev;
-                return { ...prev, details: { ...prev.details, activeTabKey: action.tabKey } };
-            });
-        }
+        case 'openDetailsTab':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyOpenDetailsTab(prev.details, { tab: action.tab, openAs: action.openAs }),
+            }));
+        case 'setDetailsTabState':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applySetDetailsTabState(prev.details, action.tabKey, action.nextState),
+            }));
+        case 'pinDetailsTab':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyPinDetailsTab(prev.details, action.tabKey),
+            }));
+        case 'unpinDetailsTab':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyUnpinDetailsTab(prev.details, action.tabKey),
+            }));
+        case 'closeDetails':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyCloseDetails(prev.details),
+            }));
+        case 'closeDetailsTab':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyCloseDetailsTab(prev.details, action.tabKey),
+            }));
+        case 'setActiveDetailsTab':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applySetActiveDetailsTab(prev.details, action.tabKey),
+            }));
+        case 'splitDetailsGroup':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applySplitDetailsGroup(prev.details, {
+                    axis: action.axis,
+                    groupId: action.groupId,
+                    placement: action.placement,
+                }),
+            }));
+        case 'setDetailsSplitRatio':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applySetDetailsSplitRatio(prev.details, action.splitId, action.ratio),
+            }));
+        case 'moveDetailsTabToGroup':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyMoveDetailsTabToGroup(prev.details, { tabKey: action.tabKey, targetGroupId: action.targetGroupId }),
+            }));
+        case 'focusDetailsGroup':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyFocusDetailsGroup(prev.details, action.groupId),
+            }));
+        case 'setMaximizedDetailsGroup':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applySetMaximizedDetailsGroup(prev.details, action.groupId),
+            }));
+        case 'closeDetailsGroup':
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                details: applyCloseDetailsGroup(prev.details, action.groupId),
+            }));
         default:
             return state;
     }

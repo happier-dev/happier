@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
-import { t } from '@/text';
-import { useResizableDockedPaneCore, type DockedPaneResizeCommitMeta } from './resizable/resizableDockedPaneCore';
+import { Platform, View } from 'react-native';
+import { useResizableDockedPaneCore, type DockedPaneResizeCommitMeta } from '@/components/ui/panels/resizable/resizableDockedPaneCore';
+import { ResizablePaneDividerHandle } from '@/components/ui/panels/resizable/ResizablePaneDividerHandle';
 
 export type ResizableDockedPaneCommitMeta = DockedPaneResizeCommitMeta;
 
@@ -41,38 +41,23 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
             }}
         >
             {canResize ? (
-                <Pressable
-                    focusable={Platform.OS === 'web'}
-                    accessibilityRole="adjustable"
-                    accessibilityLabel={t('ui.resizableDockedPane.resizeA11y')}
-                    accessibilityHint={t('ui.resizableDockedPane.resizeHint')}
-                    {...(Platform.OS === 'web'
+                <ResizablePaneDividerHandle
+                    axis="x"
+                    interactionProps={Platform.OS === 'web'
                         ? ({
                             ...webHandleProps,
                         } as any)
-                        : panHandlers as any)}
+                        : panHandlers as any}
                     style={{
                         position: 'absolute',
                         ...(resizeEdge === 'left' ? { left: 0 } : { right: 0 }),
                         top: 0,
                         bottom: 0,
-                        width: 2,
-                        cursor: 'col-resize' as any,
+                        width: 10,
                         zIndex: 1000,
-                        userSelect: 'none' as any,
-                        ...(Platform.OS === 'web' ? ({ touchAction: 'none' } as any) : null),
                     }}
-                >
-                    <View
-                        style={{
-                            position: 'absolute',
-                            ...(resizeEdge === 'left' ? { left: 4 } : { right: 4 }),
-                            top: 0,
-                            bottom: 0,
-                            width: 1,
-                        }}
-                    />
-                </Pressable>
+                    showIndicator={false}
+                />
             ) : null}
             <View style={{ flex: 1, width: '100%', minHeight: 0 }}>{props.children}</View>
         </View>

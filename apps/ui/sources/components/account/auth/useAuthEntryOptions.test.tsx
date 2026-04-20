@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn());
@@ -22,8 +23,8 @@ vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: getAuthProviderMock,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+const textMock = createTextModuleMock({
+    translate: (key: string, params?: Record<string, unknown>) => {
         if (key === 'welcome.signUpWithProvider' && typeof params?.provider === 'string') {
             return `Sign up with ${params.provider}`;
         }
@@ -32,7 +33,9 @@ vi.mock('@/text', () => ({
         if (key === 'status.unknown') return 'Unknown';
         return key;
     },
-}));
+});
+
+vi.mock('@/text', () => textMock);
 
 describe('useAuthEntryOptions', () => {
     let activeServerListener: ((snapshot: { serverUrl: string }) => void) | null = null;

@@ -11,7 +11,7 @@ import { storage, useSession, useIsDataReady, useLocalSetting, useSetting } from
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
-import { sessionArchiveWithServerScope, sessionDelete, sessionRename, sessionStop } from '@/sync/ops';
+import { sessionArchiveWithServerScope, sessionDelete, sessionRename, sessionStopWithServerScope } from '@/sync/ops';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
@@ -42,7 +42,7 @@ import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHand
 import {
     resolveSessionHandoffUiAvailability,
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
-import { buildBackendTargetKey, getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
@@ -51,11 +51,14 @@ import { useSessionReachableMachineTarget } from '@/components/sessions/model/us
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 
 // Animated status dot component
@@ -132,6 +135,16 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
     const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
     const core = getAgentCore(agentId);
+    const daemonProjectionMachineId = React.useMemo(() => {
+        const raw = typeof (session.metadata as any)?.machineId === 'string' ? (session.metadata as any).machineId : '';
+        const trimmed = String(raw ?? '').trim();
+        return trimmed.length > 0 ? trimmed : null;
+    }, [session.metadata]);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: daemonProjectionMachineId,
+        serverId: sessionServerId ?? null,
+    });
+    const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready' ? daemonMergedProjection.inputs : null;
     const sessionActionDefaultBackend = React.useMemo(
         () => resolveSessionActionDefaultBackend({
             session,
@@ -142,13 +155,24 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     );
     const sessionActionDefaultBackendEntry = React.useMemo(() => {
         if (!sessionActionDefaultBackend) return null;
-        const selectedTargetKey = buildBackendTargetKey(sessionActionDefaultBackend.backendTarget);
+        const selectedTargetKey = resolveBackendTargetKeyV2(sessionActionDefaultBackend.backendTarget);
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
             acpCatalogSettingsV1: (acpCatalogSettingsV1 as any) ?? { v: 2, backends: [] },
             backendEnabledByTargetKey: (backendEnabledByTargetKey as any) ?? null,
-        }).find((entry) => entry.targetKey === selectedTargetKey) ?? null;
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds, sessionActionDefaultBackend]);
+            mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
+            discoveredBackendIds: daemonMergedProjectionInputs?.discoveredBackendIds ?? undefined,
+        }).find((entry) => entry.backendTargetKey === selectedTargetKey) ?? null;
+    }, [
+        acpCatalogSettingsV1,
+        backendEnabledByTargetKey,
+        daemonMergedProjectionInputs?.discoveredBackendIds,
+        daemonMergedProjectionInputs?.mergedBackendProjectionById,
+        daemonMergedProjectionInputs?.mergedProviderProjectionById,
+        enabledAgentIds,
+        sessionActionDefaultBackend,
+    ]);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: (childSessionId) => {
@@ -284,8 +308,9 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
-    const canArchiveSession = canManageSharing && !session.active && !isArchivedSession;
-    const resolvedServerId = sessionServerId;
+    const canArchiveSession = canManageSharing && !isArchivedSession;
+    const resolvedServerId = resolveServerIdForSessionIdFromLocalCache(session.id) ?? sessionServerId;
+    const scopedMutationServerId = routeScope.serverId ?? sessionServerId ?? resolvedServerId ?? null;
     const isPinnedSession = Boolean(
         resolvedServerId &&
         Array.isArray(pinnedSessionKeysV1) &&
@@ -297,13 +322,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             sessionId: session.id,
             hideInactiveSessions,
             isPinned: isPinnedSession,
-            stopSession: async () => await sessionStop(session.id),
-            archiveSession: async () => await sessionArchiveWithServerScope(session.id, { serverId: null }),
+            archiveAfterStop: 'never',
+            stopSession: async () => await sessionStopWithServerScope(session.id, { serverId: scopedMutationServerId }),
+            archiveSession: async () => await sessionArchiveWithServerScope(session.id, { serverId: scopedMutationServerId }),
             stopErrorMessage: t('sessionInfo.failedToStopSession'),
             archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
         });
         handleExitAfterSessionMutation();
-    }, [handleExitAfterSessionMutation, hideInactiveSessions, isPinnedSession, session.id]);
+    }, [handleExitAfterSessionMutation, hideInactiveSessions, isPinnedSession, scopedMutationServerId, session.id]);
     const [stoppingSession, performStop] = useHappyAction(handleStopAndMaybeArchive);
 
     const handleStopSession = useCallback(() => {
@@ -322,13 +348,28 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [performStop]);
 
     const handleArchive = useCallback(async () => {
-        const result = await sessionArchiveWithServerScope(session.id, { serverId: null });
+        if (session.active) {
+            await stopSessionAndMaybeArchive({
+                sessionId: session.id,
+                hideInactiveSessions,
+                isPinned: isPinnedSession,
+                archiveAfterStop: 'always',
+                stopSession: async () => await sessionStopWithServerScope(session.id, { serverId: scopedMutationServerId }),
+                archiveSession: async () => await sessionArchiveWithServerScope(session.id, { serverId: scopedMutationServerId }),
+                stopErrorMessage: t('sessionInfo.failedToStopSession'),
+                archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
+            });
+            handleExitAfterSessionMutation();
+            return;
+        }
+
+        const result = await sessionArchiveWithServerScope(session.id, { serverId: scopedMutationServerId });
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }
         clearSessionVisibleWhenInactive(session.id);
         handleExitAfterSessionMutation();
-    }, [handleExitAfterSessionMutation, session.id]);
+    }, [handleExitAfterSessionMutation, hideInactiveSessions, isPinnedSession, scopedMutationServerId, session.active, session.id]);
     const [archivingSession, performArchive] = useHappyAction(handleArchive);
 
     const handleForkAction = useCallback(async () => {
@@ -673,7 +714,6 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                                 title={t('sessionInfo.aiProvider')}
                                 subtitle={resolveSessionActionDefaultBackendTitle({
                                     session,
-                                    agentId,
                                     sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
                                     fallbackTitle: t(getAgentCore(agentId).displayNameKey),
                                 })}

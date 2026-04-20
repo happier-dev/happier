@@ -1,7 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,6 +33,15 @@ const mockState = vi.hoisted(() => ({
     projectForSession: {} as Record<string, { key?: { machineId?: string; rootPath?: string } } | null>,
     settingsState: {} as Record<string, unknown>,
     sessionsState: [] as Array<unknown>,
+}));
+type MachineContributionRegistryProjectionDescribeFn =
+    typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
+const {
+    machineContributionRegistryProjectionDescribe,
+} = vi.hoisted(() => ({
+    machineContributionRegistryProjectionDescribe: vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+        async () => ({ supported: false, reason: 'not-supported' }),
+    ),
 }));
 
 installMachineDetailsCommonModuleMocks({
@@ -100,6 +109,11 @@ vi.mock('@/sync/ops', () => ({
     machineRevokeFromAccount: vi.fn(async () => ({ ok: true })),
 }));
 
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
+        machineContributionRegistryProjectionDescribe(...args),
+}));
+
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
 }));
@@ -148,12 +162,6 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode', () => ({
     resolveEffectiveWindowsRemoteSessionLaunchMode: () => ({ mode: 'visible' }),
 }));
 vi.mock('@/capabilities/installablesRegistry', () => ({ getInstallablesRegistryEntries: () => [] }));
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: () => ({ cli: { detectKey: 'codex' } }),
-    isAgentId: () => true,
-}));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: () => null,
 }));
@@ -174,6 +182,7 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 
 describe('MachineDetailScreen path browser', () => {
     beforeEach(() => {
+        vi.resetModules();
         mockState.machineSpawnNewSessionMock.mockClear();
         mockState.openMachinePathBrowserModalMock.mockClear();
         mockState.multiTextInputSpy.mockClear();
@@ -185,12 +194,15 @@ describe('MachineDetailScreen path browser', () => {
         };
         mockState.projectForSession = {};
         mockState.settingsState = {};
+        machineContributionRegistryProjectionDescribe.mockReset();
+        machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
     });
 
     it('opens the shared path browser with the current absolute path preselected and writes the chosen folder relative to the machine home', async () => {
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
 
         const pathInput = mockState.multiTextInputSpy.mock.calls.at(-1)?.[0];
         expect(pathInput).toBeTruthy();
@@ -277,11 +289,15 @@ describe('MachineDetailScreen path browser', () => {
     it('spawns using the persisted configured backend target instead of rebuilding a built-in target from lastUsedAgent', async () => {
         mockState.settingsState = {
             lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
         };
 
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        await act(async () => {
+            await Promise.resolve();
+        });
 
         const startButtons = screen.findAll((node) =>
             String(node.type) === 'Pressable'
@@ -296,14 +312,18 @@ describe('MachineDetailScreen path browser', () => {
         });
 
         expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'review-bot',
+                configuredBackendId: 'review-bot',
+            },
         }));
     });
 
     it('falls back to the preferred built-in target when the stored configured backend is stale', async () => {
         mockState.settingsState = {
             lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' },
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'stale-review-bot', configuredBackendId: 'stale-review-bot', sourceKind: 'configured' },
             backendEnabledByTargetKey: { 'agent:codex': true },
             acpCatalogSettingsV1: {
                 v: 2,
@@ -327,7 +347,61 @@ describe('MachineDetailScreen path browser', () => {
         });
 
         expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+        }));
+    });
+
+    it('falls back to the preferred built-in target when lastUsedAgent is legacy customAcp even when merged projection lists discovered plugin backends', async () => {
+        mockState.settingsState = {
+            lastUsedAgent: 'customAcp',
+            lastUsedBackendTarget: null,
+        };
+        machineContributionRegistryProjectionDescribe.mockResolvedValue({
+            supported: true,
+            projection: {
+                v: 1,
+                providersById: {
+                    'acme.review.provider': {
+                        id: 'acme.review.provider',
+                        providerId: 'acme.review.provider',
+                        title: 'Acme Review Provider',
+                        channel: 'plugin',
+                        isBuiltIn: false,
+                        settingsBackendId: 'acme.review.backend',
+                    },
+                },
+                backendsById: {
+                    'acme.review.backend': {
+                        id: 'acme.review.backend',
+                        backendId: 'acme.review.backend',
+                        providerId: 'acme.review.provider',
+                        title: 'Acme Review Backend',
+                    },
+                },
+            },
+        });
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        const startButtons = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        );
+
+        expect(startButtons[0]).toBeTruthy();
+
+        await act(async () => {
+            await startButtons[0].props.onPress();
+        });
+
+        expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+            serverId: 'server-a',
+            timeoutMs: 10_000,
+        }));
+        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            backendTarget: { kind: 'backend', backendId: 'claude' },
         }));
     });
 });

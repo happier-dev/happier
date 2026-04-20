@@ -2,7 +2,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { View } from 'react-native';
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useGlobalSearchParams } from 'expo-router';
 import { MainView } from '@/components/navigation/shell/MainView';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -19,6 +19,7 @@ import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/authe
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { shouldHoldUnauthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldUnauthenticatedShellForWebServerOverride';
+import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 
 const stylesheet = StyleSheet.create({
     root: {
@@ -27,14 +28,48 @@ const stylesheet = StyleSheet.create({
     },
 });
 
+function normalizeQueryParam(value: string | string[] | undefined): string {
+    if (Array.isArray(value)) {
+        return typeof value[0] === 'string' ? value[0].trim() : '';
+    }
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function readVoiceE2eFixtureIdFromLocation(): string {
+    if (typeof window === 'undefined') return '';
+    try {
+        const current = new URL(window.location.href);
+        return (current.searchParams.get('happier_voice_e2e_fixture') ?? '').trim();
+    } catch {
+        return '';
+    }
+}
+
+function readVoiceE2eFixtureIdFromStorage(): string {
+    const storage =
+        typeof globalThis !== 'undefined' && typeof (globalThis as any).localStorage?.getItem === 'function'
+            ? (globalThis as any).localStorage as Storage
+            : null;
+    if (!storage) return '';
+    try {
+        return String(storage.getItem('happier.voice.e2e.fixture') ?? '').trim();
+    } catch {
+        return '';
+    }
+}
+
 export default function Home() {
     const auth = useAuth();
     const activeServerSnapshot = useActiveServerSnapshot();
+    const params = useGlobalSearchParams<{ happier_voice_e2e_fixture?: string | string[] }>();
+    const shouldSuppressFirstLaunchSetupRedirect = Boolean(
+        normalizeQueryParam(params.happier_voice_e2e_fixture) || readVoiceE2eFixtureIdFromLocation() || readVoiceE2eFixtureIdFromStorage(),
+    );
     if (!auth.isAuthenticated) {
         if (shouldHoldUnauthenticatedShellForWebServerOverride(auth.isAuthenticated, activeServerSnapshot.serverUrl)) {
             return null;
         }
-        return <PreAuthOnboardingWizardEntry enableFirstLaunchSetupRedirect />;
+        return <PreAuthOnboardingWizardEntry enableFirstLaunchSetupRedirect={!shouldSuppressFirstLaunchSetupRedirect} />;
     }
     return (
         <Authenticated />
@@ -42,7 +77,13 @@ export default function Home() {
 }
 
 function Authenticated() {
-    const params = useLocalSearchParams<{ id?: string | string[]; messageId?: string | string[]; jumpChildId?: string | string[] }>();
+    const params = useGlobalSearchParams<{
+        id?: string | string[];
+        messageId?: string | string[];
+        jumpChildId?: string | string[];
+        serverId?: string | string[];
+        happier_voice_e2e_fixture?: string | string[];
+    }>();
     const router = useRouter();
     const connectionHealth = useConnectionHealth();
     const localDaemonControl = useLocalDaemonControl();
@@ -53,6 +94,18 @@ function Authenticated() {
     const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
     const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
     const jumpChildId = typeof params.jumpChildId === 'string' ? params.jumpChildId : Array.isArray(params.jumpChildId) ? (params.jumpChildId[0] ?? null) : null;
+    const voiceE2eFixtureId =
+        typeof params.happier_voice_e2e_fixture === 'string'
+            ? params.happier_voice_e2e_fixture
+            : Array.isArray(params.happier_voice_e2e_fixture)
+                ? (params.happier_voice_e2e_fixture[0] ?? null)
+                : null;
+    const shouldSuppressAutoOpenSetupWizard = Boolean(
+        String(voiceE2eFixtureId ?? '').trim()
+        || readVoiceE2eFixtureIdFromLocation()
+        || readVoiceE2eFixtureIdFromStorage(),
+    );
+    const sessionRouteServerScope = createSessionRouteServerScope(params);
     const currentMachineIsConfiguredAndHealthy =
         localDaemonControl.status?.serviceInstalled === true
         && localDaemonControl.status?.daemonRunning === true
@@ -75,15 +128,28 @@ function Authenticated() {
     const shouldSkipSetupWizardBecauseAnotherMachineIsOnline =
         isTauriDesktop() !== true
         && (connectionHealth.onlineCount ?? 0) > 0;
-    const shouldAutoOpenSetupWizard = isTauriDesktop()
-        ? (!currentMachineIsConfiguredAndHealthy || hasRelayDrift)
-        : (connectionHealth.onlineCount ?? 0) === 0;
+    const shouldAutoOpenSetupWizard = shouldSuppressAutoOpenSetupWizard
+        ? false
+        : isTauriDesktop()
+            ? (!currentMachineIsConfiguredAndHealthy || hasRelayDrift)
+            : (connectionHealth.onlineCount ?? 0) === 0;
     const needsSetupWizard =
         !hasPendingTerminalConnectApproval
+        && shouldSuppressAutoOpenSetupWizard !== true
         &&
         pendingSetupIntentDismissed !== true
         && shouldSkipSetupWizardBecauseAnotherMachineIsOnline !== true
         && (hasPendingSetupContinuation || shouldAutoOpenSetupWizard);
+
+    React.useEffect(() => {
+        if (!shouldSuppressAutoOpenSetupWizard) return;
+        if (setupWizardVisible) {
+            setSetupWizardVisible(false);
+        }
+        if (!pendingSetupIntent) return;
+        if (pendingSetupIntent.phase === 'dismissed') return;
+        setPendingSetupIntent({ ...pendingSetupIntent, phase: 'dismissed' });
+    }, [pendingSetupIntent, setupWizardVisible, shouldSuppressAutoOpenSetupWizard]);
 
     const dismissPendingSetupIntent = React.useCallback(() => {
         const current = getPendingSetupIntent();
@@ -113,13 +179,18 @@ function Authenticated() {
         const mid = String(messageId ?? '').trim();
         if (mid) {
             const child = String(jumpChildId ?? '').trim();
-            const qs = child ? `?jumpChildId=${encodeURIComponent(child)}` : '';
-            router.replace(`/session/${encodeURIComponent(sid)}/message/${encodeURIComponent(mid)}${qs}`);
+            router.replace(sessionRouteServerScope.buildHref(sid, {
+                suffix: `/message/${encodeURIComponent(mid)}`,
+                query: child ? { jumpChildId: child } : undefined,
+            }));
             return;
         }
 
-        router.replace(`/session/${encodeURIComponent(sid)}`);
-    }, [jumpChildId, messageId, router, sessionId]);
+        const child = String(jumpChildId ?? '').trim();
+        router.replace(sessionRouteServerScope.buildHref(sid, {
+            query: child ? { jumpChildId: child } : undefined,
+        }));
+    }, [jumpChildId, messageId, router, sessionId, sessionRouteServerScope]);
 
     React.useEffect(() => {
         const sid = normalizeSessionId(sessionId);

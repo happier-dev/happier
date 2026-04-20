@@ -16,6 +16,7 @@ import { isSessionSharingSupported } from '@/sync/api/capabilities/sessionSharin
 import { getAuthProvider } from '@/auth/providers/registry';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -114,6 +115,11 @@ function normalizeInternalReturnTo(value: unknown): string | null {
     if (!trimmed.startsWith('/')) return null;
     if (trimmed.startsWith('//')) return null;
     return trimmed;
+}
+
+function normalizeComparableServerUrl(value: unknown): string {
+    if (typeof value !== 'string') return '';
+    return createServerUrlComparableKey(value);
 }
 
 function resolveProvisioningModes(raw: string | null): Readonly<{ allowPlain: boolean; allowE2ee: boolean }> {
@@ -464,11 +470,17 @@ export default function OAuthProviderReturn() {
 
             if (flow === 'auth') {
                 const pending = pendingFromParams;
-                const state = await TokenStorage.getPendingExternalAuth();
+                const pendingAuthState = await TokenStorage.readPendingExternalAuthState();
+                const state = pendingAuthState.value;
                 const secret = typeof state?.secret === 'string' ? state.secret : null;
                 const proof = typeof state?.proof === 'string' ? state.proof : null;
+                const pendingServerUrl = normalizeComparableServerUrl(state?.serverUrl);
+                const activeServerUrl = normalizeComparableServerUrl(getActiveServerSnapshot().serverUrl);
+                const serverUrlMismatch =
+                    pendingAuthState.serverMismatch
+                    || Boolean(pendingServerUrl && activeServerUrl && pendingServerUrl !== activeServerUrl);
 
-                if (!pending || !state || state.provider !== providerId || (!proof && !secret)) {
+                if (!pending || !state || state.provider !== providerId || (!proof && !secret) || serverUrlMismatch) {
                     // In dev (React strict-mode) or certain hydration paths, this screen can mount more than once.
                     // If another instance already completed the flow, pending state may have been cleared even
                     // though the user is now logged in. Avoid showing a false-negative OAuth error in that case.
@@ -477,7 +489,12 @@ export default function OAuthProviderReturn() {
                         safeReplace('/');
                         return;
                     }
-                    await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
+                    if (serverUrlMismatch) {
+                        await TokenStorage.clearPendingExternalAuth();
+                        await Modal.alert(t('common.error'), t('errors.oauthStateMismatch'));
+                    } else {
+                        await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
+                    }
                     safeReplace('/');
                     return;
                 }

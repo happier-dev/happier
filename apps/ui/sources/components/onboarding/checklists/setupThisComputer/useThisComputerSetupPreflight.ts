@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { storage as syncStorage } from '@/sync/domains/state/storageStore';
+import { resolveWebappUrlFromServerUrl } from '@/sync/domains/server/url/resolveWebappUrlFromServerUrl';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 
@@ -17,6 +18,12 @@ export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
     return React.useMemo(() => ({
         activeRelayUrl: typeof activeServerSnapshot.serverUrl === 'string' && activeServerSnapshot.serverUrl.trim().length > 0
             ? activeServerSnapshot.serverUrl.trim()
+            : null,
+        activeWebappUrl: typeof activeServerSnapshot.serverUrl === 'string' && activeServerSnapshot.serverUrl.trim().length > 0
+            ? resolveWebappUrlFromServerUrl(activeServerSnapshot.serverUrl.trim())
+            : null,
+        activeLocalRelayUrl: typeof activeServerSnapshot.activeLocalRelayUrl === 'string' && activeServerSnapshot.activeLocalRelayUrl.trim().length > 0
+            ? activeServerSnapshot.activeLocalRelayUrl.trim()
             : null,
         localCliReady: daemon.status != null,
         serviceInstalled: daemon.status?.serviceInstalled === true,

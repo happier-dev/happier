@@ -17,8 +17,10 @@ let sessionHydrated = true;
 let mockDetailsParam: string | undefined;
 let mockPathParam: string | undefined;
 let mockShaParam: string | undefined;
+let mockTerminalInstanceIdParam: string | undefined;
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
+const routerSetParamsSpy = vi.fn();
 const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve());
 const closeDetailsSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
@@ -31,11 +33,21 @@ const routerMock = createExpoRouterMock({
         back: routerBackSpy,
         push: vi.fn(),
         replace: routerReplaceSpy,
-        setParams: vi.fn(),
+        setParams: routerSetParamsSpy,
     },
 });
 
-type DetailsTab = Readonly<{ key: string }>;
+type DetailsTab = Readonly<{
+    key: string;
+    kind?: string;
+    resource?: Readonly<Record<string, unknown>>;
+}>;
+type DetailsGroup = Readonly<{
+    id: string;
+    tabs?: readonly DetailsTab[];
+    activeTabKey?: string | null;
+    isFocused?: boolean;
+}>;
 type MockScopeState = Readonly<{
     details:
         | null
@@ -44,6 +56,8 @@ type MockScopeState = Readonly<{
               tabs?: readonly DetailsTab[];
               activeTabKey?: string | null;
               tabState?: Record<string, unknown>;
+              groups?: readonly DetailsGroup[];
+              focusedGroupId?: string | null;
           }>;
 }>;
 
@@ -52,8 +66,20 @@ let scopeState: MockScopeState = { details: null };
 installSessionRouteCommonModuleMocks({
     router: () => ({
         ...routerMock.module,
-        useLocalSearchParams: () => ({ id: mockSessionId, details: mockDetailsParam, path: mockPathParam, sha: mockShaParam }),
-        useGlobalSearchParams: () => ({ id: mockSessionId, details: mockDetailsParam, path: mockPathParam, sha: mockShaParam }),
+        useLocalSearchParams: () => ({
+            id: mockSessionId,
+            details: mockDetailsParam,
+            path: mockPathParam,
+            sha: mockShaParam,
+            terminalInstanceId: mockTerminalInstanceIdParam,
+        }),
+        useGlobalSearchParams: () => ({
+            id: mockSessionId,
+            details: mockDetailsParam,
+            path: mockPathParam,
+            sha: mockShaParam,
+            terminalInstanceId: mockTerminalInstanceIdParam,
+        }),
         useNavigation: () => ({ canGoBack: () => canGoBack }),
     }),
     storageModule: async (importOriginal) => {
@@ -93,10 +119,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
             },
             closeDetails: () => {
                 closeDetailsSpy();
-                setState((prev) => ({
-                    ...prev,
-                    details: prev.details ? { ...prev.details, isOpen: false } : prev.details,
-                }));
             },
             closeDetailsTab: vi.fn(),
             setActiveDetailsTab: vi.fn(),
@@ -120,7 +142,36 @@ vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
         if (mockDetailsParam === 'commit' && mockShaParam) {
             return { details: { kind: 'commit', sha: mockShaParam } };
         }
+        if (mockDetailsParam === 'terminal') {
+            return {
+                details: mockTerminalInstanceIdParam
+                    ? { kind: 'terminal', terminalInstanceId: mockTerminalInstanceIdParam }
+                    : { kind: 'terminal' },
+            };
+        }
         return null;
+    },
+    buildActiveDetailsRouteParams: (detailsTabs: any[], activeDetailsKey: string | null) => {
+        const activeTab = detailsTabs.find((tab) => tab?.key === activeDetailsKey) ?? detailsTabs.at(-1) ?? null;
+        if (!activeTab) return {};
+        if (activeTab.kind === 'file') {
+            return {
+                details: 'file',
+                path: activeTab.resource?.path,
+            };
+        }
+        if (activeTab.kind === 'commit') {
+            return {
+                details: 'commit',
+                sha: activeTab.resource?.commitHash ?? activeTab.resource?.sha,
+            };
+        }
+        if (activeTab.kind === 'terminal') {
+            return activeTab.resource?.terminalInstanceId
+                ? { details: 'terminal', terminalInstanceId: activeTab.resource.terminalInstanceId }
+                : { details: 'terminal' };
+        }
+        return {};
     },
     applySessionPaneUrlState: (pane: any, state: any) => {
         if (state?.details?.kind === 'file') {
@@ -136,6 +187,16 @@ vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
                 key: `commit:${state.details.sha}`,
                 kind: 'commit',
                 resource: { kind: 'commit', commitHash: state.details.sha },
+            });
+            return;
+        }
+        if (state?.details?.kind === 'terminal') {
+            pane.openDetailsTab({
+                key: state.details.terminalInstanceId ? `terminal:${state.details.terminalInstanceId}` : 'terminal:primary',
+                kind: 'terminal',
+                resource: state.details.terminalInstanceId
+                    ? { kind: 'terminal', terminalInstanceId: state.details.terminalInstanceId }
+                    : { kind: 'terminal' },
             });
         }
     },
@@ -176,12 +237,14 @@ describe('/session/[id]/details', () => {
         mockDetailsParam = undefined;
         mockPathParam = undefined;
         mockShaParam = undefined;
+        mockTerminalInstanceIdParam = undefined;
         canGoBack = true;
         deviceType = 'desktop';
         mobileWorkspaceExperience = 'classic';
         scopeState = { details: null };
         routerBackSpy.mockClear();
         routerReplaceSpy.mockClear();
+        routerSetParamsSpy.mockClear();
         ensureSessionVisibleSpy.mockClear();
         closeDetailsSpy.mockClear();
         openDetailsTabSpy.mockClear();
@@ -206,6 +269,43 @@ describe('/session/[id]/details', () => {
             })
         );
         expect(routerBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('still restores the URL-selected details tab when split groups already exist', async () => {
+        mockDetailsParam = 'file';
+        mockPathParam = 'README.md';
+        scopeState = {
+            details: {
+                isOpen: true,
+                tabs: [{ key: 'file:OTHER.md' }],
+                activeTabKey: 'file:OTHER.md',
+                tabState: {},
+                focusedGroupId: 'group:2',
+                groups: [
+                    {
+                        id: 'group:1',
+                        activeTabKey: 'file:OTHER.md',
+                        tabs: [{ key: 'file:OTHER.md' }],
+                    },
+                    {
+                        id: 'group:2',
+                        activeTabKey: null,
+                        tabs: [],
+                        isFocused: true,
+                    },
+                ],
+            },
+        };
+
+        await renderScreen(<Screen />);
+
+        expect(openDetailsTabSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                key: 'file:README.md',
+                kind: 'file',
+                resource: { kind: 'file', path: 'README.md' },
+            }),
+        );
     });
 
     it('navigates back when there are no details tabs to display', async () => {
@@ -259,10 +359,105 @@ describe('/session/[id]/details', () => {
         expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
+    it('stays on the fullscreen details route when the focused split group is empty but another group still has tabs', async () => {
+        scopeState = {
+            details: {
+                isOpen: true,
+                tabs: [],
+                activeTabKey: null,
+                tabState: {},
+                focusedGroupId: 'group:2',
+                groups: [
+                    {
+                        id: 'group:1',
+                        activeTabKey: 'file:README.md',
+                        tabs: [{ key: 'file:README.md' }],
+                    },
+                    {
+                        id: 'group:2',
+                        activeTabKey: null,
+                        tabs: [],
+                    },
+                ],
+            },
+        };
+
+        await renderScreen(<Screen />);
+
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+    });
+
     it('hydrates the session for deep links by requesting session visibility', async () => {
         scopeState = { details: { tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
         await renderScreen(<Screen />);
         expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-1');
+    });
+
+    it('keeps the fullscreen details route params in sync with the selected split details tab after mount', async () => {
+        mockDetailsParam = 'file';
+        mockPathParam = 'README.md';
+        scopeState = {
+            details: {
+                isOpen: true,
+                tabs: [
+                    { key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } },
+                    { key: 'commit:abc1234', kind: 'commit', resource: { kind: 'commit', commitHash: 'abc1234' } },
+                ],
+                activeTabKey: 'file:README.md',
+                tabState: {},
+                focusedGroupId: 'group:1',
+                groups: [
+                    {
+                        id: 'group:1',
+                        activeTabKey: 'file:README.md',
+                        tabs: [
+                            { key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } },
+                            { key: 'commit:abc1234', kind: 'commit', resource: { kind: 'commit', commitHash: 'abc1234' } },
+                        ],
+                        isFocused: true,
+                    },
+                ],
+            },
+        };
+
+        await renderScreen(<Screen />);
+        routerSetParamsSpy.mockClear();
+
+        await act(async () => {
+            setScopeStateForTest?.((prev) => ({
+                ...prev,
+                details: prev.details ? {
+                    ...prev.details,
+                    activeTabKey: 'commit:abc1234',
+                    tabs: [
+                        { key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } },
+                        { key: 'commit:abc1234', kind: 'commit', resource: { kind: 'commit', commitHash: 'abc1234' } },
+                    ],
+                    groups: [
+                        {
+                            id: 'group:1',
+                            activeTabKey: 'commit:abc1234',
+                            tabs: [
+                                { key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } },
+                                { key: 'commit:abc1234', kind: 'commit', resource: { kind: 'commit', commitHash: 'abc1234' } },
+                            ],
+                            isFocused: true,
+                        },
+                    ],
+                } : prev.details,
+            }));
+        });
+        await act(async () => {});
+
+        await vi.waitFor(() => {
+            expect(routerSetParamsSpy).toHaveBeenCalledWith({
+                details: 'commit',
+                path: undefined,
+                sha: 'abc1234',
+                terminalInstanceId: undefined,
+            });
+        });
     });
 
     it('passes an onRequestClose that closes the pane and navigates back', async () => {
@@ -276,6 +471,15 @@ describe('/session/[id]/details', () => {
 
         expect(closeDetailsSpy).toHaveBeenCalled();
         expect(routerBackSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes details pane state when the fullscreen details route unmounts', async () => {
+        scopeState = { details: { isOpen: true, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
+        const screen = await renderScreen(<Screen />);
+
+        await screen.unmount();
+
+        expect(closeDetailsSpy).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to the parent session route when there is no back stack', async () => {

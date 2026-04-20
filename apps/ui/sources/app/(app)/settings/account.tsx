@@ -17,10 +17,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { useConnectAccount } from '@/hooks/auth/useConnectAccount';
 import { getDisplayName } from '@/sync/domains/profiles/profile';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
-import { getAgentCore, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { HappyError } from '@/utils/errors/errors';
 import { setAccountUsername } from '@/sync/api/account/apiUsername';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -45,6 +43,7 @@ import { getConnectedServiceCredentialPlain } from '@/sync/api/account/apiConnec
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { AccountEncryptionMigrateInvalidParamsReasonSchema } from '@happier-dev/protocol';
+import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 
 
 export default React.memo(() => {
@@ -191,6 +190,7 @@ export default React.memo(() => {
     const showAddYourPhone = isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb);
     const showLinkNewDevice = canUseCurrentDeviceQrScanner();
     const showAccountAccessGroup = showAddYourPhone || showLinkNewDevice;
+    const connectedServices = profile.connectedServicesV2.filter((service) => service.profiles.length > 0);
 
     return (
         <>
@@ -275,46 +275,30 @@ export default React.memo(() => {
                 </ItemGroup>
 
                 {/* Connected Services Section */}
-                {profile.connectedServices && profile.connectedServices.length > 0 && (() => {
-                    const displayServices = profile.connectedServices
-                        .map((serviceId) => {
-                            const agentId = resolveAgentIdFromConnectedServiceId(serviceId);
-                            if (!agentId) return null;
-                            const core = getAgentCore(agentId);
-                            if (!core.connectedService?.id) return null;
-                            return {
-                                agentId,
-                                serviceId,
-                                name: core.connectedService.name,
-                            };
-                        })
-                        .filter((x): x is NonNullable<typeof x> => Boolean(x));
-
-                    if (displayServices.length === 0) return null;
-                    
-                    return (
-                        <ItemGroup title={t('settings.connectedAccounts')}>
-                            {displayServices.map(service => {
-                                const isDisconnecting = disconnectingService === service.serviceId;
-                                return (
-                                    <Item
-                                        key={service.serviceId}
-                                        title={service.name}
-                                        detail={t('settingsAccount.statusActive')}
-                                        subtitle={t('settingsAccount.tapToDisconnect')}
-                                        onPress={() => handleDisconnectService(service.serviceId, service.name)}
-                                        loading={isDisconnecting}
-                                        disabled={isDisconnecting}
-                                        showChevron={false}
-                                        icon={
-                                            <AgentIcon agentId={service.agentId} size={29} />
-                                        }
-                                    />
-                                );
-                            })}
-                        </ItemGroup>
-                    );
-                })()}
+                {connectedServices.length > 0 ? (
+                    <ItemGroup title={t('settings.connectedAccounts')}>
+                        {connectedServices.map((service) => {
+                            const isDisconnecting = disconnectingService === service.serviceId;
+                            const connectedProfileCount = service.profiles.filter((profile) => profile.status === 'connected').length;
+                            const serviceName = resolveConnectedServiceDisplayName(service.serviceId, t);
+                            return (
+                                <Item
+                                    key={service.serviceId}
+                                    title={serviceName}
+                                    detail={connectedProfileCount > 0 ? t('settingsAccount.statusActive') : t('connectedServices.list.needsReauth')}
+                                    subtitle={t('settingsAccount.tapToDisconnect')}
+                                    onPress={() => handleDisconnectService(service.serviceId, serviceName)}
+                                    loading={isDisconnecting}
+                                    disabled={isDisconnecting}
+                                    showChevron={false}
+                                    icon={
+                                        <SafeIonicons name="key-outline" size={29} color={theme.colors.textSecondary} />
+                                    }
+                                />
+                            );
+                        })}
+                    </ItemGroup>
+                ) : null}
 
                 {/* Backup Section */}
                 {formattedSecret ? (

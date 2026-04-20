@@ -69,7 +69,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
   ]),
 }));
 
-vi.mock('@/sync/domains/state/persistence', () => ({
+vi.mock('@/sync/domains/state/profilePersistence', () => ({
   loadProfile: () => ({
     id: 'acct_ui_1',
     timestamp: 1,

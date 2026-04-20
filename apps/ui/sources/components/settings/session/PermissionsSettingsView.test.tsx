@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSessionSettingsCommonModuleMocks } from './sessionSettingsViewTestHelpers';
 
@@ -120,7 +120,7 @@ describe('PermissionsSettingsView', () => {
         expect(screen.findRowByTitle('DropdownItem:agent.codex:sessionsList.storageDirectTab')).toBeTruthy();
         screen.pressRowByTitle('DropdownItem:agent.codex:sessionsList.storageDirectTab');
         expect(setDefaultPersistenceModeByTargetKey).toHaveBeenCalledWith({
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'direct',
+            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'direct',
         });
 
         expect(screen.findRowByTitle('DropdownItem:agent.codex:settingsSession.defaultStorage.useGlobalDefault')).toBeTruthy();

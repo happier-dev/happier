@@ -1,14 +1,12 @@
-import type { AgentId } from '@/agents/catalog/catalog';
-
 export type ProviderSetupQueueState = Readonly<{
-    activeProviderId: AgentId | null;
-    completedProviderIds: AgentId[];
-    failedProviderIds: AgentId[];
-    pendingProviderIds: AgentId[];
-    skippedProviderIds?: AgentId[];
+    activeProviderId: string | null;
+    completedProviderIds: string[];
+    failedProviderIds: string[];
+    pendingProviderIds: string[];
+    skippedProviderIds?: string[];
 }>;
 
-export function createProviderSetupQueueState(providerIds: readonly AgentId[]): ProviderSetupQueueState {
+export function createProviderSetupQueueState(providerIds: readonly string[]): ProviderSetupQueueState {
     const [activeProviderId = null, ...pendingProviderIds] = providerIds;
     return {
         activeProviderId,
@@ -19,9 +17,9 @@ export function createProviderSetupQueueState(providerIds: readonly AgentId[]): 
 }
 
 export function createProviderSetupQueueStateFromInstallSummary(params: Readonly<{
-    selectedProviderIds: readonly AgentId[];
-    installedProviderIds: readonly AgentId[];
-    failedProviderIds: readonly AgentId[];
+    selectedProviderIds: readonly string[];
+    installedProviderIds: readonly string[];
+    failedProviderIds: readonly string[];
 }>): ProviderSetupQueueState {
     const installedProviderIdSet = new Set(params.installedProviderIds);
     const failedProviderIdSet = new Set(params.failedProviderIds);

@@ -71,37 +71,6 @@ export const AUTO_HIDE_DELAY_OPTIONS: readonly ChoiceOption<3000 | 6000 | 10000 
     },
 ];
 
-export const EXPANDED_BEHAVIOR_OPTIONS: readonly ChoiceOption<'click' | 'hover'>[] = [
-    {
-        value: 'click',
-        titleKey: 'settingsDesktop.overlay.expandedBehaviorClickTitle',
-        icon: 'hand-left-outline',
-    },
-    {
-        value: 'hover',
-        titleKey: 'settingsDesktop.overlay.expandedBehaviorHoverTitle',
-        icon: 'eye-outline',
-    },
-];
-
-export const COLLAPSED_CLICK_ACTION_OPTIONS: readonly ChoiceOption<'expand_overlay' | 'open_primary_session' | 'open_sessions'>[] = [
-    {
-        value: 'expand_overlay',
-        titleKey: 'settingsDesktop.overlay.collapsedClickActionExpandOverlayTitle',
-        icon: 'open-outline',
-    },
-    {
-        value: 'open_primary_session',
-        titleKey: 'settingsDesktop.overlay.collapsedClickActionOpenPrimarySessionTitle',
-        icon: 'arrow-forward-outline',
-    },
-    {
-        value: 'open_sessions',
-        titleKey: 'settingsDesktop.overlay.collapsedClickActionOpenSessionsTitle',
-        icon: 'albums-outline',
-    },
-];
-
 export const PLACEMENT_MODE_OPTIONS: readonly ChoiceOption<'anchored' | 'custom'>[] = [
     {
         value: 'anchored',
@@ -155,32 +124,6 @@ export const ANCHOR_OPTIONS: readonly ChoiceOption<'top_center' | 'top_left' | '
         value: 'right_center',
         titleKey: 'settingsDesktop.overlay.anchorRightCenterTitle',
         icon: 'chevron-forward-outline',
-    },
-];
-
-export const DENSITY_OPTIONS: readonly ChoiceOption<'compact' | 'comfortable'>[] = [
-    {
-        value: 'compact',
-        titleKey: 'settingsDesktop.overlay.densityCompactTitle',
-        icon: 'scan-outline',
-    },
-    {
-        value: 'comfortable',
-        titleKey: 'settingsDesktop.overlay.densityComfortableTitle',
-        icon: 'reader-outline',
-    },
-];
-
-export const COMPACT_STYLE_OPTIONS: readonly ChoiceOption<'pill' | 'panel'>[] = [
-    {
-        value: 'pill',
-        titleKey: 'settingsDesktop.overlay.compactStylePillTitle',
-        icon: 'ellipse-outline',
-    },
-    {
-        value: 'panel',
-        titleKey: 'settingsDesktop.overlay.compactStylePanelTitle',
-        icon: 'square-outline',
     },
 ];
 

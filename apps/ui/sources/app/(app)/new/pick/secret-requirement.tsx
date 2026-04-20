@@ -10,9 +10,11 @@ import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { PopoverScope } from '@/components/ui/popover';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 
 type SecretRequirementRoutePayload = Readonly<{
     profileId: string;
@@ -78,38 +80,31 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const selectedSecretIdByEnvVarName = React.useMemo(() => {
         return parseJsonRecord(params.selectedSecretIdByEnvVarName);
     }, [params.selectedSecretIdByEnvVarName]);
+    const currentRouteParams = React.useMemo(() => {
+        return pickNewSessionRouteParams(params);
+    }, [params]);
+    const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId,
+        serverId: spawnServerId,
+        enabled: Boolean(machineId),
+        staleMs: 60_000,
+    });
     const preferredBackendTarget = React.useMemo(() => {
-        return resolvePreferredBackendTargetFromSettings({
+        return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
+        daemonMergedProjection.inputs,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
-        settings.backendEnabledByTargetKey,
-        settings.acpCatalogSettingsV1,
     ]);
-    const roundTripFallbackTarget = React.useMemo(() => {
-        return resolveRouteCloseoutFallbackTarget({
-            agentType: params.agentType,
-            backendTarget: params.backendTarget,
-            backendTargetKey: params.backendTargetKey,
-            preferredBackendTarget,
-        });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, preferredBackendTarget]);
-    const roundTripBackendParams = React.useMemo(() => {
-        return buildBackendTargetRouteParams({
-            agentType: params.agentType,
-            backendTarget: params.backendTarget,
-            backendTargetKey: params.backendTargetKey,
-            fallbackTarget: roundTripFallbackTarget,
-        });
-    }, [params.agentType, params.backendTarget, params.backendTargetKey, roundTripFallbackTarget]);
-    const currentRouteParams = React.useMemo(() => {
-        return pickNewSessionRouteParams(params);
-    }, [params]);
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -131,6 +126,18 @@ export default React.memo(function SecretRequirementPickerScreen() {
             result,
         };
         const id = storeTempData(payload);
+        const roundTripFallbackTarget = resolveRouteCloseoutFallbackTarget({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            preferredBackendTarget,
+        });
+        const roundTripBackendParams = buildBackendTargetRouteParams({
+            agentType: params.agentType,
+            backendTarget: params.backendTarget,
+            backendTargetKey: params.backendTargetKey,
+            fallbackTarget: roundTripFallbackTarget,
+        });
 
         const returnMode = setNewSessionPickerReturnParams({
             navigation: navigation as any,
@@ -152,7 +159,27 @@ export default React.memo(function SecretRequirementPickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [currentRouteParams, navigation, params.dataId, params.machineId, params.profileId, params.spawnServerId, profileId, revertOnCancel, roundTripBackendParams, router]);
+    }, [
+        currentRouteParams,
+        machineId,
+        navigation,
+        params.agentType,
+        params.backendTarget,
+        params.backendTargetKey,
+        params.dataId,
+        params.machineId,
+        params.profileId,
+        params.spawnServerId,
+        profileId,
+        revertOnCancel,
+        router,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+        preferredBackendTarget,
+        spawnServerId,
+    ]);
 
     const handleCancel = React.useCallback(() => {
         sendResultToNewSession({ action: 'cancel' });
@@ -161,7 +188,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
     React.useEffect(() => {
         const sub = (navigation as any)?.addListener?.('beforeRemove', () => {
             if (didSendResultRef.current) return;
-            sendResultToNewSession({ action: 'cancel' });
+            void sendResultToNewSession({ action: 'cancel' });
         });
         return () => sub?.();
     }, [navigation, sendResultToNewSession]);

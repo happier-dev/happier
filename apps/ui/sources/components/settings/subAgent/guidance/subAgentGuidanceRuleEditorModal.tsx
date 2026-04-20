@@ -2,9 +2,8 @@ import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
 import { Item } from '@/components/ui/lists/Item';
@@ -24,6 +23,8 @@ import { useAllMachines } from '@/sync/store/hooks';
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import type { SubAgentGuidanceRuleEditorResult } from './showSubAgentGuidanceRuleEditorModal';
 
@@ -54,7 +55,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
     const [title, setTitle] = React.useState<string>(normalizeText(entry.title));
     const [description, setDescription] = React.useState<string>(normalizeText(entry.description));
     const [intent, setIntent] = React.useState<Intent | undefined>(toIntent(entry.suggestedIntent));
-    const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV1 | undefined>(() => {
+    const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV2 | undefined>(() => {
         const raw = entry.suggestedBackendTarget;
         return raw ?? undefined;
     });
@@ -77,22 +78,39 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
             recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
         });
     }, [machines, recentMachinePaths]);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: preflightMachineId,
+        serverId: String(getActiveServerSnapshot().serverId ?? '').trim() || null,
+        enabled: Boolean(preflightMachineId),
+        staleMs: 60_000,
+    });
 
     const backendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
             acpCatalogSettingsV1: acpCatalogSettingsV1 as any,
             backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
+            discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
+            mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
         });
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds]);
+    }, [
+        acpCatalogSettingsV1,
+        backendEnabledByTargetKey,
+        daemonMergedProjection.inputs?.discoveredBackendIds,
+        daemonMergedProjection.inputs?.mergedBackendProjectionById,
+        daemonMergedProjection.inputs?.mergedProviderProjectionById,
+        enabledAgentIds,
+    ]);
 
     const selectedBackendEntry = React.useMemo(() => {
         if (!backendTarget) return null;
-        return backendEntries.find((entry) => entry.targetKey === buildBackendTargetKey(backendTarget)) ?? null;
+        const targetKey = resolveBackendTargetKeyV2(backendTarget);
+        return backendEntries.find((entry) => entry.backendTargetKey === targetKey) ?? null;
     }, [backendEntries, backendTarget]);
 
     const preflightModels = useNewSessionPreflightModelsState({
-        backendTarget: backendTarget ?? { kind: 'builtInAgent', agentId: DEFAULT_AGENT_ID },
+        backendTarget: backendTarget ?? null,
         selectedMachineId: backendTarget ? preflightMachineId : null,
         capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
     });
@@ -270,7 +288,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     variant="selectable"
                     search={true}
                     searchPlaceholder={t('subAgentGuidance.ruleEditor.backendPicker.searchPlaceholder')}
-                    selectedId={selectedBackendEntry?.targetKey ?? ''}
+                    selectedId={selectedBackendEntry?.backendTargetKey ?? ''}
                     showCategoryTitles={false}
                     matchTriggerWidth={true}
                     connectToTrigger={true}
@@ -301,7 +319,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                               ),
                           },
                           ...backendEntries.map((entry) => ({
-                              id: entry.targetKey,
+                              id: entry.backendTargetKey,
                               title: entry.title,
                               subtitle: entry.subtitle ?? undefined,
                               icon: (
@@ -318,9 +336,9 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                             setModelId(undefined);
                             return;
                         }
-                        const resolved = backendEntries.find((entry) => entry.targetKey === next) ?? null;
+                        const resolved = backendEntries.find((entry) => entry.backendTargetKey === next) ?? null;
                         if (!resolved) return;
-                        setBackendTarget(resolved.target);
+                        setBackendTarget(resolved.backendTarget);
                         setModelId(undefined);
                     }}
                 />

@@ -3,12 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTypes';
 import type { SetupThisComputerWizardPrimaryState } from './SetupThisComputerChecklistStep';
 
 const preflightMock = vi.hoisted(() => ({
     value: {
         activeRelayUrl: 'https://relay.example.test',
+        activeWebappUrl: 'https://app.example.test',
+        activeLocalRelayUrl: 'http://127.0.0.1:53288',
         localCliReady: false,
         serviceInstalled: false,
         daemonRunning: false,
@@ -90,19 +93,13 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: vi.fn(() => 'modal-id'),
-        hide: vi.fn(),
-        update: vi.fn(),
-        hideAll: vi.fn(),
-        alert: vi.fn(),
-        alertAsync: vi.fn(async () => undefined),
-        prompt: vi.fn(async () => null),
+const modalMock = createModalModuleMock({
+    spies: {
         confirm: modalSpies.confirm,
     },
-    ModalProvider: ({ children }: { children?: React.ReactNode }) => React.createElement('ModalProvider', null, children ?? null),
-}));
+});
+
+vi.mock('@/modal', () => modalMock.module);
 
 vi.mock('./useThisComputerSetupPreflight', () => ({
     useThisComputerSetupPreflight: () => preflightMock.value,
@@ -416,6 +413,47 @@ describe('SetupThisComputerChecklistStep', () => {
 
         expect(taskHookMock.value.start).toHaveBeenCalledTimes(1);
         expect(onRequestAdvance).not.toHaveBeenCalled();
+    });
+
+    it('starts setup with the relay selected in the UI instead of relying on CLI current-relay state', async () => {
+        const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
+
+        preflightMock.value = {
+            ...preflightMock.value,
+            activeRelayUrl: 'https://relay-from-ui.example.test',
+            activeWebappUrl: 'https://app-from-ui.example.test',
+            activeLocalRelayUrl: 'http://127.0.0.1:55321',
+            localCliReady: false,
+            serviceInstalled: false,
+            daemonRunning: false,
+            machineId: null,
+            needsAuth: true,
+            pairingRequired: true,
+        };
+        taskHookMock.value.activeTaskSnapshot = null;
+        taskHookMock.value.start.mockClear();
+
+        const primaryRef: { current: SetupThisComputerWizardPrimaryState | null } = { current: null };
+        await renderScreen(
+            <SetupThisComputerChecklistStep
+                testID="setup-this-computer"
+                onWizardPrimaryChange={(state) => {
+                    primaryRef.current = state;
+                }}
+            />,
+        );
+
+        await act(async () => {
+            await primaryRef.current?.onPress?.();
+        });
+
+        expect(taskHookMock.value.start).toHaveBeenCalledWith(expect.objectContaining({
+            params: expect.objectContaining({
+                activeRelayUrl: 'https://relay-from-ui.example.test',
+                activeWebappUrl: 'https://app-from-ui.example.test',
+                activeLocalRelayUrl: 'http://127.0.0.1:55321',
+            }),
+        }));
     });
 
     it('disables the wizard primary CTA after starting execution until the task snapshot is available', async () => {

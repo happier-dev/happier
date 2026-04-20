@@ -1,10 +1,10 @@
 import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
+import { resolveDesktopActivityOverlaySurfaceTestID as resolveDesktopActivityOverlaySurfaceTestIDShared } from './shared/desktopActivityOverlaySelectors.mjs';
 
 export type DesktopActivityOverlayVisualMode = 'notch_integrated' | 'floating_overlay';
 
 export function resolveDesktopActivityOverlayVisualMode(params: Readonly<{
     presentationMode: DesktopOverlayPolicy['presentationMode'];
-    compactStyle: DesktopOverlayPolicy['compactStyle'];
     hostMode?: 'floating' | 'notch_integrated' | null;
 }>): DesktopActivityOverlayVisualMode {
     if (params.hostMode === 'notch_integrated') {
@@ -30,5 +30,5 @@ export function resolveDesktopActivityOverlaySurfaceTestID(
     baseTestID: string,
     visualMode: DesktopActivityOverlayVisualMode,
 ): string {
-    return `${baseTestID}-${visualMode === 'notch_integrated' ? 'notch' : 'floating'}`;
+    return resolveDesktopActivityOverlaySurfaceTestIDShared(baseTestID, visualMode);
 }

@@ -49,7 +49,7 @@ struct Rect {
 }
 
 #[cfg(desktop)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct PersistedWindowState {
     x: f64,
@@ -325,6 +325,60 @@ fn resolve_preauth_window_rect(monitor_rect: Rect) -> Rect {
 }
 
 #[cfg(desktop)]
+fn resolve_main_window_state_to_persist_before_preauth(
+    previous_mode: WindowMode,
+    rect: Rect,
+    scale_factor: f64,
+    maximized: bool,
+) -> Option<PersistedWindowState> {
+    if previous_mode != WindowMode::Main {
+        return None;
+    }
+
+    Some(PersistedWindowState {
+        x: rect.x / scale_factor,
+        y: rect.y / scale_factor,
+        width: rect.width / scale_factor,
+        height: rect.height / scale_factor,
+        maximized,
+        units: PersistedWindowUnits::Logical,
+    })
+}
+
+#[cfg(desktop)]
+fn approximately_equal(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 1.0
+}
+
+#[cfg(desktop)]
+fn rect_matches(left: Rect, right: Rect) -> bool {
+    approximately_equal(left.x, right.x)
+        && approximately_equal(left.y, right.y)
+        && approximately_equal(left.width, right.width)
+        && approximately_equal(left.height, right.height)
+}
+
+#[cfg(desktop)]
+fn should_ignore_persisted_main_state_on_login(
+    previous_mode: WindowMode,
+    monitor_logical: Rect,
+    persisted: Option<&PersistedWindowState>,
+    scale_factor: f64,
+) -> bool {
+    if previous_mode != WindowMode::PreAuth {
+        return false;
+    }
+
+    let Some(persisted) = persisted else {
+        return false;
+    };
+
+    let persisted_logical = normalize_persisted_rect_to_logical(persisted, scale_factor);
+    let preauth_rect = resolve_preauth_window_rect(monitor_logical);
+    rect_matches(persisted_logical, preauth_rect)
+}
+
+#[cfg(desktop)]
 fn apply_main_window_rect<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     monitor_logical: Rect,
@@ -502,13 +556,15 @@ pub async fn desktop_set_window_mode(
     let mode_path = resolve_mode_path_handle(&app).map_err(|e| e.to_string())?;
     write_mode(&mode_path, mode);
 
-    {
+    let previous_mode = {
         let mut guard = state
             .mode
             .lock()
             .map_err(|_| "WindowSizingState poisoned".to_string())?;
+        let previous_mode = *guard;
         *guard = mode;
-    }
+        previous_mode
+    };
 
     let scale_factor = window.scale_factor().unwrap_or(1.0);
     let monitor = window
@@ -530,6 +586,16 @@ pub async fn desktop_set_window_mode(
         WindowMode::Main => {
             let state_path = resolve_state_path_handle(&app).map_err(|e| e.to_string())?;
             let persisted = read_json(&state_path);
+            let persisted = if should_ignore_persisted_main_state_on_login(
+                previous_mode,
+                monitor_logical,
+                persisted.as_ref(),
+                scale_factor,
+            ) {
+                None
+            } else {
+                persisted
+            };
             apply_main_window_rect(&window, monitor_logical, persisted, scale_factor);
         }
         WindowMode::PreAuth => {
@@ -537,24 +603,15 @@ pub async fn desktop_set_window_mode(
             if let Ok(pos) = window.outer_position() {
                 if let Ok(size) = window.outer_size() {
                     let rect = physical_size_to_rect(pos, size);
-                    let logical = Rect {
-                        x: rect.x / scale_factor,
-                        y: rect.y / scale_factor,
-                        width: rect.width / scale_factor,
-                        height: rect.height / scale_factor,
-                    };
-                    if let Ok(state_path) = resolve_state_path_handle(&app) {
-                        write_json(
-                            &state_path,
-                            &PersistedWindowState {
-                                x: logical.x,
-                                y: logical.y,
-                                width: logical.width,
-                                height: logical.height,
-                                maximized: window.is_maximized().unwrap_or(false),
-                                units: PersistedWindowUnits::Logical,
-                            },
-                        );
+                    if let Some(next_state) = resolve_main_window_state_to_persist_before_preauth(
+                        previous_mode,
+                        rect,
+                        scale_factor,
+                        window.is_maximized().unwrap_or(false),
+                    ) {
+                        if let Ok(state_path) = resolve_state_path_handle(&app) {
+                            write_json(&state_path, &next_state);
+                        }
                     }
                 }
             }
@@ -593,6 +650,99 @@ mod tests {
             resolve_initial_window_mode(None, false),
             WindowMode::PreAuth
         );
+    }
+
+    #[test]
+    fn resolve_main_window_state_to_persist_before_preauth_ignores_existing_preauth_mode() {
+        let rect = Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 500.0,
+            height: 760.0,
+        };
+
+        assert_eq!(
+            resolve_main_window_state_to_persist_before_preauth(
+                WindowMode::PreAuth,
+                rect,
+                2.0,
+                false,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_main_window_state_to_persist_before_preauth_keeps_main_geometry() {
+        let rect = Rect {
+            x: 200.0,
+            y: 100.0,
+            width: 2400.0,
+            height: 1600.0,
+        };
+
+        assert_eq!(
+            resolve_main_window_state_to_persist_before_preauth(WindowMode::Main, rect, 2.0, true,),
+            Some(PersistedWindowState {
+                x: 100.0,
+                y: 50.0,
+                width: 1200.0,
+                height: 800.0,
+                maximized: true,
+                units: PersistedWindowUnits::Logical,
+            })
+        );
+    }
+
+    #[test]
+    fn should_ignore_persisted_main_state_on_login_when_it_matches_preauth_geometry() {
+        let monitor = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1440.0,
+            height: 900.0,
+        };
+        let preauth = resolve_preauth_window_rect(monitor);
+        let persisted = PersistedWindowState {
+            x: preauth.x,
+            y: preauth.y,
+            width: preauth.width,
+            height: preauth.height,
+            maximized: false,
+            units: PersistedWindowUnits::Logical,
+        };
+
+        assert!(should_ignore_persisted_main_state_on_login(
+            WindowMode::PreAuth,
+            monitor,
+            Some(&persisted),
+            1.0,
+        ));
+    }
+
+    #[test]
+    fn should_not_ignore_real_main_window_state_on_login() {
+        let monitor = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1440.0,
+            height: 900.0,
+        };
+        let persisted = PersistedWindowState {
+            x: 100.0,
+            y: 80.0,
+            width: 1200.0,
+            height: 820.0,
+            maximized: false,
+            units: PersistedWindowUnits::Logical,
+        };
+
+        assert!(!should_ignore_persisted_main_state_on_login(
+            WindowMode::PreAuth,
+            monitor,
+            Some(&persisted),
+            1.0,
+        ));
     }
 
     #[test]

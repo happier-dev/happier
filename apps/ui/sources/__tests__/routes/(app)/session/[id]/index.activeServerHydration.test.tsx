@@ -51,6 +51,10 @@ vi.mock('@/components/sessions/shell/SessionView', () => ({
     SessionView: (props: any) => React.createElement('SessionView', props),
 }));
 
+vi.mock('@/components/sessions/canvas/SessionSplitCanvasScreen', () => ({
+    SessionSplitCanvasScreen: (props: any) => React.createElement('SessionSplitCanvasScreen', props),
+}));
+
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         scopeState: {
@@ -131,7 +135,7 @@ describe('/session/[id] hydration (active server generation)', () => {
 
         const screen = await renderScreen(<SessionRouteScreen />);
 
-        expect(screen.findAllByType('SessionView')).toHaveLength(0);
+        expect(screen.findAllByType('SessionSplitCanvasScreen')).toHaveLength(0);
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
     });
 
@@ -149,7 +153,7 @@ describe('/session/[id] hydration (active server generation)', () => {
 
             const screen = await renderScreen(<SessionRouteScreen />);
 
-            expect(screen.findAllByType('SessionView')).toHaveLength(1);
+            expect(screen.findAllByType('SessionSplitCanvasScreen')).toHaveLength(1);
             expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
         } finally {
             storage.setState(previousState);

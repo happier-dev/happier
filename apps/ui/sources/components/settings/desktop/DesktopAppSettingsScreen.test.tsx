@@ -78,6 +78,7 @@ function createDesktopOverlayWindowStatePayload(hostMode: 'floating' | 'notch_in
             effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
             anchor: 'bottom_right',
             placementMode: 'custom',
+            requestedHostMode: hostMode,
             hostMode,
             displayContext: null,
             effectiveOffsetX: 24,
@@ -173,7 +174,7 @@ describe('DesktopAppSettingsScreen', () => {
             expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
             expect(screen.findRow('settings-desktop-overlay-visibility-mode')).toBeTruthy();
             expect(screen.findRow('settings-desktop-overlay-placement-mode')).toBeTruthy();
-            expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeTruthy();
+            expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeNull();
         });
     });
 });

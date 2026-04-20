@@ -13,11 +13,13 @@ type ConnectionEndpointStatus =
     | 'online'
     | 'auth_failed'
     | 'shutting_down';
+type ConnectionSyncErrorKind = 'auth' | 'config' | 'network' | 'server' | 'unknown';
 
 export function resolveConnectionHealth(params: Readonly<{
     socketStatus: ConnectionSocketStatus;
     endpointStatus?: ConnectionEndpointStatus;
     hasSyncError?: boolean;
+    syncErrorKind?: ConnectionSyncErrorKind;
     machineGroups: ReadonlyArray<ConnectionHealthMachineGroup>;
 }>): ConnectionHealth {
     let hasUnknownReadyCount = false;
@@ -64,6 +66,16 @@ export function resolveConnectionHealth(params: Readonly<{
     if (params.endpointStatus === 'offline' || params.endpointStatus === 'shutting_down') {
         return {
             kind: 'server_unreachable',
+            machineCount: machines.machineCount,
+            onlineCount: machines.onlineCount,
+            hasUnknownMachines,
+            socketStatus: params.socketStatus,
+        };
+    }
+
+    if (params.syncErrorKind === 'auth') {
+        return {
+            kind: 'auth_required',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
             hasUnknownMachines,

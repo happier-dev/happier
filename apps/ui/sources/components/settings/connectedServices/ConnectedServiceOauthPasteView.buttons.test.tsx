@@ -3,6 +3,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { changeTextTestInstance, renderScreen } from '@/dev/testkit';
+import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 
 
@@ -103,16 +104,17 @@ describe('ConnectedServiceOauthPasteView button layout', () => {
     if (!redirectInput) {
         throw new Error('missing redirect input');
     }
+    const claudeRegistryEntry = getConnectedServiceRegistryEntry('claude-subscription');
     expect(String(redirectInput.props?.placeholder ?? '')).toContain(
-      'connectedServices.oauthPaste.providerOverrides.claudeSubscription.pasteRedirectUrlPlaceholder',
+      `${claudeRegistryEntry.oauthPasteCopyKeyPrefix}.pasteRedirectUrlPlaceholder`,
     );
 
     await screen.pressByTestIdAsync('connectedServices.oauthPaste.openAuthorizationButton');
 
     expect(alertAsyncSpy).toHaveBeenCalledTimes(1);
     expect(alertAsyncSpy).toHaveBeenCalledWith(
-      'connectedServices.oauthPaste.providerOverrides.claudeSubscription.connectWebDescription',
-      'connectedServices.oauthPaste.providerOverrides.claudeSubscription.pasteRedirectUrlPromptBody',
+      `${claudeRegistryEntry.oauthPasteCopyKeyPrefix}.connectWebDescription`,
+      `${claudeRegistryEntry.oauthPasteCopyKeyPrefix}.pasteRedirectUrlPromptBody`,
       expect.any(Array),
     );
   });

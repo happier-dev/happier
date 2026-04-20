@@ -141,7 +141,7 @@ export function installSettingsViewCommonModuleMocks(
         return createStorageModuleStub({});
     });
 
-    vi.mock('@/app/(app)/scan/useScannedAuthUrlProcessor', () => ({
+    vi.mock('@/hooks/auth/useScannedAuthUrlProcessor', () => ({
         useScannedAuthUrlProcessor: () => ({
             processAuthUrl: settingsViewModuleState.scanProcessAuthUrlSpy,
             isLoading: false,

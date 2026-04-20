@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildActivityBadgeState } from './buildActivityBadgeState';
+import type { StorageState } from '@/sync/store/types';
 
 const storageState = vi.hoisted(() => ({
     sessionMessages: {} as Record<string, unknown>,
 }));
+
+const readMockStorageState = () => storageState as unknown as StorageState;
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -19,7 +22,9 @@ vi.mock('@/sync/domains/state/storage', async () => {
     } as any);
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    registerStorageStateReader(readMockStorageState);
     storageState.sessionMessages = {};
 });
 
@@ -128,6 +133,59 @@ describe('buildActivityBadgeState', () => {
 
         expect(state).toEqual({
             count: 0,
+            showNonNumericDot: false,
+        });
+    });
+
+    it('counts hydrated pending transcript requests for active sessions before a fresh pending fetch completes', () => {
+        storageState.sessionMessages = {
+            s1: {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-pending-1',
+                        localId: null,
+                        createdAt: 100,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'Bash',
+                            state: 'running',
+                            input: { command: 'ls' },
+                            createdAt: 100,
+                            permission: {
+                                id: 'req1',
+                                status: 'pending',
+                                kind: 'user_action',
+                            },
+                        },
+                    },
+                ],
+            },
+        };
+
+        const state = buildActivityBadgeState({
+            sessions: [
+                {
+                    id: 's1',
+                    seq: 5,
+                    active: true,
+                    lastViewedSessionSeq: 5,
+                    pendingCount: 0,
+                    metadata: { path: '', host: '' },
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {},
+                        completedRequests: null,
+                    },
+                } as any,
+            ],
+            numericInboxCount: 0,
+            hasNonNumericInboxAttention: false,
+        });
+
+        expect(state).toEqual({
+            count: 1,
             showNonNumericDot: false,
         });
     });

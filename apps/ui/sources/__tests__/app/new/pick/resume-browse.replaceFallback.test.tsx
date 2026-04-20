@@ -1,7 +1,8 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type {
     DirectSessionsBrowseInteraction,
     DirectSessionsBrowseScopeLock,
@@ -28,6 +29,12 @@ const routeParamsState = vi.hoisted(() => ({
 const settingsState = vi.hoisted(() => ({
     value: {} as Record<string, unknown>,
 }));
+const directBrowseSupportState = vi.hoisted(() => ({
+    supportedByProviderId: {} as Record<string, boolean>,
+}));
+const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() =>
+    vi.fn<(...args: unknown[]) => Promise<any>>(async () => ({ supported: false, reason: 'not-supported' })),
+);
 type DirectSessionsBrowseScreenProps = Readonly<{
     interaction?: DirectSessionsBrowseInteraction;
     lockScope?: DirectSessionsBrowseScopeLock | null;
@@ -80,12 +87,17 @@ vi.mock('@/components/sessions/directSessions/browse/DirectSessionsBrowseScreen'
 }));
 
 vi.mock('@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption', () => ({
-    canBrowseDirectSessions: () => true,
-    resolveDirectBrowseLockedSource: () => ({ kind: 'test' }),
+    canBrowseDirectSessions: (providerId: string) => directBrowseSupportState.supportedByProviderId[providerId] ?? true,
+    resolveDirectBrowseLockedSource: (params: { providerId: string }) =>
+        (directBrowseSupportState.supportedByProviderId[params.providerId] ?? true) ? { kind: 'test' } : null,
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => ({ id: 'account-1' }),
+}));
+
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
@@ -101,6 +113,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
             spawnServerId: 'server-2',
         };
         settingsState.value = {};
+        directBrowseSupportState.supportedByProviderId = {};
         browseScreenPropsRef.current = null;
         routerMock.push.mockClear();
         routerMock.back.mockClear();
@@ -109,6 +122,8 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         navigationMock.dispatch.mockClear();
         navigationMock.goBack.mockClear();
         navigationMock.setParams.mockClear();
+        machineContributionRegistryProjectionDescribeMock.mockReset();
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
         navigationMock.getState = () => ({
             index: 0,
             routes: [
@@ -139,6 +154,8 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
             pathname: '/new',
             params: {
                 agentType: 'claude',
+                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
+                backendTargetKey: 'backend:claude',
                 dataId: 'draft-1',
                 machineId: 'machine-2',
                 spawnServerId: 'server-2',
@@ -149,9 +166,9 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         expect(routerMock.back).not.toHaveBeenCalled();
     });
 
-    it('round-trips a serialized backendTarget without reserializing the legacy customAcp agentType', async () => {
+    it('closes the browse picker instead of reviving a customAcp compat carrier when a configured backend has no runtime browse carrier', async () => {
         routeParamsState.value = {
-            backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
+            backendTarget: JSON.stringify({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
             dataId: 'draft-1',
             machineId: 'machine-2',
             spawnServerId: 'server-2',
@@ -185,16 +202,63 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
 
         await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+        await Promise.resolve();
 
+        expect(browseScreenPropsRef.current).toBeNull();
+        expect(routerMock.replace).toHaveBeenCalledWith('/new');
+    });
+
+    it('uses the last explicit built-in placeholder when route context is missing without reviving customAcp', async () => {
+        routeParamsState.value = {
+            dataId: 'draft-1',
+            machineId: 'machine-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {
+            lastUsedAgent: 'codex',
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [
+                    {
+                        id: 'review-bot',
+                        name: 'review-bot',
+                        title: 'Review Bot',
+                        command: 'custom-acp',
+                        args: ['serve'],
+                        env: {},
+                        transportProfile: 'generic',
+                        capabilities: {
+                            supportsLoadSession: false,
+                            supportsModes: 'unknown',
+                            supportsModels: 'unknown',
+                            supportsConfigOptions: 'unknown',
+                            promptImageSupport: 'unknown',
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+            },
+        };
+
+        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
+
+        await renderScreen(React.createElement(ResumeBrowsePickerScreen));
         const props = browseScreenPropsRef.current;
-        expect(props?.lockScope?.providerId).toBe('customAcp');
+        expect(props?.lockScope?.providerId).toBe('codex');
+
         await props?.onPickRemoteSessionId?.('session-picked');
 
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
-                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
-                backendTargetKey: 'acpBackend:review-bot',
+                backendTarget: JSON.stringify({
+                    kind: 'backend',
+                    backendId: 'review-bot',
+                    configuredBackendId: 'review-bot',
+                }),
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
                 dataId: 'draft-1',
                 machineId: 'machine-2',
                 spawnServerId: 'server-2',
@@ -203,59 +267,117 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         });
     });
 
-    it('falls back to the settings-backed configured backend when route context is missing', async () => {
+    it('uses the projected runtime carrier when browsing direct sessions for a plugin backend', async () => {
         routeParamsState.value = {
+            backendTargetKey: 'backend:plugin-review-bot',
             dataId: 'draft-1',
-            machineId: 'machine-2',
+            machineId: 'machine-plugin-2',
             spawnServerId: 'server-2',
         };
         settingsState.value = {
-            lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [
-                    {
-                        id: 'review-bot',
-                        name: 'review-bot',
-                        title: 'Review Bot',
-                        command: 'custom-acp',
-                        args: ['serve'],
-                        env: {},
-                        transportProfile: 'generic',
-                        capabilities: {
-                            supportsLoadSession: false,
-                            supportsModes: 'unknown',
-                            supportsModels: 'unknown',
-                            supportsConfigOptions: 'unknown',
-                            promptImageSupport: 'unknown',
-                        },
-                        createdAt: 1,
-                        updatedAt: 1,
-                    },
-                ],
+            backendEnabledByTargetKey: {
+                'backend:plugin-review-bot': true,
             },
         };
-
-        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
-
-        await renderScreen(React.createElement(ResumeBrowsePickerScreen));
-
-        const props = browseScreenPropsRef.current;
-        expect(props?.lockScope?.providerId).toBe('customAcp');
-
-        await props?.onPickRemoteSessionId?.('session-picked');
-
-        expect(routerMock.replace).toHaveBeenCalledWith({
-            pathname: '/new',
-            params: {
-                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
-                backendTargetKey: 'acpBackend:review-bot',
-                dataId: 'draft-1',
-                machineId: 'machine-2',
-                spawnServerId: 'server-2',
-                resumeSessionId: 'session-picked',
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: {
+                v: 1,
+                providersById: {
+                    'plugin:review-bot': {
+                        providerId: 'plugin:review-bot',
+                        title: 'Review Bot Plugin',
+                        subtitle: 'plugin provider',
+                        channel: 'plugin',
+                        isBuiltIn: false,
+                        providerAgentId: 'claude',
+                        iconAgentId: 'claude',
+                    },
+                },
+                backendsById: {
+                    'plugin-review-bot': {
+                        backendId: 'plugin-review-bot',
+                        providerId: 'plugin:review-bot',
+                        title: 'Review Bot (plugin)',
+                        subtitle: 'plugin backend',
+                        providerAgentId: 'claude',
+                        iconAgentId: 'claude',
+                    },
+                },
             },
         });
+
+        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
+        await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+
+        expect(browseScreenPropsRef.current?.lockScope?.providerId).toBe('claude');
+    });
+
+    it('waits for plugin carrier projection on cold load instead of navigating away through the customAcp fallback', async () => {
+        routeParamsState.value = {
+            backendTargetKey: 'backend:plugin-review-bot',
+            dataId: 'draft-1',
+            machineId: 'machine-plugin-2',
+            spawnServerId: 'server-2',
+        };
+        settingsState.value = {
+            backendEnabledByTargetKey: {
+                'backend:plugin-review-bot': true,
+            },
+        };
+        directBrowseSupportState.supportedByProviderId = {
+            customAcp: false,
+            claude: true,
+        };
+
+        let resolveProjection: ((value: unknown) => void) | undefined;
+        machineContributionRegistryProjectionDescribeMock.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveProjection = resolve;
+        }));
+
+        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
+        await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+        await Promise.resolve();
+
+        expect(routerMock.back).not.toHaveBeenCalled();
+        expect(routerMock.replace).not.toHaveBeenCalled();
+
+        const projectionResolver = resolveProjection;
+        if (typeof projectionResolver === 'function') {
+            await act(async () => {
+                projectionResolver({
+                    supported: true,
+                    projection: {
+                        v: 1,
+                        providersById: {
+                            'plugin:review-bot': {
+                                providerId: 'plugin:review-bot',
+                                title: 'Review Bot Plugin',
+                                subtitle: 'plugin provider',
+                                channel: 'plugin',
+                                isBuiltIn: false,
+                                providerAgentId: 'claude',
+                                iconAgentId: 'claude',
+                            },
+                        },
+                        backendsById: {
+                            'plugin-review-bot': {
+                                backendId: 'plugin-review-bot',
+                                providerId: 'plugin:review-bot',
+                                title: 'Review Bot (plugin)',
+                                subtitle: 'plugin backend',
+                                providerAgentId: 'claude',
+                                iconAgentId: 'claude',
+                            },
+                        },
+                    },
+                });
+            });
+        }
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(routerMock.back).not.toHaveBeenCalled();
+        expect(routerMock.replace).not.toHaveBeenCalled();
+        expect(browseScreenPropsRef.current?.lockScope?.providerId).toBe('claude');
     });
 });

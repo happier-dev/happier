@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { DesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
 import { Text } from '@/components/ui/text/Text';
 
 import {
@@ -18,14 +17,15 @@ import {
     type DesktopActivityOverlayVisualMode,
 } from './DesktopActivityOverlayVisualMode';
 import type { DesktopActivityOverlayHoverablePressableState } from './DesktopActivityOverlayHoverablePressableState';
+import type { DesktopActivityOverlayUiModel } from './shared/desktopActivityOverlayUiModel';
 
 export function DesktopActivityOverlayCollapsed(props: Readonly<{
-    model: DesktopActivityOverlayModel;
+    model: DesktopActivityOverlayUiModel;
     visualMode: DesktopActivityOverlayVisualMode;
-    interactive: boolean;
     dragHandlers: Readonly<Record<string, unknown>>;
     onPress: () => void;
     onHoverIn?: () => void;
+    onHoverOut?: () => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const isNotchIntegrated = props.visualMode === 'notch_integrated';
@@ -49,17 +49,17 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
         <Pressable
             testID="desktop-activity-overlay-collapsed"
             accessibilityLabel={accessibilityLabel || undefined}
-            disabled={!props.interactive}
             onPress={props.onPress}
             onHoverIn={props.onHoverIn}
+            onHoverOut={props.onHoverOut}
             style={(state) => {
                 const { pressed } = state;
                 const hovered = (state as DesktopActivityOverlayHoverablePressableState).hovered === true;
 
                 return [
                     containerStyle,
-                    props.interactive && hovered ? { opacity: 0.985 } : null,
-                    props.interactive && pressed ? { opacity: 0.92 } : null,
+                    hovered ? { opacity: 0.985 } : null,
+                    pressed ? { opacity: 0.92 } : null,
                 ];
             }}
             {...props.dragHandlers}
@@ -90,11 +90,20 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
                             testID="desktop-activity-overlay-collapsed-brand-mark"
                         />
                     </View>
-                    <View style={styles.notchSpacer} />
-                    <View style={styles.notchTrailingCluster}>
+                    <View style={styles.notchTextWrap}>
+                        <Text numberOfLines={1} style={[styles.notchTitle, { color: theme.colors.overlay.text }]}>
+                            {props.model.collapsed.title}
+                        </Text>
                         {props.model.collapsed.statusText ? (
-                            <View style={[styles.statusDot, { backgroundColor: theme.colors.accent.orange }]} />
+                            <View style={styles.notchStatusRow}>
+                                <View style={[styles.statusDot, { backgroundColor: theme.colors.accent.orange }]} />
+                                <Text numberOfLines={1} style={[styles.notchStatus, { color: theme.colors.overlay.textSecondary }]}>
+                                    {props.model.collapsed.statusText}
+                                </Text>
+                            </View>
                         ) : null}
+                    </View>
+                    <View style={styles.notchTrailingCluster}>
                         {typeof props.model.collapsed.sessionCount === 'number' ? (
                             <View style={[
                                 styles.countBadge,
@@ -153,7 +162,7 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
 
 const styles = StyleSheet.create({
     container: {
-        minHeight: 42,
+        minHeight: 38,
         width: '100%',
         height: '100%',
         position: 'relative',
@@ -184,8 +193,26 @@ const styles = StyleSheet.create({
         minWidth: 0,
         gap: 1,
     },
-    notchSpacer: {
+    notchTextWrap: {
         flex: 1,
+        minWidth: 0,
+        gap: 1,
+    },
+    notchTitle: {
+        fontSize: 10,
+        fontWeight: '700',
+        letterSpacing: 0.08,
+    },
+    notchStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        minWidth: 0,
+    },
+    notchStatus: {
+        flex: 1,
+        fontSize: 8,
+        opacity: 0.86,
     },
     notchTrailingCluster: {
         flexDirection: 'row',

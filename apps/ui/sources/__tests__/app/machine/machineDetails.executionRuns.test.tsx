@@ -192,7 +192,7 @@ describe('MachineDetailScreen (execution runs section)', () => {
             callId: 'call-1',
             sidechainId: 'side-1',
             intent: 'review',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             runClass: 'bounded',
             ioMode: 'request_response',
             retentionPolicy: 'ephemeral',

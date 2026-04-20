@@ -4,12 +4,15 @@ import {
     flushOAuthEffects,
     localSearchParamsMock,
     loginWithCredentialsSpy,
+    modal,
     replaceSpy,
     resetOAuthHarness,
     runWithOAuthScreen,
     setPendingExternalAuthState,
+    setPendingExternalAuthServerMismatch,
     trackAccountRestoredSpy,
 } from '@/auth/providers/github/test/oauthReturnHarness';
+import { t } from '@/text';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,6 +26,38 @@ afterEach(() => {
 });
 
 describe('oauth/[provider] return (keyless)', () => {
+    it('surfaces oauth state mismatch and clears stale pending auth when the pending auth belongs to a different server context', async () => {
+        replaceSpy.mockReset();
+        loginWithCredentialsSpy.mockReset();
+        clearPendingExternalAuthMock.mockReset();
+        modal.alert.mockReset();
+
+        localSearchParamsMock.mockReturnValue({
+            provider: 'github',
+            flow: 'auth',
+            pending: 'p-mismatch',
+        });
+        setPendingExternalAuthState({
+            provider: 'github',
+            proof: 'proof_mismatch',
+            serverId: 'server-a',
+            serverUrl: 'https://shared.example.test',
+        });
+        setPendingExternalAuthServerMismatch(true);
+
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 }));
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
+
+        await runWithOAuthScreen(async () => {
+            await flushOAuthEffects();
+            expect(fetchMock).not.toHaveBeenCalled();
+            expect(clearPendingExternalAuthMock).toHaveBeenCalled();
+            expect(modal.alert).toHaveBeenCalledWith(t('common.error'), t('errors.oauthStateMismatch'));
+            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            expect(replaceSpy).toHaveBeenCalledWith('/');
+        });
+    });
+
     it('finalizes keyless oauth auth for a plaintext account and logs in with data-key credentials', async () => {
         replaceSpy.mockReset();
         loginWithCredentialsSpy.mockReset();

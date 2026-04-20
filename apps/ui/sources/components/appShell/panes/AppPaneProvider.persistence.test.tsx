@@ -100,6 +100,14 @@ describe('AppPaneProvider persistence', () => {
             details: expect.objectContaining({
                 isOpen: true,
                 activeTabKey: 'file:/repo/src/a.ts',
+                focusedGroupId: 'group:1',
+                groups: [
+                    expect.objectContaining({
+                        id: 'group:1',
+                        activeTabKey: 'file:/repo/src/a.ts',
+                        tabKeys: ['file:/repo/src/a.ts'],
+                    }),
+                ],
                 tabState: {
                     'file:/repo/src/a.ts': { draft: 'draft text' },
                 },
@@ -126,7 +134,26 @@ describe('AppPaneProvider persistence', () => {
         expect(setLocalSettingSpy).toHaveBeenCalledWith(expect.objectContaining({
             'project:wr_1': expect.objectContaining({
                 details: expect.objectContaining({
-                    activeTabKey: 'file:/repo/src/a.ts',
+                    focusedGroupId: 'group:1',
+                    root: {
+                        id: 'group:1',
+                        kind: 'leaf',
+                        leafKind: 'details-group',
+                        payload: { groupId: 'group:1' },
+                    },
+                    tabsByKey: expect.objectContaining({
+                        'file:/repo/src/a.ts': expect.objectContaining({
+                            isPinned: true,
+                            isPreview: false,
+                        }),
+                    }),
+                    groupsById: {
+                        'group:1': {
+                            id: 'group:1',
+                            tabKeys: ['file:/repo/src/a.ts'],
+                            activeTabKey: 'file:/repo/src/a.ts',
+                        },
+                    },
                     tabState: {
                         'file:/repo/src/a.ts': { draft: 'draft text' },
                     },
@@ -186,6 +213,14 @@ describe('AppPaneProvider persistence', () => {
             details: expect.objectContaining({
                 isOpen: true,
                 activeTabKey: 'file:/repo/src/a.ts',
+                focusedGroupId: 'group:1',
+                groups: [
+                    expect.objectContaining({
+                        id: 'group:1',
+                        activeTabKey: 'file:/repo/src/a.ts',
+                        tabKeys: ['file:/repo/src/a.ts'],
+                    }),
+                ],
                 tabState: {
                     'file:/repo/src/a.ts': { draft: 'draft text' },
                 },

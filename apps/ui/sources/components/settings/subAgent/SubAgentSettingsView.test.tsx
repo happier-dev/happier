@@ -118,9 +118,12 @@ vi.mock('@/agents/providers/registry/providerSubagentSettingsRegistry', () => ({
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     getResolvedBackendCatalogEntries: () => [
         {
-            target: { kind: 'configuredAcpBackend', backendId: 'custom-review' },
-            targetKey: 'acpBackend:custom-review',
-            family: 'configuredAcpBackend',
+            backendTarget: { kind: 'backend', backendId: 'custom-review', configuredBackendId: 'custom-review' },
+            backendTargetKey: 'backend:custom-review:configured:custom-review',
+            kind: 'configuredBackend',
+            backendId: 'custom-review',
+            providerId: 'custom-review',
+            providerAgentId: null,
             builtInAgentId: null,
             iconAgentId: 'customAcp',
             title: 'Custom Review Bot',

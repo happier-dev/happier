@@ -13,6 +13,12 @@ pub(crate) enum DesktopActivityOverlayMacWindowLevelOverride {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum DesktopActivityOverlayMacHostPath {
+    Window,
+    Panel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DesktopActivityOverlayMacWindowBuilderDefaults {
     pub(crate) accept_first_mouse: bool,
     pub(crate) title_bar_style: TitleBarStyle,
@@ -22,7 +28,7 @@ pub(crate) struct DesktopActivityOverlayMacWindowBuilderDefaults {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DesktopActivityOverlayMacWindowHostSettings {
-    pub(crate) prefer_panel_host: bool,
+    pub(crate) host_path: DesktopActivityOverlayMacHostPath,
     pub(crate) prefer_accessory_activation_policy: bool,
     pub(crate) visible_on_all_workspaces: bool,
     pub(crate) shadow: bool,
@@ -62,12 +68,19 @@ pub(crate) fn resolve_macos_overlay_window_host_settings(
     }
 
     Some(DesktopActivityOverlayMacWindowHostSettings {
-        prefer_panel_host: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
+        host_path: if matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated) {
+            DesktopActivityOverlayMacHostPath::Panel
+        } else {
+            DesktopActivityOverlayMacHostPath::Window
+        },
         prefer_accessory_activation_policy: matches!(
             host_mode,
             DesktopActivityOverlayHostMode::NotchIntegrated
         ),
-        visible_on_all_workspaces: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
+        visible_on_all_workspaces: matches!(
+            host_mode,
+            DesktopActivityOverlayHostMode::NotchIntegrated
+        ),
         shadow: false,
         full_screen_auxiliary: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
         stationary: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
@@ -86,7 +99,10 @@ pub(crate) fn resolve_macos_overlay_window_host_settings(
 pub(crate) fn should_apply_raw_macos_overlay_window_collection_behavior(
     settings: DesktopActivityOverlayMacWindowHostSettings,
 ) -> bool {
-    !settings.prefer_panel_host
+    matches!(
+        settings.host_path,
+        DesktopActivityOverlayMacHostPath::Window
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -187,7 +203,11 @@ mod tests {
     use crate::activity_overlay::host_mode::DesktopActivityOverlayDisplayContext;
     use crate::activity_overlay::placement::Rect;
 
-    fn display_context(is_macos: bool, is_builtin_display: bool, has_physical_notch: bool) -> DesktopActivityOverlayDisplayContext {
+    fn display_context(
+        is_macos: bool,
+        is_builtin_display: bool,
+        has_physical_notch: bool,
+    ) -> DesktopActivityOverlayDisplayContext {
         DesktopActivityOverlayDisplayContext {
             is_macos,
             is_builtin_display,
@@ -233,7 +253,7 @@ mod tests {
         .expect("expected notch-integrated host settings");
 
         assert!(settings.visible_on_all_workspaces);
-        assert!(settings.prefer_panel_host);
+        assert_eq!(settings.host_path, DesktopActivityOverlayMacHostPath::Panel);
         assert!(settings.prefer_accessory_activation_policy);
         assert!(!settings.shadow);
         assert!(settings.full_screen_auxiliary);
@@ -256,7 +276,10 @@ mod tests {
         .expect("expected floating host settings on macOS");
 
         assert!(!settings.visible_on_all_workspaces);
-        assert!(!settings.prefer_panel_host);
+        assert_eq!(
+            settings.host_path,
+            DesktopActivityOverlayMacHostPath::Window
+        );
         assert!(!settings.prefer_accessory_activation_policy);
         assert!(!settings.shadow);
         assert!(!settings.full_screen_auxiliary);
@@ -286,7 +309,9 @@ mod tests {
         )
         .expect("expected notch-integrated host settings");
 
-        assert!(!should_apply_raw_macos_overlay_window_collection_behavior(settings));
+        assert!(!should_apply_raw_macos_overlay_window_collection_behavior(
+            settings
+        ));
     }
 
     #[test]
@@ -297,6 +322,8 @@ mod tests {
         )
         .expect("expected floating host settings");
 
-        assert!(should_apply_raw_macos_overlay_window_collection_behavior(settings));
+        assert!(should_apply_raw_macos_overlay_window_collection_behavior(
+            settings
+        ));
     }
 }

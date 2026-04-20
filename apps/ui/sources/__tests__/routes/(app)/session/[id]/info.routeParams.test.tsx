@@ -3,6 +3,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +12,9 @@ const useSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => unknown>());
 const resolvePreferredServerIdForSessionIdSpy = vi.hoisted(() => vi.fn<(sessionId: string) => string | undefined>());
 const useSessionExecutionRunsSupportedSpy = vi.hoisted(() => vi.fn<(sessionId: string, serverId: string | null) => boolean>(() => true));
 const useSessionHandoffSourceReachabilitySpy = vi.hoisted(() => vi.fn());
+const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() =>
+    vi.fn<(...args: unknown[]) => Promise<any>>(async () => ({ supported: false, reason: 'not-supported' })),
+);
 
 const routerMock = createExpoRouterMock({
     params: { id: ['s1', 's2'] },
@@ -60,6 +64,10 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string, reason: string) => hydrateSessionSpy(sessionId, reason),
 }));
 
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
 }));
@@ -75,7 +83,7 @@ vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
         useSessionExecutionRunsSupportedSpy(sessionId, serverId),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     useSession: (sessionId: string) => useSessionSpy(sessionId),
     useSessionMessagesVersion: () => 0,
     useIsDataReady: () => true,
@@ -84,7 +92,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => ({}),
     },
-}));
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionReachableMachineTarget: () => null,
@@ -118,6 +128,8 @@ describe('session info route', () => {
         resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-canonical');
         useSessionExecutionRunsSupportedSpy.mockClear();
         useSessionHandoffSourceReachabilitySpy.mockClear();
+        machineContributionRegistryProjectionDescribeMock.mockReset();
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
     });
 
     afterEach(() => {

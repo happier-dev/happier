@@ -215,6 +215,12 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const isTablet = useIsTablet();
+    const router = useRouter();
+
+    const handleNewSession = React.useCallback(() => {
+        router.push('/new');
+    }, [router]);
+
     if (variant === 'sidebar') {
         const storageChrome = (
             <SessionsListStorageChrome
@@ -225,12 +231,15 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
         );
 
         return (
-            <View style={styles.sidebarContainer}>
-                {storageChrome}
-                <View style={styles.sidebarContentContainer}>
-                    <SessionsListPaneContent storageKind={storageKind} fallbackGuidanceVariant="sidebar" />
+            <>
+                <View style={styles.sidebarContainer}>
+                    {storageChrome}
+                    <View style={styles.sidebarContentContainer}>
+                        <SessionsListPaneContent storageKind={storageKind} fallbackGuidanceVariant="sidebar" />
+                    </View>
                 </View>
-            </View>
+                <FABWide onPress={handleNewSession} />
+            </>
         );
     }
 

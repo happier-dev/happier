@@ -3,6 +3,7 @@ import { createContext, useContext, useMemo, useReducer, useRef, useState } from
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import type { PaneDriver, PaneScopeId } from './types';
 import { appPaneReduce, createAppPaneState, type AppPaneAction, type AppPaneState, type PaneScopeState } from './model/appPaneReducer';
+import { migrateLegacyDetailsWorkspaceState, serializeDetailsWorkspaceState } from './details/workspace/migrateLegacyDetailsWorkspaceState';
 
 type AppPaneContextValue = Readonly<{
     state: AppPaneState;
@@ -15,24 +16,11 @@ type AppPaneContextValue = Readonly<{
 const AppPaneContext = createContext<AppPaneContextValue | null>(null);
 
 function normalizePersistedPaneScopes(
-    value: Readonly<Record<string, PaneScopeState>> | Record<string, {
+    value: Readonly<Record<string, {
         right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
-        details: {
-            isOpen: boolean;
-            tabs: Array<{
-                key: string;
-                kind: string;
-                title: string;
-                subtitle?: string | null;
-                resource: unknown;
-                isPreview: boolean;
-                isPinned: boolean;
-            }>;
-            activeTabKey: string | null;
-            tabState: Record<string, unknown>;
-        };
+        details: unknown;
         bottom: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
-    }> | null | undefined,
+    }>> | null | undefined,
 ): Readonly<Record<string, PaneScopeState>> {
     if (!value) return {};
     return Object.fromEntries(
@@ -44,20 +32,7 @@ function normalizePersistedPaneScopes(
                     activeTabId: scope.right.activeTabId ?? null,
                     tabState: scope.right.tabState,
                 },
-                details: {
-                    isOpen: scope.details.isOpen,
-                    tabs: scope.details.tabs.map((tab) => ({
-                        key: tab.key,
-                        kind: tab.kind,
-                        title: tab.title,
-                        subtitle: tab.subtitle ?? null,
-                        resource: tab.resource,
-                        isPreview: tab.isPreview,
-                        isPinned: tab.isPinned,
-                    })),
-                    activeTabKey: scope.details.activeTabKey ?? null,
-                    tabState: scope.details.tabState,
-                },
+                details: migrateLegacyDetailsWorkspaceState(scope.details),
                 bottom: {
                     isOpen: scope.bottom.isOpen,
                     activeTabId: scope.bottom.activeTabId ?? null,
@@ -72,20 +47,7 @@ function serializePersistedPaneScopes(
     value: Readonly<Record<string, PaneScopeState>>,
 ): Record<string, {
     right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
-    details: {
-        isOpen: boolean;
-        tabs: Array<{
-            key: string;
-            kind: string;
-            title: string;
-            subtitle?: string | null;
-            resource: unknown;
-            isPreview: boolean;
-            isPinned: boolean;
-        }>;
-        activeTabKey: string | null;
-        tabState: Record<string, unknown>;
-    };
+    details: ReturnType<typeof serializeDetailsWorkspaceState>;
     bottom: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
 }> {
     return Object.fromEntries(
@@ -97,20 +59,7 @@ function serializePersistedPaneScopes(
                     activeTabId: scope.right.activeTabId,
                     tabState: { ...scope.right.tabState },
                 },
-                details: {
-                    isOpen: scope.details.isOpen,
-                    tabs: scope.details.tabs.map((tab) => ({
-                        key: tab.key,
-                        kind: tab.kind,
-                        title: tab.title,
-                        subtitle: tab.subtitle ?? null,
-                        resource: tab.resource,
-                        isPreview: tab.isPreview,
-                        isPinned: tab.isPinned,
-                    })),
-                    activeTabKey: scope.details.activeTabKey,
-                    tabState: { ...scope.details.tabState },
-                },
+                details: serializeDetailsWorkspaceState(scope.details),
                 bottom: {
                     isOpen: scope.bottom.isOpen,
                     activeTabId: scope.bottom.activeTabId,

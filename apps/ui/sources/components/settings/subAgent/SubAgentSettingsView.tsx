@@ -3,12 +3,13 @@ import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
-import { buildBackendTargetKey, type BackendTargetRefV1, isBuiltInAgentTarget } from '@happier-dev/protocol';
+import { type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { listProviderSubagentSettingsSections } from '@/agents/providers/registry/providerSubagentSettingsRegistry';
 import type { TranslatableText } from '@/agents/providers/shared/providerSettingsPlugin';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -21,6 +22,9 @@ import { randomUUID } from '@/platform/randomUUID';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useAllMachines } from '@/sync/store/hooks';
+import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
     buildExecutionRunsGuidanceBlock,
     coerceExecutionRunsGuidanceEntries,
@@ -56,17 +60,17 @@ function getRuleTitle(entry: ExecutionRunsGuidanceEntry): string {
     return truncateForTitle(desc.split('\n')[0]?.trim() || t('subAgentGuidance.settings.rules.untitled'), 56);
 }
 
-function getBackendTargetLabel(target: BackendTargetRefV1, backendEntries: readonly ResolvedBackendCatalogEntry[]): string {
-    const resolved = backendEntries.find((entry) => entry.targetKey === buildBackendTargetKey(target)) ?? null;
+function getBackendTargetLabel(target: BackendTargetRefV2, backendEntries: readonly ResolvedBackendCatalogEntry[]): string {
+    const resolved = backendEntries.find((entry) => entry.backendTargetKey === resolveBackendTargetKeyV2(target)) ?? null;
     if (resolved) return resolved.title;
 
-    if (isBuiltInAgentTarget(target) && isAgentId(target.agentId as any)) {
-        const core = getAgentCore(target.agentId as AgentId);
+    if (!target.configuredBackendId && isAgentId(target.backendId)) {
+        const core = getAgentCore(target.backendId as AgentId);
         const displayName = t(core.displayNameKey).trim();
-        return displayName ? `${displayName} (${target.agentId})` : target.agentId;
+        return displayName ? `${displayName} (${target.backendId})` : target.backendId;
     }
 
-    return buildBackendTargetKey(target);
+    return resolveBackendTargetKeyV2(target);
 }
 
 function getRuleSubtitle(entry: ExecutionRunsGuidanceEntry, backendEntries: readonly ResolvedBackendCatalogEntry[]): string {
@@ -97,6 +101,19 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
     const [maxCharsRaw, setMaxChars] = useSettingMutable('executionRunsGuidanceMaxChars');
     const [entriesRaw, setEntries] = useSettingMutable('executionRunsGuidanceEntries');
     const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const machines = useAllMachines();
+    const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
+    const preferredMachineId = React.useMemo(() => {
+        return resolvePreferredMachineId({
+            machines,
+            recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
+        });
+    }, [machines, recentMachinePaths]);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: preferredMachineId,
+        enabled: Boolean(preferredMachineId),
+        staleMs: 60_000,
+    });
 
     const maxChars = clampInt(Number(maxCharsRaw ?? 4_000), { min: 200, max: 50_000 });
     const entries = React.useMemo(
@@ -108,8 +125,18 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
             enabledAgentIds,
             acpCatalogSettingsV1: acpCatalogSettingsV1 as any,
             backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
+            discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
+            mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
         });
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds]);
+    }, [
+        acpCatalogSettingsV1,
+        backendEnabledByTargetKey,
+        daemonMergedProjection.inputs?.discoveredBackendIds,
+        daemonMergedProjection.inputs?.mergedBackendProjectionById,
+        daemonMergedProjection.inputs?.mergedProviderProjectionById,
+        enabledAgentIds,
+    ]);
     const providerSubagentSections = React.useMemo(() => listProviderSubagentSettingsSections(), []);
 
     const setEntriesNext = React.useCallback((next: readonly ExecutionRunsGuidanceEntry[]) => {

@@ -16,9 +16,8 @@ export type DesktopOverlayCompactStyle = 'pill' | 'panel';
 export type DesktopOverlayExpandedBehavior = 'click' | 'hover';
 export type DesktopOverlaySettingsVisibilityState = Readonly<{
     showOverlayConfiguration: boolean;
+    showAttentionFilterControls: boolean;
     showAutoHideDelay: boolean;
-    showCollapsedClickAction: boolean;
-    showExpandedBehavior: boolean;
     showHostModeFallbackNotice: boolean;
     showFloatingPlacementControls: boolean;
     showCustomPlacementControls: boolean;
@@ -51,6 +50,18 @@ export type DesktopOverlayPolicy = Readonly<{
 
 export type DesktopOverlayEffectiveHostMode = 'floating' | 'notch_integrated' | null;
 
+const DESKTOP_OVERLAY_FIXED_PRODUCT_DEFAULTS = {
+    expandedBehavior: 'click',
+    interactiveCollapsed: true,
+    clickAction: 'expand_overlay',
+    density: 'compact',
+    compactStyle: 'pill',
+    showSessionCount: true,
+} as const satisfies Pick<
+    DesktopOverlayPolicy,
+    'expandedBehavior' | 'interactiveCollapsed' | 'clickAction' | 'density' | 'compactStyle' | 'showSessionCount'
+>;
+
 function readBoolean(value: unknown, fallback: boolean): boolean {
     return typeof value === 'boolean' ? value : fallback;
 }
@@ -80,13 +91,13 @@ export function resolveDesktopOverlayPolicy(settings: Readonly<Record<string, un
         alwaysOnTop: readBoolean(settings.desktopOverlayAlwaysOnTop, true),
         autoHideEnabled: readBoolean(settings.desktopOverlayAutoHideEnabled, true),
         autoHideDelayMs: readNumber(settings.desktopOverlayAutoHideDelayMs, 6000, 1000, 120000),
-        expandedBehavior: readEnum(settings.desktopOverlayExpandedBehavior, ['click', 'hover'], 'click'),
-        interactiveCollapsed: readBoolean(settings.desktopOverlayInteractiveCollapsed, true),
+        expandedBehavior: DESKTOP_OVERLAY_FIXED_PRODUCT_DEFAULTS.expandedBehavior,
+        interactiveCollapsed: DESKTOP_OVERLAY_FIXED_PRODUCT_DEFAULTS.interactiveCollapsed,
         presentationMode: readEnum(settings.desktopOverlayPresentationMode, ['automatic', 'notch_integrated', 'floating_overlay'], 'automatic'),
-        clickAction: readEnum(settings.desktopOverlayClickAction, ['expand_overlay', 'open_primary_session', 'open_sessions'], 'expand_overlay'),
-        density: readEnum(settings.desktopOverlayDensity, ['compact', 'comfortable'], 'compact'),
-        compactStyle: readEnum(settings.desktopOverlayCompactStyle, ['pill', 'panel'], 'pill'),
-        showSessionCount: readBoolean(settings.desktopOverlayShowSessionCount, true),
+        clickAction: DESKTOP_OVERLAY_FIXED_PRODUCT_DEFAULTS.clickAction,
+        density: DESKTOP_OVERLAY_FIXED_PRODUCT_DEFAULTS.density,
+        compactStyle: DESKTOP_OVERLAY_FIXED_PRODUCT_DEFAULTS.compactStyle,
+        showSessionCount: DESKTOP_OVERLAY_FIXED_PRODUCT_DEFAULTS.showSessionCount,
         showPreviewText: readBoolean(settings.desktopOverlayShowPreviewText, false),
         placementMode,
         anchor: readEnum(settings.desktopOverlayAnchor, [
@@ -111,7 +122,6 @@ export function resolveDesktopOverlaySettingsVisibilityState(
     hostMode: DesktopOverlayEffectiveHostMode = null,
 ): DesktopOverlaySettingsVisibilityState {
     const showOverlayConfiguration = policy.enabled;
-    const showCollapsedClickAction = showOverlayConfiguration && policy.interactiveCollapsed;
     const effectiveHostMode = hostMode
         ?? (policy.presentationMode === 'notch_integrated'
             ? 'notch_integrated'
@@ -129,9 +139,8 @@ export function resolveDesktopOverlaySettingsVisibilityState(
 
     return {
         showOverlayConfiguration,
+        showAttentionFilterControls: showOverlayConfiguration && policy.visibilityMode === 'attention_only',
         showAutoHideDelay: showOverlayConfiguration && policy.autoHideEnabled,
-        showCollapsedClickAction,
-        showExpandedBehavior: showCollapsedClickAction && policy.clickAction === 'expand_overlay',
         showHostModeFallbackNotice,
         showFloatingPlacementControls,
         showCustomPlacementControls: showFloatingPlacementControls && policy.placementMode === 'custom',

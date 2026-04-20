@@ -168,10 +168,11 @@ fn write_linux_hsetup_gzip(source_path: &PathBuf) -> Result<(), String> {
     let bytes = fs::read(source_path).map_err(|error| error.to_string())?;
     let gzip_path = PathBuf::from(format!("{}.gz", source_path.display()));
 
-    let mut encoder =
-        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     use std::io::Write;
-    encoder.write_all(&bytes).map_err(|error| error.to_string())?;
+    encoder
+        .write_all(&bytes)
+        .map_err(|error| error.to_string())?;
     let gz = encoder.finish().map_err(|error| error.to_string())?;
     fs::write(&gzip_path, gz).map_err(|error| error.to_string())?;
     Ok(())

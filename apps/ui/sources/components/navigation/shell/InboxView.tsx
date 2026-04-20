@@ -13,7 +13,6 @@ import {
 import { t } from '@/text';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { Typography } from '@/constants/Typography';
 import { useRouter } from 'expo-router';
@@ -127,7 +126,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                     </View>
                 )}
                 <RecoveryKeyReminderBanner />
-                <UpdateBanner />
                 <View style={styles.emptyContainer}>
                     <ActivityIndicator size="large" color={theme.colors.textSecondary} />
                 </View>
@@ -150,7 +148,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                     </View>
                 )}
                 <RecoveryKeyReminderBanner />
-                <UpdateBanner />
                 <View style={styles.emptyContainer}>
                     <Image
                         source={require('@/assets/images/brutalist/Brutalism 10.png')}
@@ -184,7 +181,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                 width: '100%'
             }}>
                 <RecoveryKeyReminderBanner />
-                <UpdateBanner />
 
                 {openApprovals.length > 0 && (
                     <ItemGroup title={t('inbox.approvals')}>

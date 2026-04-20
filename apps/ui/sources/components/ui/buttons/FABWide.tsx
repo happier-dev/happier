@@ -15,7 +15,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     button: {
         borderRadius: 12,
-        paddingVertical: 16,
+        paddingVertical: 12,
         paddingHorizontal: 20,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignItems: 'center',

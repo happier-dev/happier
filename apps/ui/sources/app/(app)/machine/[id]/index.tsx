@@ -52,7 +52,8 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
-import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -169,6 +170,27 @@ export default function MachineDetailScreen() {
     const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
     const settings = useSettings();
     const activeServerId = getActiveServerId();
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: machineId ?? null,
+        serverId: activeServerId,
+        enabled: Boolean(machineId && activeServerId),
+        staleMs: 60_000,
+    });
+    const preferredBackendTarget = React.useMemo(() => {
+        return resolvePreferredBackendTargetFromProjection({
+            lastUsedAgent: settings.lastUsedAgent,
+            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            daemonMergedProjectionInputs: daemonMergedProjection.inputs,
+        });
+    }, [
+        daemonMergedProjection.inputs,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+        settings.lastUsedAgent,
+        settings.lastUsedBackendTarget,
+    ]);
     const [executionRunsState, setExecutionRunsState] = useState<
         | { status: 'idle' | 'loading'; runs: readonly DaemonExecutionRunEntry[] }
         | { status: 'loaded'; runs: readonly DaemonExecutionRunEntry[] }
@@ -663,12 +685,6 @@ export default function MachineDetailScreen() {
             const terminal = resolveTerminalSpawnOptions({
                 settings: storage.getState().settings,
                 machineId,
-            });
-            const preferredBackendTarget = resolvePreferredBackendTargetFromSettings({
-                lastUsedAgent: settings.lastUsedAgent,
-                lastUsedBackendTarget: settings.lastUsedBackendTarget,
-                backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-                acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
             });
             const result = await machineSpawnNewSession({
                 machineId: machineId!,

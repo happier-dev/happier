@@ -7,19 +7,25 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string, options?: { serverId?: string }) => true));
-const sessionViewSpy = vi.hoisted(() => vi.fn((props: { id: string }) => React.createElement('SessionView', props)));
+const sessionSplitCanvasScreenSpy = vi.hoisted(() => vi.fn((props: {
+    sessionId: string;
+    routeServerId?: string;
+    jumpToSeq?: number | null;
+    paneUrlState?: unknown;
+    initialAttachmentDrafts?: readonly unknown[] | null;
+}) => React.createElement('SessionSplitCanvasScreen', props)));
 
 const routerMock = createExpoRouterMock({
     params: {
         id: ['', 's1'],
         serverId: ['server-1'],
-        jumpSeq: '',
-        right: '',
-        bottom: '',
-        details: '',
-        path: '',
-        sha: '',
-        recoveryDataId: '',
+        jumpSeq: '42',
+        right: 'files',
+        bottom: 'terminal',
+        details: 'commit',
+        path: 'src/index.ts',
+        sha: 'abc123',
+        recoveryDataId: 'recovery-1',
     },
     router: {
         push: vi.fn(),
@@ -60,8 +66,22 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
+vi.mock('@/components/sessions/canvas/SessionSplitCanvasScreen', () => ({
+    SessionSplitCanvasScreen: (props: {
+        sessionId: string;
+        routeServerId?: string;
+        jumpToSeq?: number | null;
+        paneUrlState?: unknown;
+        initialAttachmentDrafts?: readonly unknown[] | null;
+    }) => sessionSplitCanvasScreenSpy(props),
+}));
+
 vi.mock('@/components/sessions/shell/SessionView', () => ({
-    SessionView: (props: { id: string }) => sessionViewSpy(props),
+    SessionView: (props: { id: string }) => React.createElement('SessionView', props),
+}));
+
+vi.mock('@/components/workspaceCockpit/session/SessionCockpitShell', () => ({
+    SessionCockpitShell: (props: { sessionId: string }) => React.createElement('SessionCockpitShell', props),
 }));
 
 vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
@@ -79,24 +99,34 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
-    parseSessionPaneUrlState: () => null,
+    parseSessionPaneUrlState: () => ({
+        rightTabId: 'files',
+        bottomTabId: 'terminal',
+        detailsTarget: {
+            kind: 'commit',
+            path: 'src/index.ts',
+            sha: 'abc123',
+        },
+    }),
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
-    getTempData: () => null,
+    getTempData: () => ({
+        attachmentDrafts: [{ id: 'draft-1' }],
+    }),
 }));
 
 describe('session index route', () => {
     beforeEach(() => {
         hydrateSessionSpy.mockClear();
-        sessionViewSpy.mockClear();
+        sessionSplitCanvasScreenSpy.mockClear();
     });
 
     afterEach(() => {
         standardCleanup();
     });
 
-    it('normalizes array session ids before hydrating and rendering the session view', async () => {
+    it('normalizes route params before hydrating and passes the full session route boundary through the session split canvas screen', async () => {
         const { default: SessionRoute } = await import('@/app/(app)/session/[id]/index');
 
         await renderScreen(<SessionRoute />);
@@ -106,9 +136,21 @@ describe('session index route', () => {
             'SessionRoute.ensureSessionVisible gen=1',
             { serverId: 'server-1' },
         );
-        expect(sessionViewSpy).toHaveBeenCalledWith(
+        expect(sessionSplitCanvasScreenSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                id: 's1',
+                sessionId: 's1',
+                routeServerId: 'server-1',
+                jumpToSeq: 42,
+                paneUrlState: {
+                    rightTabId: 'files',
+                    bottomTabId: 'terminal',
+                    detailsTarget: {
+                        kind: 'commit',
+                        path: 'src/index.ts',
+                        sha: 'abc123',
+                    },
+                },
+                initialAttachmentDrafts: [{ id: 'draft-1' }],
             }),
         );
     });

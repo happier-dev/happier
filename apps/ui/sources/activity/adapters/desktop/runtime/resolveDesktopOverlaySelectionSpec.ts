@@ -6,7 +6,8 @@ import type { DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 export function resolveDesktopOverlaySelectionSpec(
     policy: DesktopOverlayPolicy,
 ): ActivitySurfaceSelectionSpec {
-    const selectsActiveSessions = policy.visibilityMode === 'active_sessions';
+    const usesActiveSessionCandidatePool = policy.visibilityMode === 'active_sessions'
+        || policy.visibilityMode === 'always_when_enabled';
 
     return {
         surfaceId: ACTIVITY_SURFACE_SELECTION_IDS.desktopOverlay,
@@ -14,10 +15,10 @@ export function resolveDesktopOverlaySelectionSpec(
         mode: 'running',
         selectionReason: 'all_eligible',
         maxSelected: null,
-        includeUrgent: selectsActiveSessions ? true : policy.showWhenAttentionRequired,
-        includeReady: selectsActiveSessions ? true : policy.showWhenReady,
-        includeThinking: selectsActiveSessions ? true : policy.showWhenRunning,
-        includeQuietActive: policy.visibilityMode !== 'attention_only',
-        activeOnly: selectsActiveSessions,
+        includeUrgent: usesActiveSessionCandidatePool ? true : policy.showWhenAttentionRequired,
+        includeReady: usesActiveSessionCandidatePool ? true : policy.showWhenReady,
+        includeThinking: usesActiveSessionCandidatePool ? true : policy.showWhenRunning,
+        includeQuietActive: usesActiveSessionCandidatePool,
+        activeOnly: false,
     };
 }

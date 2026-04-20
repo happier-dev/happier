@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -19,6 +18,7 @@ import { getPermissionApplyTimingSubtitleKey } from '@/components/settings/sessi
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { supportsDirectTranscriptStorageForNewSession } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { readAccountTranscriptStorageDefaults, type SessionTranscriptStorageMode } from '@/sync/domains/session/transcriptStorageDefaults';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 type PermissionApplyTiming = 'immediate' | 'next_prompt';
 type PermissionPromptSurfaceMenuOption = 'composer' | 'transcript';
@@ -41,13 +41,13 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
     const [defaultTranscriptStorageModeByTargetKey, setDefaultTranscriptStorageModeByTargetKey] = useSettingMutable('newSessionDefaultPersistenceModeByTargetKeyV1');
 
     const getDefaultPermission = React.useCallback((agent: AgentId): PermissionMode => {
-        const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: agent });
+        const targetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: agent });
         const raw = (defaultPermissionByTargetKey as any)?.[targetKey] as PermissionMode | undefined;
         return (raw ?? 'default') as PermissionMode;
     }, [defaultPermissionByTargetKey]);
 
     const setDefaultPermission = React.useCallback((agent: AgentId, mode: PermissionMode) => {
-        const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: agent });
+        const targetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: agent });
         setDefaultPermissionByTargetKey({
             ...(defaultPermissionByTargetKey ?? {}),
             [targetKey]: mode,
@@ -62,10 +62,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
     }, [enabledAgentIds, transcriptStorageSettings]);
 
     const accountTranscriptStorageDefaults = React.useMemo(() => {
-        const enabledBackendTargets: BackendTargetRefV1[] = supportedDirectAgentIds.map((agentId) => ({
-            kind: 'builtInAgent',
-            agentId,
-        }));
+        const enabledBackendTargets = supportedDirectAgentIds.map((agentId) => ({ kind: 'backend', backendId: agentId } as const));
         return readAccountTranscriptStorageDefaults({
             globalDefault: defaultTranscriptStorageMode,
             byTargetKey: defaultTranscriptStorageModeByTargetKey,
@@ -74,7 +71,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
     }, [defaultTranscriptStorageMode, defaultTranscriptStorageModeByTargetKey, supportedDirectAgentIds]);
 
     const setAgentDefaultTranscriptStorage = React.useCallback((agent: AgentId, mode: SessionTranscriptStorageMode | null) => {
-        const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: agent });
+        const targetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: agent });
         const next = {
             ...(defaultTranscriptStorageModeByTargetKey ?? {}),
         } as Record<string, SessionTranscriptStorageMode>;
@@ -297,7 +294,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                     {supportedDirectAgentIds.map((agentId, index) => {
                         const core = getAgentCore(agentId);
                         const override = accountTranscriptStorageDefaults.byTargetKey[
-                            buildBackendTargetKey({ kind: 'builtInAgent', agentId })
+                            resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId })
                         ] ?? null;
                         const selectedMode = override ?? accountTranscriptStorageDefaults.globalDefault;
                         const showDivider = index < supportedDirectAgentIds.length - 1;

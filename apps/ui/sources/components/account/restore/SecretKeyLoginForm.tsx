@@ -10,6 +10,7 @@ import { authGetToken } from '@/auth/flows/getToken';
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { decodeBase64 } from '@/encryption/base64';
 import { Modal } from '@/modal';
+import { activateStackRuntimeServer } from '@/sync/domains/server/stackRuntimeServer';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -94,6 +95,8 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
             if (secretBytes.length !== 32) {
                 throw new Error('Invalid secret key length');
             }
+
+            activateStackRuntimeServer({ scope: 'device' });
 
             const token = await authGetToken(secretBytes);
             if (!token) {

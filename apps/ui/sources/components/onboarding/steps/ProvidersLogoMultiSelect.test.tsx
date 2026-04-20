@@ -19,7 +19,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('ProvidersLogoMultiSelect', () => {
-    it('filters unsupported providers and keeps the supported grid selectable', async () => {
+    it('preserves explicit provider ids instead of filtering them through the built-in setup recommendation list', async () => {
         const onToggleProvider = vi.fn();
         const { ProvidersLogoMultiSelect } = await import('./ProvidersLogoMultiSelect');
 
@@ -40,11 +40,12 @@ describe('ProvidersLogoMultiSelect', () => {
 
         const claude = screen.findByTestId('providers-select-provider-claude');
         const codex = screen.findByTestId('providers-select-provider-codex');
+        const customAcp = screen.findByTestId('providers-select-provider-customAcp');
         expect(claude).toBeTruthy();
         if (!codex) {
             throw new Error('Expected codex provider option to render.');
         }
-        expect(screen.findByTestId('providers-select-provider-customAcp')).toBeNull();
+        expect(customAcp).toBeTruthy();
 
         await pressTestInstanceAsync(codex, 'providers-select-provider-codex');
         expect(onToggleProvider).toHaveBeenCalledWith('codex');

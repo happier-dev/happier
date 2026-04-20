@@ -18,7 +18,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { loadProfile } from '@/sync/domains/state/persistence';
+import { loadProfile } from '@/sync/domains/state/profilePersistence';
 import { serverFetch } from '@/sync/http/client';
 import { machineCollectBugReportDiagnostics, machineGetBugReportLogTail } from '@/sync/ops/machines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';

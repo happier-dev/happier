@@ -12,7 +12,6 @@ import type {
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t, tLoose } from '@/text';
 
-import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 import { RelayAccessPrerequisitesStep } from '@/components/onboarding/steps/relayAccess/RelayAccessPrerequisitesStep';
@@ -22,11 +21,11 @@ import {
     buildCliInstallAndRunCommandForCurrentApp,
     buildCliInstallAndRunPowershellCommandForCurrentApp,
     buildHappierSetupCommand,
-    buildRemoteMachineSetupCommand,
 } from '@/components/onboarding/commands/wizardCliCommands';
-import { buildWebDesktopRelayHostHandoffSteps } from '@/components/onboarding/commands/webDesktopHandoffSteps';
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
 import { WebDesktopDownloadCta } from '@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta';
+import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
+import { WebDesktopRemoteSshHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRemoteSshHandoffContent';
 import { ProvidersLogoMultiSelect } from '@/components/onboarding/steps/ProvidersLogoMultiSelect';
 import { WizardProviderSetupStep } from '@/components/onboarding/steps/WizardProviderSetupStep';
 import { RelayHostLocalChecklistStep } from '@/components/onboarding/checklists/relayHostLocal/RelayHostLocalChecklistStep';
@@ -99,18 +98,9 @@ export function renderSetupStepBody(params: Readonly<{
             );
         case 'host_relay_local':
             if (requiresDesktop) {
-                const installAndSetupRelayCommand = buildCliInstallAndRunCommandForCurrentApp({ action: 'setup-relay' });
-                const installAndSetupRelayWindowsCommand = buildCliInstallAndRunPowershellCommandForCurrentApp({ action: 'setup-relay' });
                 return (
                     <View testID="setupWizard-web-relay-host-handoff" style={params.styles.webRelayHostHandoff}>
-                        <WizardTerminalHandoff
-                            testID="setupWizard-terminal-handoff"
-                            steps={buildWebDesktopRelayHostHandoffSteps({
-                                installAndSetupRelayCommand,
-                                installAndSetupRelayWindowsCommand,
-                            })}
-                        />
-                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-relay" />
+                        <WebDesktopRelayHostHandoffContent testID="setupWizard-web-relay" />
                         <View style={params.styles.urlBlock}>
                             <TextInput
                                 testID="setupWizard-relay-url-input"
@@ -184,51 +174,16 @@ export function renderSetupStepBody(params: Readonly<{
             );
         case 'remote_ssh_setup':
             if (requiresDesktop) {
-                const setupArgs: string[] = [];
-                if (params.activeServerUrl) {
-                    setupArgs.push('--relay-url', params.activeServerUrl);
-                }
-                setupArgs.push('--skip-providers', '--yes');
-                const installAndSetupCommand = buildCliInstallAndRunCommandForCurrentApp({
-                    action: 'setup',
-                    args: setupArgs,
-                });
-                const installAndSetupWindowsCommand = buildCliInstallAndRunPowershellCommandForCurrentApp({
-                    action: 'setup',
-                    args: setupArgs,
-                });
-                const sshCommand = buildRemoteMachineSetupCommand({
-                    draft: params.webRemoteSshDraft,
-                    installRelayRuntime: params.remoteSetupIntent === 'remoteRelayHost',
-                });
                 return (
-                    <View testID="setupWizard-web-remote-ssh-handoff" style={params.styles.webRelayHostHandoff}>
-                        <SshCredentialsFields
-                            testIDPrefix="setupWizard-web-remote-ssh"
-                            layoutVariant="wizard"
-                            value={params.webRemoteSshDraft}
-                            onChange={params.onWebRemoteSshDraftChange}
-                        />
-                        <WizardTerminalHandoff
-                            testID="setupWizard-terminal-handoff"
-                            steps={[
-                                {
-                                    title: t('setupOnboarding.webDesktopOnlySetupCommandTitle'),
-                                    subtitle: t('setupOnboarding.webDesktopOnlySetupRemotePrereqsSubtitle'),
-                                    code: installAndSetupCommand,
-                                    windowsCode: installAndSetupWindowsCommand,
-                                    windowsLanguage: 'powershell',
-                                    scrollTestIDSuffix: 'setup',
-                                },
-                                {
-                                    title: t('settings.machineSetupSshMachineTitle'),
-                                    subtitle: t('settings.machineSetupSshMachineSubtitle'),
-                                    code: sshCommand,
-                                    scrollTestIDSuffix: 'remote-ssh-setup',
-                                },
-                            ]}
-                        />
-                    </View>
+                    <WebDesktopRemoteSshHandoffContent
+                        testID="setupWizard-web-remote-ssh"
+                        terminalTestID="setupWizard-terminal-handoff"
+                        sshFieldTestIDPrefix="setupWizard-web-remote-ssh"
+                        draft={params.webRemoteSshDraft}
+                        onDraftChange={params.onWebRemoteSshDraftChange}
+                        relayUrl={params.activeServerUrl}
+                        installRelayRuntime={params.remoteSetupIntent === 'remoteRelayHost'}
+                    />
                 );
             }
             return (

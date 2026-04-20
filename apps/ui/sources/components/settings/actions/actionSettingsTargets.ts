@@ -22,7 +22,7 @@ export type ActionSettingsTargetId =
     | 'cli'
     | 'contextual_ui';
 
-type ActionSettingsSurface = keyof ActionSurfaces;
+type ActionSettingsSurface = NonNullable<ActionsSettingsV1['actions'][ActionId]>['disabledSurfaces'][number];
 
 type ActionSettingsTargetBase = Readonly<{
     id: ActionSettingsTargetId;
@@ -49,9 +49,9 @@ export type ActionSettingsTargetDefinition =
 type MutableActionSettingsEntry = {
     enabled?: boolean;
     enabledPlacements: ActionUiPlacement[];
-    disabledSurfaces: Array<keyof ActionSurfaces>;
+    disabledSurfaces: ActionSettingsSurface[];
     disabledPlacements: ActionUiPlacement[];
-    approvalRequiredSurfaces: Array<keyof ActionSurfaces>;
+    approvalRequiredSurfaces: ActionSettingsSurface[];
 };
 
 const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
@@ -211,12 +211,18 @@ function getMutableEntry(settings: ActionsSettingsV1, actionId: ActionId): Mutab
 }
 
 function normalizeEntry(entry: MutableActionSettingsEntry) {
-    const enabledPlacements = sortUnique(entry.enabledPlacements);
-    const disabledSurfaces = sortUnique(entry.disabledSurfaces);
-    const disabledPlacements = sortUnique(entry.disabledPlacements);
-    const approvalRequiredSurfaces = sortUnique(entry.approvalRequiredSurfaces);
+    const enabledPlacements = sortUnique<ActionUiPlacement>(entry.enabledPlacements);
+    const disabledSurfaces = sortUnique<ActionSettingsSurface>(entry.disabledSurfaces);
+    const disabledPlacements = sortUnique<ActionUiPlacement>(entry.disabledPlacements);
+    const approvalRequiredSurfaces = sortUnique<ActionSettingsSurface>(entry.approvalRequiredSurfaces);
 
-    const normalized = {
+    const normalized: Readonly<{
+        enabled?: false;
+        enabledPlacements: ActionUiPlacement[];
+        disabledSurfaces: ActionSettingsSurface[];
+        disabledPlacements: ActionUiPlacement[];
+        approvalRequiredSurfaces: ActionSettingsSurface[];
+    }> = {
         ...(entry.enabled === false ? { enabled: false as const } : {}),
         enabledPlacements,
         disabledSurfaces,
@@ -358,20 +364,20 @@ export function setActionTargetSelected(params: Readonly<{
         if (isActionSettingsOptInPlacement(target.placement)) {
             entry.disabledPlacements = entry.disabledPlacements.filter((placement) => placement !== target.placement);
             entry.enabledPlacements = params.selected
-                ? sortUnique([...entry.enabledPlacements, target.placement])
+                ? sortUnique<ActionUiPlacement>([...entry.enabledPlacements, target.placement])
                 : entry.enabledPlacements.filter((placement) => placement !== target.placement);
             return writeEntry(normalizedSettings, params.actionId, entry);
         }
 
         entry.disabledPlacements = params.selected
             ? entry.disabledPlacements.filter((placement) => placement !== target.placement)
-            : sortUnique([...entry.disabledPlacements, target.placement]);
+            : sortUnique<ActionUiPlacement>([...entry.disabledPlacements, target.placement]);
         return writeEntry(normalizedSettings, params.actionId, entry);
     }
 
     entry.disabledSurfaces = params.selected
         ? entry.disabledSurfaces.filter((surface) => surface !== target.surface)
-        : sortUnique([...entry.disabledSurfaces, target.surface]);
+        : sortUnique<ActionSettingsSurface>([...entry.disabledSurfaces, target.surface]);
 
     return writeEntry(normalizedSettings, params.actionId, entry);
 }
@@ -395,7 +401,7 @@ export function getActionTargetApprovalRequired(params: Readonly<{
     return entry.approvalRequiredSurfaces?.includes(surface) === true;
 }
 
-export function resolveActionSettingsApprovalSurface(actionId: ActionId, targetId: ActionSettingsTargetId): keyof ActionSurfaces | null {
+export function resolveActionSettingsApprovalSurface(actionId: ActionId, targetId: ActionSettingsTargetId): ActionSettingsSurface | null {
     const target = getActionSettingsTargetDefinition(actionId, targetId);
     if (target.kind === 'surface') {
         return target.surface;
@@ -424,7 +430,7 @@ export function setActionTargetApprovalRequired(params: Readonly<{
     }
 
     entry.approvalRequiredSurfaces = params.approvalRequired
-        ? sortUnique([...entry.approvalRequiredSurfaces, surface])
+        ? sortUnique<ActionSettingsSurface>([...entry.approvalRequiredSurfaces, surface])
         : entry.approvalRequiredSurfaces.filter((value) => value !== surface);
 
     return writeEntry(normalizedSettings, params.actionId, entry);

@@ -4,10 +4,15 @@ import { ActivityIndicator, Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
-import { getProviderCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
-import { getProviderLocalAuthPlugin } from '@/agents/providers/registry/providerLocalAuthRegistry';
-import { getAgentCore } from '@/agents/catalog/catalog';
-import { ProvidersLogoMultiSelect, WizardTerminalHandoff, WebDesktopDownloadCta } from '@/components/onboarding';
+import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { getProviderLocalAuthPlugin } from '@/agents/providers/catalog/providerLocalAuthCatalog';
+import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import {
+    ProvidersLogoMultiSelect,
+    WizardTerminalHandoff,
+    WebDesktopDownloadCta,
+    type ProvidersLogoMultiSelectEntry,
+} from '@/components/onboarding';
 import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
 import { ActionCard } from '@/components/ui/cards/ActionCard';
 import { Item } from '@/components/ui/lists/Item';
@@ -34,27 +39,76 @@ import {
 } from './providerSetupQueue';
 import { useProviderCliInstallQueue, type ProviderCliInstallStatus } from './useProviderCliInstallQueue';
 
-const DEFAULT_PROVIDER_IDS = getProviderCliSetupSupportedIds();
+function supportsDirectProviderSetup(providerId: AgentId | null | undefined): providerId is AgentId {
+    return isAgentId(providerId) && Boolean(getProviderCliRuntimeSpec(providerId).binaryName);
+}
+
+const DEFAULT_PROVIDER_IDS = AGENT_IDS.filter((providerId) => supportsDirectProviderSetup(providerId));
+const DEFAULT_PROVIDER_ENTRIES = DEFAULT_PROVIDER_IDS.map((providerId) => {
+    const core = getAgentCore(providerId);
+    return {
+        providerId,
+        providerAgentId: providerId,
+        title: t(core.displayNameKey),
+        iconAgentId: providerId,
+        iconName: core.ui.agentPickerIconName,
+    } as const;
+});
+
+export type ProviderSetupEntry = Readonly<{
+    providerId: string;
+    providerAgentId?: AgentId | null;
+    title: string;
+    iconAgentId?: AgentId | null;
+    iconName: string;
+    subtitle?: string | null;
+}>;
+
+function uniqueProviderSetupEntries(entries: readonly ProviderSetupEntry[]): ProviderSetupEntry[] {
+    const entriesById = new Map<string, ProviderSetupEntry>();
+    for (const entry of entries) {
+        if (!entry.providerId.trim()) continue;
+        if (!entriesById.has(entry.providerId)) {
+            entriesById.set(entry.providerId, entry);
+        }
+    }
+    return [...entriesById.values()];
+}
+
+function buildSelectableProviderEntries(entries: readonly ProviderSetupEntry[]): ProvidersLogoMultiSelectEntry[] {
+    return entries.map((entry) => ({
+        providerId: entry.providerId,
+        iconAgentId: entry.iconAgentId ?? null,
+        setupProviderId: entry.providerAgentId ?? null,
+        iconName: entry.iconName,
+    }));
+}
+
+function uniqueSetupProviderIds(entries: readonly ProviderSetupEntry[]): AgentId[] {
+    return [
+        ...new Set(
+            entries
+                .map((entry) => entry.providerAgentId)
+                .filter((providerId): providerId is AgentId => supportsDirectProviderSetup(providerId)),
+        ),
+    ];
+}
 
 const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowWizardWebHandoff(props: Readonly<{
-    providerIds: readonly AgentId[];
+    providerEntries: readonly ProviderSetupEntry[];
 }>) {
     const { theme } = useUnistyles();
-    const supportedProviderIds = React.useMemo(() => new Set(getProviderCliSetupSupportedIds()), []);
-    const providerIds = React.useMemo(
-        () => props.providerIds.filter((providerId) => supportedProviderIds.has(providerId)),
-        [props.providerIds, supportedProviderIds],
-    );
-    const [selectedProviderIds, setSelectedProviderIds] = React.useState<AgentId[]>(() => [...providerIds]);
+    const providerEntries = React.useMemo(() => props.providerEntries, [props.providerEntries]);
+    const [selectedProviderIds, setSelectedProviderIds] = React.useState<string[]>(() => providerEntries.map((entry) => entry.providerId));
 
     React.useEffect(() => {
         setSelectedProviderIds((previous) => {
-            const next = providerIds.filter((providerId) => previous.includes(providerId));
-            return next.length > 0 ? next : [...providerIds];
+            const next = providerEntries.map((entry) => entry.providerId).filter((providerId) => previous.includes(providerId));
+            return next.length > 0 ? next : providerEntries.map((entry) => entry.providerId);
         });
-    }, [providerIds]);
+    }, [providerEntries]);
 
-    const toggleProvider = React.useCallback((providerId: AgentId) => {
+    const toggleProvider = React.useCallback((providerId: string) => {
         setSelectedProviderIds((previous) => {
             if (previous.includes(providerId)) {
                 return previous.filter((entry) => entry !== providerId);
@@ -63,10 +117,17 @@ const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowW
         });
     }, []);
 
+    const selectedSetupProviderIds = React.useMemo(
+        () => uniqueSetupProviderIds(providerEntries.filter((entry) => selectedProviderIds.includes(entry.providerId))),
+        [providerEntries, selectedProviderIds],
+    );
+    const canLaunchSetupHandoff = selectedSetupProviderIds.length > 0;
     const providerArgv = React.useMemo(() => {
-        if (selectedProviderIds.length === 0) return ['--yes'];
-        return ['--providers', selectedProviderIds.join(','), '--yes'];
-    }, [selectedProviderIds]);
+        if (!canLaunchSetupHandoff) {
+            return [] as string[];
+        }
+        return ['--providers', selectedSetupProviderIds.join(','), '--yes'];
+    }, [canLaunchSetupHandoff, selectedSetupProviderIds]);
 
     const providersSetupCommand = React.useMemo(() => buildCliInstallAndRunCommandForCurrentApp({
         action: 'providers-setup',
@@ -83,7 +144,7 @@ const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowW
             <View style={{ gap: 12, alignItems: 'center' }}>
                 <ProvidersLogoMultiSelect
                     testID="provider-setup-wizard-select"
-                    providerIds={providerIds}
+                    providerEntries={buildSelectableProviderEntries(providerEntries)}
                     selectedProviderIds={selectedProviderIds}
                     onToggleProvider={toggleProvider}
                 />
@@ -91,19 +152,21 @@ const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowW
                     {t('settingsProviders.setup.selectionFooter')}
                 </Text>
             </View>
-            <WizardTerminalHandoff
-                testID="provider-setup-wizard-terminal"
-                steps={[
-                    {
-                        title: t('settingsProviders.setup.startTitle'),
-                        subtitle: t('settingsProviders.setup.startDescription'),
-                        code: providersSetupCommand,
-                        windowsCode: providersSetupWindowsCommand,
-                        windowsLanguage: 'powershell',
-                        scrollTestIDSuffix: 'providers-setup',
-                    },
-                ]}
-            />
+            {canLaunchSetupHandoff ? (
+                <WizardTerminalHandoff
+                    testID="provider-setup-wizard-terminal"
+                    steps={[
+                        {
+                            title: t('settingsProviders.setup.startTitle'),
+                            subtitle: t('settingsProviders.setup.startDescription'),
+                            code: providersSetupCommand,
+                            windowsCode: providersSetupWindowsCommand,
+                            windowsLanguage: 'powershell',
+                            scrollTestIDSuffix: 'providers-setup',
+                        },
+                    ]}
+                />
+            ) : null}
             {Platform.OS === 'web' ? (
                 <WebDesktopDownloadCta testIDPrefix="provider-setup-wizard" />
             ) : null}
@@ -112,7 +175,7 @@ const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowW
 });
 
 function resolveProviderStepState(params: Readonly<{
-    providerId: AgentId;
+    providerId: string;
     queueState: ProviderSetupQueueState | null;
 }>): 'idle' | 'active' | 'done' | 'skipped' {
     if (!params.queueState) return 'idle';
@@ -139,6 +202,7 @@ function buildInstallStepDetail(stepState: ProviderCliInstallStatus): string | u
 
 export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Readonly<{
     providerIds?: readonly AgentId[];
+    providerEntries?: readonly ProviderSetupEntry[];
     machineId?: string | null;
     serverId?: string | null;
     presentation?: 'settings' | 'wizard';
@@ -146,71 +210,90 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
     onRequestAdvance?: (() => void) | null;
 }>) {
     const presentation = props.presentation ?? 'settings';
+    const providerEntries = React.useMemo(
+        () => {
+            const sourceEntries = props.providerEntries?.length
+                ? props.providerEntries
+                : (props.providerIds?.length ? props.providerIds : DEFAULT_PROVIDER_IDS).map((providerId) => {
+                    const core = getAgentCore(providerId);
+                    return {
+                        providerId,
+                        providerAgentId: providerId,
+                        title: t(core.displayNameKey),
+                        iconAgentId: providerId,
+                        iconName: core.ui.agentPickerIconName,
+                    } satisfies ProviderSetupEntry;
+                });
+            return uniqueProviderSetupEntries(sourceEntries);
+        },
+        [props.providerEntries, props.providerIds],
+    );
     if (!isTauriDesktop()) {
-        const sourceProviderIds = props.providerIds?.length ? props.providerIds : DEFAULT_PROVIDER_IDS;
         void presentation;
-        return <ProviderSetupFlowWizardWebHandoff providerIds={sourceProviderIds} />;
+        return <ProviderSetupFlowWizardWebHandoff providerEntries={providerEntries.length > 0 ? providerEntries : DEFAULT_PROVIDER_ENTRIES} />;
     }
 
     const { theme } = useUnistyles();
     const defaultMachineId = usePrimaryMachineFromActiveSelection();
-    const supportedProviderIds = React.useMemo(() => new Set(getProviderCliSetupSupportedIds()), []);
-    const providerIds = React.useMemo(
-        () => {
-            const sourceProviderIds = props.providerIds?.length ? props.providerIds : DEFAULT_PROVIDER_IDS;
-            return sourceProviderIds.filter((providerId) => supportedProviderIds.has(providerId));
-        },
-        [props.providerIds, supportedProviderIds],
-    );
     const serverId = props.serverId ?? getActiveServerId();
     const machineId = props.machineId ?? defaultMachineId;
     const machine = useMachine(machineId ?? '');
     const machineLabel = machine?.metadata?.displayName ?? machine?.metadata?.host ?? machineId ?? t('machine.detectedCliUnknown');
     const isWizardPresentation = presentation === 'wizard';
 
-    const [selectedProviderIds, setSelectedProviderIds] = React.useState<AgentId[]>(() => [...providerIds]);
+    const [selectedProviderIds, setSelectedProviderIds] = React.useState<string[]>(() => providerEntries.map((entry) => entry.providerId));
     const [queueState, setQueueState] = React.useState<ProviderSetupQueueState | null>(null);
-    const [terminalProviderId, setTerminalProviderId] = React.useState<AgentId | null>(null);
+    const [terminalProviderId, setTerminalProviderId] = React.useState<string | null>(null);
 
     React.useEffect(() => {
         setSelectedProviderIds((previous) => {
-            const next = providerIds.filter((providerId) => previous.includes(providerId));
-            return next.length > 0 ? next : [...providerIds];
+            const next = providerEntries.map((entry) => entry.providerId).filter((providerId) => previous.includes(providerId));
+            return next.length > 0 ? next : providerEntries.map((entry) => entry.providerId);
         });
-    }, [providerIds]);
+    }, [providerEntries]);
 
     const activeProviderId = queueState?.activeProviderId ?? null;
-    const activeCore = activeProviderId ? getAgentCore(activeProviderId) : null;
-    const authPlugin = activeProviderId ? getProviderLocalAuthPlugin(activeProviderId) : null;
+    const activeEntry = React.useMemo(
+        () => providerEntries.find((entry) => entry.providerId === activeProviderId) ?? null,
+        [activeProviderId, providerEntries],
+    );
+    const activeSetupProviderId = activeEntry?.providerAgentId ?? null;
+    const activeCore = activeSetupProviderId ? getAgentCore(activeSetupProviderId) : null;
+    const authPlugin = activeSetupProviderId ? getProviderLocalAuthPlugin(activeSetupProviderId) : null;
+    const selectedSetupProviderIds = React.useMemo(
+        () => uniqueSetupProviderIds(providerEntries.filter((entry) => selectedProviderIds.includes(entry.providerId))),
+        [providerEntries, selectedProviderIds],
+    );
+    const hasRunnableSelectedProviders = selectedSetupProviderIds.length > 0;
     const cliAvailability = useCLIDetection(machineId, {
         autoDetect: Boolean(machineId),
-        agentIds: selectedProviderIds,
-        includeLoginStatus: Boolean(activeProviderId),
-        includeLoginStatusForAgentIds: activeProviderId ? [activeProviderId] : [],
+        agentIds: selectedSetupProviderIds,
+        includeLoginStatus: Boolean(activeSetupProviderId),
+        includeLoginStatusForAgentIds: activeSetupProviderId ? [activeSetupProviderId] : [],
         serverId,
     });
     const authState = useProviderAuthenticationState({
-        providerId: activeProviderId ?? 'codex',
+        providerId: activeSetupProviderId,
         cliAvailability,
         authPlugin,
         primaryMachine: machine ?? null,
     });
     const providerDetectKeys = React.useMemo(() => {
         const out: Partial<Record<AgentId, string>> = {};
-        for (const providerId of selectedProviderIds) {
+        for (const providerId of selectedSetupProviderIds) {
             out[providerId] = getAgentCore(providerId).cli.detectKey;
         }
         return out;
-    }, [selectedProviderIds]);
+    }, [selectedSetupProviderIds]);
     const installQueue = useProviderCliInstallQueue({
         machineId,
         serverId,
-        providerIds: selectedProviderIds,
+        providerIds: selectedSetupProviderIds,
         providerDetectKeys,
         installedByProviderId: cliAvailability.available,
     });
 
-    const toggleProvider = React.useCallback((providerId: AgentId) => {
+    const toggleProvider = React.useCallback((providerId: string) => {
         if (queueState || installQueue.state.hasStarted) return;
         setSelectedProviderIds((previous) => {
             if (previous.includes(providerId)) {
@@ -220,7 +303,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
         });
     }, [installQueue.state.hasStarted, queueState]);
 
-    const canStart = selectedProviderIds.length > 0 && Boolean(machineId) && !installQueue.state.isRunning;
+    const canStart = selectedProviderIds.length > 0 && hasRunnableSelectedProviders && Boolean(machineId) && !installQueue.state.isRunning;
     const isFinished = queueState != null && queueState.activeProviderId == null;
 
     const startSetup = React.useCallback(async () => {
@@ -236,13 +319,20 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
         );
         if (!confirmed) return;
 
-        const summary = await installQueue.start(selectedProviderIds);
+        const selectedEntries = providerEntries.filter((entry) => selectedProviderIds.includes(entry.providerId));
+        const summary = await installQueue.start(uniqueSetupProviderIds(selectedEntries));
+        const installedProviderIdSet = new Set(summary.installedProviderIds);
+        const failedProviderIdSet = new Set(summary.failedProviderIds);
         setQueueState(createProviderSetupQueueStateFromInstallSummary({
-            selectedProviderIds,
-            installedProviderIds: summary.installedProviderIds,
-            failedProviderIds: summary.failedProviderIds,
+            selectedProviderIds: selectedEntries.map((entry) => entry.providerId),
+            installedProviderIds: selectedEntries
+                .filter((entry) => entry.providerAgentId != null && installedProviderIdSet.has(entry.providerAgentId))
+                .map((entry) => entry.providerId),
+            failedProviderIds: selectedEntries
+                .filter((entry) => entry.providerAgentId != null && failedProviderIdSet.has(entry.providerAgentId))
+                .map((entry) => entry.providerId),
         }));
-    }, [canStart, installQueue, selectedProviderIds]);
+    }, [canStart, installQueue, providerEntries, selectedProviderIds]);
 
     const continueQueue = React.useCallback(() => {
         setTerminalProviderId(null);
@@ -294,7 +384,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                 <View style={{ gap: 12, alignItems: 'center' }}>
                     <ProvidersLogoMultiSelect
                         testID="provider-setup-wizard-select"
-                        providerIds={providerIds}
+                        providerEntries={buildSelectableProviderEntries(providerEntries)}
                         selectedProviderIds={selectedProviderIds}
                         onToggleProvider={toggleProvider}
                     />
@@ -313,22 +403,22 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                         showChevron={false}
                         mode="info"
                     />
-                    {providerIds.map((providerId) => {
-                        const core = getAgentCore(providerId);
-                        const selected = selectedProviderIds.includes(providerId);
-                        const stepState = resolveProviderStepState({ providerId, queueState });
-                        const installStatus = installQueue.resolveStatus(providerId).status;
+                    {providerEntries.map((entry) => {
+                        const selected = selectedProviderIds.includes(entry.providerId);
+                        const stepState = resolveProviderStepState({ providerId: entry.providerId, queueState });
+                        const installStatus = entry.providerAgentId ? installQueue.resolveStatus(entry.providerAgentId).status : 'idle';
+                        const iconName = entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
                         const canRetryInstall = installQueue.state.hasStarted && !installQueue.state.isRunning && installStatus === 'failed';
                         return (
                             <Item
-                                key={providerId}
-                                testID={`provider-setup-option-${providerId}`}
-                                title={t(core.displayNameKey)}
+                                key={entry.providerId}
+                                testID={`provider-setup-option-${entry.providerId}`}
+                                title={entry.title}
                                 subtitle={installQueue.state.hasStarted ? buildInstallStepDetail(installStatus) : buildProviderStepDetail(stepState)}
                                 selected={selected}
                                 showChevron={false}
                                 disabled={installQueue.state.hasStarted ? (installQueue.state.isRunning || !canRetryInstall) : Boolean(queueState)}
-                                icon={<Ionicons name={core.ui.agentPickerIconName as any} size={24} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name={iconName as any} size={24} color={theme.colors.textSecondary} />}
                                 rightElement={
                                     installQueue.state.hasStarted
                                         ? installStatus === 'installing'
@@ -346,12 +436,12 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                                 }
                                 onPress={async () => {
                                     if (installQueue.state.hasStarted) {
-                                        if (canRetryInstall) {
-                                            await installQueue.retry(providerId);
+                                        if (canRetryInstall && entry.providerAgentId) {
+                                            await installQueue.retry(entry.providerAgentId);
                                         }
                                         return;
                                     }
-                                    toggleProvider(providerId);
+                                    toggleProvider(entry.providerId);
                                 }}
                             />
                         );
@@ -372,15 +462,21 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                 />
             ) : null}
 
-            {activeProviderId && activeCore ? (
+            {activeProviderId && activeEntry ? (
                 <>
+                    {(() => {
+                        const activeIconName = activeEntry.iconAgentId
+                            ? getAgentCore(activeEntry.iconAgentId).ui.agentPickerIconName
+                            : activeEntry.iconName;
+                        return (
+                            <>
                     {!isWizardPresentation ? (
                         <ItemGroup title={t('settingsProviders.setup.queueTitle')}>
                             <Item
                                 testID={`provider-setup-active-${activeProviderId}`}
-                                title={t(activeCore.displayNameKey)}
+                                title={activeEntry.title}
                                 subtitle={t('settingsProviders.setup.activeDescription')}
-                                icon={<Ionicons name={activeCore.ui.agentPickerIconName as any} size={24} color={theme.colors.accent.blue} />}
+                                icon={<Ionicons name={activeIconName as any} size={24} color={theme.colors.accent.blue} />}
                                 showChevron={false}
                                 mode="info"
                             />
@@ -391,32 +487,37 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                             testID={`provider-setup-active-${activeProviderId}`}
                             style={{ width: '100%', flexDirection: 'row', alignItems: 'center', gap: 10 }}
                         >
-                            <Ionicons name={activeCore.ui.agentPickerIconName as any} size={24} color={theme.colors.accent.blue} />
+                            <Ionicons name={activeIconName as any} size={24} color={theme.colors.accent.blue} />
                             <View style={{ flex: 1, gap: 2 }}>
-                                <Text>{t(activeCore.displayNameKey)}</Text>
+                                <Text>{activeEntry.title}</Text>
                                 <Text style={{ color: theme.colors.textSecondary }}>
                                     {t('settingsProviders.setup.activeDescription')}
                                 </Text>
                             </View>
                         </View>
                     ) : null}
+                            </>
+                        );
+                    })()}
                     <ProviderAuthenticationCard
-                        providerId={activeProviderId}
+                        providerId={activeEntry.providerId}
+                        runtimeProviderId={activeSetupProviderId}
                         state={authState}
                         onCheckNow={() => {
+                            if (!activeSetupProviderId) return;
                             cliAvailability.refresh({
                                 bypassCache: true,
-                                includeLoginStatusForAgentIds: [activeProviderId],
+                                includeLoginStatusForAgentIds: [activeSetupProviderId],
                             });
                         }}
                         onLaunchLogin={() => {
                             setTerminalProviderId(activeProviderId);
                         }}
                     />
-                    {terminalProviderId === activeProviderId && authState.loginLaunch ? (
+                    {terminalProviderId === activeProviderId && authState.loginLaunch && activeSetupProviderId ? (
                         <View style={{ minHeight: 320 }}>
                             <ProviderAuthenticationTerminalPane
-                                providerId={activeProviderId}
+                                providerId={activeSetupProviderId}
                                 machineId={machineId}
                                 machineHomeDir={authState.machineHomeDir}
                                 loginLaunch={authState.loginLaunch}
@@ -424,7 +525,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                                 onTerminalExit={() => {
                                     cliAvailability.refresh({
                                         bypassCache: true,
-                                        includeLoginStatusForAgentIds: [activeProviderId],
+                                        includeLoginStatusForAgentIds: [activeSetupProviderId],
                                     });
                                 }}
                             />
@@ -434,7 +535,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                         <ActionCard
                             testID="provider-setup-queue-card"
                             title={t('settingsProviders.setup.queueTitle')}
-                            description={t('settingsProviders.setup.queueDescription', { provider: t(activeCore.displayNameKey) })}
+                            description={t('settingsProviders.setup.queueDescription', { provider: activeEntry.title })}
                             primaryAction={{
                                 label: (queueState?.pendingProviderIds.length ?? 0) > 0 ? t('common.continue') : t('common.done'),
                                 onPress: continueQueue,
@@ -479,17 +580,17 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
 
             {isWizardPresentation && installQueue.state.hasStarted && !queueState ? (
                 <View testID="provider-setup-wizard-install-status" style={{ width: '100%', gap: 10 }}>
-                    {providerIds.map((providerId) => {
-                        const core = getAgentCore(providerId);
-                        const selected = selectedProviderIds.includes(providerId);
+                    {providerEntries.map((entry) => {
+                        const selected = selectedProviderIds.includes(entry.providerId);
                         if (!selected) return null;
 
-                        const status = installQueue.resolveStatus(providerId).status;
+                        const status = entry.providerAgentId ? installQueue.resolveStatus(entry.providerAgentId).status : 'idle';
+                        const iconName = entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
                         return (
-                            <View key={providerId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <Ionicons name={core.ui.agentPickerIconName as any} size={22} color={theme.colors.textSecondary} />
+                            <View key={entry.providerId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <Ionicons name={iconName as any} size={22} color={theme.colors.textSecondary} />
                                 <View style={{ flex: 1, gap: 2 }}>
-                                    <Text>{t(core.displayNameKey)}</Text>
+                                    <Text>{entry.title}</Text>
                                     <Text style={{ color: theme.colors.textSecondary }}>
                                         {buildInstallStepDetail(status) ?? t('settingsNotifications.badges.queuedTitle')}
                                     </Text>

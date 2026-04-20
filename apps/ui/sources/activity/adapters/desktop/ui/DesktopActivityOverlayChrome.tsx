@@ -8,7 +8,28 @@ import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayV
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
 type ChromeTone = 'collapsed' | 'expanded' | 'row';
-type InteriorSurfaceKind = 'action' | 'badge';
+type InteriorSurfaceKind = 'action' | 'badge' | 'card';
+
+const notchIntegratedChromeRadii = {
+    collapsed: {
+        borderTopLeftRadius: 6,
+        borderTopRightRadius: 6,
+        borderBottomLeftRadius: 14,
+        borderBottomRightRadius: 14,
+    },
+    expanded: {
+        borderTopLeftRadius: 19,
+        borderTopRightRadius: 19,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+    },
+    row: {
+        borderTopLeftRadius: 10,
+        borderTopRightRadius: 10,
+        borderBottomLeftRadius: 14,
+        borderBottomRightRadius: 14,
+    },
+} as const satisfies Record<ChromeTone, Readonly<Record<string, number>>>;
 
 function formatOpaqueColorWithAlpha(baseColor: string, alpha: number): string {
     const normalizedAlpha = Math.max(0, Math.min(1, alpha));
@@ -40,12 +61,7 @@ function resolveChromeRadii(
 ): Readonly<Record<string, number>> {
     if (tone === 'collapsed') {
         return visualMode === 'notch_integrated'
-            ? {
-                borderTopLeftRadius: 10,
-                borderTopRightRadius: 10,
-                borderBottomLeftRadius: 18,
-                borderBottomRightRadius: 18,
-            }
+            ? notchIntegratedChromeRadii.collapsed
             : {
                 borderRadius: 24,
             };
@@ -53,24 +69,14 @@ function resolveChromeRadii(
 
     if (tone === 'expanded') {
         return visualMode === 'notch_integrated'
-            ? {
-                borderTopLeftRadius: 18,
-                borderTopRightRadius: 18,
-                borderBottomLeftRadius: 28,
-                borderBottomRightRadius: 28,
-            }
+            ? notchIntegratedChromeRadii.expanded
             : {
                 borderRadius: 22,
             };
     }
 
     return visualMode === 'notch_integrated'
-        ? {
-            borderTopLeftRadius: 12,
-            borderTopRightRadius: 12,
-            borderBottomLeftRadius: 16,
-            borderBottomRightRadius: 16,
-        }
+        ? notchIntegratedChromeRadii.row
         : {
             borderRadius: 14,
         };
@@ -96,9 +102,11 @@ function resolveInteriorSurfaceAlpha(
     kind: InteriorSurfaceKind,
 ): number {
     if (visualMode === 'notch_integrated') {
+        if (kind === 'card') return 0.958;
         return kind === 'action' ? 0.985 : 0.97;
     }
 
+    if (kind === 'card') return 0.94;
     return kind === 'action' ? 0.97 : 0.955;
 }
 
@@ -128,7 +136,7 @@ function resolveNotchGeometry(tone: ChromeTone): Readonly<{
 
     if (tone === 'expanded') {
         return {
-            topCornerRadius: 18,
+            topCornerRadius: 19,
             bottomCornerRadius: 24,
         };
     }
@@ -224,6 +232,7 @@ export function createDesktopActivityOverlayInteriorSurfaceStyle(
             theme.colors.overlay.scrimStrong,
             resolveInteriorSurfaceAlpha(params.visualMode, params.kind),
         ),
+        borderRadius: params.kind === 'badge' ? 999 : (params.kind === 'card' ? 18 : 10),
     };
 }
 
@@ -231,7 +240,11 @@ export function DesktopActivityOverlayChromeHighlights(props: Readonly<{
     theme: Theme;
     visualMode: DesktopActivityOverlayVisualMode;
     tone: ChromeTone;
-}>): React.ReactElement {
+}>): React.ReactElement | null {
+    if (props.visualMode === 'notch_integrated') {
+        return null;
+    }
+
     const toneStyle = chromeHighlightStyles[props.visualMode][props.tone];
 
     return (
@@ -321,10 +334,10 @@ const chromeHighlightStyles: Record<
                 borderBottomRightRadius: 18,
             },
             innerRim: {
-                borderTopLeftRadius: 10,
-                borderTopRightRadius: 10,
-                borderBottomLeftRadius: 18,
-                borderBottomRightRadius: 18,
+                borderTopLeftRadius: 6,
+                borderTopRightRadius: 6,
+                borderBottomLeftRadius: 14,
+                borderBottomRightRadius: 14,
             },
         },
         expanded: {
@@ -344,10 +357,10 @@ const chromeHighlightStyles: Record<
                 borderBottomRightRadius: 28,
             },
             innerRim: {
-                borderTopLeftRadius: 18,
-                borderTopRightRadius: 18,
-                borderBottomLeftRadius: 28,
-                borderBottomRightRadius: 28,
+                borderTopLeftRadius: 19,
+                borderTopRightRadius: 19,
+                borderBottomLeftRadius: 24,
+                borderBottomRightRadius: 24,
             },
         },
         row: {

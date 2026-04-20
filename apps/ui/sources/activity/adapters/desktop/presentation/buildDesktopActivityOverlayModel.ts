@@ -1,31 +1,31 @@
 import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
-import type { DesktopActivityOverlaySnapshot } from './buildDesktopActivityOverlaySnapshot';
 
-export type DesktopActivityOverlayModel = Readonly<{
-    visible: boolean;
-    isExpanded: boolean;
-    generatedAt: number;
-    collapsed: Readonly<{
-        title: string;
-        statusText: string | null;
-        defaultTarget: string;
-        sessionCount: number | null;
-    }>;
-    expanded: Readonly<{
-        title: string;
-        rows: readonly Readonly<{
-            sessionId: string;
-            title: string;
-            subtitle: string | null;
-            statusText: string | null;
-            previewText: string | null;
-        }>[];
-    }>;
-    window: Readonly<{
-        collapsed: Readonly<{ width: number; height: number }>;
-        expanded: Readonly<{ width: number; height: number }>;
-    }>;
-}>;
+import { buildDesktopActivityOverlayCollapsedModel } from './model/buildDesktopActivityOverlayCollapsedModel';
+import { buildDesktopActivityOverlayExpandedCards } from './model/buildDesktopActivityOverlayExpandedCards';
+import type {
+    DesktopActivityOverlayModel,
+    DesktopActivityOverlayWindowSizeParams,
+} from './model/desktopActivityOverlayModelTypes';
+import type { DesktopActivityOverlaySnapshot } from './snapshot/desktopActivityOverlaySnapshotTypes';
+
+export type {
+    DesktopActivityOverlayExpandedCard,
+    DesktopActivityOverlayModel,
+} from './model/desktopActivityOverlayModelTypes';
+
+const desktopActivityOverlayCollapsedWindowSizeByDensity = {
+    comfortable: {
+        pill: { width: 236, height: 40 },
+        panel: { width: 372, height: 76 },
+    },
+    compact: {
+        pill: { width: 224, height: 38 },
+        panel: { width: 336, height: 68 },
+    },
+} as const satisfies Record<
+    'comfortable' | 'compact',
+    Record<'pill' | 'panel', Readonly<{ width: number; height: number }>>
+>;
 
 function resolveVisibility(params: Readonly<{
     snapshot: DesktopActivityOverlaySnapshot;
@@ -51,31 +51,18 @@ function resolveVisibility(params: Readonly<{
     return hasAnyTrigger || hasActiveSessions;
 }
 
-function resolveWindowSize(params: Readonly<{
-    density: DesktopOverlayPolicy['density'];
-    compactStyle: DesktopOverlayPolicy['compactStyle'];
-    rowCount: number;
-}>): Readonly<{
+function resolveWindowSize(params: DesktopActivityOverlayWindowSizeParams): Readonly<{
     collapsed: Readonly<{ width: number; height: number }>;
     expanded: Readonly<{ width: number; height: number }>;
 }> {
-    const collapsed =
-        params.density === 'comfortable'
-            ? (
-                params.compactStyle === 'pill'
-                    ? { width: 268, height: 48 }
-                    : { width: 372, height: 76 }
-            )
-            : (
-                params.compactStyle === 'pill'
-                    ? { width: 240, height: 42 }
-                    : { width: 336, height: 68 }
-            );
+    const collapsed = desktopActivityOverlayCollapsedWindowSizeByDensity[params.density][params.compactStyle];
     const expandedWidth = params.density === 'comfortable' ? 444 : 408;
     const rowHeight = params.density === 'comfortable' ? 60 : 54;
+    const expandedBaseHeight = params.density === 'comfortable' ? 64 : 46;
+    const expandedMinHeight = params.density === 'comfortable' ? 152 : 118;
     const expandedHeight = Math.min(
         params.density === 'comfortable' ? 500 : 432,
-        Math.max(params.density === 'comfortable' ? 168 : 148, 86 + rowHeight * params.rowCount),
+        Math.max(expandedMinHeight, expandedBaseHeight + rowHeight * params.rowCount),
     );
     return {
         collapsed,
@@ -86,12 +73,36 @@ function resolveWindowSize(params: Readonly<{
     };
 }
 
+function resolveExpandedWindowRowCount(
+    cards: readonly NonNullable<DesktopActivityOverlayModel['expanded']['cards']>[number][],
+    fallbackRowCount: number,
+): number {
+    if (cards.length === 0) {
+        return fallbackRowCount;
+    }
+
+    return cards.reduce((total, card) => {
+        switch (card.kind) {
+            case 'multi_session_list':
+                return total + card.rows.length;
+            case 'permission_request':
+            case 'user_question':
+                return total + 2;
+            case 'idle_state':
+            case 'quota_summary':
+            case 'completion_state':
+            case 'session_overview':
+            default:
+                return total + 1;
+        }
+    }, 0);
+}
+
 export function buildDesktopActivityOverlayModel(params: Readonly<{
     snapshot: DesktopActivityOverlaySnapshot;
     policy: DesktopOverlayPolicy;
     isExpanded: boolean;
 }>): DesktopActivityOverlayModel {
-    const primary = params.snapshot.primary;
     const rows = params.snapshot.sessions.slice(0, 8).map((session) => ({
         sessionId: session.sessionId,
         title: session.title,
@@ -99,25 +110,26 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
         statusText: session.statusText ?? null,
         previewText: session.previewText ?? null,
     }));
+    const cards = buildDesktopActivityOverlayExpandedCards(params.snapshot);
     const window = resolveWindowSize({
         density: params.policy.density,
         compactStyle: params.policy.compactStyle,
-        rowCount: rows.length,
+        rowCount: resolveExpandedWindowRowCount(cards, rows.length),
     });
 
     return {
         visible: resolveVisibility({ snapshot: params.snapshot, policy: params.policy }),
         isExpanded: params.isExpanded,
         generatedAt: params.snapshot.generatedAt,
-        collapsed: {
-            title: primary?.title ?? params.snapshot.labels.emptyTitle,
-            statusText: primary?.statusText ?? null,
-            defaultTarget: params.snapshot.defaultTarget,
-            sessionCount: params.policy.showSessionCount ? params.snapshot.sessions.length : null,
-        },
+        collapsed: buildDesktopActivityOverlayCollapsedModel({
+            snapshot: params.snapshot,
+            cards,
+            showSessionCount: params.policy.showSessionCount,
+        }),
         expanded: {
             title: params.snapshot.labels.sessionsTitle,
             rows,
+            cards,
         },
         window,
     };

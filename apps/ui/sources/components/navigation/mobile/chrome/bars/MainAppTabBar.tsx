@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Image } from 'expo-image';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
+import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 import { Typography } from '@/constants/Typography';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
@@ -130,7 +130,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
                             hitSlop={8}
                         >
                             <View style={styles.tabContent}>
-                                <Image
+                                <SafeExpoImage
                                     source={tab.icon}
                                     contentFit="contain"
                                     style={{ width: 24, height: 24 }}

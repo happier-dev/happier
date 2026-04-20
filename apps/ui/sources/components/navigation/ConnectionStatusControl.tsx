@@ -27,6 +27,7 @@ import { resolveMachineConnectionSummary } from '@/components/navigation/connect
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { sync } from '@/sync/sync';
 import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
+import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 type Variant = 'sidebar' | 'header';
@@ -349,6 +350,9 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             return '';
         }
     }, [open]);
+    const activeSyncError = React.useMemo(() => {
+        return selectSyncErrorForServer(syncError, activeServerId);
+    }, [activeServerId, syncError]);
 
     const activeServerLabel = React.useMemo(() => {
         const active = servers.find((server) => server.id === activeServerId);
@@ -511,14 +515,15 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     }, [targetActions]);
 
     const syncErrorPresentation = React.useMemo(() => {
-        if (!syncError) return null;
-        const classified = resolveSocketErrorClassification(syncError.message);
+        if (!activeSyncError) return null;
+        const classified = resolveSocketErrorClassification(activeSyncError.message);
         return {
             ...classified,
-            kind: syncError.kind === 'auth' ? 'auth' : classified.kind,
-            retryable: syncError.retryable ?? classified.retryable,
+            kind: activeSyncError.kind === 'auth' ? 'auth' : classified.kind,
+            retryable: activeSyncError.retryable ?? classified.retryable,
+            message: classified.message,
         };
-    }, [syncError]);
+    }, [activeSyncError]);
 
     const popoverMaxWidthCap = props.variant === 'sidebar' ? 560 : 420;
     const popoverMinWidth = props.variant === 'sidebar' && Platform.OS === 'web' ? 420 : undefined;

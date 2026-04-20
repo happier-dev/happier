@@ -20,7 +20,16 @@ export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
     effectiveMonitor: DesktopActivityOverlayRect;
     anchor: DesktopOverlayAnchor;
     placementMode: DesktopOverlayPolicy['placementMode'];
+    requestedHostMode: 'floating' | 'notch_integrated';
     hostMode: 'floating' | 'notch_integrated';
+    hostFallbackReason?:
+        | 'missing_display_context'
+        | 'unsupported_platform'
+        | 'external_display'
+        | 'display_has_no_physical_notch'
+        | 'panel_host_apply_failed'
+        | 'panel_position_unavailable'
+        | null;
     displayContext?: Readonly<{
         isMacos: boolean;
         isBuiltinDisplay: boolean;
@@ -35,6 +44,7 @@ export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
         x: number;
         y: number;
     }>;
+    nativeHostPath?: 'window' | 'panel';
     appliedNativeFrame?: DesktopActivityOverlayRect | null;
 }>;
 
@@ -78,6 +88,10 @@ export async function applyDesktopActivityOverlayDragDelta(deltaX: number, delta
 
 export async function resetDesktopActivityOverlayPosition(): Promise<void> {
     await invokeTauri<void>('desktop_activity_overlay_reset_position');
+}
+
+export async function showDesktopMainWindow(): Promise<void> {
+    await invokeTauri<void>('desktop_show_main_window');
 }
 
 export async function emitDesktopActivityOverlayInteraction(payload: DesktopActivityOverlayInteractionPayload): Promise<void> {

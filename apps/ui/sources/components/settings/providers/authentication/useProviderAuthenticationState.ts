@@ -7,7 +7,7 @@ import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
 export type ProviderAuthenticationState = Readonly<ReturnType<typeof useProviderAuthenticationState>>;
 
 export function useProviderAuthenticationState(params: Readonly<{
-    providerId: AgentId;
+    providerId: AgentId | null;
     cliAvailability: CLIAvailability;
     authPlugin: ProviderLocalAuthPlugin | null;
     primaryMachine: Readonly<{
@@ -19,6 +19,22 @@ export function useProviderAuthenticationState(params: Readonly<{
     }> | null;
 }>) {
     return React.useMemo(() => {
+        if (!params.providerId) {
+            return {
+                authStatus: null,
+                cliAvailable: null,
+                machineId: params.primaryMachine?.id ?? null,
+                machineHomeDir: params.primaryMachine?.metadata?.homeDir ?? null,
+                canCheckNow: false,
+                supportsLoginTerminal: false,
+                canLaunchLogin: false,
+                loginLaunch: null,
+                loginActionKind: 'login',
+                docsUrl: params.authPlugin?.docsUrl ?? null,
+                support: params.authPlugin?.support ?? 'unsupported',
+                statusHelpText: params.authPlugin?.statusHelpText ?? null,
+            } as const;
+        }
         const authStatus = params.cliAvailability.authStatus[params.providerId] ?? null;
         const cliAvailable = params.cliAvailability.available[params.providerId] ?? null;
         const resolvedPath = params.cliAvailability.resolvedPath[params.providerId] ?? null;

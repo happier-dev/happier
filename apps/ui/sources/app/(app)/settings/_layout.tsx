@@ -69,6 +69,7 @@ export default React.memo(function SettingsLayoutRoute() {
                 <Stack.Screen name="providers" options={buildHeaderTitleOptions(t('settingsProviders.title'))} />
                 <Stack.Screen name="providers/[providerId]" options={buildHeaderTitleOptions(t('settingsProviders.title'))} />
                 <Stack.Screen name="plugins" options={buildHeaderTitleOptions(t('settingsPlugins.title'))} />
+                <Stack.Screen name="plugins/[pluginId]" options={buildHeaderTitleOptions(t('settingsPlugins.detailTitle'))} />
                 <Stack.Screen name="desktop" options={buildHeaderTitleOptions(t('settingsDesktop.title'))} />
                 <Stack.Screen name="source-control" options={buildHeaderTitleOptions(t('navigation.sourceControl'))} />
                 <Stack.Screen name="report-issue" options={buildHeaderTitleOptions(t('settings.reportIssue'))} />

@@ -113,7 +113,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'claude',
     isAgentId: (value: unknown) => value === 'claude',
-    getAgentCore: () => ({ displayNameKey: 'agents.claude.displayName' }),
+    getAgentCore: () => ({ displayNameKey: 'Claude', ui: { agentPickerIconName: 'code-slash-outline' } }),
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -125,7 +125,7 @@ vi.mock('@/components/settings/pickers/agentDropdownItems', () => ({
     getAgentDropdownMenuItems: () => [
         {
             id: 'claude',
-            title: 'Claude',
+            title: 'Legacy Claude',
             subtitle: 'claude',
             icon: React.createElement('Ionicons', { name: 'sparkles-outline' }),
         },
@@ -144,6 +144,32 @@ vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
+}));
+
+const dropdownMenuProps: any[] = [];
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => {
+        dropdownMenuProps.push(props);
+        const toggle = () => props.onOpenChange?.(!props.open);
+        const openMenu = () => props.onOpenChange?.(true);
+        const closeMenu = () => props.onOpenChange?.(false);
+        const triggerNode =
+            typeof props.trigger === 'function'
+                ? props.trigger({ open: Boolean(props.open), toggle, openMenu, closeMenu, selectedItem: null })
+                : props.trigger;
+        const itemTriggerNode = props.itemTrigger
+            ? React.createElement('Item', {
+                title: props.itemTrigger.title,
+                subtitle: props.itemTrigger.subtitle,
+                icon: props.itemTrigger.icon,
+                detail: undefined,
+                onPress: toggle,
+                showChevron: false,
+                selected: false,
+            })
+            : null;
+        return React.createElement('DropdownMenu', props, itemTriggerNode ?? triggerNode ?? null);
+    },
 }));
 
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -175,23 +201,41 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 }));
 
 describe('LlmTaskRunnerConfigV1BackendModelPicker', () => {
-    it('probes models against the selected configured ACP backend target', async () => {
+	    it('probes models against the selected configured ACP backend target', async () => {
+	        preflightModelArgs.length = 0;
+	        const { LlmTaskRunnerConfigV1BackendModelPicker } = await import('./LlmTaskRunnerConfigV1BackendModelPicker');
+
+	        await renderScreen(
+	            <LlmTaskRunnerConfigV1BackendModelPicker
+	                value={{
+	                    v: 1,
+	                    backendTarget: { kind: 'backend', backendId: 'custom-backend', configuredBackendId: 'custom-backend' },
+	                    modelId: 'default',
+	                    permissionMode: 'no_tools',
+	                } as any}
+	                onChange={() => {}}
+	            />,
+	        );
+
+	        expect(preflightModelArgs[0]?.backendTarget).toMatchObject({
+	            kind: 'backend',
+	            backendId: 'custom-backend',
+	            configuredBackendId: 'custom-backend',
+	        });
+	    });
+
+    it('does not invent a built-in backend target when no backend is selected', async () => {
         preflightModelArgs.length = 0;
         const { LlmTaskRunnerConfigV1BackendModelPicker } = await import('./LlmTaskRunnerConfigV1BackendModelPicker');
 
         await renderScreen(
             <LlmTaskRunnerConfigV1BackendModelPicker
-                value={{
-                    v: 1,
-                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-backend' },
-                    modelId: 'default',
-                    permissionMode: 'no_tools',
-                } as any}
+                value={null}
                 onChange={() => {}}
             />,
         );
 
-        expect(preflightModelArgs[0]?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
+        expect(preflightModelArgs[0]?.backendTarget).toBeNull();
     });
 
     it('does not emit raw period text nodes under non-Text parents on web', async () => {
@@ -232,4 +276,28 @@ describe('LlmTaskRunnerConfigV1BackendModelPicker', () => {
 
         expect(badNodes).toEqual([]);
     });
+
+    it('uses resolved backend catalog entries for built-in backend menu rows', async () => {
+        dropdownMenuProps.length = 0;
+        const { LlmTaskRunnerConfigV1BackendModelPicker } = await import('./LlmTaskRunnerConfigV1BackendModelPicker');
+
+        await renderScreen(
+            <LlmTaskRunnerConfigV1BackendModelPicker
+                value={{
+                    v: 1,
+                    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    modelId: 'default',
+                    permissionMode: 'no_tools',
+                } as any}
+                onChange={() => {}}
+            />,
+        );
+
+        const backendMenu = dropdownMenuProps.find((node: any) => node.searchPlaceholder === 'settingsSession.replayResume.summaryRunner.searchBackendsPlaceholder');
+
+        expect(backendMenu).toBeTruthy();
+        expect(backendMenu?.items.some((item: any) => item.title === 'Claude')).toBe(true);
+        expect(backendMenu?.items.some((item: any) => item.title === 'Legacy Claude')).toBe(false);
+    });
+
 });

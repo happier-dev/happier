@@ -582,7 +582,11 @@ describe('AutomationEditScreen route', () => {
                 existingSessionId: 's1',
             }),
             fallbackDraft: expect.objectContaining({
-                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'review-bot',
+                    configuredBackendId: 'review-bot',
+                },
                 profileId: 'profile-1',
                 permissionMode: 'safe-yolo',
                 permissionModeUpdatedAt: 123,

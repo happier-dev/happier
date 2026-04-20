@@ -1,6 +1,7 @@
 import { t } from '@/text';
 
 import type { ConnectedServiceId } from '@happier-dev/protocol';
+import { getConnectedServiceRegistryEntry, type ConnectedServiceOauthPasteCopyKeyPrefix } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 export type ConnectedServiceOauthPasteCopy = Readonly<{
   connectWebDescription: string;
@@ -20,18 +21,19 @@ function resolveDefaultCopy(): ConnectedServiceOauthPasteCopy {
 
 type ConnectedServiceOauthPasteCopyOverride = Readonly<Partial<ConnectedServiceOauthPasteCopy>>;
 
-const SERVICE_OVERRIDES: Readonly<Partial<Record<ConnectedServiceId, ConnectedServiceOauthPasteCopyOverride>>> = Object.freeze({
-  'claude-subscription': Object.freeze({
-    connectWebDescription: t('connectedServices.oauthPaste.providerOverrides.claudeSubscription.connectWebDescription'),
-    pasteRedirectUrlPromptBody: t('connectedServices.oauthPaste.providerOverrides.claudeSubscription.pasteRedirectUrlPromptBody'),
-    pasteRedirectUrlPlaceholder: t('connectedServices.oauthPaste.providerOverrides.claudeSubscription.pasteRedirectUrlPlaceholder'),
-    missingStateError: t('connectedServices.oauthPaste.providerOverrides.claudeSubscription.errors.missingState'),
-  }),
-});
+function resolveCopyFromPrefix(prefix: ConnectedServiceOauthPasteCopyKeyPrefix): ConnectedServiceOauthPasteCopyOverride {
+  return {
+    connectWebDescription: t(`${prefix}.connectWebDescription`),
+    pasteRedirectUrlPromptBody: t(`${prefix}.pasteRedirectUrlPromptBody`),
+    pasteRedirectUrlPlaceholder: t(`${prefix}.pasteRedirectUrlPlaceholder`),
+    missingStateError: t(`${prefix}.errors.missingState`),
+  };
+}
 
 export function resolveConnectedServiceOauthPasteCopy(serviceId: ConnectedServiceId): ConnectedServiceOauthPasteCopy {
   const base = resolveDefaultCopy();
-  const override = SERVICE_OVERRIDES[serviceId];
+  const entry = getConnectedServiceRegistryEntry(serviceId);
+  const override = entry.oauthPasteCopyKeyPrefix ? resolveCopyFromPrefix(entry.oauthPasteCopyKeyPrefix) : null;
   if (!override) return base;
   return {
     ...base,

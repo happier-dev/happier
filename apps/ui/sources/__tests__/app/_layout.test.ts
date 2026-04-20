@@ -27,6 +27,16 @@ const invokeTauriSpy = vi.hoisted(() => vi.fn());
 let isAuthenticated = true;
 let segments: string[] = ['(app)'];
 let pathname = '/';
+let endpointConnectivityStatus: 'idle' | 'offline' | 'connecting' | 'online' | 'auth_failed' | 'shutting_down' = 'online';
+let syncErrorState: null | {
+    message: string;
+    retryable: boolean;
+    kind: 'auth' | 'config' | 'network' | 'server' | 'unknown';
+    at: number;
+    serverId?: string;
+} = null;
+let activeServerId = 'server-active';
+let globalSearchParamsState: Record<string, string | string[] | undefined> = {};
 
 const router = { replace: vi.fn(), push: vi.fn() };
 type NotificationResponsePayload = {
@@ -210,6 +220,7 @@ vi.mock('expo-router', async () => {
             React.useMemo(() => 0, [pathname]);
             return pathname;
         },
+        params: () => globalSearchParamsState,
         segments: () => {
             React.useMemo(() => 0, [segments.join('|')]);
             return segments;
@@ -228,11 +239,40 @@ vi.mock('@/auth/context/AuthContext', () => {
     };
 });
 
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useProfile: () => ({
+            linkedProviders: [],
+            username: null,
+        }),
+        useLocalSettings: () => ({}),
+        useEndpointConnectivity: () => ({
+            status: endpointConnectivityStatus,
+            reason: null,
+            attempt: 0,
+            nextRetryAt: null,
+            lastConnectedAt: null,
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        }),
+        useSyncError: () => syncErrorState,
+    } as any);
+});
+
 vi.mock('@/auth/routing/authRouting', () => {
     return {
         isPublicRouteForUnauthenticated: () => false,
     };
 });
+
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => ({
+        serverId: activeServerId,
+        serverUrl: 'https://example.com',
+        generation: 1,
+    }),
+}));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -267,6 +307,11 @@ afterEach(() => {
     tauriDesktopState.value = false;
     isAuthenticated = true;
     segments = ['(app)'];
+    pathname = '/';
+    endpointConnectivityStatus = 'online';
+    syncErrorState = null;
+    activeServerId = 'server-active';
+    globalSearchParamsState = {};
 });
 
 describe('RootLayout hooks order', () => {
@@ -425,5 +470,51 @@ describe('RootLayout desktop window sizing', () => {
         await renderScreen(React.createElement(RootLayout));
 
         expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'preAuth' });
+    }, 60_000);
+});
+
+describe('RootLayout auth recovery route hold', () => {
+    it('does not redirect an unauthenticated already-open base session route when auth recovery is active', async () => {
+        stubFeatureFetch();
+        isAuthenticated = false;
+        segments = ['(app)', 'session', '[id]'];
+        pathname = '/session/s1';
+        globalSearchParamsState = { id: 's1', serverId: 'server-active' };
+        endpointConnectivityStatus = 'auth_failed';
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        await renderScreen(React.createElement(RootLayout));
+
+        expect(router.replace).not.toHaveBeenCalledWith('/');
+    }, 60_000);
+
+    it('still redirects an unauthenticated base session route to home when no auth recovery signal is active', async () => {
+        stubFeatureFetch();
+        isAuthenticated = false;
+        segments = ['(app)', 'session', '[id]'];
+        pathname = '/session/s1';
+        globalSearchParamsState = { id: 's1', serverId: 'server-active' };
+        endpointConnectivityStatus = 'online';
+        syncErrorState = null;
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        await renderScreen(React.createElement(RootLayout));
+
+        expect(router.replace).toHaveBeenCalledWith('/');
+    }, 60_000);
+
+    it('normalizes a nested stale-auth session route back to the base session route', async () => {
+        stubFeatureFetch();
+        isAuthenticated = false;
+        segments = ['(app)', 'session', '[id]', 'details'];
+        pathname = '/session/s1/details';
+        globalSearchParamsState = { id: 's1', serverId: 'server-active' };
+        endpointConnectivityStatus = 'auth_failed';
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        await renderScreen(React.createElement(RootLayout));
+
+        expect(router.replace).toHaveBeenCalledWith('/session/s1?serverId=server-active');
+        expect(router.replace).not.toHaveBeenCalledWith('/');
     }, 60_000);
 });

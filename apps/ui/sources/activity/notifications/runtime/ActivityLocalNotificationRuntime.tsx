@@ -3,7 +3,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { storage, useLocalSettings } from '@/sync/domains/state/storage';
-import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
+import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -41,7 +41,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 return;
             }
 
-            if (getActiveViewingSessionId() === event.sessionId) {
+            if (isSessionSurfaceVisible(event.sessionId)) {
                 return;
             }
 

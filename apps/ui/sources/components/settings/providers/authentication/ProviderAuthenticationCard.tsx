@@ -8,7 +8,8 @@ import { ProviderAuthenticationStatusRows } from './ProviderAuthenticationStatus
 import type { ProviderAuthenticationState } from './useProviderAuthenticationState';
 
 export const ProviderAuthenticationCard = React.memo(function ProviderAuthenticationCard(props: Readonly<{
-    providerId: AgentId;
+    providerId: string;
+    runtimeProviderId?: AgentId | null;
     state: ProviderAuthenticationState;
     onCheckNow: () => void;
     onLaunchLogin: () => void;

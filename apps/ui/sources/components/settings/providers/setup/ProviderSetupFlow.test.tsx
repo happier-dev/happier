@@ -152,7 +152,7 @@ vi.mock('../authentication/useProviderAuthenticationState', () => ({
     }),
 }));
 
-vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
+vi.mock('@/agents/providers/catalog/providerLocalAuthCatalog', () => ({
     getProviderLocalAuthPlugin: () => null,
 }));
 
@@ -242,15 +242,128 @@ describe('ProviderSetupFlow', () => {
         expect(screen.findByTestId('settings.providers.setup.desktopOnlyNotice')).toBeNull();
     });
 
-    it('filters unsupported provider ids from the selectable list', async () => {
+    it('does not render a misleading generic web handoff command when only headless plugin providers are selected', async () => {
+        tauriDesktopState.value = false;
+
         const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
         const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
-            providerIds: ['codex', 'claude', 'customAcp'],
+            presentation: 'wizard',
+            providerEntries: [{
+                providerId: 'acme.headless.provider',
+                providerAgentId: null,
+                title: 'Acme Headless Provider',
+                subtitle: 'Plugin provider',
+                iconAgentId: 'claude',
+                iconName: 'layers-outline',
+            }],
+        }));
+
+        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeTruthy();
+        const select = screen.findByType('ProvidersLogoMultiSelect' as never) as unknown as {
+            props: { providerEntries?: Array<{ providerId: string }> };
+        };
+        expect(select.props.providerEntries?.map((entry) => entry.providerId)).toEqual(['acme.headless.provider']);
+        expect(screen.findAllByType('WizardTerminalHandoff' as never)).toHaveLength(0);
+    });
+
+    it('preserves explicit provider entries instead of filtering them through the built-in setup recommendation list', async () => {
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
+            providerEntries: [
+                {
+                    providerId: 'codex',
+                    providerAgentId: 'codex',
+                    title: 'Codex',
+                    iconAgentId: 'codex',
+                    iconName: 'code-slash-outline',
+                },
+                {
+                    providerId: 'claude',
+                    providerAgentId: 'claude',
+                    title: 'Claude',
+                    iconAgentId: 'claude',
+                    iconName: 'sparkles-outline',
+                },
+                {
+                    providerId: 'acme.review.provider',
+                    providerAgentId: null,
+                    title: 'Acme Review Provider',
+                    subtitle: 'Plugin provider',
+                    iconAgentId: null,
+                    iconName: 'layers-outline',
+                },
+            ],
         }));
 
         expect(screen.findByTestId('provider-setup-option-claude')).toBeTruthy();
         expect(screen.findByTestId('provider-setup-option-codex')).toBeTruthy();
-        expect(screen.findByTestId('provider-setup-option-customAcp')).toBeNull();
+        expect(screen.findByTestId('provider-setup-option-acme.review.provider')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-start-card')?.props.disabled).toBe(false);
+    });
+
+    it('renders projected plugin providers in setup with plugin identity preserved while using optional backing runtime capabilities', async () => {
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
+            providerEntries: [{
+                providerId: 'acme.review.provider',
+                providerAgentId: 'claude',
+                title: 'Acme Review Provider',
+                subtitle: 'Plugin provider',
+                iconAgentId: 'claude',
+                iconName: 'layers-outline',
+            }],
+        }));
+
+        expect(screen.findByTestId('provider-setup-option-acme.review.provider')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('provider-setup-start-card');
+
+        expect(capabilitiesState.invoke).toHaveBeenCalledWith(
+            'machine-1',
+            expect.objectContaining({ id: 'cli.claude' }),
+            expect.anything(),
+        );
+        expect(screen.findByTestId('provider-setup-active-acme.review.provider')).toBeTruthy();
+
+        const authCard = screen.findByType('ProviderAuthenticationCard' as never) as unknown as {
+            props: { providerId: string; runtimeProviderId: string | null };
+        };
+        expect(authCard.props.providerId).toBe('acme.review.provider');
+        expect(authCard.props.runtimeProviderId).toBe('claude');
+    });
+
+    it('keeps plugin providers in the setup flow even when they have no built-in runtime carrier', async () => {
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
+            providerEntries: [{
+                providerId: 'acme.headless.provider',
+                providerAgentId: null,
+                title: 'Acme Headless Provider',
+                subtitle: 'Plugin provider',
+                iconAgentId: 'claude',
+                iconName: 'layers-outline',
+            }],
+        }));
+
+        expect(screen.findByTestId('provider-setup-option-acme.headless.provider')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-start-card')?.props.disabled).toBe(true);
+    });
+
+    it('keeps explicit ACP-carried provider entries visible without treating them as runnable CLI setup targets', async () => {
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
+            providerEntries: [{
+                providerId: 'acme.acp.provider',
+                providerAgentId: null,
+                title: 'Acme ACP Provider',
+                subtitle: 'Plugin provider',
+                iconAgentId: null,
+                iconName: 'layers-outline',
+            }],
+        }));
+
+        expect(screen.findByTestId('provider-setup-option-acme.acp.provider')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-start-card')?.props.disabled).toBe(true);
     });
 
     it('defaults to the setup-supported provider set and excludes unsupported providers', async () => {

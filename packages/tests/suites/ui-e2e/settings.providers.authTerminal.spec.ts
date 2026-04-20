@@ -109,6 +109,7 @@ test.describe('ui e2e: provider settings auth terminal', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
           HAPPIER_VARIANT: 'dev',
           HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         },

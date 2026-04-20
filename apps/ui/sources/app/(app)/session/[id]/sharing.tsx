@@ -173,7 +173,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
         expiresInDays?: number;
         maxUses?: number;
         isConsentRequired: boolean;
-    }) => {
+    }): Promise<PublicSessionShare> => {
         try {
             const credentials = sync.getCredentials();
 
@@ -206,6 +206,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
             setPublicShare(created);
             await loadSharingData();
+            return created;
         } catch (error) {
             console.error('Failed to create public share:', error);
             if (error instanceof HappyError) throw error;

@@ -21,8 +21,10 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { resolvePreferredBackendTargetFromSettings } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -40,14 +42,24 @@ export default React.memo(function ProfileEditScreen() {
         spawnServerId?: string | string[];
     }>();
     const settings = useSettings() ?? settingsDefaults;
+    const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
+    const spawnServerIdParam = resolveSpawnServerRouteParam(Array.isArray(params.spawnServerId) ? params.spawnServerId[0] : params.spawnServerId);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: machineIdParam ?? null,
+        serverId: spawnServerIdParam,
+        enabled: Boolean(machineIdParam),
+        staleMs: 60_000,
+    });
     const preferredBackendTarget = React.useMemo(() => {
-        return resolvePreferredBackendTargetFromSettings({
+        return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
+        daemonMergedProjection.inputs,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
         settings.backendEnabledByTargetKey,
@@ -75,7 +87,6 @@ export default React.memo(function ProfileEditScreen() {
     const profileIdParam = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const cloneFromProfileIdParam = Array.isArray(params.cloneFromProfileId) ? params.cloneFromProfileId[0] : params.cloneFromProfileId;
     const profileDataParam = Array.isArray(params.profileData) ? params.profileData[0] : params.profileData;
-    const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
     const screenWidth = useWindowDimensions().width;
     const headerHeight = useHeaderHeight();
     const [profiles, setProfiles] = useSettingMutable('profiles');

@@ -17,7 +17,8 @@ import { useProjectMobileRoutePersistence } from '@/components/projects/detail/u
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
 import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
 import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
-import { useLegacyDetailsRouteRedirect } from '@/components/workspaceCockpit/useLegacyDetailsRouteRedirect';
+import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
+import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { t } from '@/text';
@@ -99,9 +100,13 @@ export default function ProjectFilesScreenRoute() {
     });
     const closeRight = pane.closeRight;
 
-    const activeDetailsKey = pane.scopeState?.details?.activeTabKey ?? null;
-    const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
-    const detailsTabs = pane.scopeState?.details?.tabs ?? [];
+    const detailsState = pane.scopeState?.details ?? null;
+    const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
+        detailsTabs: detailsState?.tabs,
+        activeDetailsKey: detailsState?.activeTabKey ?? null,
+        detailsGroups: detailsState?.groups,
+    }), [detailsState?.activeTabKey, detailsState?.groups, detailsState?.tabs]);
+    const detailsIsOpen = detailsState?.isOpen ?? false;
 
     React.useEffect(() => {
         if (!isFocused) return;
@@ -112,13 +117,12 @@ export default function ProjectFilesScreenRoute() {
         routeActions.navigateToSegment({ segment: 'details', method: 'push' });
     }, [routeActions]);
 
-    useLegacyDetailsRouteRedirect({
+    useFullscreenDetailsRouteAutoRedirect({
         resetKey: workspaceRef.id,
         enabled: !cockpitEnabled,
         isFocused,
         detailsIsOpen,
-        activeDetailsKey,
-        detailsTabs,
+        detailsSelection,
         onNavigate: handleNavigateToDetails,
     });
 

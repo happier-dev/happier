@@ -52,6 +52,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => 'server-a',
     getDeviceDefaultServerId: () => 'server-a',
     getResetToDefaultServerId: () => 'server-a',
+    subscribeActiveServer: vi.fn(() => () => {}),
     setActiveServerId: vi.fn(),
     upsertServerProfile: vi.fn(() => ({ id: 'server-a' })),
 }));

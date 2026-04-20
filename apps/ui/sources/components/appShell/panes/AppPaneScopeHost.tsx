@@ -9,6 +9,7 @@ import { useAppPaneContext } from './AppPaneProvider';
 import { PANE_SIZING_DEFAULTS, resolveDockedPaneSizing, resolveScaledPaneHeightPx, resolveScaledPaneHeightPxUncapped, resolveScaledPaneWidthPx, resolveScaledPaneWidthPxUncapped } from './layout/paneSizing';
 import { resolveMultiPaneDeviceType } from './layout/resolveMultiPaneDeviceType';
 import { applyEditorFocusModePaneLayoutOverride } from './layout/applyEditorFocusModePaneLayoutOverride';
+import { AppPaneScopeLayoutProvider } from './hooks/useAppPaneScopeLayout';
 
 export type AppPaneScopeHostProps = Readonly<{
     scopeId: string;
@@ -412,33 +413,44 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
                 }
             }}
         >
-            <MultiPaneHostWithBottom
-                main={props.main}
-                hideMain={editorFocusModeEnabled && (rightOpen || effectiveDetailsOpen)}
-                rightPane={rightPane}
-                detailsPane={detailsPane}
-                layout={resolvedLayout}
-                rightDockWidthPx={focusAwareDockSizing.rightWidthPx}
-                detailsDockWidthPx={focusAwareDockSizing.detailsWidthPx}
-                rightDockMinWidthPx={focusAwareDockSizing.rightMinWidthPx}
-                detailsDockMinWidthPx={focusAwareDockSizing.detailsMinWidthPx}
-                rightDockMaxWidthPx={focusAwareDockSizing.rightMaxWidthPx}
-                detailsDockMaxWidthPx={focusAwareDockSizing.detailsMaxWidthPx}
-                onCloseRight={onCloseRight}
-                onCloseDetails={onCloseDetails}
-                onCommitRightDockWidthPx={onCommitRightDockWidthPx}
-                onCommitDetailsDockWidthPx={onCommitDetailsDockWidthPx}
-                onDragRightDockWidthPx={setRightDragWidthPx}
-                onDragDetailsDockWidthPx={setDetailsDragWidthPx}
-                bottomPane={bottomPane}
-                bottomPresentation={resolvedBottomLayout.presentation}
-                bottomDockHeightPx={effectiveBottomDockHeightPx}
-                bottomDockMinHeightPx={PANE_SIZING_DEFAULTS.bottom.minPx}
-                bottomDockMaxHeightPx={bottomResizeMaxHeightPx}
-                onCloseBottom={onCloseBottom}
-                onCommitBottomDockHeightPx={onCommitBottomDockHeightPx}
-                onDragBottomDockHeightPx={setBottomDragHeightPx}
-            />
+            <AppPaneScopeLayoutProvider
+                value={{
+                    containerWidthPx,
+                    containerHeightPx,
+                    mainRegionWidthPx,
+                    multiPaneEnabled,
+                    deviceType: multiPaneDeviceType,
+                    layout: resolvedLayout,
+                }}
+            >
+                <MultiPaneHostWithBottom
+                    main={props.main}
+                    hideMain={editorFocusModeEnabled && (rightOpen || effectiveDetailsOpen)}
+                    rightPane={rightPane}
+                    detailsPane={detailsPane}
+                    layout={resolvedLayout}
+                    rightDockWidthPx={focusAwareDockSizing.rightWidthPx}
+                    detailsDockWidthPx={focusAwareDockSizing.detailsWidthPx}
+                    rightDockMinWidthPx={focusAwareDockSizing.rightMinWidthPx}
+                    detailsDockMinWidthPx={focusAwareDockSizing.detailsMinWidthPx}
+                    rightDockMaxWidthPx={focusAwareDockSizing.rightMaxWidthPx}
+                    detailsDockMaxWidthPx={focusAwareDockSizing.detailsMaxWidthPx}
+                    onCloseRight={onCloseRight}
+                    onCloseDetails={onCloseDetails}
+                    onCommitRightDockWidthPx={onCommitRightDockWidthPx}
+                    onCommitDetailsDockWidthPx={onCommitDetailsDockWidthPx}
+                    onDragRightDockWidthPx={setRightDragWidthPx}
+                    onDragDetailsDockWidthPx={setDetailsDragWidthPx}
+                    bottomPane={bottomPane}
+                    bottomPresentation={resolvedBottomLayout.presentation}
+                    bottomDockHeightPx={effectiveBottomDockHeightPx}
+                    bottomDockMinHeightPx={PANE_SIZING_DEFAULTS.bottom.minPx}
+                    bottomDockMaxHeightPx={bottomResizeMaxHeightPx}
+                    onCloseBottom={onCloseBottom}
+                    onCommitBottomDockHeightPx={onCommitBottomDockHeightPx}
+                    onDragBottomDockHeightPx={setBottomDragHeightPx}
+                />
+            </AppPaneScopeLayoutProvider>
         </View>
     );
 });

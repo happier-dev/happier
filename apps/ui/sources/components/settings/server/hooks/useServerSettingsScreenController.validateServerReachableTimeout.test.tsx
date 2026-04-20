@@ -61,6 +61,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => '',
     getDeviceDefaultServerId: () => '',
     getResetToDefaultServerId: () => '',
+    subscribeActiveServer: vi.fn(() => () => {}),
     setActiveServerId: vi.fn(),
     upsertServerProfile: (...args: unknown[]) => upsertServerProfileMock(...args),
     removeServerProfile: vi.fn(),

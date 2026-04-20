@@ -157,6 +157,10 @@ function findStartButton(screen: RenderedNewRunScreen) {
     return button!;
 }
 
+function findBackendToggle(screen: RenderedNewRunScreen, backendLabel: string) {
+    return screen.findByProps({ accessibilityLabel: `Toggle backend ${backendLabel}` });
+}
+
 function translateText(key: string, params?: Record<string, unknown>) {
     if (key === 'executionRuns.newRun.headerTitle') return 'Start run';
     if (key === 'executionRuns.newRun.sections.intent') return 'Intent';
@@ -542,7 +546,7 @@ describe('Session New Run Screen', () => {
             screen.changeTextByTestId('execution-run-new-instructions-input', 'please review this');
         });
 
-        const selectClaude = screen.findByProps({ accessibilityLabel: 'Toggle backend claude' });
+        const selectClaude = findBackendToggle(screen, 'claude');
         expect(selectClaude).toBeDefined();
         await pressTestInstanceAsync(selectClaude, 'backend claude');
 
@@ -787,7 +791,7 @@ describe('Session New Run Screen', () => {
         const startButton = findStartButton(screen);
         expect(startButton.props.disabled).toBe(true);
 
-        const selectClaude = screen.findByProps({ accessibilityLabel: 'Toggle backend claude' });
+        const selectClaude = findBackendToggle(screen, 'claude');
         expect(selectClaude).toBeDefined();
 
         await pressTestInstanceAsync(selectClaude, 'backend claude');
@@ -813,7 +817,7 @@ describe('Session New Run Screen', () => {
 
         const screen = await renderNewRunScreen();
 
-        const selectClaude = screen.findByProps({ accessibilityLabel: 'Toggle backend claude' });
+        const selectClaude = findBackendToggle(screen, 'claude');
         expect(selectClaude).toBeDefined();
         await pressTestInstanceAsync(selectClaude, 'backend claude');
 
@@ -843,7 +847,7 @@ describe('Session New Run Screen', () => {
             screen.changeTextByTestId('execution-run-new-instructions-input', 'please review this');
         });
 
-        const selectClaude = screen.findByProps({ accessibilityLabel: 'Toggle backend claude' });
+        const selectClaude = findBackendToggle(screen, 'claude');
         expect(selectClaude).toBeDefined();
         await pressTestInstanceAsync(selectClaude, 'backend claude');
 
@@ -886,7 +890,7 @@ describe('Session New Run Screen', () => {
 
         const screen = await renderNewRunScreen();
 
-        const toggleCodeRabbit = screen.findByProps({ accessibilityLabel: 'Toggle backend coderabbit' });
+        const toggleCodeRabbit = findBackendToggle(screen, 'coderabbit');
         expect(toggleCodeRabbit).toBeDefined();
     });
 
@@ -934,7 +938,7 @@ describe('Session New Run Screen', () => {
             screen.changeTextByTestId('execution-run-new-instructions-input', 'review with default permissions');
         });
 
-        const selectClaude = screen.findByProps({ accessibilityLabel: 'Toggle backend claude' });
+        const selectClaude = findBackendToggle(screen, 'agentInput.agent.claude');
         expect(selectClaude).toBeDefined();
         await pressTestInstanceAsync(selectClaude, 'backend claude');
 
@@ -971,7 +975,7 @@ describe('Session New Run Screen', () => {
         localSearchParamsMock = { id: 'session-1', intent: 'delegate' };
 
         const screen = await renderNewRunScreen();
-        const toggleClaude = screen.findByProps({ accessibilityLabel: 'Toggle backend claude' });
+        const toggleClaude = findBackendToggle(screen, 'agentInput.agent.claude');
         expect(toggleClaude).toBeDefined();
 
         await pressTestInstanceAsync(toggleClaude, 'backend claude');
@@ -1002,7 +1006,7 @@ describe('Session New Run Screen', () => {
         };
 
         const screen = await renderNewRunScreen();
-        const togglePi = screen.findByProps({ accessibilityLabel: 'Toggle backend pi' });
+        const togglePi = findBackendToggle(screen, 'agentInput.agent.pi');
         expect(togglePi).toBeDefined();
         expect(togglePi!.props.disabled).toBe(true);
     });
@@ -1044,7 +1048,7 @@ describe('Session New Run Screen', () => {
         };
 
         const screen = await renderNewRunScreen();
-        const togglePreset = screen.findByProps({ accessibilityLabel: 'Toggle backend Review Bot' });
+        const togglePreset = findBackendToggle(screen, 'Review Bot');
         expect(togglePreset).toBeDefined();
 
         await pressTestInstanceAsync(togglePreset, 'backend Review Bot');

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 vi.mock('react-native', async () => {
@@ -18,9 +19,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+const textMock = createTextModuleMock({ translate: (key: string) => key });
+vi.mock('@/text', () => textMock);
 
 vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',

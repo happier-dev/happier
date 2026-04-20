@@ -120,7 +120,7 @@ installAccountSettingsRouteModuleMocks({
     },
     storageModule: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
+                return createStorageModuleMock({
             importOriginal,
             overrides: {
                 useSetting: ((key: string) => {
@@ -156,9 +156,46 @@ installAccountSettingsRouteModuleMocks({
                         profileUrl: 'https://github.com/octocat',
                         showOnProfile: true,
                     }],
-                    connectedServices: ['openai', 'anthropic', 'gemini'],
-                    connectedServicesV2: [],
-                }),
+                    connectedServices: [],
+                    connectedServicesV2: [
+                        {
+                            serviceId: 'openai-codex',
+                            profiles: [{
+                                profileId: 'work',
+                                status: 'connected',
+                                kind: 'oauth',
+                                providerEmail: null,
+                                providerAccountId: null,
+                                expiresAt: null,
+                                lastUsedAt: null,
+                            }],
+                        },
+                        {
+                            serviceId: 'anthropic',
+                            profiles: [{
+                                profileId: 'main',
+                                status: 'connected',
+                                kind: 'token',
+                                providerEmail: null,
+                                providerAccountId: null,
+                                expiresAt: null,
+                                lastUsedAt: null,
+                            }],
+                        },
+                        {
+                            serviceId: 'gemini',
+                            profiles: [{
+                                profileId: 'home',
+                                status: 'connected',
+                                kind: 'oauth',
+                                providerEmail: null,
+                                providerAccountId: null,
+                                expiresAt: null,
+                                lastUsedAt: null,
+                            }],
+                        },
+                    ],
+                }) as any,
             },
         });
     },
@@ -197,8 +234,8 @@ describe('Settings → Account desktop shell', () => {
         expect(screen.findByTestId('settings-sidebar')).toBeTruthy();
         expect(screen.findByTestId('settings-account-secret-key-item')).toBeTruthy();
         const text = screen.getTextContent();
-        expect(text).toContain('OpenAI Codex');
-        expect(text).toContain('Claude Code');
-        expect(text).toContain('Google Gemini');
+        expect(text).toContain('connectedServices.serviceNames.openaiCodex');
+        expect(text).toContain('connectedServices.serviceNames.anthropic');
+        expect(text).toContain('connectedServices.serviceNames.gemini');
     });
 });

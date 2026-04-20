@@ -132,4 +132,54 @@ describe('Settings → Account (username)', () => {
             expect.objectContaining({ method: 'POST' }),
         );
     }, 40_000);
+
+    it('renders connected services from connectedServicesV2 projections', async () => {
+        storage.getState().applyProfile({
+            ...profileDefaults,
+            linkedProviders: [],
+            connectedServices: ['openai'],
+            connectedServicesV2: [
+                {
+                    serviceId: 'openai-codex',
+                    profiles: [
+                        {
+                            profileId: 'work',
+                            status: 'connected',
+                            kind: 'oauth',
+                            providerEmail: null,
+                            providerAccountId: null,
+                            expiresAt: null,
+                            lastUsedAt: null,
+                        },
+                    ],
+                },
+            ],
+            username: null,
+        });
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = getRequestUrl(input);
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({}),
+                } as unknown as Response;
+            }
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse(),
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+        setRuntimeFetch(fetchMock as unknown as typeof fetch);
+
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderSettingsView(<AccountScreen />);
+
+        expect(screen.findRowByTitle('connectedServices.serviceNames.openaiCodex')).toBeTruthy();
+    }, 40_000);
 });

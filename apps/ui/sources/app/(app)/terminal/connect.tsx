@@ -9,6 +9,7 @@ import { t } from '@/text';
 import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
+import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import {
     buildTerminalConnectAuthRedirectHref,
@@ -53,7 +54,13 @@ export default function TerminalConnectScreen() {
         if (parsed?.publicKeyB64Url) {
             setPublicKey(parsed.publicKeyB64Url);
 
-            const desiredServerUrl = normalizeServerUrl(parsed.serverUrl ?? '') || getActiveServerUrl();
+            const activeServerUrl = normalizeServerUrl(getActiveServerUrl());
+            const requestedServerUrl = normalizeServerUrl(parsed.serverUrl ?? '');
+            const effectiveTarget = resolveEffectiveServerUrlOverride({
+                requestedServerUrl,
+                activeServerUrl,
+            });
+            const desiredServerUrl = effectiveTarget || activeServerUrl || getActiveServerUrl();
             if (desiredServerUrl) {
                 setPendingTerminalConnect({
                     publicKeyB64Url: parsed.publicKeyB64Url,
@@ -80,17 +87,22 @@ export default function TerminalConnectScreen() {
         }
 
         authRedirectTriggeredRef.current = true;
-        const desiredServerUrl = normalizeServerUrl(serverUrlFromHash ?? '');
+        const activeServerUrl = normalizeServerUrl(getActiveServerUrl());
+        const effectiveTarget = resolveEffectiveServerUrlOverride({
+            requestedServerUrl: serverUrlFromHash,
+            activeServerUrl,
+        });
+        const desiredServerUrl = effectiveTarget || activeServerUrl || getActiveServerUrl();
         setPendingTerminalConnect({
             publicKeyB64Url: publicKey,
-            serverUrl: desiredServerUrl || getActiveServerUrl(),
+            serverUrl: desiredServerUrl,
         });
 
         fireAndForget((async () => {
-            if (desiredServerUrl) {
+            if (effectiveTarget && effectiveTarget !== activeServerUrl) {
                 try {
                     await upsertActivateAndSwitchServer({
-                        serverUrl: desiredServerUrl,
+                        serverUrl: effectiveTarget,
                         source: 'url',
                         scope: 'device',
                         refreshAuth: auth.refreshFromActiveServer,

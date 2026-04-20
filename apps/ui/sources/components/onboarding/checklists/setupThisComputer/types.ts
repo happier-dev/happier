@@ -2,6 +2,8 @@ import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTy
 
 export type ThisComputerSetupPreflight = Readonly<{
     activeRelayUrl: string | null;
+    activeWebappUrl: string | null;
+    activeLocalRelayUrl: string | null;
     localCliReady?: boolean;
     serviceInstalled: boolean;
     daemonRunning: boolean;

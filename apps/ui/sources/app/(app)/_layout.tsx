@@ -1,4 +1,4 @@
-import { Stack, router, usePathname, useSegments } from 'expo-router';
+import { Stack, router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
 import { Typography } from '@/constants/Typography';
@@ -37,6 +37,13 @@ import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDae
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
+import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import {
+    isSessionRouteInAuthRecoverySubtree,
+    resolveSessionRouteAuthRecoveryState,
+    shouldNormalizeSessionRouteToAuthRecoveryBase,
+} from '@/hooks/session/sessionRouteAuthRecovery';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
@@ -46,6 +53,7 @@ export default function RootLayout() {
     const refreshAuth = auth.refreshFromActiveServer;
     const segments = useSegments();
     const pathname = usePathname();
+    const globalSearchParams = useGlobalSearchParams();
     const { theme } = useUnistyles();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
@@ -54,6 +62,38 @@ export default function RootLayout() {
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const isTauriDesktopHost = isTauriDesktop();
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
+    const endpointConnectivity = useEndpointConnectivity();
+    const syncError = useSyncError();
+    const activeServerSnapshot = useActiveServerSnapshot();
+    const stackContentStyle = React.useMemo(
+        () => ({
+            backgroundColor: isDesktopOverlayWindow ? 'transparent' : theme.colors.surface,
+        }),
+        [isDesktopOverlayWindow, theme.colors.surface],
+    );
+    const sessionRouteAuthRecovery = React.useMemo(
+        () => resolveSessionRouteAuthRecoveryState({
+            routeParams: globalSearchParams,
+            activeServerId: activeServerSnapshot.serverId,
+            endpointStatus: endpointConnectivity.status,
+            syncError,
+        }),
+        [activeServerSnapshot.serverId, endpointConnectivity.status, globalSearchParams, syncError],
+    );
+    const shouldHoldProtectedRouteForAuthRecovery = React.useMemo(
+        () => isSessionRouteInAuthRecoverySubtree({
+            pathname,
+            authRecovery: sessionRouteAuthRecovery,
+        }),
+        [pathname, sessionRouteAuthRecovery],
+    );
+    const shouldNormalizeSessionRouteForAuthRecovery = React.useMemo(
+        () => !isAuthenticated && shouldNormalizeSessionRouteToAuthRecoveryBase({
+            pathname,
+            authRecovery: sessionRouteAuthRecovery,
+        }),
+        [isAuthenticated, pathname, sessionRouteAuthRecovery],
+    );
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
@@ -138,8 +178,17 @@ export default function RootLayout() {
         legacySessionDeepLinkHandledRef.current = true;
     }, [isAuthenticated]);
 
-    const shouldRedirect = !isAuthenticated && !isPublicRouteForUnauthenticated(segments);
+    const shouldRedirect =
+        !isAuthenticated
+        && !isPublicRouteForUnauthenticated(segments)
+        && !shouldHoldProtectedRouteForAuthRecovery;
     const pendingTerminalHandledRef = React.useRef(false);
+    React.useEffect(() => {
+        if (!shouldNormalizeSessionRouteForAuthRecovery) return;
+        if (!sessionRouteAuthRecovery.baseHref) return;
+        router.replace(sessionRouteAuthRecovery.baseHref);
+    }, [sessionRouteAuthRecovery.baseHref, shouldNormalizeSessionRouteForAuthRecovery]);
+
     React.useEffect(() => {
         if (!shouldRedirect) return;
         router.replace('/');
@@ -185,13 +234,13 @@ export default function RootLayout() {
                     } catch {
                         // keep navigation best-effort; terminal flow can still recover with explicit server param
                     }
-                    router.push(route);
+                    router.replace(route);
                 })(), { tag: 'RootLayout.pendingTerminalConnect' });
                 return;
             }
 
             pendingTerminalHandledRef.current = true;
-            router.push(route);
+            router.replace(route);
             return;
         }
 
@@ -265,9 +314,7 @@ export default function RootLayout() {
                     header: shouldUseCustomHeader ? createHeader : undefined,
                     headerBackTitle: t('common.back'),
                     headerShadowVisible: false,
-                    contentStyle: {
-                        backgroundColor: theme.colors.surface,
-                    },
+                    contentStyle: stackContentStyle,
                     headerStyle: {
                         backgroundColor: theme.colors.header.background,
                     },

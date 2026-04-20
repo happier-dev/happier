@@ -182,8 +182,8 @@ describe('PathPickerScreen', () => {
         await renderPathPicker();
 
         expect(lastPathSelectorProps).toBeTruthy();
-        act(() => {
-            lastPathSelectorProps?.onSubmitSelectedPath('/Users/leeroy/Documents/Development/happier/dev/apps/stack');
+        await act(async () => {
+            await lastPathSelectorProps?.onSubmitSelectedPath('/Users/leeroy/Documents/Development/happier/dev/apps/stack');
         });
 
         expect(navigationMock.dispatch).toHaveBeenCalledWith(expect.objectContaining({
@@ -209,8 +209,8 @@ describe('PathPickerScreen', () => {
         await renderPathPicker();
 
         expect(lastPathSelectorProps).toBeTruthy();
-        act(() => {
-            lastPathSelectorProps?.onSubmitSelectedPath('');
+        await act(async () => {
+            await lastPathSelectorProps?.onSubmitSelectedPath('');
         });
 
         expect(navigationMock.dispatch).not.toHaveBeenCalled();
@@ -219,6 +219,9 @@ describe('PathPickerScreen', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                agentType: 'claude',
+                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
+                backendTargetKey: 'backend:claude',
                 dataId: 'draft-1',
                 machineId: 'm1',
                 directory: '/home',

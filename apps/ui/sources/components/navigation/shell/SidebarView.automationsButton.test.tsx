@@ -32,6 +32,16 @@ const syncErrorState = vi.hoisted(() => ({
     value: null as null | { message: string; retryable?: boolean; kind?: string; at?: number },
 }));
 
+const desktopWindowBridgeState = vi.hoisted(() => ({
+    getDesktopWindowChromePolicy: vi.fn(),
+    getDesktopWindowState: vi.fn(),
+    listenDesktopWindowState: vi.fn(),
+    minimizeDesktopWindow: vi.fn(),
+    toggleDesktopWindowMaximize: vi.fn(),
+    closeDesktopWindow: vi.fn(),
+    startDesktopWindowDragging: vi.fn(),
+}));
+
 installNavigationShellCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -229,6 +239,17 @@ vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
     ConnectionStatusControl: 'ConnectionStatusControl',
 }));
 
+vi.mock('@/utils/platform/desktopWindowBridge', () => ({
+    getDesktopWindowChromePolicy: () => desktopWindowBridgeState.getDesktopWindowChromePolicy(),
+    getDesktopWindowState: () => desktopWindowBridgeState.getDesktopWindowState(),
+    listenDesktopWindowState: (handler: (state: { isMaximized: boolean }) => void) =>
+        desktopWindowBridgeState.listenDesktopWindowState(handler),
+    minimizeDesktopWindow: () => desktopWindowBridgeState.minimizeDesktopWindow(),
+    toggleDesktopWindowMaximize: () => desktopWindowBridgeState.toggleDesktopWindowMaximize(),
+    closeDesktopWindow: () => desktopWindowBridgeState.closeDesktopWindow(),
+    startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
+}));
+
 vi.mock('./MainView', () => ({
     MainView: 'MainView',
 }));
@@ -268,6 +289,16 @@ describe('SidebarView header automations button', () => {
         socketStatusState.status = 'connected';
         socketStatusState.lastError = null;
         syncErrorState.value = null;
+        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
+        desktopWindowBridgeState.getDesktopWindowState.mockReset();
+        desktopWindowBridgeState.listenDesktopWindowState.mockReset();
+        desktopWindowBridgeState.minimizeDesktopWindow.mockReset();
+        desktopWindowBridgeState.toggleDesktopWindowMaximize.mockReset();
+        desktopWindowBridgeState.closeDesktopWindow.mockReset();
+        desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
+        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'none' });
+        desktopWindowBridgeState.getDesktopWindowState.mockResolvedValue({ isMaximized: false });
+        desktopWindowBridgeState.listenDesktopWindowState.mockResolvedValue(async () => {});
     });
 
     it('navigates to home when logo is pressed', async () => {
@@ -332,6 +363,36 @@ describe('SidebarView header automations button', () => {
         const screen = await renderScreen(<SidebarView />);
 
         expect(screen.findAllByType('VoiceSurface')).toHaveLength(1);
+    });
+
+    it('does not reserve a dead controls host gutter when no controls surface is active', async () => {
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
+
+        expect(screen.findAllByTestId('desktop-window-controls-host')).toHaveLength(0);
+        expect(screen.findAllByTestId('desktop-window-controls-slot')).toHaveLength(0);
+    });
+
+    it('renders the desktop sidebar chrome hosts in the header row when shell surfaces are injected', async () => {
+        const { SidebarView } = await import('./SidebarView');
+        const sidebarProps = {
+            sidebarWidthPx: 600,
+            desktopWindowControls: <View testID="injected-desktop-window-controls" />,
+            desktopUpdateIndicator: <View testID="injected-desktop-update-indicator" />,
+        } as React.ComponentProps<typeof SidebarView> & {
+            desktopWindowControls: React.ReactNode;
+            desktopUpdateIndicator: React.ReactNode;
+        };
+        const screen = await renderScreen(<SidebarView {...sidebarProps} />);
+
+        expect(screen.findByTestId('desktop-sidebar-chrome')).toBeTruthy();
+        expect(screen.findByTestId('desktop-window-controls-host')).toBeTruthy();
+        expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
+        expect(screen.findByTestId('desktop-window-drag-region')).toBeTruthy();
+        expect(screen.findByTestId('desktop-update-indicator-host')).toBeTruthy();
+        expect(screen.findByTestId('injected-desktop-window-controls')).toBeTruthy();
+        expect(screen.findByTestId('injected-desktop-update-indicator')).toBeTruthy();
+        expect(desktopWindowBridgeState.getDesktopWindowChromePolicy).not.toHaveBeenCalled();
     });
 
     it('shows friend request counts on the friends button and only a dot on inbox', async () => {
@@ -418,7 +479,6 @@ describe('SidebarView header automations button', () => {
         expect(screen.findAllByTestId('sidebar-inbox-button')).toHaveLength(0);
         // Projects stays pinned so it remains discoverable on desktop.
         expect(screen.findAllByTestId('nav-projects').length).toBeGreaterThan(0);
-        // Keep new-session pinned so it remains one-tap even when space is tight.
         expect(screen.findAllByTestId('nav-new-session').length).toBeGreaterThan(0);
     });
 

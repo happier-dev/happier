@@ -30,15 +30,17 @@ import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfigured
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from '@/utils/platform/firstLaunchSetupRedirectPolicy';
-import {
-    resolveWizardAuthReturnToRoute,
-    setOnboardingWizardPreAuthResumeIntent,
-    getWizardStepDefinition,
-    type WizardStepId,
-} from '@/components/onboarding';
 import { OnboardingWizardSurface } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
+import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/desktopChrome/DesktopShellUpdateIndicatorHost';
+import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
+import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
+import { AppUpdateStatusTag } from '@/components/ui/feedback/AppUpdateStatusTag';
 import { shouldUseWizardFullscreenPresentation } from '@/components/onboarding/ui/wizardPresentation';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
+import { setOnboardingWizardPreAuthResumeIntent, resolveWizardAuthReturnToRoute } from '@/components/onboarding/state/wizardResume';
+import { getWizardStepDefinition } from '@/components/onboarding/state/wizardStepRegistry';
+import type { WizardStepId } from '@/components/onboarding/state/wizardTypes';
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
@@ -61,6 +63,16 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const autoRedirectAttemptedRef = React.useRef(false);
     const firstLaunchSetupRedirectedRef = React.useRef(false);
     const shouldTopAlignWebModal = shouldUseWizardFullscreenPresentation(windowWidth);
+    const shellChromeHost = resolveAppShellChromeHost({
+        isAuthenticated: false,
+        isTauriDesktop: isDesktopShell,
+        isTablet: false,
+        editorFocusModeEnabled: false,
+        isTerminalConnectRoute: false,
+    });
+    const resolvedDesktopWindowControls = useResolvedDesktopWindowControls({
+        variant: 'expanded',
+    });
 
     React.useEffect(() => {
         if (!props.clearPendingSetupIntentOnMount) {
@@ -254,7 +266,11 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     React.useEffect(() => {
         const autoRedirect = authEntryOptions.autoRedirect;
         const providerId = autoRedirect.providerId;
-        if (!autoRedirect.enabled || providerId == null || providerId === '') {
+        const nonMtlsProviderId =
+            typeof providerId === 'string' && providerId.trim().length > 0
+                ? providerId
+                : null;
+        if (!autoRedirect.enabled) {
             return;
         }
         if (autoRedirectAttemptedRef.current) {
@@ -266,6 +282,9 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         if (!autoRedirect.toMtls && !autoRedirect.toKeyedProvision && !autoRedirect.toKeylessLogin && !autoRedirect.toLegacySignupProvider) {
             return;
         }
+        if (!autoRedirect.toMtls && nonMtlsProviderId == null) {
+            return;
+        }
 
         autoRedirectAttemptedRef.current = true;
         fireAndForget((async () => {
@@ -275,11 +294,14 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                 await loginWithMtls();
                 return;
             }
-            if (autoRedirect.toKeylessLogin) {
-                await loginWithKeylessProvider(providerId);
+            if (nonMtlsProviderId == null) {
                 return;
             }
-            await createAccountViaProvider(providerId);
+            if (autoRedirect.toKeylessLogin) {
+                await loginWithKeylessProvider(nonMtlsProviderId);
+                return;
+            }
+            await createAccountViaProvider(nonMtlsProviderId);
         })(), { tag: 'PreAuthOnboardingWizardEntry.autoRedirect' });
     }, [authEntryOptions, createAccountViaProvider, loginWithKeylessProvider, loginWithMtls]);
 
@@ -329,6 +351,16 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             wizardChromeMode={isDesktopShell ? 'embedded' : 'overlay'}
             wizardLayoutPresentation={isDesktopShell ? 'fullscreen' : undefined}
             authEntryOptions={authEntryOptions}
+            shellChrome={shellChromeHost === 'unauth-shell' ? (
+                <>
+                    <DesktopShellWindowControlsHost>
+                        {resolvedDesktopWindowControls}
+                    </DesktopShellWindowControlsHost>
+                    <DesktopShellUpdateIndicatorHost>
+                        <AppUpdateStatusTag testID="preauth-app-update-status-tag" />
+                    </DesktopShellUpdateIndicatorHost>
+                </>
+            ) : null}
             initialStepId={resolvedInitialStepId}
             onCreateAccount={createAccount}
             onCreateAccountViaProvider={createAccountViaProvider}

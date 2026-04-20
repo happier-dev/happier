@@ -190,7 +190,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     ]);
 
     const mainRegion = (
-        <View style={{ flex: 1, position: 'relative' }}>
+        <View style={{ flex: 1, minWidth: 0, minHeight: 0, position: 'relative' }}>
             {main}
 
             {layout.details === 'overlay' && detailsPresence.present ? (

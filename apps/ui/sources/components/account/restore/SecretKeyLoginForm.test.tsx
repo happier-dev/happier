@@ -3,22 +3,26 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 const loginSpy = vi.hoisted(() => vi.fn(async () => {}));
 const replaceSpy = vi.hoisted(() => vi.fn());
 const trackAccountRestoredSpy = vi.hoisted(() => vi.fn());
 const authGetTokenSpy = vi.hoisted(() => vi.fn<(secret: Uint8Array) => Promise<string>>(async (_secret) => 'tok_restore'));
+const activateStackRuntimeServerSpy = vi.hoisted(() => vi.fn());
+
+const expoRouterMock = createExpoRouterMock({
+    router: {
+        replace: (value: unknown) => replaceSpy(value),
+    },
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({
-        replace: replaceSpy,
-    }),
-}));
+vi.mock('expo-router', () => expoRouterMock.module);
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({
     default: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
@@ -36,6 +40,10 @@ vi.mock('@/auth/flows/getToken', () => ({
 
 vi.mock('@/auth/recovery/secretKeyBackup', () => ({
     normalizeSecretKey: (value: string) => value.trim(),
+}));
+
+vi.mock('@/sync/domains/server/stackRuntimeServer', () => ({
+    activateStackRuntimeServer: activateStackRuntimeServerSpy,
 }));
 
 vi.mock('@/encryption/base64', () => ({
@@ -98,6 +106,7 @@ describe('SecretKeyLoginForm', () => {
         trackAccountRestoredSpy.mockReset();
         authGetTokenSpy.mockReset();
         authGetTokenSpy.mockResolvedValue('tok_restore');
+        activateStackRuntimeServerSpy.mockReset();
     });
 
     afterEach(() => {
@@ -123,5 +132,25 @@ describe('SecretKeyLoginForm', () => {
         expect(loginSpy).toHaveBeenCalledWith('tok_restore', 'secret-key');
         expect(trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
         expect(replaceSpy).toHaveBeenCalledWith('/');
+    });
+
+    it('re-anchors the active server to the stack runtime server before completing restore login', async () => {
+        const { SecretKeyLoginForm } = await import('./SecretKeyLoginForm');
+        const screen = await renderScreen(<SecretKeyLoginForm />);
+        const secretInput = screen.findByTestId('restore-manual-secret-input');
+        const submitButton = screen.findByTestId('restore-manual-submit');
+        if (!secretInput || !submitButton) {
+            throw new Error('Expected restore secret input and submit button to render');
+        }
+
+        await act(async () => {
+            secretInput.props.onChangeText('secret-key');
+        });
+        await act(async () => {
+            await submitButton.props.action();
+        });
+
+        expect(activateStackRuntimeServerSpy).toHaveBeenCalledWith({ scope: 'device' });
+        expect(loginSpy).toHaveBeenCalledWith('tok_restore', 'secret-key');
     });
 });

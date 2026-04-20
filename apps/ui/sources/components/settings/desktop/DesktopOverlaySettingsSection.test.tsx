@@ -78,6 +78,7 @@ function createDesktopOverlayWindowStatePayload(
             effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
             anchor: 'bottom_right',
             placementMode: 'custom',
+            requestedHostMode: hostMode,
             hostMode,
             displayContext: null,
             effectiveOffsetX: 24,
@@ -159,7 +160,10 @@ describe('DesktopOverlaySettingsSection', () => {
 
         expect(screen.findGroup('settingsDesktop.overlay.title')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
-        expect(screen.findAllByType('DropdownMenu' as any)).toHaveLength(9);
+        expect(screen.findAllByType('DropdownMenu' as any)).toHaveLength(5);
+        expect(screen.findRowByTitle('settingsDesktop.overlay.interactiveCollapsedTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.densityTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.compactStyleTitle')).toBeNull();
     });
 
     it('writes overlay visibility and placement changes through the dropdown menu controls', async () => {
@@ -188,20 +192,6 @@ describe('DesktopOverlaySettingsSection', () => {
             desktopOverlayAnchor: 'bottom_right',
         });
         expect(resetDesktopActivityOverlayPositionMock).toHaveBeenCalledTimes(1);
-
-        const densityMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.densityTitle');
-        expect(densityMenu).toBeTruthy();
-        densityMenu?.props.onSelect?.('comfortable');
-        expect(applyLocalSettingsMock).toHaveBeenCalledWith({
-            desktopOverlayDensity: 'comfortable',
-        });
-
-        const compactStyleMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.compactStyleTitle');
-        expect(compactStyleMenu).toBeTruthy();
-        compactStyleMenu?.props.onSelect?.('panel');
-        expect(applyLocalSettingsMock).toHaveBeenCalledWith({
-            desktopOverlayCompactStyle: 'panel',
-        });
 
         const presentationModeMenu = dropdownMenus.find((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.presentationModeTitle');
         expect(presentationModeMenu).toBeTruthy();
@@ -250,35 +240,56 @@ describe('DesktopOverlaySettingsSection', () => {
         expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenReadyTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.alwaysOnTopTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.autoHideEnabledTitle')).toBeNull();
-        expect(screen.findRowByTitle('settingsDesktop.overlay.interactiveCollapsedTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.allowRepositioningTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.lockPositionTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsDesktop.overlay.resetPositionTitle')).toBeNull();
     });
 
-    it('hides collapsed action rows when collapsed interactivity is disabled', async () => {
+    it('hides attention filter rows outside attention-only mode', async () => {
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayVisibilityMode: 'active_sessions',
+        };
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+
+        expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenRunningTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenAttentionRequiredTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenReadyTitle')).toBeNull();
+    });
+
+    it('also hides attention filter rows in always-visible mode', async () => {
+        localSettingsState.value = {
+            ...localSettingsState.value,
+            desktopOverlayVisibilityMode: 'always_when_enabled',
+        };
+        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+
+        expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenRunningTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenAttentionRequiredTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.showWhenReadyTitle')).toBeNull();
+    });
+
+    it('does not render legacy experimental controls even when old settings still exist', async () => {
         localSettingsState.value = {
             ...localSettingsState.value,
             desktopOverlayInteractiveCollapsed: false,
-        };
-        const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
-        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
-
-        expect(screen.findRowByTitle('settingsDesktop.overlay.interactiveCollapsedTitle')).toBeTruthy();
-        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.collapsedClickActionTitle')).toBe(false);
-        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.expandedBehaviorTitle')).toBe(false);
-    });
-
-    it('hides expanded behavior rows when collapsed clicks do not expand the overlay', async () => {
-        localSettingsState.value = {
-            ...localSettingsState.value,
             desktopOverlayClickAction: 'open_sessions',
+            desktopOverlayExpandedBehavior: 'hover',
+            desktopOverlayDensity: 'comfortable',
+            desktopOverlayCompactStyle: 'panel',
+            desktopOverlayShowSessionCount: false,
         };
         const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
         const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
 
-        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.collapsedClickActionTitle')).toBeTruthy();
-        expect(screen.findAllByType('DropdownMenu' as any).some((menu) => menu.props.itemTrigger?.title === 'settingsDesktop.overlay.expandedBehaviorTitle')).toBe(false);
+        expect(screen.findRowByTitle('settingsDesktop.overlay.interactiveCollapsedTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.collapsedClickActionTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.expandedBehaviorTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.densityTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.compactStyleTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsDesktop.overlay.showSessionCountTitle')).toBeNull();
     });
 
     it('resets anchored placement back to anchored defaults', async () => {
@@ -433,6 +444,7 @@ describe('DesktopOverlaySettingsSection', () => {
                 effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
                 anchor: 'bottom_right',
                 placementMode: 'custom',
+                requestedHostMode: 'floating',
                 hostMode: 'floating',
                 displayContext: null,
                 effectiveOffsetX: 24,
@@ -515,6 +527,7 @@ describe('DesktopOverlaySettingsSection', () => {
                 effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
                 anchor: 'bottom_right',
                 placementMode: 'custom',
+                requestedHostMode: 'floating',
                 hostMode: 'notch_integrated',
                 displayContext: null,
                 effectiveOffsetX: 24,
@@ -608,6 +621,7 @@ describe('DesktopOverlaySettingsSection', () => {
                 effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
                 anchor: 'bottom_right',
                 placementMode: 'custom',
+                requestedHostMode: 'floating',
                 hostMode: 'floating',
                 displayContext: null,
                 effectiveOffsetX: 24,
@@ -680,6 +694,7 @@ describe('DesktopOverlaySettingsSection', () => {
                     effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
                     anchor: 'bottom_right',
                     placementMode: 'custom',
+                    requestedHostMode: 'floating',
                     hostMode: 'notch_integrated',
                     displayContext: null,
                     effectiveOffsetX: 24,

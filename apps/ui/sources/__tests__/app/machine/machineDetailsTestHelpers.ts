@@ -1,4 +1,4 @@
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 type MachineDetailsModuleFactory = () => unknown | Promise<unknown>;
@@ -21,6 +21,11 @@ export function installMachineDetailsCommonModuleMocks(
     options: InstallMachineDetailsCommonModuleMocksOptions = {},
 ) {
     machineDetailsModuleState.options = options;
+
+    beforeEach(async () => {
+        const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+        clearDaemonMergedProjectionCacheForTests();
+    });
 
     vi.mock('react-native-reanimated', () => ({}));
 

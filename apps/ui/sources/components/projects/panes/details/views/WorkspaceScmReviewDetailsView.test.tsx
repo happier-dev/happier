@@ -30,14 +30,13 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const original = await importOriginal<any>();
-    return {
-        ...original,
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
         useSetting: (key: string) => {
             if (key === 'wrapLinesInDiffs') return true;
             if (key === 'showLineNumbers') return true;
             if (key === 'scmReviewMaxFiles') return 25;
-            return original.useSetting?.(key);
+            return undefined;
         },
         useWorkspaceReviewCommentsDrafts: () => [
             {
@@ -60,7 +59,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 createdAt: 1,
             },
         ],
-    };
+    });
 });
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({

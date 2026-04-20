@@ -2,6 +2,11 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS } from '@happier-dev/protocol';
 import type { RenderScreenResult } from '@/dev/testkit';
+import { createUseLocalSettingMock } from '@/dev/testkit/mocks/storage';
+import type {
+    DesktopWindowChromePolicy,
+    DesktopWindowState,
+} from '@/utils/platform/desktopWindowBridge';
 import { installRouteRootCommonModuleMocks } from './routeRootTestHelpers';
 
 // Avoid React "act(...) environment" warnings in non-JSDOM test environments.
@@ -18,6 +23,26 @@ const sentryInitMock = vi.fn();
 const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayIntegration' }));
 const sentryWrapMock = vi.fn((Component: any) => Component);
 const routerPushMock = vi.fn();
+const bootCredentialsState = vi.hoisted(() => ({
+    value: null as null | { token: string; secret: string },
+}));
+const shellChromeState = vi.hoisted(() => ({
+    isTauriDesktop: false,
+    isTablet: true,
+    editorFocusModeEnabled: false,
+}));
+const desktopOverlayWindowState = vi.hoisted(() => ({
+    value: false,
+}));
+const desktopWindowBridgeState = vi.hoisted(() => ({
+    getDesktopWindowChromePolicy: vi.fn<() => Promise<DesktopWindowChromePolicy>>(async () => ({ strategy: 'none' })),
+    getDesktopWindowState: vi.fn<() => Promise<DesktopWindowState>>(async () => ({ isMaximized: false })),
+    listenDesktopWindowState: vi.fn<(handler: (state: DesktopWindowState) => void) => Promise<() => Promise<void>>>(async () => async () => {}),
+    minimizeDesktopWindow: vi.fn(async () => {}),
+    toggleDesktopWindowMaximize: vi.fn(async () => {}),
+    closeDesktopWindow: vi.fn(async () => {}),
+    startDesktopWindowDragging: vi.fn(async () => {}),
+}));
 
 const { fromModuleMock, trackingState, fontAwesomeFontMock, ioniconsFontMock, mainAppTabStateShim } = vi.hoisted(() => ({
     fromModuleMock: vi.fn(),
@@ -91,6 +116,35 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
+vi.mock('@/boot/resolveBootCredentials', () => ({
+    resolveBootCredentials: vi.fn(async () => bootCredentialsState.value),
+}));
+
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => shellChromeState.isTauriDesktop,
+    invokeTauri: vi.fn(),
+    listenTauriEvent: vi.fn(),
+}));
+
+vi.mock('@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext', () => ({
+    isDesktopActivityOverlayWindowContext: () => desktopOverlayWindowState.value,
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useIsTablet: () => shellChromeState.isTablet,
+}));
+
+vi.mock('@/utils/platform/desktopWindowBridge', () => ({
+    getDesktopWindowChromePolicy: () => desktopWindowBridgeState.getDesktopWindowChromePolicy(),
+    getDesktopWindowState: () => desktopWindowBridgeState.getDesktopWindowState(),
+    listenDesktopWindowState: (handler: (state: { isMaximized: boolean }) => void) =>
+        desktopWindowBridgeState.listenDesktopWindowState(handler),
+    minimizeDesktopWindow: () => desktopWindowBridgeState.minimizeDesktopWindow(),
+    toggleDesktopWindowMaximize: () => desktopWindowBridgeState.toggleDesktopWindowMaximize(),
+    closeDesktopWindow: () => desktopWindowBridgeState.closeDesktopWindow(),
+    startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
+}));
+
 vi.mock('@/hooks/ui/useTabState', () => ({
     useTabState: () => ({
         activeTab: 'sessions',
@@ -161,6 +215,24 @@ installRouteRootCommonModuleMocks({
         });
         return expoRouterMock.module;
     },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const useLocalSetting = createUseLocalSettingMock({
+            fallback: (key) => {
+                if (key === 'editorFocusModeEnabled') {
+                    return shellChromeState.editorFocusModeEnabled;
+                }
+                return undefined;
+            },
+        });
+
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting,
+            },
+        });
+    },
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
@@ -168,6 +240,15 @@ installRouteRootCommonModuleMocks({
                 dark: false,
                 colors: {
                     groupped: { background: '#fff' },
+                    divider: '#ddd',
+                    surface: '#fff',
+                    text: '#111',
+                    textSecondary: '#777',
+                    header: { tint: '#111' },
+                    button: { primary: { background: '#111', tint: '#fff' } },
+                    accent: { indigo: '#55f' },
+                    success: '#0a0',
+                    warningCritical: '#f80',
                 },
             },
         });
@@ -184,7 +265,8 @@ vi.mock('@/auth/context/AuthContext', () => {
 vi.mock('@react-navigation/native', () => {
     const React = require('react');
     return {
-        ThemeProvider: ({ children }: { children: React.ReactNode }) => React.createElement('ThemeProvider', null, children),
+        ThemeProvider: ({ children, ...props }: { children: React.ReactNode } & Record<string, unknown>) =>
+            React.createElement('ThemeProvider', props, children),
         DarkTheme: { colors: {} },
         DefaultTheme: { colors: {} },
     };
@@ -301,10 +383,10 @@ vi.mock('@/components/ui/layout/StatusBarProvider', () => ({
     StatusBarProvider: () => null,
 }));
 
-vi.mock('@/components/ui/feedback/DesktopUpdateBanner', () => {
+vi.mock('@/components/ui/feedback/AppUpdateStatusTag', () => {
     const React = require('react');
     return {
-        DesktopUpdateBanner: () => React.createElement('DesktopUpdateBanner'),
+        AppUpdateStatusTag: () => React.createElement('AppUpdateStatusTag'),
     };
 });
 
@@ -328,6 +410,21 @@ describe('app/_layout init resilience', () => {
         mockedPlatformOS = 'web';
         mockedPathname = '/';
         mockedConfigVariant = '';
+        bootCredentialsState.value = null;
+        shellChromeState.isTauriDesktop = false;
+        shellChromeState.isTablet = true;
+        shellChromeState.editorFocusModeEnabled = false;
+        desktopOverlayWindowState.value = false;
+        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
+        desktopWindowBridgeState.getDesktopWindowState.mockReset();
+        desktopWindowBridgeState.listenDesktopWindowState.mockReset();
+        desktopWindowBridgeState.minimizeDesktopWindow.mockReset();
+        desktopWindowBridgeState.toggleDesktopWindowMaximize.mockReset();
+        desktopWindowBridgeState.closeDesktopWindow.mockReset();
+        desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
+        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'none' });
+        desktopWindowBridgeState.getDesktopWindowState.mockResolvedValue({ isMaximized: false });
+        desktopWindowBridgeState.listenDesktopWindowState.mockResolvedValue(async () => {});
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (globalThis as any).__HAPPIER_SENTRY_INIT__;
         // Clean up any navigator overrides from tests.
@@ -466,6 +563,47 @@ describe('app/_layout init resilience', () => {
         consoleErrorSpy.mockRestore();
     });
 
+    it('skips sync restore inside the dedicated desktop overlay window', async () => {
+        mockedPlatformOS = 'web';
+        mockedPathname = '/desktop/activity-overlay';
+        shellChromeState.isTauriDesktop = true;
+        desktopOverlayWindowState.value = true;
+        bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
+
+        await renderSettledRootLayout();
+
+        expect(syncRestoreMock).not.toHaveBeenCalled();
+    });
+
+    it('does not mount desktop fallback shell chrome inside the dedicated desktop overlay window', async () => {
+        mockedPlatformOS = 'web';
+        mockedPathname = '/desktop/activity-overlay';
+        bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
+        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isTablet = false;
+        desktopOverlayWindowState.value = true;
+        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
+
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findAllByTestId('desktop-narrow-shell-chrome')).toHaveLength(0);
+        expect(screen.findAllByTestId('desktop-focus-mode-shell-chrome')).toHaveLength(0);
+        expect(screen.findAllByType('AppUpdateStatusTag' as any)).toHaveLength(0);
+    });
+
+    it('uses a transparent navigation background inside the dedicated desktop overlay window', async () => {
+        mockedPlatformOS = 'web';
+        mockedPathname = '/desktop/activity-overlay';
+        bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
+        shellChromeState.isTauriDesktop = true;
+        desktopOverlayWindowState.value = true;
+
+        const screen = await renderSettledRootLayout();
+
+        const themeProvider = screen.findByType('ThemeProvider' as any);
+        expect(themeProvider?.props?.value?.colors?.background).toBe('transparent');
+    });
+
     it('preloads both FontAwesome and Ionicons icon fonts on native', async () => {
         mockedPlatformOS = 'ios';
 
@@ -485,13 +623,65 @@ describe('app/_layout init resilience', () => {
         expect(screen.findByTestId('app-crash-recovery-boundary')).toBeTruthy();
     });
 
-    it('keeps the shell navigator mounted while hiding desktop chrome for terminal-connect routes', async () => {
+    it('keeps the shell navigator mounted while hiding the shell update tag for terminal-connect routes', async () => {
         mockedPathname = '/terminal/connect';
         const screen = await renderSettledRootLayout();
 
         expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(1);
-        expect(screen.findAllByType('DesktopUpdateBanner' as any)).toHaveLength(0);
+        expect(screen.findAllByType('AppUpdateStatusTag' as any)).toHaveLength(0);
         expect(screen.findAllByType('FaviconPermissionIndicator' as any)).toHaveLength(0);
+    });
+
+    it('mounts the shell update tag on ordinary app routes', async () => {
+        mockedPathname = '/';
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(1);
+        expect(screen.findAllByType('AppUpdateStatusTag' as any)).toHaveLength(1);
+    });
+
+    it('does not mount a root-shell update tag for unauthenticated desktop flows owned by the pre-auth host', async () => {
+        mockedPathname = '/';
+        shellChromeState.isTauriDesktop = true;
+
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(1);
+        expect(screen.findAllByType('AppUpdateStatusTag' as any)).toHaveLength(0);
+        expect(screen.findAllByTestId('desktop-focus-mode-shell-chrome')).toHaveLength(0);
+        expect(screen.findAllByTestId('desktop-narrow-shell-chrome')).toHaveLength(0);
+    });
+
+    it('renders a focus-mode fallback shell host with a real desktop controls slot', async () => {
+        mockedPathname = '/';
+        bootCredentialsState.value = { token: 'token', secret: 'secret' };
+        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isTablet = true;
+        shellChromeState.editorFocusModeEnabled = true;
+        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
+
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findByTestId('desktop-focus-mode-shell-chrome')).toBeTruthy();
+        expect(screen.findAllByType('AppUpdateStatusTag' as any)).toHaveLength(1);
+        expect(screen.findByTestId('desktop-window-controls-host')).toBeTruthy();
+        expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
+        expect(screen.findByTestId('desktop-window-drag-region')).toBeTruthy();
+    });
+
+    it('renders an explicit narrow-desktop fallback host instead of folding it into focus-mode fallback', async () => {
+        mockedPathname = '/';
+        bootCredentialsState.value = { token: 'token', secret: 'secret' };
+        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isTablet = false;
+        shellChromeState.editorFocusModeEnabled = false;
+        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
+
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findByTestId('desktop-narrow-shell-chrome')).toBeTruthy();
+        expect(screen.findAllByTestId('desktop-focus-mode-shell-chrome')).toHaveLength(0);
+        expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
     });
 
     it('mounts the settings analytics runtime inside PostHogProvider when tracking is enabled', async () => {

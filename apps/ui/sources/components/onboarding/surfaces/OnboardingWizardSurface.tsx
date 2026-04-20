@@ -7,6 +7,7 @@ import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOpt
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
@@ -67,6 +68,7 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     testID?: string;
     layout: 'portrait' | 'landscape';
     isDesktopShell: boolean;
+    shellChrome?: React.ReactNode;
     wizardChromeMode?: 'overlay' | 'embedded';
     wizardLayoutPresentation?: 'auto' | 'card' | 'fullscreen';
     authEntryOptions: AuthEntryOptions;
@@ -90,6 +92,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const { theme } = useUnistyles();
     const styles = onboardingWizardSurfaceStylesheet;
     const { width, height } = useWindowDimensions();
+    const safeArea = useChromeSafeAreaInsets();
     const activeServerSnapshot = useActiveServerSnapshot();
     const wizardPlatform: WizardPlatform = props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native');
     const wizardCapabilities = React.useMemo(
@@ -1325,27 +1328,45 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     });
 
     return (
-        <WizardModalShell
-            testID={props.testID ?? 'onboarding-wizard'}
-            stepIndex={Math.max(0, progress.current - 1)}
-            stepCount={Math.max(1, progress.total)}
-            showScrim={props.wizardChromeMode === 'embedded' ? false : undefined}
-            layoutPresentation={props.wizardLayoutPresentation}
-            titleLeading={stepId === 'welcome' ? <WizardLogotype height={45} testID={`${props.testID ?? 'onboarding-wizard'}-logotype`} /> : undefined}
-            title={title}
-            subtitle={subtitle ?? undefined}
-            onSkip={onSkip}
-            skipLabel={activeSkipOverride?.label ?? skipLabel}
-            skipDisabled={skipDisabled}
-            onBack={onBack ?? (() => {})}
-            onPrimary={onPrimary}
-            primaryLabel={activePrimaryOverride?.label ?? primaryLabel}
-            primaryDisabled={activePrimaryOverride?.disabled ?? primaryDisabled}
-            showBack={Boolean(onBack)}
-            showSkip={activeSkipOverride ? !activeSkipOverride.hidden : undefined}
-            footerHint={footerHint ?? undefined}
-        >
-            {body}
-        </WizardModalShell>
+        <View style={{ flex: 1, position: 'relative' }}>
+            {props.shellChrome ? (
+                <View
+                    style={{
+                        position: 'absolute',
+                        top: safeArea.top + 12,
+                        left: safeArea.left + 16,
+                        zIndex: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 10,
+                    }}
+                    testID="desktop-unauth-shell-chrome"
+                >
+                    {props.shellChrome}
+                </View>
+            ) : null}
+            <WizardModalShell
+                testID={props.testID ?? 'onboarding-wizard'}
+                stepIndex={Math.max(0, progress.current - 1)}
+                stepCount={Math.max(1, progress.total)}
+                showScrim={props.wizardChromeMode === 'embedded' ? false : undefined}
+                layoutPresentation={props.wizardLayoutPresentation}
+                titleLeading={stepId === 'welcome' ? <WizardLogotype height={45} testID={`${props.testID ?? 'onboarding-wizard'}-logotype`} /> : undefined}
+                title={title}
+                subtitle={subtitle ?? undefined}
+                onSkip={onSkip}
+                skipLabel={activeSkipOverride?.label ?? skipLabel}
+                skipDisabled={skipDisabled}
+                onBack={onBack ?? (() => {})}
+                onPrimary={onPrimary}
+                primaryLabel={activePrimaryOverride?.label ?? primaryLabel}
+                primaryDisabled={activePrimaryOverride?.disabled ?? primaryDisabled}
+                showBack={Boolean(onBack)}
+                showSkip={activeSkipOverride ? !activeSkipOverride.hidden : undefined}
+                footerHint={footerHint ?? undefined}
+            >
+                {body}
+            </WizardModalShell>
+        </View>
     );
 }

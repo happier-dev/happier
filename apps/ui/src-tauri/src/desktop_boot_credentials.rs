@@ -86,7 +86,8 @@ fn parse_boot_credentials(raw: &str) -> Option<DesktopBootCredentials> {
     if parsed.token.trim().is_empty() {
         return None;
     }
-    if parsed.encryption.public_key.trim().is_empty() || parsed.encryption.machine_key.trim().is_empty()
+    if parsed.encryption.public_key.trim().is_empty()
+        || parsed.encryption.machine_key.trim().is_empty()
     {
         return None;
     }
@@ -166,7 +167,11 @@ mod tests {
         let cli_home = temp.path().join("cli");
         create_dir_all(&cli_home).expect("expected cli home");
         let credentials = sample_credentials();
-        write_access_key(&cli_home, "stack_activity-surfaces-qa__id_default", &credentials);
+        write_access_key(
+            &cli_home,
+            "stack_activity-surfaces-qa__id_default",
+            &credentials,
+        );
 
         let env = HashMap::from([
             ("HAPPIER_STACK_STACK", "activity-surfaces-qa".to_string()),
@@ -193,7 +198,11 @@ mod tests {
         )
         .expect("expected settings");
         let credentials = sample_credentials();
-        write_access_key(&cli_home, "stack_activity-surfaces-qa__id_default", &credentials);
+        write_access_key(
+            &cli_home,
+            "stack_activity-surfaces-qa__id_default",
+            &credentials,
+        );
 
         let env = HashMap::from([
             ("HAPPIER_STACK_STACK", "activity-surfaces-qa".to_string()),

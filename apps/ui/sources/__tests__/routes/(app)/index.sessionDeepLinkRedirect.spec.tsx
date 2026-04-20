@@ -7,7 +7,7 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 const shared = vi.hoisted(() => ({
   routerReplaceSpy: vi.fn(),
-  searchParams: { id: 'session-1', messageId: 'message-1' } as { id?: string; messageId?: string; jumpChildId?: string },
+  searchParams: { id: 'session-1', messageId: 'message-1' } as { id?: string; messageId?: string; jumpChildId?: string; serverId?: string },
 }));
 
 vi.mock('expo-router', async () => {
@@ -63,6 +63,46 @@ describe('/ authenticated deep link redirects', () => {
       await flushHookEffects();
 
       expect(shared.routerReplaceSpy).toHaveBeenCalledWith('/session/session-1/message/message-1');
+    } finally {
+      act(() => {
+        tree?.unmount();
+      });
+    }
+  });
+
+  it('preserves serverId and jumpChildId when redirecting to /session/:id/message/:messageId', async () => {
+    vi.resetModules();
+    shared.routerReplaceSpy.mockClear();
+    shared.searchParams = { id: 'session-1', serverId: 'server-a', messageId: 'message-1', jumpChildId: 'child-1' };
+
+    const { default: Screen } = await import('@/app/(app)/index');
+    let tree: renderer.ReactTestRenderer | null = null;
+
+    try {
+      tree = (await renderScreen(<Screen />)).tree;
+      await flushHookEffects();
+
+      expect(shared.routerReplaceSpy).toHaveBeenCalledWith('/session/session-1/message/message-1?serverId=server-a&jumpChildId=child-1');
+    } finally {
+      act(() => {
+        tree?.unmount();
+      });
+    }
+  });
+
+  it('preserves jumpChildId when redirecting to /session/:id (no messageId)', async () => {
+    vi.resetModules();
+    shared.routerReplaceSpy.mockClear();
+    shared.searchParams = { id: 'session-1', serverId: 'server-a', jumpChildId: 'child-1' };
+
+    const { default: Screen } = await import('@/app/(app)/index');
+    let tree: renderer.ReactTestRenderer | null = null;
+
+    try {
+      tree = (await renderScreen(<Screen />)).tree;
+      await flushHookEffects();
+
+      expect(shared.routerReplaceSpy).toHaveBeenCalledWith('/session/session-1?serverId=server-a&jumpChildId=child-1');
     } finally {
       act(() => {
         tree?.unmount();

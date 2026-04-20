@@ -2,22 +2,25 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 const routerPushSpy = vi.fn();
 const workspaceScmReviewDetailsViewSpy = vi.hoisted(() => vi.fn((_props: unknown) => null));
 const projectTerminalSurfaceSpy = vi.hoisted(() => vi.fn((_props: unknown) => null));
 const openDetailsTabSpy = vi.hoisted(() => vi.fn());
-const paneDetailsTabsPanelSpy = vi.hoisted(() => vi.fn((props: any) => React.createElement(
+const detailsSplitWorkspaceSpy = vi.hoisted(() => vi.fn((props: any) => React.createElement(
     React.Fragment,
     null,
     props.renderHeaderActions?.(),
 )));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({
-        push: routerPushSpy,
-    }),
-}));
+const expoRouterMock = createExpoRouterMock({
+    router: {
+        push: (value: unknown) => routerPushSpy(value),
+    },
+});
+
+vi.mock('expo-router', () => expoRouterMock.module);
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -48,8 +51,8 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'desktop',
 }));
 
-vi.mock('@/components/appShell/panes/details/PaneDetailsTabsPanel', () => ({
-    PaneDetailsTabsPanel: (props: any) => paneDetailsTabsPanelSpy(props),
+vi.mock('@/components/appShell/panes/details/workspace/DetailsSplitWorkspace', () => ({
+    DetailsSplitWorkspace: (props: any) => detailsSplitWorkspaceSpy(props),
 }));
 
 vi.mock('@/components/workspaces/files/details/WorkspaceFileDetailsView', () => ({
@@ -80,9 +83,8 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const original = await importOriginal<any>();
-    return {
-        ...original,
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
         useAllMachines: () => [],
         useLocalSetting: () => false,
         useLocalSettingMutable: () => [false, vi.fn()],
@@ -105,7 +107,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
             body: 'Please verify this project change.',
             createdAt: 1,
         }],
-    };
+    });
 });
 
 describe('WorkspaceDetailsPanel review comment launcher', () => {
@@ -114,7 +116,7 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
         workspaceScmReviewDetailsViewSpy.mockReset();
         projectTerminalSurfaceSpy.mockReset();
         openDetailsTabSpy.mockReset();
-        paneDetailsTabsPanelSpy.mockClear();
+        detailsSplitWorkspaceSpy.mockClear();
     });
 
     afterEach(() => {
@@ -170,7 +172,7 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
             />,
         );
 
-        const [{ renderTabContent }] = paneDetailsTabsPanelSpy.mock.calls.at(-1) ?? [];
+        const [{ renderTabContent }] = detailsSplitWorkspaceSpy.mock.calls.at(-1) ?? [];
 
         expect(typeof renderTabContent).toBe('function');
 
@@ -233,7 +235,7 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
             />,
         );
 
-        const [{ renderTabContent }] = paneDetailsTabsPanelSpy.mock.calls.at(-1) ?? [];
+        const [{ renderTabContent }] = detailsSplitWorkspaceSpy.mock.calls.at(-1) ?? [];
         const tabContent = renderTabContent({
             key: 'terminal:terminal-instance-2',
             kind: 'terminal',
@@ -299,7 +301,7 @@ describe('WorkspaceDetailsPanel review comment launcher', () => {
             />,
         );
 
-        const [{ testIds }] = paneDetailsTabsPanelSpy.mock.calls.at(-1) ?? [];
+        const [{ testIds }] = detailsSplitWorkspaceSpy.mock.calls.at(-1) ?? [];
         expect(testIds?.root).toBe('workspace-details-panel-root');
         expect(testIds?.tab?.('file_src_index_ts')).toBe('workspace-details-tab-file_src_index_ts');
         expect(testIds?.tabClose?.('file_src_index_ts')).toBe('workspace-details-tab-close-file_src_index_ts');

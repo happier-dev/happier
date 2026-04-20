@@ -348,4 +348,36 @@ describe('/session/[id]/files', () => {
             params: { id: 'session-2', details: 'file', path: 'README.md' },
         });
     });
+
+    it('navigates to details when the focused split group is empty but another details group still has a tab', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: {
+                isOpen: true,
+                tabs: [],
+                activeTabKey: null,
+                tabState: {},
+                focusedGroupId: 'group:2',
+                groups: [
+                    {
+                        id: 'group:1',
+                        activeTabKey: 'file:README.md',
+                        tabs: [{ key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } }],
+                    },
+                    {
+                        id: 'group:2',
+                        activeTabKey: null,
+                        tabs: [],
+                    },
+                ],
+            },
+        };
+
+        await renderRouteScreen();
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/session/[id]/details',
+            params: { id: 'session-1', details: 'file', path: 'README.md' },
+        });
+    });
 });
