@@ -1,0 +1,66 @@
+services:
+  prometheus:
+    image: ${HAPPIER_PROMETHEUS_IMAGE:-prom/prometheus:v2.54.1}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - 127.0.0.1:${HAPPIER_PROMETHEUS_HOST_PORT:-9091}:9090
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    depends_on:
+      - alertmanager
+    networks:
+      - observability
+      - target
+
+  alertmanager:
+    image: ${HAPPIER_ALERTMANAGER_IMAGE:-prom/alertmanager:v0.27.0}
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - 127.0.0.1:${HAPPIER_ALERTMANAGER_HOST_PORT:-9093}:9093
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+    networks:
+      - observability
+
+  grafana:
+    image: ${HAPPIER_GRAFANA_IMAGE:-grafana/grafana:11.2.0}
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-change-me}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - 127.0.0.1:${HAPPIER_GRAFANA_HOST_PORT:-3000}:3000
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards/happier:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    networks:
+      - observability
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+
+networks:
+  observability:
+  target:
+    external: true
+    name: ${HAPPIER_OBSERVABILITY_TARGET_NETWORK:-happier-server}

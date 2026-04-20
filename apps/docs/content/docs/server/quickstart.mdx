@@ -50,6 +50,14 @@ If you terminate TLS on a reverse proxy (Caddy/Nginx/Traefik), also set:
 
 This allows correct `request.ip` and protocol detection behind `X-Forwarded-*` headers (important for rate limiting and some URL behaviors).
 
+Important: your proxy must also support **WebSocket upgrades** for Socket.IO realtime:
+
+- `/v1/updates` (polling + websocket upgrade)
+
+If websocket upgrades are broken, machines can register but stay offline (“no online machines”, `machine.none_online`).
+
+See: [Deployment → Environment variables → Networking / reverse proxy](../deployment/env#websockets-required-for-realtime--machine-online)
+
 ## 4) Optional: Tailscale Serve inference
 
 If you use `tailscale serve` and you did not explicitly set `HAPPIER_PUBLIC_SERVER_URL`, the server can best-effort infer the `https://*.ts.net` URL at boot.

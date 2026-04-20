@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { parseBooleanEnv } from '@/config/env';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
 type SqliteMigration = Readonly<{
   name: string;
@@ -11,26 +13,67 @@ type SqliteMigration = Readonly<{
   checksum: string;
 }>;
 
+type AppliedMigrationRecord = Readonly<{
+  name: string;
+  checksum: string;
+}>;
+
 function sha256Hex(input: string): string {
   return createHash('sha256').update(input).digest('hex');
+}
+
+function normalizeChecksum(value: string): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function createChecksumMismatchError(migration: SqliteMigration, appliedChecksum: string): Error {
+  return new Error(
+    `[sqlite-migrations] checksum mismatch for applied migration ${migration.name}: recorded=${normalizeChecksum(appliedChecksum) || '<empty>'} current=${migration.checksum}`,
+  );
+}
+
+function mapAppliedMigrations(rows: ReadonlyArray<AppliedMigrationRecord>): Map<string, string> {
+  const applied = new Map<string, string>();
+  for (const row of rows) {
+    const name = String(row.name ?? '').trim();
+    if (!name) {
+      continue;
+    }
+    applied.set(name, normalizeChecksum(row.checksum));
+  }
+  return applied;
+}
+
+function ensureAppliedMigrationChecksum(migration: SqliteMigration, appliedChecksums: ReadonlyMap<string, string>): void {
+  const appliedChecksum = appliedChecksums.get(migration.name);
+  if (appliedChecksum == null) {
+    return;
+  }
+  if (appliedChecksum !== migration.checksum) {
+    throw createChecksumMismatchError(migration, appliedChecksum);
+  }
 }
 
 export function resolveSqliteDatabaseFilePath(databaseUrl: string): string {
   const raw = String(databaseUrl ?? '').trim();
   if (!raw) return '';
   if (!raw.startsWith('file:')) return '';
+  const value = raw.slice('file:'.length);
+  if (!value) return '';
+  const shouldPreserveRelativePath =
+    !value.startsWith('/') &&
+    !value.startsWith('//') &&
+    !/^[A-Za-z]:[\\/]/.test(value);
+  if (shouldPreserveRelativePath) {
+    return value;
+  }
   try {
     const url = new URL(raw);
     // For file: URLs, pathname is already decoded and starts with / on unix.
     if (url.protocol !== 'file:') return '';
-    // On Windows, URL.pathname can start with /C:/...
-    const path = url.pathname.startsWith('/') && /^[A-Za-z]:\//.test(url.pathname.slice(1))
-      ? url.pathname.slice(1)
-      : url.pathname;
-    return path || '';
+    return fileURLToPath(url);
   } catch {
     // Prisma accepts file:/path and file:relative forms; treat them as best-effort paths.
-    const value = raw.slice('file:'.length);
     return value.startsWith('//') ? value.replace(/^\/+/, '/') : value;
   }
 }
@@ -56,8 +99,9 @@ export async function listSqliteMigrations(migrationsDir: string): Promise<Sqlit
 type SqliteExecutor = Readonly<{
   exec: (sql: string) => void;
   queryTableNames: () => Set<string>;
-  queryAppliedMigrations: () => Set<string>;
+  queryAppliedMigrations: () => Array<Readonly<{ migration_name: string; checksum: string }>>;
   insertAppliedMigration: (params: { name: string; checksum: string }) => void;
+  close: () => void;
 }>;
 
 export function shouldAutoMigrateSqliteOnStart(env: NodeJS.ProcessEnv): boolean {
@@ -65,7 +109,10 @@ export function shouldAutoMigrateSqliteOnStart(env: NodeJS.ProcessEnv): boolean 
 }
 
 export function resolveSqliteMigrationsDir(env: NodeJS.ProcessEnv, dataDir: string): string {
-  const explicit = String(env.HAPPIER_SQLITE_MIGRATIONS_DIR ?? env.HAPPY_SQLITE_MIGRATIONS_DIR ?? '').trim();
+  const explicit = expandHomeDirPath(
+    String(env.HAPPIER_SQLITE_MIGRATIONS_DIR ?? env.HAPPY_SQLITE_MIGRATIONS_DIR ?? '').trim(),
+    env,
+  );
   if (explicit) return explicit;
   const base = String(dataDir ?? '').trim();
   return base ? join(base, 'migrations', 'sqlite') : '';
@@ -94,7 +141,7 @@ async function createBunSqliteExecutor(params: { databasePath: string }): Promis
   );
 
   const tableNamesQuery = db.query(`SELECT name FROM sqlite_master WHERE type='table'`);
-  const appliedQuery = db.query(`SELECT migration_name FROM _prisma_migrations WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL`);
+  const appliedQuery = db.query(`SELECT migration_name, checksum FROM _prisma_migrations WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL`);
   const insertQuery = db.query(
     `INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) VALUES (?, ?, CURRENT_TIMESTAMP, ?, 1)`,
   );
@@ -114,15 +161,24 @@ async function createBunSqliteExecutor(params: { databasePath: string }): Promis
     },
     queryAppliedMigrations: () => {
       const rows = appliedQuery.all();
-      const set = new Set<string>();
+      const result: Array<Readonly<{ migration_name: string; checksum: string }>> = [];
       for (const row of rows) {
         const name = String(row?.migration_name ?? '').trim();
-        if (name) set.add(name);
+        if (!name) continue;
+        result.push({
+          migration_name: name,
+          checksum: String((row as { checksum?: string })?.checksum ?? ''),
+        });
       }
-      return set;
+      return result;
     },
     insertAppliedMigration: ({ name, checksum }) => {
       insertQuery.run(randomUUID(), checksum, name);
+    },
+    close: () => {
+      if (typeof db.close === 'function') {
+        db.close();
+      }
     },
   });
 }
@@ -148,44 +204,59 @@ export async function applySqliteMigrationsIfNeeded(params: Readonly<{
   await mkdir(dirname(dbPath), { recursive: true }).catch(() => {});
 
   const executor = await createBunSqliteExecutor({ databasePath: dbPath });
-  const migrations = await listSqliteMigrations(migrationsDir);
-  if (migrations.length === 0) {
-    return { applied: [] };
-  }
-  const applied = executor.queryAppliedMigrations();
-  const existingTables = executor.queryTableNames();
-  const hasCoreTables = existingTables.has('Account') || existingTables.has('account') || existingTables.has('accounts');
-  const legacyMode = applied.size === 0 && hasCoreTables;
+  try {
+    const migrations = await listSqliteMigrations(migrationsDir);
+    if (migrations.length === 0) {
+      return { applied: [] };
+    }
+    const appliedChecksums = mapAppliedMigrations(
+      executor.queryAppliedMigrations().map((row) => ({
+        name: row.migration_name,
+        checksum: row.checksum,
+      })),
+    );
+    const applied = new Set(appliedChecksums.keys());
+    const existingTables = executor.queryTableNames();
+    const hasCoreTables = existingTables.has('Account') || existingTables.has('account') || existingTables.has('accounts');
+    const legacyMode = applied.size === 0 && hasCoreTables;
 
-  const isLikelyAlreadyAppliedError = (err: unknown): boolean => {
-    const msg = String((err as any)?.message ?? err ?? '').toLowerCase();
-    return msg.includes('already exists') || msg.includes('duplicate column') || msg.includes('duplicate');
-  };
+    const isLikelyAlreadyAppliedError = (err: unknown): boolean => {
+      const msg = String((err as any)?.message ?? err ?? '').toLowerCase();
+      return msg.includes('already exists') || msg.includes('duplicate column') || msg.includes('duplicate');
+    };
 
-  const appliedNow: string[] = [];
-  for (const migration of migrations) {
-    if (applied.has(migration.name)) continue;
-    executor.exec('BEGIN');
-    try {
-      executor.exec(migration.sql);
-      executor.insertAppliedMigration({ name: migration.name, checksum: migration.checksum });
-      executor.exec('COMMIT');
-      appliedNow.push(migration.name);
-      applied.add(migration.name);
-    } catch (err) {
-      try {
-        executor.exec('ROLLBACK');
-      } catch {
-        // ignore
-      }
-      if (legacyMode && isLikelyAlreadyAppliedError(err)) {
-        executor.insertAppliedMigration({ name: migration.name, checksum: migration.checksum });
-        appliedNow.push(migration.name);
-        applied.add(migration.name);
+    const appliedNow: string[] = [];
+    for (const migration of migrations) {
+      if (applied.has(migration.name)) {
+        ensureAppliedMigrationChecksum(migration, appliedChecksums);
         continue;
       }
-      throw err;
+      executor.exec('BEGIN');
+      try {
+        executor.exec(migration.sql);
+        executor.insertAppliedMigration({ name: migration.name, checksum: migration.checksum });
+        executor.exec('COMMIT');
+        appliedNow.push(migration.name);
+        applied.add(migration.name);
+        appliedChecksums.set(migration.name, migration.checksum);
+      } catch (err) {
+        try {
+          executor.exec('ROLLBACK');
+        } catch {
+          // ignore
+        }
+        if (legacyMode && isLikelyAlreadyAppliedError(err)) {
+          executor.insertAppliedMigration({ name: migration.name, checksum: migration.checksum });
+          appliedNow.push(migration.name);
+          applied.add(migration.name);
+          appliedChecksums.set(migration.name, migration.checksum);
+          continue;
+        }
+        throw err;
+      }
     }
+    return { applied: appliedNow };
+  } finally {
+    executor.close();
   }
-  return { applied: appliedNow };
 }

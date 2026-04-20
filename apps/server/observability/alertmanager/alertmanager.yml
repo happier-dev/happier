@@ -1,0 +1,37 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default-null
+  group_by:
+    - alertname
+    - job
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: default-null
+
+# Safe local default:
+# - alerts are accepted and visible in Alertmanager
+# - no notifications are sent anywhere until you add a real receiver
+#
+# Example webhook receiver:
+# receivers:
+#   - name: ops-webhook
+#     webhook_configs:
+#       - url: https://hooks.example.com/services/your/webhook
+#
+# route:
+#   receiver: ops-webhook
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal:
+      - alertname
+      - job
+      - instance

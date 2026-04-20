@@ -144,6 +144,8 @@ S3_SECRET_KEY=minioadmin
 # (required if you run more than one API replica)
 REDIS_URL=redis://127.0.0.1:6379
 HAPPIER_SOCKET_ADAPTER=redis-streams
+HAPPIER_SOCKET_ADAPTER_MAXLEN=200000
+HAPPIER_SOCKET_ADAPTER_READ_COUNT=2000
 
 # Optional: process role when scaling (unset => "all")
 # SERVER_ROLE=api
@@ -219,13 +221,29 @@ To explicitly disable it (single-process mode), leave it unset or set:
 This enables:
 
 - room-based fanout for `update` / `ephemeral` events
-- cluster-aware Socket.IO RPC routing (method registry stored in Redis)
+- cluster-aware Socket.IO RPC routing through room discovery plus the Redis Streams backplane
+- adapter / RPC / presence / runtime metrics on `/metrics`
+- socket auth / reconnect / disconnect / transport-upgrade metrics on `/metrics`
+- fanout and app-owned Redis command metrics on `/metrics`
 
 Presence stream (when Redis adapter is enabled):
 
-- `HAPPY_PRESENCE_STREAM_MAXLEN` (default: `100000`)
+- `HAPPIER_SOCKET_ADAPTER_MAXLEN` (alias: `HAPPY_SOCKET_ADAPTER_MAXLEN`, default: `200000`)
+  - Redis Streams adapter trim target for Socket.IO cluster traffic
+- `HAPPIER_SOCKET_ADAPTER_READ_COUNT` (alias: `HAPPY_SOCKET_ADAPTER_READ_COUNT`, default: `2000`)
+  - Redis Streams adapter `XREAD` batch size for cross-replica fanout
+- `HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS` (default: `750`)
+  - reconnect grace window for scoped RPC methods before returning `METHOD_NOT_AVAILABLE`
+- `HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS` (default: `25`)
+  - poll interval used while waiting for scoped RPC listeners to reappear during the grace window
+- `HAPPIER_PRESENCE_STREAM_MAXLEN` (alias: `HAPPY_PRESENCE_STREAM_MAXLEN`, default: `100000`)
   - uses Redis `XADD ... MAXLEN ~ N` trimming for the `presence:alive:v1` stream to prevent unbounded growth
   - set to `0` to disable trimming (not recommended in production)
+- `HAPPIER_PRESENCE_WORKER_FLUSH_INTERVAL_MS` (default: `5000`)
+- `HAPPIER_PRESENCE_WORKER_READ_BLOCK_MS` (default: `5000`)
+- `HAPPIER_PRESENCE_WORKER_READ_COUNT` (default: `200`)
+- `HAPPIER_PRESENCE_WORKER_RECLAIM_IDLE_MS` (default: `60000`)
+  - tune worker-side read/flush/reclaim cadence explicitly instead of patching code constants
 
 Important:
 
@@ -248,6 +266,8 @@ SERVER_ROLE=api HAPPIER_SOCKET_ADAPTER=redis-streams REDIS_URL=redis://127.0.0.1
 
 If you run multiple API replicas behind a load balancer/ingress, you must configure **sticky sessions** so a given websocket client keeps talking to the same API pod/process after the initial upgrade. Without stickiness, reconnects and long-poll fallbacks can flap between replicas and degrade realtime behavior.
 
+Also ensure the reverse-proxy idle timeout is greater than the Socket.IO `pingInterval + pingTimeout`. The current defaults require more than `60s`; use a higher timeout such as several minutes.
+
 ### DB connection pool sizing
 
 With multiple API processes, total Postgres connections become roughly:
@@ -267,6 +287,21 @@ Prisma pooling is typically configured via the database connection string / driv
 - Set `HAPPIER_INSTANCE_ID` to something stable per process/pod for debugging (for example, Kubernetes `metadata.uid`). If unset, it is generated automatically at runtime.
 - If you run API + worker processes on the same host, ensure their `PORT`/`METRICS_PORT` values do not conflict.
 - To disable the metrics server (for example in some local multi-process setups), set `METRICS_ENABLED=false`. To avoid conflicts while keeping it enabled, set `METRICS_PORT=0` (random free port) or choose distinct ports per process.
+
+### Observability pack
+
+The repo-owned Prometheus + Grafana + Alertmanager pack for self-hosting lives in:
+
+- `apps/server/observability/`
+
+Use it when you want:
+
+- Prometheus metric storage for `/metrics`
+- provisioned Grafana dashboards
+- baseline Prometheus alert rules
+- a safe local/default Alertmanager config
+
+For a full guide, see `apps/docs/content/docs/deployment/observability.mdx`.
 
 ### Choosing a flavor
 

@@ -1,6 +1,6 @@
 import { startApi } from '@/app/api/api';
 import { startMetricsServer } from '@/app/monitoring/metrics';
-import { startDatabaseMetricsUpdater } from '@/app/monitoring/metrics2';
+import { startDatabaseMetricsUpdater, setSocketAdapterModeInfo } from '@/app/monitoring/metrics/index';
 import { auth } from '@/app/auth/auth';
 import { activityCache } from '@/app/presence/sessionCache';
 import { startTimeout } from '@/app/presence/timeout';
@@ -10,58 +10,32 @@ import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, initDbPglite, initDbSqlite, shutdownDbPglite } from '@/storage/db';
 import { log } from '@/utils/logging/log';
 import { awaitShutdown, onShutdown } from '@/utils/process/shutdown';
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from '@/flavors/light/env';
+import {
+    applyLightDefaultEnv,
+    applyPackagedLightRuntimeSqliteDefaults,
+    ensureHandyMasterSecret,
+    resolveLightSqliteDatabaseUrl,
+} from '@/flavors/light/env';
 import { applySqliteMigrationsIfNeeded } from '@/flavors/light/sqliteMigrations';
 import {
     getFilesBackendFromEnv,
-    getSocketAdapterFromEnv,
-    isRedisStreamsEnabled,
     resolveDefaultFilesBackend,
     resolveDefaultSocketAdapter,
 } from '@/config/backends';
-import http from 'node:http';
-import { homedir } from 'node:os';
-import { Server as SocketIOServer } from 'socket.io';
-import { createAdapter } from '@socket.io/redis-streams-adapter';
-import { getRedisClient } from '@/storage/redis/redis';
+import { readSocketAdapterRuntimeConfigFromEnv } from '@/config/socketAdapter';
+import { createRedisStreamsRoomEmitter } from '@/app/events/createRedisStreamsRoomEmitter';
 import { eventRouter } from '@/app/events/eventRouter';
+import { getRedisClient } from '@/storage/redis/redis';
 import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush } from '@/app/presence/presenceMode';
 import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { resolveCachedCanonicalPublicServerUrl } from '@/app/integrations/publicUrl/publicServerUrlInference';
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { readPresenceRedisWorkerConfigFromEnv } from '@/config/presence';
 
 export type ServerFlavor = 'full' | 'light';
 export type ServerRole = 'all' | 'api' | 'worker';
-
-function resolveServerHomeDirFromEnvironment(env: NodeJS.ProcessEnv): string {
-    const envHome =
-        process.platform === 'win32'
-            ? (env.USERPROFILE || env.HOME)
-            : env.HOME;
-    const trimmedEnvHome = typeof envHome === 'string' ? envHome.trim() : '';
-    if (trimmedEnvHome) {
-        return trimmedEnvHome;
-    }
-    const resolvedHomeDir = homedir().trim();
-    return resolvedHomeDir;
-}
-
-function expandHomeDirPath(value: string, env: NodeJS.ProcessEnv): string {
-    const homeDir = resolveServerHomeDirFromEnvironment(env);
-    if (!homeDir) {
-        return value;
-    }
-    if (value === '~') {
-        return homeDir;
-    }
-    if (value.startsWith('~/') || value.startsWith('~\\')) {
-        return join(homeDir, value.slice(2));
-    }
-    return value;
-}
 
 function resolveServerLightDataDir(env: NodeJS.ProcessEnv): string {
     return expandHomeDirPath(
@@ -78,8 +52,7 @@ export function getServerRoleFromEnv(env: NodeJS.ProcessEnv): ServerRole {
 }
 
 function shouldEnableRedisAdapterFromEnv(env: NodeJS.ProcessEnv, flavor: ServerFlavor): boolean {
-    const socketAdapter = getSocketAdapterFromEnv(env, resolveDefaultSocketAdapter(flavor));
-    return isRedisStreamsEnabled(env, socketAdapter);
+    return readSocketAdapterRuntimeConfigFromEnv(env, resolveDefaultSocketAdapter(flavor)).redisStreamsEnabled;
 }
 
 export async function startServer(flavor: ServerFlavor): Promise<void> {
@@ -96,13 +69,15 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     process.env.HAPPY_FILES_BACKEND = filesBackend;
     process.env.HAPPIER_FILES_BACKEND = filesBackend;
 
-    const socketAdapter = getSocketAdapterFromEnv(process.env, resolveDefaultSocketAdapter(flavor));
+    const socketAdapterConfig = readSocketAdapterRuntimeConfigFromEnv(process.env, resolveDefaultSocketAdapter(flavor));
+    const socketAdapter = socketAdapterConfig.adapter;
     process.env.HAPPY_SOCKET_ADAPTER = socketAdapter;
     process.env.HAPPIER_SOCKET_ADAPTER = socketAdapter;
 
     const shouldApplyLocalDefaults = filesBackend === 'local' || dbProvider === 'pglite' || dbProvider === 'sqlite';
     if (shouldApplyLocalDefaults) {
         applyLightDefaultEnv(process.env);
+        applyPackagedLightRuntimeSqliteDefaults(process.env);
         await ensureHandyMasterSecret(process.env);
     }
 
@@ -119,7 +94,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
             if (!dataDir) {
                 throw new Error('HAPPIER_SERVER_LIGHT_DATA_DIR (or HAPPY_SERVER_LIGHT_DATA_DIR) must be set when using sqlite without DATABASE_URL');
             }
-            process.env.DATABASE_URL = pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href;
+            process.env.DATABASE_URL = resolveLightSqliteDatabaseUrl(dataDir);
         }
         if (dataDir) {
             await applySqliteMigrationsIfNeeded({ env: process.env, dataDir });
@@ -168,6 +143,12 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
         );
     }
 
+    setSocketAdapterModeInfo({
+        adapter: socketAdapter,
+        redisEnabled: shouldEnableRedisAdapter,
+        role,
+    });
+
     // Initialize auth module
     await initEncrypt();
     await initGithub();
@@ -184,23 +165,13 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
                 "SERVER_ROLE=worker requires Redis socket adapter enabled (set REDIS_URL and HAPPIER_SOCKET_ADAPTER=redis-streams) so worker pushes can fan out to connected API sockets",
             );
         }
-        // Create an emitter-only Socket.IO server wired to the Redis adapter, so background jobs can publish
-        // ephemeral/update events to rooms even though this process does not accept client connections.
-        const dummyHttpServer = http.createServer();
-        const io = new SocketIOServer(dummyHttpServer, {
-            adapter: createAdapter(getRedisClient()),
-            serveClient: false,
-            transports: ['websocket', 'polling'],
-            path: '/v1/updates',
-        });
-        eventRouter.setIo(io);
-        onShutdown('worker-socketio', async () => {
-            await io.close();
-            dummyHttpServer.close();
-        });
+        // Background workers should publish into rooms without joining the Socket.IO cluster as a fetchSockets peer.
+        eventRouter.setIo(createRedisStreamsRoomEmitter({
+            maxLen: socketAdapterConfig.redisStreamsOptions.maxLen ?? 200_000,
+        }));
 
         if (shouldConsumePresenceFromRedis(process.env)) {
-            const presenceWorker = startPresenceRedisWorker();
+            const presenceWorker = startPresenceRedisWorker(readPresenceRedisWorkerConfigFromEnv(process.env));
             onShutdown('presence-redis-worker', async () => {
                 await presenceWorker.stop();
             });

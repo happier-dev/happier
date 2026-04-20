@@ -1,8 +1,12 @@
-import { mkdtemp, rm, readFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "./env";
+import {
+  applyLightDefaultEnv,
+  applyPackagedLightRuntimeSqliteDefaults,
+  ensureHandyMasterSecret,
+} from "./env";
 
 describe("light env helpers", () => {
   it("applyLightDefaultEnv fills defaults without overriding explicit values", () => {
@@ -42,6 +46,21 @@ describe("light env helpers", () => {
     expect(env.PUBLIC_URL).toBe("http://localhost:4000");
   });
 
+  it("applyLightDefaultEnv expands ~ in explicit light path overrides", () => {
+    const env: NodeJS.ProcessEnv = {
+      HOME: "/Users/tester",
+      HAPPY_SERVER_LIGHT_DATA_DIR: "~/server-light",
+      HAPPY_SERVER_LIGHT_FILES_DIR: "~/server-light-files",
+      HAPPY_SERVER_LIGHT_DB_DIR: "~/server-light-db",
+    };
+
+    applyLightDefaultEnv(env, { homedir: "/home/ignored" });
+
+    expect(env.HAPPY_SERVER_LIGHT_DATA_DIR).toBe("/Users/tester/server-light");
+    expect(env.HAPPY_SERVER_LIGHT_FILES_DIR).toBe("/Users/tester/server-light-files");
+    expect(env.HAPPY_SERVER_LIGHT_DB_DIR).toBe("/Users/tester/server-light-db");
+  });
+
   it("applyLightDefaultEnv falls back to default port when PORT is invalid", () => {
     const env: NodeJS.ProcessEnv = { PORT: "oops" };
     applyLightDefaultEnv(env, { homedir: "/home/test" });
@@ -54,6 +73,53 @@ describe("light env helpers", () => {
     const expectedBase = join(tmpdir(), "happier-server-light");
     expect(env.HAPPY_SERVER_LIGHT_DATA_DIR).toBe(expectedBase);
     expect(env.HAPPY_SERVER_LIGHT_DB_DIR).toBe(join(expectedBase, "pglite"));
+  });
+
+  it("applyPackagedLightRuntimeSqliteDefaults enables sqlite auto-migrate for extracted server binaries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "happy-server-packaged-sqlite-"));
+    try {
+      const binDir = join(root, "artifact");
+      const migrationsDir = join(binDir, "prisma", "sqlite", "migrations");
+      await mkdir(migrationsDir, { recursive: true });
+      const executablePath = join(binDir, "happier-server");
+      await writeFile(executablePath, "", "utf8");
+      const env: NodeJS.ProcessEnv = {
+        HAPPIER_SERVER_LIGHT_DATA_DIR: "/tmp/happier-data",
+      };
+
+      applyPackagedLightRuntimeSqliteDefaults(env, { executablePath });
+
+      expect(env.DATABASE_URL).toBe("file:///tmp/happier-data/happier-server-light.sqlite");
+      expect(env.HAPPIER_SQLITE_AUTO_MIGRATE).toBe("1");
+      expect(env.HAPPIER_SQLITE_MIGRATIONS_DIR).toBe(migrationsDir);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applyPackagedLightRuntimeSqliteDefaults preserves explicit sqlite runtime overrides", async () => {
+    const root = await mkdtemp(join(tmpdir(), "happy-server-packaged-sqlite-keep-"));
+    try {
+      const binDir = join(root, "artifact");
+      const migrationsDir = join(binDir, "prisma", "sqlite", "migrations");
+      await mkdir(migrationsDir, { recursive: true });
+      const executablePath = join(binDir, "happier-server");
+      await writeFile(executablePath, "", "utf8");
+      const env: NodeJS.ProcessEnv = {
+        HAPPIER_SERVER_LIGHT_DATA_DIR: "/tmp/happier-data",
+        DATABASE_URL: "file:/custom.sqlite",
+        HAPPIER_SQLITE_AUTO_MIGRATE: "0",
+        HAPPIER_SQLITE_MIGRATIONS_DIR: "/custom/migrations",
+      };
+
+      applyPackagedLightRuntimeSqliteDefaults(env, { executablePath });
+
+      expect(env.DATABASE_URL).toBe("file:/custom.sqlite");
+      expect(env.HAPPIER_SQLITE_AUTO_MIGRATE).toBe("0");
+      expect(env.HAPPIER_SQLITE_MIGRATIONS_DIR).toBe("/custom/migrations");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("ensureHandyMasterSecret persists a generated secret and reuses it", async () => {

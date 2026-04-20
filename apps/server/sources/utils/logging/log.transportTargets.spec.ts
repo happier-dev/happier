@@ -29,5 +29,17 @@ describe('createLoggingTransportTargets', () => {
     const targets = mod.createLoggingTransportTargets();
     expect(targets.some(t => t?.target === 'pino-pretty')).toBe(false);
   });
-});
 
+  it('defaults the server log level to info', async () => {
+    const mod = await import('./log');
+
+    expect(mod.resolveServerLogLevelFromEnv({} as NodeJS.ProcessEnv)).toBe('info');
+  });
+
+  it('honors explicit server log level env overrides', async () => {
+    const mod = await import('./log');
+
+    expect(mod.resolveServerLogLevelFromEnv({ HAPPIER_SERVER_LOG_LEVEL: 'debug' } as NodeJS.ProcessEnv)).toBe('debug');
+    expect(mod.resolveServerLogLevelFromEnv({ LOG_LEVEL: 'warn' } as NodeJS.ProcessEnv)).toBe('warn');
+  });
+});

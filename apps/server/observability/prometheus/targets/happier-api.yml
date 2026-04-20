@@ -1,0 +1,5 @@
+- targets:
+    - happier-api:9090
+  labels:
+    service: happier-api
+    role: api

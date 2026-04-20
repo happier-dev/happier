@@ -12,10 +12,10 @@ This page documents how Happier integrates with **OpenCode** and what matters fo
 
 ## Install OpenCode
 
-If you use hstack, you can install OpenCode with the providers installer (macOS / Linux only):
+If you use Happier's provider installer, you can install OpenCode from the CLI:
 
 ```bash
-hstack providers install opencode
+happier install provider opencode
 opencode --version
 ```
 
@@ -23,6 +23,13 @@ Or install manually:
 
 ```bash
 curl -fsSL https://opencode.ai/install | bash
+opencode --version
+```
+
+On Windows, OpenCode also supports native installs such as:
+
+```bash
+npm install -g opencode-ai
 opencode --version
 ```
 

@@ -3,16 +3,16 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { applySqliteMigrationsIfNeeded, listSqliteMigrations, resolveSqliteDatabaseFilePath } from './sqliteMigrations';
+import { applySqliteMigrationsIfNeeded, listSqliteMigrations, resolveSqliteDatabaseFilePath, resolveSqliteMigrationsDir } from './sqliteMigrations';
 
-type SqliteState = { tables: Set<string>; applied: Set<string> };
+type SqliteState = { tables: Set<string>; applied: Map<string, string>; closeCount: number };
 
 const sqliteStore = new Map<string, SqliteState>();
 
 function getSqliteState(databasePath: unknown): SqliteState {
   const key = String(databasePath ?? '');
   if (!sqliteStore.has(key)) {
-    sqliteStore.set(key, { tables: new Set(), applied: new Set() });
+    sqliteStore.set(key, { tables: new Set(), applied: new Map(), closeCount: 0 });
   }
   return sqliteStore.get(key)!;
 }
@@ -44,15 +44,22 @@ class FakeDatabase {
     if (!text) return;
     const upper = text.toUpperCase();
     if (upper === 'BEGIN' || upper === 'COMMIT' || upper === 'ROLLBACK') return;
+    const isCreateTableIfNotExists = upper.includes('CREATE TABLE IF NOT EXISTS');
     for (const table of extractCreatedTableNames(text)) {
       if (this.state.tables.has(table)) {
+        if (isCreateTableIfNotExists) {
+          continue;
+        }
         throw new Error(`table ${table} already exists`);
       }
       this.state.tables.add(table);
     }
   }
 
-  query(queryText: unknown): { all?: () => Array<{ name?: string; migration_name?: string }>; run?: (...args: any[]) => void } {
+  query(queryText: unknown): {
+    all?: () => Array<{ name?: string; migration_name?: string; checksum?: string }>;
+    run?: (...args: unknown[]) => void;
+  } {
     const text = String(queryText ?? '');
     if (text.includes("FROM sqlite_master")) {
       return {
@@ -61,17 +68,25 @@ class FakeDatabase {
     }
     if (text.includes('FROM _prisma_migrations')) {
       return {
-        all: () => Array.from(this.state.applied).map((migration_name) => ({ migration_name })),
+        all: () =>
+          Array.from(this.state.applied.entries()).map(([migration_name, checksum]) => ({
+            migration_name,
+            checksum,
+          })),
       };
     }
     if (text.startsWith('INSERT INTO _prisma_migrations')) {
       return {
-        run: (_id: unknown, _checksum: unknown, name: unknown) => {
-          this.state.applied.add(String(name ?? '').trim());
+        run: (_id: unknown, checksum: unknown, name: unknown) => {
+          this.state.applied.set(String(name ?? '').trim(), String(checksum ?? '').trim());
         },
       };
     }
     throw new Error(`Unexpected bun:sqlite query: ${text}`);
+  }
+
+  close(): void {
+    this.state.closeCount += 1;
   }
 }
 
@@ -88,6 +103,8 @@ describe('light sqlite migrations (unit)', () => {
   it('resolveSqliteDatabaseFilePath parses file: DATABASE_URL values', () => {
     expect(resolveSqliteDatabaseFilePath('file:/tmp/happier.sqlite')).toBe('/tmp/happier.sqlite');
     expect(resolveSqliteDatabaseFilePath('file:///tmp/happier.sqlite')).toBe('/tmp/happier.sqlite');
+    expect(resolveSqliteDatabaseFilePath('file:///tmp/happy%20server%20%23light/happier.sqlite')).toBe('/tmp/happy server #light/happier.sqlite');
+    expect(resolveSqliteDatabaseFilePath('file:relative.sqlite')).toBe('relative.sqlite');
   });
 
   it('listSqliteMigrations returns migration.sql entries in directory name order', async () => {
@@ -103,6 +120,13 @@ describe('light sqlite migrations (unit)', () => {
     expect(migrations.map((m) => m.name)).toEqual(['20260101000000_first', '20260201000000_second']);
     expect(migrations[0]?.sql).toContain('CREATE TABLE one');
     expect(migrations[1]?.sql).toContain('CREATE TABLE two');
+  });
+
+  it('resolveSqliteMigrationsDir expands ~/ overrides against HOME', () => {
+    expect(resolveSqliteMigrationsDir({
+      HOME: '/scoped/home',
+      HAPPIER_SQLITE_MIGRATIONS_DIR: '~/migrations/sqlite',
+    }, '/fallback')).toBe('/scoped/home/migrations/sqlite');
   });
 
   it('applySqliteMigrationsIfNeeded applies missing migrations when auto-migrate is enabled', async () => {
@@ -132,21 +156,35 @@ describe('light sqlite migrations (unit)', () => {
     expect(state.applied.has('20260201000000_second')).toBe(true);
   });
 
+  it('applySqliteMigrationsIfNeeded closes the Bun sqlite connection before Prisma starts', async () => {
+    vi.stubGlobal('Bun', {});
+    const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-close-'));
+    const m1 = join(dir, '20260101000000_first');
+    await mkdir(m1, { recursive: true });
+    await writeFile(join(m1, 'migration.sql'), 'CREATE TABLE Account(id INTEGER);\n', 'utf8');
+
+    const dataDir = await mkdtemp(join(tmpdir(), 'happier-sqlite-data-close-'));
+    const dbPath = join(dataDir, 'happier.sqlite');
+    const env = {
+      HAPPIER_SQLITE_AUTO_MIGRATE: '1',
+      HAPPIER_SQLITE_MIGRATIONS_DIR: dir,
+      DATABASE_URL: `file:${dbPath}`,
+    };
+
+    await applySqliteMigrationsIfNeeded({ env, dataDir });
+
+    expect(getSqliteState(dbPath).closeCount).toBe(1);
+  });
+
   it('applySqliteMigrationsIfNeeded applies new migrations even when core tables already exist', async () => {
     vi.stubGlobal('Bun', {});
     const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-upgrade-'));
     const m1 = join(dir, '20260101000000_first');
-    const m2 = join(dir, '20260201000000_second');
     await mkdir(m1, { recursive: true });
-    await mkdir(m2, { recursive: true });
     await writeFile(join(m1, 'migration.sql'), 'CREATE TABLE Account(id INTEGER);\n', 'utf8');
-    await writeFile(join(m2, 'migration.sql'), 'CREATE TABLE Widget(id INTEGER);\n', 'utf8');
 
     const dataDir = await mkdtemp(join(tmpdir(), 'happier-sqlite-data-upgrade-'));
     const dbPath = join(dataDir, 'happier.sqlite');
-    const state = getSqliteState(dbPath);
-    state.tables.add('Account');
-    state.applied.add('20260101000000_first');
 
     const env = {
       HAPPIER_SQLITE_AUTO_MIGRATE: '1',
@@ -154,10 +192,40 @@ describe('light sqlite migrations (unit)', () => {
       DATABASE_URL: `file:${dbPath}`,
     };
 
+    await applySqliteMigrationsIfNeeded({ env, dataDir });
+
+    const m2 = join(dir, '20260201000000_second');
+    await mkdir(m2, { recursive: true });
+    await writeFile(join(m2, 'migration.sql'), 'CREATE TABLE Widget(id INTEGER);\n', 'utf8');
+
+    const state = getSqliteState(dbPath);
+    state.tables.add('Account');
+
     const res = await applySqliteMigrationsIfNeeded({ env, dataDir });
     expect(res.applied).toEqual(['20260201000000_second']);
     expect(state.tables.has('Widget')).toBe(true);
     expect(state.applied.has('20260201000000_second')).toBe(true);
+  });
+
+  it('applySqliteMigrationsIfNeeded rejects checksum drift for already-applied migrations', async () => {
+    vi.stubGlobal('Bun', {});
+    const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-drift-'));
+    const migration = join(dir, '20260101000000_first');
+    await mkdir(migration, { recursive: true });
+    await writeFile(join(migration, 'migration.sql'), 'CREATE TABLE Account(id INTEGER);\n', 'utf8');
+
+    const dataDir = await mkdtemp(join(tmpdir(), 'happier-sqlite-data-drift-'));
+    const dbPath = join(dataDir, 'happier.sqlite');
+    const env = {
+      HAPPIER_SQLITE_AUTO_MIGRATE: '1',
+      HAPPIER_SQLITE_MIGRATIONS_DIR: dir,
+      DATABASE_URL: `file:${dbPath}`,
+    };
+
+    await applySqliteMigrationsIfNeeded({ env, dataDir });
+    await writeFile(join(migration, 'migration.sql'), 'CREATE TABLE Account(id INTEGER, name TEXT);\n', 'utf8');
+
+    await expect(applySqliteMigrationsIfNeeded({ env, dataDir })).rejects.toThrow(/checksum mismatch/i);
   });
 
   it('applySqliteMigrationsIfNeeded tolerates legacy databases without migration history', async () => {

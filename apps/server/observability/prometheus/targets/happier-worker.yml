@@ -1,0 +1,5 @@
+- targets:
+    - happier-worker:9090
+  labels:
+    service: happier-worker
+    role: worker

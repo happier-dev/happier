@@ -1,4 +1,6 @@
 import { vi } from 'vitest'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
 
 export { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
@@ -29,16 +31,23 @@ export function snapshotStartServerEnv(): EnvValues {
 export function installStartServerCommonWiringMocks(): void {
   vi.mock('@/app/api/api', () => ({ startApi: vi.fn(async () => {}) }))
   vi.mock('@/app/monitoring/metrics', () => ({ startMetricsServer: vi.fn(async () => {}) }))
-  vi.mock('@/app/monitoring/metrics2', () => ({ startDatabaseMetricsUpdater: vi.fn(() => {}) }))
+  vi.mock('@/app/monitoring/metrics/index', () => ({
+    startDatabaseMetricsUpdater: vi.fn(() => {}),
+    setSocketAdapterModeInfo: vi.fn(() => {}),
+  }))
   vi.mock('@/app/auth/auth', () => ({ auth: { init: vi.fn(async () => {}), verifyToken: vi.fn() } }))
   vi.mock('@/app/presence/sessionCache', () => ({
     activityCache: { enableDbFlush: vi.fn(), shutdown: vi.fn() },
   }))
   vi.mock('@/app/presence/timeout', () => ({ startTimeout: vi.fn(() => {}) }))
-  vi.mock('@/flavors/light/env', () => ({
-    applyLightDefaultEnv: vi.fn(),
-    ensureHandyMasterSecret: vi.fn(async () => {}),
-  }))
+  vi.mock('@/flavors/light/env', async () => {
+    const actual = await vi.importActual<typeof import('@/flavors/light/env')>('@/flavors/light/env')
+    return {
+      ...actual,
+      ensureHandyMasterSecret: vi.fn(async () => {}),
+      resolveLightSqliteDatabaseUrl: vi.fn((dataDir: string) => pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href),
+    }
+  })
   vi.mock('@/modules/encrypt', () => ({ initEncrypt: vi.fn(async () => {}) }))
   vi.mock('@/app/auth/providers/github/webhooks', () => ({ initGithub: vi.fn(async () => {}) }))
   vi.mock('@/storage/blob/files', () => ({

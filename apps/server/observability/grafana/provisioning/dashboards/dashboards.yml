@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Happier
+    orgId: 1
+    folder: Happier Server
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/happier

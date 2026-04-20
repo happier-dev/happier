@@ -38,6 +38,17 @@ function isBunRuntime() {
     return Boolean(g?.Bun) || Boolean((process as any)?.versions?.bun);
 }
 
+export function resolveServerLogLevelFromEnv(env: NodeJS.ProcessEnv): pino.LevelWithSilent {
+    const raw = (
+        env.HAPPIER_SERVER_LOG_LEVEL
+        ?? env.HAPPIER_LOG_LEVEL
+        ?? env.LOG_LEVEL
+        ?? ""
+    ).trim().toLowerCase();
+    const allowed = new Set<pino.LevelWithSilent>(["fatal", "error", "warn", "info", "debug", "trace", "silent"]);
+    return allowed.has(raw as pino.LevelWithSilent) ? (raw as pino.LevelWithSilent) : "info";
+}
+
 export function createLoggingTransportTargets(): any[] {
     const transports: any[] = [];
 
@@ -72,7 +83,7 @@ export function createLoggingTransportTargets(): any[] {
 // Main server logger with local time formatting
 const transportTargets = createLoggingTransportTargets();
 export const logger = pino({
-    level: 'debug',
+    level: resolveServerLogLevelFromEnv(process.env),
     ...(transportTargets.length
         ? {
             transport: {
@@ -95,7 +106,7 @@ export const logger = pino({
 // Optional file-only logger for remote logs from CLI/mobile
 export const fileConsolidatedLogger = process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING && consolidatedLogFile ? 
     pino({
-        level: 'debug',
+        level: resolveServerLogLevelFromEnv(process.env),
         transport: {
             targets: [{
                 target: 'pino/file',

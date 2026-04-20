@@ -1,0 +1,112 @@
+groups:
+  - name: happier-server-runtime
+    rules:
+      - alert: HappierHighHttp5xxRate
+        expr: |
+          100 * (
+            sum(rate(http_requests_total{job="happier-api",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_requests_total{job="happier-api"}[5m])), 0.001)
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier API 5xx error rate is elevated
+          description: The 5-minute API 5xx ratio is above 5 percent for at least 10 minutes.
+
+      - alert: HappierHighHttpP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="happier-api"}[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier API p95 latency is elevated
+          description: API p95 request latency stayed above 1 second for at least 10 minutes.
+
+      - alert: HappierEventLoopLagSpike
+        expr: max(runtime_event_loop_lag_seconds{stat="max"}) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier runtime event loop lag is elevated
+          description: Maximum observed event loop lag stayed above 250ms for at least 5 minutes.
+
+      - alert: HappierDatabaseDatasourceP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(prisma_datasource_queries_duration_histogram_ms_bucket{job=~"happier-api|happier-worker"}[5m]))
+          ) > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier datasource query p95 latency is elevated
+          description: Prisma datasource query p95 stayed above 50ms for at least 10 minutes.
+
+      - alert: HappierDatabaseQueryWaitSaturation
+        expr: max(prisma_client_queries_wait{job=~"happier-api|happier-worker"}) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier database query wait backlog is elevated
+          description: Prisma reported more than 5 queries waiting for a free connection for at least 10 minutes.
+
+  - name: happier-server-rpc
+    rules:
+      - alert: HappierRpcMethodNotAvailableSpike
+        expr: sum(rate(rpc_method_not_available_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier RPC method-not-available rate is elevated
+          description: Scoped RPC target resolution is failing often enough to suggest cluster registration churn or routing drift.
+
+      - alert: HappierFetchSocketsTimeoutSpike
+        expr: sum(rate(socket_cluster_fetch_sockets_failures_total{reason="timeout"}[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier cluster fetchSockets timeouts are elevated
+          description: Cluster-wide socket discovery is timing out at an elevated rate.
+
+  - name: happier-server-presence
+    rules:
+      - alert: HappierPresenceReclaimSpike
+        expr: sum(rate(presence_stream_reclaims_total[10m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier presence worker is reclaiming stuck entries
+          description: Presence reclaim activity suggests worker crashes, stalls, or long processing delays.
+
+      - alert: HappierPresenceNotDraining
+        expr: |
+          max(presence_stream_redis_pending_entries{job="happier-worker"}) > 1000
+          or
+          max(presence_stream_pending_entries{job="happier-worker"}) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Happier presence worker backlog is growing
+          description: Redis-backed or in-process pending presence backlog exceeded 1000 for at least 10 minutes.
+
+      - alert: HappierWorkerMissing
+        expr: sum(up{job="happier-worker"}) < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: No Happier worker metrics target is healthy
+          description: Prometheus has not scraped a healthy Happier worker target for at least 5 minutes.
