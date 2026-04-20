@@ -25,7 +25,7 @@ import { runStressTasksWithConcurrencyLimit } from './runStressTasksWithConcurre
 import { summarizeLatencySamples, resolveRpcCallCount, resolveStressSocketTransports } from './stressScenarioRuntime';
 import { waitForRegisteredRpcMethod } from './waitForRegisteredRpcMethod';
 
-type MixedScenarioAuth = Readonly<{
+export type MixedScenarioAuth = Readonly<{
   token: string;
   publicKeyBase64?: string;
 }>;
@@ -37,22 +37,22 @@ type MixedListener = Readonly<{
   socket: Awaited<ReturnType<typeof createMachineBoundSessionScopedSocketCollector>>['socket'];
 }>;
 
-type MixedCollector = Readonly<{
+export type MixedCollector = Readonly<{
   sessionId: string;
   machineId: string;
   authIndex: number;
   socket: Awaited<ReturnType<typeof createMachineBoundSessionScopedSocketCollector>>['socket'];
 }>;
 
-type MixedUserScopedDevice = ReturnType<typeof createUserScopedSocketCollector>;
+export type MixedUserScopedDevice = ReturnType<typeof createUserScopedSocketCollector>;
 
-type MixedUserDevices = Readonly<{
+export type MixedUserDevices = Readonly<{
   authIndex: number;
   token: string;
   devices: ReadonlyArray<MixedUserScopedDevice>;
 }>;
 
-type MixedSessionTarget = Readonly<{
+export type MixedSessionTarget = Readonly<{
   sessionId: string;
   authIndex: number;
 }>;
@@ -81,7 +81,7 @@ type MixedFailedRpcContext = Readonly<{
   error?: string;
 }>;
 
-type MixedConnectivitySnapshot = Readonly<{
+export type MixedConnectivitySnapshot = Readonly<{
   userDevices: {
     total: number;
     connected: number;
@@ -212,7 +212,7 @@ function parseGatewayStubStatus(statusText: string): {
   };
 }
 
-async function scrapeMixedRealisticFullComposeMetrics(params: {
+export async function scrapeMixedRealisticFullComposeMetrics(params: {
   target: StartedStressTarget;
 }): Promise<Record<string, unknown>> {
     const [apiCountersResult, workerCountersResult, apiStageMetricsResult, gatewayStatusResult, gatewayLogSummaryResult] = await Promise.allSettled([
@@ -426,7 +426,7 @@ async function scrapeMixedRealisticFullComposeMetrics(params: {
   };
 }
 
-function normalizeMixedScenarioAuths(params: {
+export function normalizeMixedScenarioAuths(params: {
   auths?: readonly MixedScenarioAuth[];
   token?: string;
 }): readonly MixedScenarioAuth[] {
@@ -439,7 +439,7 @@ function normalizeMixedScenarioAuths(params: {
   throw new Error('Mixed stress scenario requires at least one auth token');
 }
 
-function resolveMixedAuth(params: {
+export function resolveMixedAuth(params: {
   auths: readonly MixedScenarioAuth[];
   authIndex: number;
 }): MixedScenarioAuth {
@@ -450,7 +450,7 @@ function resolveMixedAuth(params: {
   return auth;
 }
 
-function resolveMixedUserDevices(params: {
+export function resolveMixedUserDevices(params: {
   auths: readonly MixedScenarioAuth[];
   baseUrl: string;
   transports: readonly ('websocket' | 'polling')[];
@@ -473,7 +473,7 @@ function resolveMixedUserDevices(params: {
   }));
 }
 
-function resolvePrimaryMixedUserDevice(params: {
+export function resolvePrimaryMixedUserDevice(params: {
   userDevices: readonly MixedUserDevices[];
   authIndex: number;
 }): MixedUserScopedDevice {
@@ -484,7 +484,7 @@ function resolvePrimaryMixedUserDevice(params: {
   return device;
 }
 
-function captureMixedConnectivitySnapshot(params: {
+export function captureMixedConnectivitySnapshot(params: {
   userDevices: readonly MixedUserDevices[];
   machineCollectors: readonly MixedCollector[];
   disconnectedSampleLimit?: number;

@@ -151,6 +151,9 @@ export function readStressConfig(): StressConfig {
       mixedMessageEmitterCount:
         readOptionalInt(['HAPPIER_STRESS_MIXED_MESSAGE_EMITTER_COUNT'])
         ?? profileConfig.load.mixedMessageEmitterCount,
+      mixedRunnerShards:
+        readOptionalInt(['HAPPIER_STRESS_MIXED_RUNNER_SHARDS'])
+        ?? profileConfig.load.mixedRunnerShards,
       rpcCallsPerSecond: readPositiveInt(['HAPPIER_STRESS_RPC_CALLS_PER_SECOND'], profileConfig.load.rpcCallsPerSecond),
       messagesPerSecond: readPositiveInt(['HAPPIER_STRESS_MESSAGES_PER_SECOND'], profileConfig.load.messagesPerSecond),
       reconnectRate: readNonNegativeInt(['HAPPIER_STRESS_RECONNECT_RATE'], profileConfig.load.reconnectRate),
