@@ -21,9 +21,9 @@ import { applyExecutionRunListRequest } from './applyExecutionRunListRequest';
 import {
     findExecutionRunPublicStateInHistoryRows,
     listExecutionRunPublicStatesFromHistoryRows,
-} from './deriveExecutionRunPublicStatesFromHistory';
+} from './executionRunPublicStatesFromHistory';
 import { readRawSessionHistoryRows } from './getSessionHistory';
-import { normalizeExecutionRunPublicStateBackendTarget } from './normalizeExecutionRunPublicStateBackendTarget';
+import { normalizeExecutionRunPublicStateBackendTarget } from './executionRunPublicStateBackendTarget';
 
 type ExecutionRunRpcContext = Readonly<{
     token: string;
@@ -294,6 +294,13 @@ export function normalizeExecutionRunRpcPayload<T>(payload: unknown): ExecutionR
         };
     }
 
+    if (Object.prototype.hasOwnProperty.call(payload, 'data')) {
+        return {
+            ok: true,
+            data: (payload as { data: T }).data,
+        };
+    }
+
     const { ok: _ok, ...rest } = payload;
     return {
         ok: true,
@@ -517,14 +524,18 @@ export async function waitForExecutionRun(
     params: ExecutionRunRpcContext &
         Readonly<{
             runId: string;
-            timeoutMs: number;
+            timeoutMs: number | null;
             pollIntervalMs: number;
         }>,
 ): Promise<WaitForExecutionRunResult> {
     const request = ExecutionRunGetRequestSchema.parse({ runId: params.runId });
-    const deadlineMs = Date.now() + params.timeoutMs;
+    const timeoutMs =
+        typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
+            ? params.timeoutMs
+            : null;
+    const deadlineMs = timeoutMs === null ? null : Date.now() + timeoutMs;
 
-    while (Date.now() <= deadlineMs) {
+    while (deadlineMs === null || Date.now() <= deadlineMs) {
         const result = await getExecutionRun({
             token: params.token,
             sessionId: params.sessionId,

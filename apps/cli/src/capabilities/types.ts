@@ -1,9 +1,10 @@
-import type { CatalogAgentId } from '@/backends/catalog';
 import type { ChecklistId } from './checklistIds';
 
 export type { ChecklistId } from './checklistIds';
 
-export type CliCapabilityId = `cli.${CatalogAgentId}`;
+// Capability IDs are namespaced strings returned by the daemon.
+// Keep this flexible so new capabilities (including new `cli.<agent>` ids) do not require constant churn.
+export type CliCapabilityId = `cli.${string}`;
 export type ToolCapabilityId = `tool.${string}`;
 export type DepCapabilityId = `dep.${string}`;
 

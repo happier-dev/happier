@@ -120,8 +120,12 @@ async function resolveDefaultBaseRef(cwd: string): Promise<string> {
   throw new Error('Unable to resolve a default base branch for CodeRabbit review.');
 }
 
+function sessionRootPathspec(): string[] {
+  return ['--', '.'];
+}
+
 async function listCommittedPaths(cwd: string, baseRef: string): Promise<string[]> {
-  const raw = await runGit(cwd, ['diff', '--name-only', `${baseRef}...HEAD`]);
+  const raw = await runGit(cwd, ['diff', '--name-only', `${baseRef}...HEAD`, ...sessionRootPathspec()]);
   return raw
     .split('\n')
     .map((line) => line.trim())
@@ -129,8 +133,8 @@ async function listCommittedPaths(cwd: string, baseRef: string): Promise<string[
 }
 
 async function listUncommittedPaths(cwd: string): Promise<string[]> {
-  const tracked = await tryRunGit(cwd, ['diff', '--name-only', '--find-renames', '-z', 'HEAD']);
-  const untracked = await runGit(cwd, ['ls-files', '--others', '--exclude-standard', '-z']);
+  const tracked = await tryRunGit(cwd, ['diff', '--name-only', '--find-renames', '-z', 'HEAD', ...sessionRootPathspec()]);
+  const untracked = await runGit(cwd, ['ls-files', '--others', '--exclude-standard', '-z', ...sessionRootPathspec()]);
   return Array.from(new Set([...parsePathsZ(tracked), ...parsePathsZ(untracked)]));
 }
 

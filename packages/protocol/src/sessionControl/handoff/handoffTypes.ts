@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { DirectSessionsSourceSchema } from '../../providers/directSessionsCatalog.js';
-import { AgentRuntimeDescriptorV1Schema } from '../../sessionMetadata/agentRuntimeDescriptorV1.js';
+import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
 import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
 
 export const SessionHandoffStorageModeSchema = z.enum(['direct', 'persisted']);
@@ -25,6 +25,6 @@ export type SessionHandoffCodexBackendMode = z.infer<typeof SessionHandoffCodexB
 export const SessionHandoffCodexAffinitySchema = z.object({
   backendMode: SessionHandoffCodexBackendModeSchema.nullable(),
   source: DirectSessionsSourceSchema.optional(),
-  runtimeDescriptor: AgentRuntimeDescriptorV1Schema.optional(),
+  runtimeDescriptor: RuntimeDescriptorV1Schema.optional(),
 }).strict();
 export type SessionHandoffCodexAffinity = z.infer<typeof SessionHandoffCodexAffinitySchema>;

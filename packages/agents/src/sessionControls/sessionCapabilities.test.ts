@@ -5,6 +5,7 @@ import { AGENTS_CORE } from '../manifest.js';
 import {
     evaluateAgentSessionCapabilitySupport,
     getAgentSessionCapability,
+    readRuntimeCapabilitiesForSession,
     isAgentSessionCapabilitySupported,
 } from './sessionCapabilities.js';
 
@@ -110,5 +111,23 @@ describe('sessionCapabilities', () => {
         },
       }),
     ).toBe('supported');
+  });
+
+  it('exposes normalized runtime capabilities for session-level runtime facts', () => {
+    expect(
+      readRuntimeCapabilitiesForSession({
+        agentId: 'opencode',
+        metadata: { opencodeBackendMode: 'acp' },
+      }),
+    ).toMatchObject({
+      sessionStorage: { direct: false, persisted: true },
+      sessionCapabilities: {
+        sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
+      },
+      localControl: null,
+      tools: { delivery: 'native_mcp', support: 'supported' },
+      handoff: { vendorStateTransfer: 'supported' },
+      executionRun: null,
+    });
   });
 });

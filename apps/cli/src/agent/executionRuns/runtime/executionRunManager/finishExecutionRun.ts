@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
-import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
-import { readBackendResumableChildSessionId } from '@/agent/executionRuns/controllers/types';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
-import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
+import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessionMessageTypes';
+import type { ExecutionRunStructuredMeta } from '../../profiles/ExecutionRunIntentProfile';
+import { resolveExecutionRunIntentProfile } from '../../profiles/intentRegistry';
+import type { ExecutionRunController } from '../../controllers/types';
+import { readBackendResumableChildSessionId } from '../../controllers/types';
+import type { ExecutionRunState } from '../executionRunTypes';
+import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
+import { writeExecutionRunMarker } from '../../../../daemon/executionRunRegistry';
+import { readBackendTargetRefV2, type ExecutionRunResumeHandle } from '@happier-dev/protocol';
 
 type EnqueueMarkerWrite = (runId: string, write: () => Promise<void>) => Promise<void>;
 
@@ -57,7 +57,7 @@ export function finishExecutionRun(args: Readonly<{
     if (existing.retentionPolicy !== 'resumable') return null;
     const vendorSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
     if (typeof vendorSessionId === 'string' && vendorSessionId.trim().length > 0) {
-      return { kind: 'vendor_session.v1', backendTarget: existing.backendTarget, vendorSessionId };
+      return { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(existing.backendTarget), vendorSessionId };
     }
     return existing.resumeHandle ?? null;
   })();

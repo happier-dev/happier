@@ -201,7 +201,6 @@ function buildFileManagerDaemonEnv(params: Readonly<{
     HAPPIER_DISABLE_CAFFEINATE: '1',
     HAPPIER_VARIANT: 'dev',
     HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-    HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: params.testDir,
     HAPPIER_CLAUDE_PATH: params.fakeClaudePath,
     HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
     HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${params.runId}`,
@@ -318,6 +317,8 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
       const fakeClaudePath = fakeClaudeFixturePath();
 
       await test.step('spawn daemon and load session files pane', async () => {
+        // Keep HAPPIER_MACHINE_RPC_WORKING_DIRECTORY unset: workspaceDir is outside cliHomeDir,
+        // so this exercises the default OS-user filesystem access policy end to end.
         runDaemon = await startTestDaemon({
           testDir,
           happyHomeDir: cliHomeDir,
@@ -331,7 +332,6 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
             HAPPIER_DISABLE_CAFFEINATE: '1',
             HAPPIER_VARIANT: 'dev',
             HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-            HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
             HAPPIER_CLAUDE_PATH: fakeClaudePath,
             HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
             HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
@@ -456,6 +456,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
           runDaemon = await startTestDaemon({
             testDir,
             happyHomeDir: cliHomeDir,
+            startupTimeoutMs: 120_000,
             env: buildFileManagerDaemonEnv({
               cliHomeDir,
               serverBaseUrl: resolvedServer.baseUrl,

@@ -98,10 +98,11 @@ export interface StartSessionResult {
 export type AgentMessageHandler = (msg: AgentMessage) => void;
 
 /**
- * Universal interface for agent backends.
- * 
- * All agent implementations (Claude, Codex, Gemini, etc.) should implement
- * this interface to be usable through the Happier CLI and app.
+ * Legacy execution-run backend interface.
+ *
+ * This is retirement debt while execution runs move onto the shared lower
+ * runtime-turn operation contract. New provider leaves must not treat
+ * AgentBackend as their native final API.
  */
 export interface AgentBackend {
   /**

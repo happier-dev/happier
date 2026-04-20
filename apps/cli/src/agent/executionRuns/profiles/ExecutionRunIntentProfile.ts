@@ -4,6 +4,7 @@ import type {
   ExecutionRunIntent,
   ExecutionRunIoMode,
   ExecutionRunRetentionPolicy,
+  ExecutionRunStartRequest,
 } from '@happier-dev/protocol';
 
 export type ExecutionRunProfileStartParams = Readonly<{
@@ -55,14 +56,39 @@ export type ExecutionRunProfileActionResult = Readonly<{
   updatedStructuredMeta?: ExecutionRunStructuredMeta;
 }>;
 
+export type ExecutionRunProfileSidechainTextParams = Readonly<{
+  fullText: string;
+}>;
+
+export type ExecutionRunProfileInvalidOutputRepairPromptParams = Readonly<{
+  start: ExecutionRunProfileStartParams;
+  rawText: string;
+}>;
+
+export type ExecutionRunProfilePrepareStartParams = Readonly<{
+  request: ExecutionRunStartRequest;
+  cwd: string;
+}>;
+
 export type ExecutionRunIntentProfile = Readonly<{
   intent: ExecutionRunIntent;
   transcriptMaterialization: 'full' | 'none';
   buildPrompt: (params: ExecutionRunProfileStartParams) => string;
+  prepareStartParams?: (
+    params: ExecutionRunProfilePrepareStartParams,
+  ) => Promise<Readonly<Record<string, unknown>> | undefined> | Readonly<Record<string, unknown>> | undefined;
   onBoundedComplete: (params: ExecutionRunProfileBoundedCompleteParams) => ExecutionRunProfileBoundedCompleteResult;
+  computeSidechainStreamText?: (params: ExecutionRunProfileSidechainTextParams) => string;
+  buildInvalidOutputRepairPrompt?: (params: ExecutionRunProfileInvalidOutputRepairPromptParams) => string;
+  /**
+   * Some intents want a final terminal prose line even when streaming already emitted
+   * progress updates. Keep that choice in the profile so the bounded runtime stays generic.
+   */
+  emitFinalSidechainMessageWhenStreamed?: boolean;
   listAvailableActionIds?: (params: Readonly<{
     start: ExecutionRunProfileStartParams;
     structuredMeta?: ExecutionRunStructuredMeta | null;
+    controllerKind?: string | null;
   }>) => readonly string[];
   applyAction?: (params: ExecutionRunProfileActionParams) => ExecutionRunProfileActionResult;
 }>;

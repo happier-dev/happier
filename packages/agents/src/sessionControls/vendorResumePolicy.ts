@@ -1,7 +1,7 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import type { AgentId } from '../types.js';
-import { AGENTS_CORE } from '../manifest.js';
-import { getProviderSessionControlAdapter } from '../providers/sessionControlAdapterRegistry.js';
+import { getAgentResumeConfig } from '../manifest.js';
+import { getProviderSessionControlAdapter } from '../runtime/controlSurface/sessionControlAdapterRegistry.js';
 
 export type VendorResumeEligibilityReasonCode =
   | 'agent_unsupported'
@@ -32,7 +32,7 @@ export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metad
   const record = asRecord(metadata);
   if (!record) return null;
 
-  const resume = AGENTS_CORE[agentId]?.resume;
+  const resume = getAgentResumeConfig(agentId);
   const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
   if (!field) return null;
 
@@ -54,7 +54,7 @@ export function evaluateVendorResumeEligibility(input: Readonly<{
     return { eligible: false, reasonCode: 'backend_disabled_by_account_settings' };
   }
 
-  const resumeConfig = AGENTS_CORE[input.agentId]?.resume;
+  const resumeConfig = getAgentResumeConfig(input.agentId);
   if (!resumeConfig || resumeConfig.vendorResume === 'unsupported') {
     return { eligible: false, reasonCode: 'agent_unsupported' };
   }

@@ -238,4 +238,34 @@ describe('ReviewProfile', () => {
 
     expect(actionIds).toEqual(['review.triage']);
   });
+
+  it('builds a review-specific repair prompt and normalizes review sidechain text', () => {
+    expect(ReviewProfile.emitFinalSidechainMessageWhenStreamed).toBe(true);
+    const prompt = ReviewProfile.buildInvalidOutputRepairPrompt?.({
+      rawText: 'not json',
+      start: {
+        sessionId: 'sess_1',
+        runId: 'run_1',
+        callId: 'call_1',
+        sidechainId: 'call_1',
+        intent: 'review',
+        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'review this',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        startedAtMs: 1,
+      },
+    });
+
+    expect(prompt).toContain('Your previous response did not include the required final JSON object.');
+    expect(prompt).toContain('continue the review first using the available read-only tools');
+    expect(prompt).toContain('not json');
+
+    expect(
+      ReviewProfile.computeSidechainStreamText?.({ fullText: 'Review prose\n{"summary":"Ok","findings":[]}' }),
+    ).toBe('Review prose');
+  });
 });

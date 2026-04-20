@@ -1,22 +1,72 @@
-import type { Capability } from '../service';
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import type { Capability, CapabilitiesDetectContext } from '../service';
+import { resolveCliFeatureDecision } from '../../features/featureDecisionService';
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, delimiter as PATH_DELIMITER } from 'node:path';
-import { AGENTS } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
-import { getVendorResumeSupport } from '@/backends/catalog';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
-import { CODEX_PROVIDER_SETTINGS_DEFAULTS } from '@happier-dev/agents';
-import { resolveProviderSpawnExtrasForRuntime } from '@/settings/providerSettings';
+import {
+  CANONICAL_AGENT_IDS,
+  hasBuiltInAcpConfig,
+  isAgentId,
+  resolveAgentRuntimeControlSurface,
+  resolveDefaultAgentRuntimeKind,
+  resolveCodexSpawnExtrasForRuntime,
+} from '@happier-dev/agents';
+import { listExecutionRunSupportedIntents } from '../../agent/executionRuns/profiles/intentRegistry';
+import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
+import type { ResolvedBackendContribution } from '../../extensions/registry/types';
 
-const EXECUTION_RUN_INTENTS = ['review', 'plan', 'delegate'] as const;
-const EXECUTION_RUN_VOICE_INTENTS = [...EXECUTION_RUN_INTENTS, 'voice_agent'] as const;
 const CODERABBIT_INTENTS = ['review'] as const;
 
-function isCliAvailable(context: any, agentId: string): boolean {
-  const entry = context?.cliSnapshot?.clis?.[agentId];
-  return Boolean(entry && typeof entry === 'object' && (entry as any).available === true);
+function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): boolean {
+  const clis = context?.cliSnapshot?.clis;
+  if (!clis || !Object.prototype.hasOwnProperty.call(clis, agentId)) {
+    return false;
+  }
+
+  const entry = clis[agentId as keyof typeof clis];
+  return entry?.available === true;
+}
+
+function hasExecutionRunCatalogOwner(entry: Readonly<{
+  getAcpBackendFactory?: unknown;
+  getBindings?: unknown;
+}> | null | undefined): boolean {
+  return typeof entry?.getAcpBackendFactory === 'function' || typeof entry?.getBindings === 'function';
+}
+
+function resolveExecutionRunBackendAvailability(params: Readonly<{
+  context: CapabilitiesDetectContext;
+  backendId: string;
+  isKnownBuiltInAgentId: boolean;
+  entry: Readonly<{
+    getAcpBackendFactory?: unknown;
+    getBindings?: unknown;
+  }> | null | undefined;
+  backendContribution?: ResolvedBackendContribution;
+}>): boolean {
+  if (params.backendId === 'customAcp') {
+    // Compatibility backend id used as the UI "configured ACP" entrypoint.
+    return true;
+  }
+
+  if (params.isKnownBuiltInAgentId && isAgentId(params.backendId) && hasBuiltInAcpConfig(params.backendId)) {
+    // Built-in ACP backends are catalog-defined and do not rely on CLI snapshot probing for
+    // UI discovery in this wave.
+    return true;
+  }
+
+  if (hasExecutionRunCatalogOwner(params.entry) || typeof params.backendContribution?.getBindings === 'function') {
+    return true;
+  }
+
+  if (params.backendContribution?.provenance === 'external') {
+    // Plugin-contributed backends are discovered from the merged contribution
+    // registry, not from PATH-backed CLI probing.
+    return true;
+  }
+
+  return isCliAvailable(params.context, params.backendId);
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null | undefined): Promise<string | null> {
@@ -71,35 +121,51 @@ export const executionRunsCapability: Capability = {
     const coderabbitOnPath = coderabbitOverride
       ? true
       : Boolean(await resolveCommandOnPath('coderabbit', mergedPath || null));
-    const intents = voiceEnabled ? EXECUTION_RUN_VOICE_INTENTS : EXECUTION_RUN_INTENTS;
-    const catalogBackendIds = Object.keys(AGENTS) as CatalogAgentId[];
+    const intents = voiceEnabled
+      ? listExecutionRunSupportedIntents()
+      : listExecutionRunSupportedIntents().filter((intent) => intent !== 'voice_agent');
 
-    const codexDefaultVendorResumeParams = resolveProviderSpawnExtrasForRuntime({
-      agentId: 'codex',
-      settings: CODEX_PROVIDER_SETTINGS_DEFAULTS,
-      processEnv: process.env,
-    });
+    const cliEngineRegistry = await resolveCliEngineRegistry();
+    const contributedBackendIds = Array.from(cliEngineRegistry.contributions.backendDefinitionsById.keys());
+    const catalogBackendIds = Object.keys(cliEngineRegistry.contributions.catalogEntriesById);
+    const knownBuiltInAgentIds = CANONICAL_AGENT_IDS;
+    const backendIds = Array.from(new Set([
+      ...knownBuiltInAgentIds,
+      'customAcp',
+      ...contributedBackendIds,
+      ...catalogBackendIds,
+    ]));
 
-    const resolveSupportsVendorResume = async (backendId: CatalogAgentId): Promise<boolean> => {
-      try {
-        const fn = await getVendorResumeSupport(backendId);
-        return backendId === 'codex' ? fn(codexDefaultVendorResumeParams) : fn({});
-      } catch {
-        return false;
-      }
-    };
-    const supportEntries = await Promise.all(
-      catalogBackendIds.map(async (backendId) => [
-        backendId,
-        await resolveSupportsVendorResume(backendId),
-      ] as const),
-    );
-    const supportsVendorResumeByBackend = Object.fromEntries(supportEntries) as Record<string, boolean>;
+    const supportsVendorResumeByBackend = Object.fromEntries(
+      backendIds.map((backendId) => {
+        const isKnownBuiltInAgentId = isAgentId(backendId);
+        if (isKnownBuiltInAgentId) {
+          const surface = backendId === 'codex'
+            ? (() => {
+              const codexExtras = resolveCodexSpawnExtrasForRuntime({ settings: {}, processEnv: process.env });
+              const runtimeKind = (codexExtras.codexBackendMode ?? resolveDefaultAgentRuntimeKind('codex')) ?? null;
+              return resolveAgentRuntimeControlSurface('codex', runtimeKind);
+            })()
+            : resolveAgentRuntimeControlSurface(backendId, null);
+          return [backendId, surface.resume.vendorResume !== 'unsupported'] as const;
+        }
+        return [backendId, false] as const;
+      }),
+    ) as Record<string, boolean>;
+
     const backends = Object.fromEntries(
       [
-        ...catalogBackendIds.map((backendId) => {
-          const entry = AGENTS[backendId];
-          const available = entry?.getAcpBackendFactory ? true : isCliAvailable(context, backendId);
+        ...backendIds.map((backendId) => {
+          const backendContribution = cliEngineRegistry.contributions.backendDefinitionsById.get(backendId);
+          const entry = cliEngineRegistry.contributions.catalogEntriesById[backendId];
+          const isKnownBuiltInAgentId = isAgentId(backendId);
+          const available = resolveExecutionRunBackendAvailability({
+            context,
+            backendId,
+            isKnownBuiltInAgentId,
+            entry,
+            backendContribution,
+          });
           return [
             backendId,
             {

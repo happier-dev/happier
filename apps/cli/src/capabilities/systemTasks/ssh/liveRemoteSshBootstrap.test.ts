@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -25,9 +29,13 @@ const { isLoopbackPortAvailable, findAvailableLoopbackPort } = vi.hoisted(() => 
   findAvailableLoopbackPort: vi.fn<(requestedPort: number) => Promise<number>>(),
 }));
 
-vi.mock('node:child_process', () => ({
-  spawnSync,
-}));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawnSync,
+  };
+});
 
 vi.mock('node:fs', () => ({
   mkdirSync,
@@ -65,14 +73,21 @@ vi.mock('@happier-dev/cli-common/systemTasks', async () => {
       lastInstallRemoteFirstPartyDeps.current = deps;
       return await actual.installRemoteFirstPartyComponent(params, {
         ...deps,
-        preparePayload: deps.preparePayload ?? (async ({ componentId, channel }) => ({
-          componentId,
-          channel,
-          versionId: 'test-version',
-          payloadRoot: '/tmp/mock-payload',
-          source: 'unit-test',
-          cleanup: async () => undefined,
-        })),
+        preparePayload: deps.preparePayload ?? (async ({ componentId, channel }) => {
+          const payloadRoot = await mkdtemp(join(tmpdir(), 'happier-ssh-bootstrap-payload-'));
+          await mkdir(join(payloadRoot, 'bin'), { recursive: true });
+          await writeFile(join(payloadRoot, 'bin', 'happier'), '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+          return {
+            componentId,
+            channel,
+            versionId: 'test-version',
+            payloadRoot,
+            source: 'unit-test',
+            cleanup: async () => {
+              await rm(payloadRoot, { recursive: true, force: true });
+            },
+          };
+        }),
       });
     },
   };
@@ -220,7 +235,10 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
 
   it('uses a local payload root for remote CLI install when HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT is set', async () => {
     const previous = process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
-    process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = '/tmp/local-cli-payload';
+    const localPayloadRoot = await mkdtemp(join(tmpdir(), 'happier-local-cli-payload-'));
+    await mkdir(join(localPayloadRoot, 'bin'), { recursive: true });
+    await writeFile(join(localPayloadRoot, 'bin', 'happier'), '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+    process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = localPayloadRoot;
     try {
       const kind = createLiveRemoteSshBootstrapTaskKind();
       const previousImplementation = spawnSync.getMockImplementation();
@@ -271,6 +289,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     } finally {
       if (previous === undefined) delete process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
       else process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = previous;
+      await rm(localPayloadRoot, { recursive: true, force: true });
     }
   });
 

@@ -1,5 +1,6 @@
 import axios from 'axios';
 
+import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
@@ -39,8 +40,8 @@ export async function resolveForkCutoffSeqInclusive(params: Readonly<{
     validateStatus: () => true,
   });
 
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`Unauthorized (${response.status})`);
+  if (isAuthenticationStatus(response.status)) {
+    throw createAuthenticationHttpStatusError(response.status, 'Authentication failed while resolving fork cutoff');
   }
   if (response.status !== 200) {
     throw new Error(`Unexpected status from /v1/sessions/:id/messages: ${response.status}`);

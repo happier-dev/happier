@@ -6,6 +6,7 @@ import {
   parseBackendTargetKey,
   type BackendTargetRefV1,
 } from './backendTargetRef.js';
+import { hasLegacyCustomAcpConcreteBackendId } from './compat/customAcp.js';
 
 export const BackendTargetSourceKindV2Schema = z.enum(['built_in', 'configured']);
 export type BackendTargetSourceKindV2 = z.infer<typeof BackendTargetSourceKindV2Schema>;
@@ -16,6 +17,17 @@ export const BackendTargetRefV2Schema = z.object({
   configuredBackendId: z.string().min(1).optional(),
   sourceKind: BackendTargetSourceKindV2Schema.optional(),
 }).superRefine((value, ctx) => {
+  if (hasLegacyCustomAcpConcreteBackendId({
+    backendId: value.backendId,
+    configuredBackendId: value.configuredBackendId,
+  })) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['backendId'],
+      message: 'backendTarget must identify a concrete backend',
+    });
+    return;
+  }
   if (value.sourceKind === 'configured' && !value.configuredBackendId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -123,6 +135,9 @@ export function normalizeBackendTargetRefV2InputToV2(input: unknown): unknown {
 
 function convertBackendTargetRefV1ToV2(input: BackendTargetRefV1): BackendTargetRefV2 {
   if (input.kind === 'builtInAgent') {
+    // V1 still uses `builtInAgent.agentId` as the only non-configured carrier on some
+    // compatibility surfaces, including plugin backend ids. Preserve that input shape
+    // here, but do not treat it as proof that the backend is a built-in catalog agent.
     return BackendTargetRefV2Schema.parse({
       kind: 'backend',
       backendId: input.agentId,

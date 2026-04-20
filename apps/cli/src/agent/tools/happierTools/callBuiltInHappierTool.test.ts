@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const resolveSessionTransportContext = vi.fn();
 const updateSessionMetadataWithRetry = vi.fn();
-const startExecutionRun = vi.fn();
 const createCliActionExecutor = vi.fn(() => ({
   execute,
 }));
@@ -20,8 +19,25 @@ vi.mock('@/session/actions/createCliActionExecutor', () => ({
   createCliActionExecutor,
 }));
 
-vi.mock('@/session/services/executionRuns', () => ({
-  startExecutionRun,
+vi.mock('@/extensions/registry/createResolvedContributionRegistry', () => ({
+  getResolvedContributionRegistry: () => ({
+    generationId: 'registry:test',
+    providers: [],
+    backends: [],
+    actions: [],
+    resources: [],
+    uiDescriptors: [],
+    activationTargets: [],
+    hookRegistrations: [],
+    actionsById: new Map(),
+    resourcesById: new Map(),
+    uiDescriptorsById: new Map(),
+    runtimeAdaptersByBackendId: new Map(),
+    catalogEntriesById: {},
+    providerDefinitionsById: new Map(),
+    backendDefinitionsById: new Map(),
+    pluginDiagnosticsByPluginId: {},
+  }),
 }));
 
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({
@@ -68,6 +84,31 @@ describe('callBuiltInHappierTool', () => {
     expect(execute).toHaveBeenCalledWith(
       'subagents.plan.start',
       { backendTargetKeys: ['agent:codex'], instructions: 'Plan this change.' },
+      { defaultSessionId: 'sess-1', surface: 'cli' },
+    );
+  });
+
+  it('forwards explicit plugin action ids through action_execute even when they are not in the local built-in catalog', async () => {
+    execute.mockResolvedValueOnce({ ok: true, result: 'self-loop-v1' });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'qa.self-improving.loop.tool',
+        input: {},
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      result: 'self-loop-v1',
+    });
+    expect(execute).toHaveBeenCalledWith(
+      'qa.self-improving.loop.tool',
+      {},
       { defaultSessionId: 'sess-1', surface: 'cli' },
     );
   });
@@ -195,11 +236,11 @@ describe('callBuiltInHappierTool', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('preserves execution_run_start failures from the shared execution-run service', async () => {
-    startExecutionRun.mockResolvedValueOnce({
+  it('preserves execution_run_start failures from the shared action executor', async () => {
+    execute.mockResolvedValueOnce({
       ok: false,
-      code: 'execution_run_budget_exceeded',
-      message: 'Execution run budget exceeded',
+      errorCode: 'execution_run_budget_exceeded',
+      error: 'Execution run budget exceeded',
     });
 
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');

@@ -16,6 +16,7 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
+import { HttpStatusError } from '@/api/client/httpStatusError';
 import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest, fetchEncryptedTranscriptRange } from './fetchEncryptedTranscriptWindow';
 
 describe('fetchEncryptedTranscriptWindow', () => {
@@ -112,5 +113,21 @@ describe('fetchEncryptedTranscriptWindow', () => {
     expect(mockGet).toHaveBeenCalledTimes(1);
     const [_url, opts] = mockGet.mock.calls[0]!;
     expect(opts.params).toEqual({ afterSeq: 4, limit: 3 });
+  });
+
+  it('throws a typed auth error when transcript fetch returns 401', async () => {
+    mockGet.mockResolvedValue({
+      status: 401,
+      data: { error: 'Unauthorized' },
+    });
+
+    await expect(
+      fetchEncryptedTranscriptPageAfterSeq({
+        token: 't',
+        sessionId: 'sess_1',
+        afterSeq: 4,
+        limit: 3,
+      }),
+    ).rejects.toBeInstanceOf(HttpStatusError);
   });
 });

@@ -3,9 +3,7 @@ import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 import { createChangeTitleToolHandler } from './createChangeTitleToolHandler';
-import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
-import { startExecutionRun } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function callBuiltInHappierTool(params: Readonly<{
@@ -58,16 +56,6 @@ export async function callBuiltInHappierTool(params: Readonly<{
     surface: 'cli',
     deps: {
       changeTitle: createChangeTitleToolHandler({ executor, surface: 'cli' }),
-      startExecutionRun: async (sessionId, request) => {
-        const result = await startExecutionRun({
-          token: params.credentials.token,
-          sessionId,
-          mode,
-          ctx,
-          request,
-        });
-        return normalizeExecutionRunToolResult(result);
-      },
       executeActionByToolName: actionToolBridge.executeActionByToolName,
       resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, sessionId),
       isActionEnabled: actionToolBridge.isActionEnabled,

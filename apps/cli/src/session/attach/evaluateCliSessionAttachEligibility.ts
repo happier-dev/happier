@@ -3,13 +3,13 @@ import {
   type AgentId,
 } from '@happier-dev/agents';
 
-import { resolveBackendExecutionSurfaces } from '@/backends/catalog';
 import type { Credentials } from '@/persistence';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan, type TerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
 import type { Metadata } from '@/api/types';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
 export type CliSessionAttachEligibilityReasonCode =
   | 'archived'

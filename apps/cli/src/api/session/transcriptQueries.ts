@@ -5,6 +5,7 @@ import { resolveLatestPermissionIntent } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
+import { isAuthenticationError } from '../client/httpStatusError';
 
 import { decodeBase64, decrypt } from '../encryption';
 import { SessionMessageContentSchema, type PermissionMode } from '../types';
@@ -102,6 +103,7 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
     items.sort((a, b) => a.createdAt - b.createdAt);
     return items.map((item) => ({ role: item.role, text: item.text }));
   } catch (error) {
+    if (isAuthenticationError(error)) throw error;
     logger.debug('[API] Failed to fetch transcript messages for ACP import', { error });
     return [];
   }
@@ -161,6 +163,7 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
     if (!resolved) return null;
     return { intent: resolved.intent as PermissionMode, updatedAt: resolved.updatedAt };
   } catch (error) {
+    if (isAuthenticationError(error)) throw error;
     logger.debug('[API] Failed to fetch transcript messages for permission intent resolution', { error });
     return null;
   }

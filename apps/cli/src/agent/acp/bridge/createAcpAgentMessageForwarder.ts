@@ -1,14 +1,14 @@
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import type { AgentMessage } from '@/agent/core';
-import { buildTokenCountSessionMessageForForwarding } from '@/agent/acp/runtime/tokenCountForwarding';
+import type { ACPMessageData, ACPProvider } from '../../../api/session/sessionMessageTypes';
+import type { AgentMessage } from '../../core';
+import { buildTokenCountSessionMessageForForwarding } from '../runtime/tokenCountForwarding';
 import {
   forwardAcpToolCall,
   forwardAcpToolResult,
   namespaceSidechainCallId,
   type AcpSendFn,
-} from '@/agent/acp/bridge/acpSessionForwarding';
-import { normalizePermissionRequestOptionsForAcp } from '@/agent/acp/bridge/acpCommonHandlers';
-import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
+} from './acpSessionForwarding';
+import { normalizePermissionRequestOptionsForAcp } from './acpCommonHandlers';
+import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from './thinkingToolCall';
 
 type SendAcpLike = AcpSendFn;
 

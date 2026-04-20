@@ -5,7 +5,7 @@ import type {
 } from './deferredSessionBuffer';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerManagerLike } from '@/api/rpc/types';
-import type { AgentState, Metadata } from '@/api/types';
+import type { AgentState, Metadata, UserMessage } from '@/api/types';
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionId: string;
@@ -14,13 +14,17 @@ export type DeferredApiSessionTarget = Readonly<{
   sendClaudeSessionMessage: (message: unknown, meta?: unknown) => void;
   sendAgentMessage: (provider: unknown, body: unknown, opts?: unknown) => void;
   sendAgentMessageEphemeral?: (provider: unknown, body: unknown, opts: unknown) => void | Promise<void>;
-  sendAgentMessageCommitted?: (provider: unknown, body: unknown, opts: unknown) => Promise<void>;
+  sendAgentMessageCommitted: (provider: unknown, body: unknown, opts: unknown) => Promise<void>;
   sendCodexMessage: (body: unknown) => void;
   sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
+  onUserMessage?: (callback: (data: UserMessage) => void) => void;
   updateMetadata: (updater: (metadata: Metadata) => Metadata) => void | Promise<void>;
   updateAgentState: (updater: (state: AgentState) => AgentState) => void | Promise<void>;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
   getMetadataSnapshot: () => Metadata | null;
+  fetchLatestUserPermissionIntentFromTranscript?: (
+    opts?: { take?: number },
+  ) => Promise<{ intent: import('@/api/types').PermissionMode; updatedAt: number } | null>;
   refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   popPendingMessage: () => Promise<boolean>;
@@ -43,6 +47,7 @@ export class DeferredApiSessionClient {
   private readonly limits: DeferredSessionBufferLimits;
   readonly rpcHandlerManager: RpcHandlerManagerLike;
   private readonly registeredHandlers = new Map<string, RpcHandler>();
+  private readonly userMessageHandlers: Array<(data: UserMessage) => void> = [];
   private target: DeferredApiSessionTarget | null = null;
   private attachPromise: Promise<void> | null = null;
   private flushInFlight: Promise<void> | null = null;
@@ -53,6 +58,7 @@ export class DeferredApiSessionClient {
   private flushHadErrors = false;
   private flushErrorWarningSent = false;
   private cancelled = false;
+  private attachWaiters: Array<(attached: boolean) => void> = [];
 
   constructor(opts: { placeholderSessionId: string; limits: DeferredSessionBufferLimits }) {
     this.sessionId = opts.placeholderSessionId;
@@ -133,7 +139,7 @@ export class DeferredApiSessionClient {
   sendAgentMessageCommitted(_provider: unknown, _body: unknown, _opts: unknown): Promise<void> {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      return Promise.resolve(target.sendAgentMessageCommitted?.(_provider, _body, _opts));
+      return target.sendAgentMessageCommitted(_provider, _body, _opts);
     }
 
     const deferred = createDeferredPromise<void>();
@@ -144,7 +150,7 @@ export class DeferredApiSessionClient {
 
     this.pushBufferedCall(
       async (t) => {
-        await Promise.resolve(t.sendAgentMessageCommitted?.(_provider, _body, _opts));
+        await t.sendAgentMessageCommitted(_provider, _body, _opts);
         deferred.resolve();
       },
       { hint: 'sendAgentMessageCommitted' },
@@ -177,6 +183,15 @@ export class DeferredApiSessionClient {
       return;
     }
     this.pushBufferedCall((t) => t.sendUserTextMessage(_text, _opts), { hint: 'sendUserTextMessage' });
+  }
+
+  onUserMessage(callback: (data: UserMessage) => void): void {
+    this.userMessageHandlers.push(callback);
+
+    const target = this.target;
+    if (target?.onUserMessage) {
+      target.onUserMessage(callback);
+    }
   }
 
   updateMetadata(_updater: (metadata: Metadata) => Metadata): void | Promise<void> {
@@ -237,12 +252,27 @@ export class DeferredApiSessionClient {
     return target.getMetadataSnapshot();
   }
 
+  async fetchLatestUserPermissionIntentFromTranscript(
+    opts?: { take?: number },
+  ): Promise<{ intent: import('@/api/types').PermissionMode; updatedAt: number } | null> {
+    const target = this.target;
+    if (target && !this.flushInFlight && typeof target.fetchLatestUserPermissionIntentFromTranscript === 'function') {
+      return await Promise.resolve(target.fetchLatestUserPermissionIntentFromTranscript(opts));
+    }
+
+    return null;
+  }
+
   async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }): Promise<void> {
     const target = this.target;
     if (target && !this.flushInFlight) {
       if (typeof target.refreshSessionSnapshotFromServerBestEffort === 'function') {
         await target.refreshSessionSnapshotFromServerBestEffort(opts);
       }
+      return;
+    }
+
+    if (!target && !this.attachPromise) {
       return;
     }
 
@@ -269,7 +299,21 @@ export class DeferredApiSessionClient {
 
   async waitForMetadataUpdate(abortSignal?: AbortSignal): Promise<boolean> {
     if (abortSignal?.aborted) return false;
-    return await this.withAttachedTarget((t) => t.waitForMetadataUpdate(abortSignal), false);
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      return await Promise.resolve(target.waitForMetadataUpdate(abortSignal));
+    }
+
+    const attached = await this.waitForAttach(abortSignal);
+    if (!attached) {
+      return false;
+    }
+
+    const attachedTarget = this.target;
+    if (!attachedTarget) {
+      return false;
+    }
+    return await Promise.resolve(attachedTarget.waitForMetadataUpdate(abortSignal));
   }
 
   async popPendingMessage(): Promise<boolean> {
@@ -311,7 +355,9 @@ export class DeferredApiSessionClient {
 
   attach(_real: DeferredApiSessionTarget): Promise<void> {
     const existingPromise = this.attachPromise;
-    if (existingPromise) return existingPromise;
+    if (existingPromise) {
+      return existingPromise;
+    }
 
     if (this.cancelled) {
       this.attachPromise = Promise.resolve();
@@ -324,11 +370,15 @@ export class DeferredApiSessionClient {
     for (const [method, handler] of this.registeredHandlers.entries()) {
       _real.rpcHandlerManager.registerHandler(method, handler);
     }
+    for (const handler of this.userMessageHandlers) {
+      _real.onUserMessage?.(handler);
+    }
 
     this.flushInFlight = this.drainBufferedCallsUntilEmpty();
     this.attachPromise = this.flushInFlight.finally(() => {
       this.flushInFlight = null;
     });
+    this.flushAttachWaiters(true);
     return this.attachPromise;
   }
 
@@ -347,6 +397,8 @@ export class DeferredApiSessionClient {
         // ignore
       }
     }
+
+    this.flushAttachWaiters(false);
   }
 
   getBufferStats(): DeferredSessionBufferStats {
@@ -440,6 +492,46 @@ export class DeferredApiSessionClient {
     const after = this.target;
     if (!after) return fallback;
     return await Promise.resolve(fn(after));
+  }
+
+  private async waitForAttach(abortSignal?: AbortSignal): Promise<boolean> {
+    if (this.cancelled) return false;
+    if (this.target) return true;
+    if (abortSignal?.aborted) return false;
+
+    return await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (attached: boolean) => {
+        if (settled) return;
+        settled = true;
+        abortSignal?.removeEventListener('abort', onAbort);
+        resolve(attached);
+      };
+      const onAbort = () => finish(false);
+
+      this.attachWaiters.push(finish);
+      abortSignal?.addEventListener('abort', onAbort, { once: true });
+
+      if (this.cancelled) {
+        finish(false);
+      } else if (this.target) {
+        finish(true);
+      } else if (abortSignal?.aborted) {
+        finish(false);
+      }
+    });
+  }
+
+  private flushAttachWaiters(attached: boolean): void {
+    const waiters = this.attachWaiters;
+    this.attachWaiters = [];
+    for (const waiter of waiters) {
+      try {
+        waiter(attached);
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private pushBufferedCall(

@@ -65,6 +65,16 @@ function extractOutputText(body: unknown): string {
   return '';
 }
 
+function extractAcpText(body: unknown): string {
+  const obj = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+  const rawData = obj?.data;
+  const data = rawData && typeof rawData === 'object' && !Array.isArray(rawData) ? (rawData as Record<string, unknown>) : null;
+  if (data?.type === 'message' && typeof data.message === 'string') {
+    return data.message;
+  }
+  return '';
+}
+
 export function extractCompactRow(params: Readonly<{
   decrypted: unknown;
   createdAt: number;
@@ -81,7 +91,9 @@ export function extractCompactRow(params: Readonly<{
       ? String(body.text)
       : kind === 'output'
         ? extractOutputText(body)
-        : '';
+        : kind === 'acp'
+          ? extractAcpText(body)
+          : '';
 
   return {
     id: params.fallbackId,

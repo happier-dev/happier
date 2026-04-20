@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TransportDisconnectEvent } from '@happier-dev/connection-supervisor';
 import axios from 'axios';
+import { HttpStatusError } from '@/api/client/httpStatusError';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 const { mockIo } = vi.hoisted(() => ({
@@ -89,5 +90,24 @@ describe('createSessionSocketTransport', () => {
             }),
         );
         expect(socket.connect).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves terminal auth failures from the access-key bootstrap request', async () => {
+        const socket = createApiSessionSocketStub();
+        bindApiSessionSocketMock(mockIo, socket);
+        vi.mocked(axios.get).mockReset();
+        vi.mocked(axios.post).mockReset();
+        vi.mocked(axios.get).mockResolvedValue({ status: 401, data: { error: 'Unauthorized' } } as never);
+
+        const { createSessionSocketTransport } = await import('./createSessionSocketTransport');
+        const { transport } = createSessionSocketTransport({
+            token: 'token-1',
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            serverUrl: 'http://127.0.0.1:4321',
+        });
+
+        await expect(transport.connect()).rejects.toBeInstanceOf(HttpStatusError);
+        expect(socket.connect).not.toHaveBeenCalled();
     });
 });

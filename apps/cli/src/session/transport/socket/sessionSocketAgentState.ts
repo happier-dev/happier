@@ -4,6 +4,7 @@ import { createSessionScopedSocket } from '@/api/session/sockets';
 import { SessionMessageContentSchema } from '@/api/types';
 import { UpdateContainerSchema, type UpdateContainer } from '@happier-dev/protocol/updates';
 import { decodeBase64, decrypt } from '@/api/encryption';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
   isSessionUserMessage,
   type SessionTurnActivity,
@@ -33,6 +34,27 @@ export function isIdle(summary: AgentStateSummary | null): boolean {
   if (!summary) return true;
   if (summary.controlledByUser === true) return false;
   return summary.pendingRequestsCount === 0;
+}
+
+function summarizeAgentStateCiphertext(params: Readonly<{
+  ciphertextBase64: string | null;
+  sessionEncryptionMode: SessionStoredContentEncryptionMode;
+  ctx: SessionEncryptionContext;
+}>): AgentStateSummary | null {
+  if (!params.ciphertextBase64) return null;
+  try {
+    const decrypted =
+      params.sessionEncryptionMode === 'plain'
+        ? JSON.parse(params.ciphertextBase64)
+        : decrypt(
+            params.ctx.encryptionKey,
+            params.ctx.encryptionVariant,
+            decodeBase64(params.ciphertextBase64, 'base64'),
+          );
+    return summarizeAgentState(decrypted);
+  } catch {
+    return null;
+  }
 }
 
 function tryDecryptMessageEnvelope(params: Readonly<{
@@ -65,22 +87,11 @@ export async function waitForIdleViaSocket(params: Readonly<{
   // Seed with the latest agentState ciphertext from snapshot, if available.
   initialAgentStateCiphertextBase64: string | null;
 }>): Promise<{ idle: true; observedAt: number }> {
-  const initial = (() => {
-    if (!params.initialAgentStateCiphertextBase64) return null;
-    try {
-      const decrypted =
-        params.sessionEncryptionMode === 'plain'
-          ? JSON.parse(params.initialAgentStateCiphertextBase64)
-          : decrypt(
-              params.ctx.encryptionKey,
-              params.ctx.encryptionVariant,
-              decodeBase64(params.initialAgentStateCiphertextBase64, 'base64'),
-            );
-      return summarizeAgentState(decrypted);
-    } catch {
-      return null;
-    }
-  })();
+  const initial = summarizeAgentStateCiphertext({
+    ciphertextBase64: params.initialAgentStateCiphertextBase64,
+    sessionEncryptionMode: params.sessionEncryptionMode,
+    ctx: params.ctx,
+  });
   let latestSummary = initial;
   let pendingUserTurns = params.initialTurnActivity.pendingUserTurns;
   let activeTaskInFlight = params.initialTurnActivity.activeTaskInFlight;
@@ -96,7 +107,9 @@ export async function waitForIdleViaSocket(params: Readonly<{
   const result = await new Promise<{ idle: true; observedAt: number }>((resolve, reject) => {
     let settled = false;
     let waitingForIdleAfterFreshBusy = !initiallyIdle;
+    let hasFreshAgentStateObservation = false;
     let idleConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+    let busyRecheckTimer: ReturnType<typeof setTimeout> | null = null;
 
     const cleanup = () => {
       if (settled) return;
@@ -104,6 +117,10 @@ export async function waitForIdleViaSocket(params: Readonly<{
       if (idleConfirmTimer) {
         clearTimeout(idleConfirmTimer);
         idleConfirmTimer = null;
+      }
+      if (busyRecheckTimer) {
+        clearTimeout(busyRecheckTimer);
+        busyRecheckTimer = null;
       }
       try {
         socket.off('update', onUpdate as any);
@@ -123,6 +140,70 @@ export async function waitForIdleViaSocket(params: Readonly<{
       cleanup();
       reject(new Error('timeout'));
     }, timeoutMs);
+
+    const scheduleBusyTurnActivityRecheck = () => {
+      if (!params.recheckTurnActivity) return;
+      if (settled) return;
+      if (!waitingForIdleAfterFreshBusy) return;
+
+      const remainingMs = Math.max(1, deadlineMs - Date.now());
+      const delayMs = Math.min(resolveSessionControlWaitIdleConfirmMs(), remainingMs);
+
+      if (busyRecheckTimer) {
+        clearTimeout(busyRecheckTimer);
+        busyRecheckTimer = null;
+      }
+
+      busyRecheckTimer = setTimeout(() => {
+        busyRecheckTimer = null;
+        void (async () => {
+          if (settled) return;
+          try {
+            const latestTurnActivity = await params.recheckTurnActivity?.();
+            if (!latestTurnActivity) {
+              scheduleBusyTurnActivityRecheck();
+              return;
+            }
+            pendingUserTurns = latestTurnActivity.pendingUserTurns;
+            activeTaskInFlight = latestTurnActivity.activeTaskInFlight;
+            if (latestTurnActivity.turnInFlight) {
+              waitingForIdleAfterFreshBusy = true;
+              scheduleBusyTurnActivityRecheck();
+              return;
+            }
+
+            const refreshedSession = await fetchSessionById({
+              token: params.token,
+              sessionId: params.sessionId,
+            }).catch(() => null);
+            latestSummary = summarizeAgentStateCiphertext({
+              ciphertextBase64:
+                typeof refreshedSession?.agentState === 'string'
+                  ? String(refreshedSession.agentState).trim() || null
+                  : null,
+              sessionEncryptionMode: params.sessionEncryptionMode,
+              ctx: params.ctx,
+            });
+            if (latestSummary) {
+              hasFreshAgentStateObservation = true;
+            }
+
+            const staleAgentStateSnapshot = !hasFreshAgentStateObservation;
+
+            if ((!isIdle(latestSummary) && !staleAgentStateSnapshot) || hasTurnInFlight()) {
+              scheduleBusyTurnActivityRecheck();
+              return;
+            }
+
+            clearTimeout(timer);
+            cleanup();
+            resolve({ idle: true, observedAt: Math.min(Date.now(), deadlineMs) });
+          } catch {
+            scheduleBusyTurnActivityRecheck();
+          }
+        })();
+      }, delayMs);
+    };
 
     const onConnectError = (err: any) => {
       if (initiallyIdle && !waitingForIdleAfterFreshBusy) {
@@ -148,29 +229,25 @@ export async function waitForIdleViaSocket(params: Readonly<{
         const agentStateCiphertext = body.agentState?.value;
         if (typeof agentStateCiphertext !== 'string' || agentStateCiphertext.trim().length === 0) return;
 
-        try {
-          const decrypted =
-            params.sessionEncryptionMode === 'plain'
-              ? JSON.parse(agentStateCiphertext)
-              : decrypt(
-                  params.ctx.encryptionKey,
-                  params.ctx.encryptionVariant,
-                  decodeBase64(agentStateCiphertext, 'base64'),
-                );
-          const summary = summarizeAgentState(decrypted);
-          latestSummary = summary;
-          if (!isIdle(summary)) {
-            waitingForIdleAfterFreshBusy = true;
-            if (idleConfirmTimer) {
-              clearTimeout(idleConfirmTimer);
-              idleConfirmTimer = null;
-            }
-            return;
+        const summary = summarizeAgentStateCiphertext({
+          ciphertextBase64: agentStateCiphertext,
+          sessionEncryptionMode: params.sessionEncryptionMode,
+          ctx: params.ctx,
+        });
+        if (!summary) {
+          return;
+        }
+        hasFreshAgentStateObservation = true;
+        latestSummary = summary;
+        if (!isIdle(summary)) {
+          waitingForIdleAfterFreshBusy = true;
+          if (idleConfirmTimer) {
+            clearTimeout(idleConfirmTimer);
+            idleConfirmTimer = null;
           }
-          if (!waitingForIdleAfterFreshBusy || hasTurnInFlight()) {
-            return;
-          }
-        } catch {
+          return;
+        }
+        if (!waitingForIdleAfterFreshBusy || hasTurnInFlight()) {
           return;
         }
 
@@ -218,7 +295,9 @@ export async function waitForIdleViaSocket(params: Readonly<{
         latestSummary = { ...(latestSummary ?? {}), pendingRequestsCount: 0 };
       }
 
-      if (hasTurnInFlight() || !isIdle(latestSummary)) {
+      const staleAgentStateSnapshot = !hasFreshAgentStateObservation;
+
+      if (hasTurnInFlight() || (!isIdle(latestSummary) && !staleAgentStateSnapshot)) {
         waitingForIdleAfterFreshBusy = true;
         if (idleConfirmTimer) {
           clearTimeout(idleConfirmTimer);
@@ -238,6 +317,8 @@ export async function waitForIdleViaSocket(params: Readonly<{
     socket.on('connect_error', onConnectError as any);
     socket.on('update', onUpdate as any);
     socket.connect();
+
+    scheduleBusyTurnActivityRecheck();
 
     if (initiallyIdle) {
       idleConfirmTimer = setTimeout(() => {

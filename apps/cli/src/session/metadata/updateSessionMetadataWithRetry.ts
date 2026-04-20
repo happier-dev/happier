@@ -1,5 +1,6 @@
 import type { Socket } from 'socket.io-client';
 
+import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import type { Credentials } from '@/persistence';
 import {
@@ -17,6 +18,12 @@ type UpdateMetadataAck =
   | { result: 'forbidden' }
   | { result: 'error' };
 
+type MetadataUpdateErrorCode = 'unsupported' | 'unknown_error' | 'conflict';
+
+function createMetadataUpdateError(message: string, code: MetadataUpdateErrorCode): Error & { code: MetadataUpdateErrorCode } {
+  return Object.assign(new Error(message), { code });
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -24,7 +31,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 async function emitUpdateMetadataWithAck(socket: Socket, payload: { sid: string; expectedVersion: number; metadata: string }): Promise<UpdateMetadataAck> {
   const res = await new Promise<UpdateMetadataAck>((resolve) => {
-    (socket as any).emit('update-metadata', payload, (answer: any) => resolve(answer as UpdateMetadataAck));
+    socket.emit('update-metadata', payload, (answer: unknown) => resolve(answer as UpdateMetadataAck));
   });
   return res;
 }
@@ -41,13 +48,11 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession);
 
   let expectedVersion = params.rawSession.metadataVersion;
-  let currentWireValue = String((params.rawSession as any).metadata ?? '').trim();
+  let currentWireValue = String(params.rawSession.metadata ?? '').trim();
 
   const initialDecrypted = asRecord(decryptStoredSessionPayload({ mode, ctx, value: currentWireValue }));
   if (!initialDecrypted) {
-    const err = new Error('Unsupported session metadata payload');
-    (err as any).code = 'unsupported';
-    throw err;
+    throw createMetadataUpdateError('Unsupported session metadata payload', 'unsupported');
   }
   let currentDecrypted: Record<string, unknown> = initialDecrypted;
 
@@ -87,19 +92,13 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
       }
 
       if (ack && ack.result === 'forbidden') {
-        const err = new Error('Forbidden');
-        (err as any).code = 'not_authenticated';
-        throw err;
+        throw createAuthenticationHttpStatusError(403, 'Forbidden');
       }
 
-      const err = new Error('Metadata update failed');
-      (err as any).code = 'unknown_error';
-      throw err;
+      throw createMetadataUpdateError('Metadata update failed', 'unknown_error');
     }
 
-    const err = new Error('Metadata update conflict');
-    (err as any).code = 'conflict';
-    throw err;
+    throw createMetadataUpdateError('Metadata update conflict', 'conflict');
   } finally {
     try {
       socket.disconnect();

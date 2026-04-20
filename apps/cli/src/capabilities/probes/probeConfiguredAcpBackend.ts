@@ -1,10 +1,10 @@
 import type { AgentBackend } from '@/agent/core';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/backends/types';
 import type { Credentials } from '@/persistence';
 
-import { createConfiguredAcpProbeBackend } from './createConfiguredAcpProbeBackend';
+import { createConfiguredAcpProbeBackend } from './configuredAcpProbeBackend';
 
 export type ConfiguredAcpProbeBackendResult<T> = Readonly<
   | { kind: 'missing' }
@@ -12,7 +12,7 @@ export type ConfiguredAcpProbeBackendResult<T> = Readonly<
 >;
 
 export async function probeConfiguredAcpBackend<T>(params: Readonly<{
-  agentId: CatalogAgentId;
+  agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   cwd: string;
   accountSettings?: Readonly<Record<string, unknown>> | null;

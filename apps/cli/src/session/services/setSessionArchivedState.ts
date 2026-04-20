@@ -1,6 +1,8 @@
 import type { Credentials } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { archiveSession, unarchiveSession } from '@/session/transport/http/sessionsHttp';
+import { archiveSessionOnceInactive, isSessionActiveArchiveError } from './archiveSessionOnceInactive';
+import { requestSessionStop } from './requestSessionStop';
 
 export async function setSessionArchivedStateById(params: Readonly<{
   token: string;
@@ -54,11 +56,35 @@ export async function setSessionArchivedState(params: Readonly<{
     };
   }
 
-  const result = await setSessionArchivedStateById({
-    token: params.credentials.token,
-    sessionId: resolved.sessionId,
-    archived: params.archived,
-  });
+  let result;
+  try {
+    result = await setSessionArchivedStateById({
+      token: params.credentials.token,
+      sessionId: resolved.sessionId,
+      archived: params.archived,
+    });
+  } catch (error) {
+    if (!params.archived || !isSessionActiveArchiveError(error)) {
+      throw error;
+    }
+
+    const stopResult = await requestSessionStop({
+      credentials: params.credentials,
+      idOrPrefix: resolved.sessionId,
+    });
+    if (!stopResult.ok) {
+      return {
+        ok: false,
+        code: stopResult.code,
+        ...(stopResult.candidates ? { candidates: stopResult.candidates } : {}),
+      };
+    }
+
+    result = await archiveSessionOnceInactive({
+      token: params.credentials.token,
+      sessionId: resolved.sessionId,
+    });
+  }
 
   return {
     ok: true,

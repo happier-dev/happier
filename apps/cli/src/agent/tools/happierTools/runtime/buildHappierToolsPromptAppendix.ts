@@ -74,6 +74,23 @@ export function buildHappierToolsPromptAppendix(params: Readonly<{
     }),
     '--json',
   ]);
+  const explicitPluginActionExecuteCommand = buildHappierToolsShellBridgeCommand([
+    'call',
+    '--session-id',
+    params.sessionId,
+    '--directory',
+    params.directory,
+    '--source',
+    'happier',
+    '--tool',
+    'action_execute',
+    '--args-json',
+    JSON.stringify({
+      actionId: '<plugin-action-or-tool-id>',
+      input: {},
+    }),
+    '--json',
+  ]);
   const memoryGuidance = params.memoryRecallGuidance?.enabled === true
     ? `For recall questions about earlier conversations, use the Happier memory bridge tools before provider-native memory files, workspace search, or guesses from model memory.
 
@@ -105,6 +122,8 @@ Do not merely describe the command or say that you plan to rename the session la
 Use \`${listCommand}\` when you need to discover the available built-in Happier tools and custom configured tools.
 
 Use \`${renameCommand}\` to rename the session.
+
+If you just created or edited a plugin capability yourself and you already know its explicit action id or tool id, do not assume discovery surfaces have refreshed yet. In that case, execute it directly through \`${explicitPluginActionExecuteCommand}\` by replacing \`<plugin-action-or-tool-id>\` with the exact id.
 
 ${memoryGuidance ? `${memoryGuidance}
 

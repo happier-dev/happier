@@ -47,3 +47,35 @@ export function applyAgentStateRequestPushNotifiedAt(params: {
   requests[params.permissionId] = req as RequestsRecord[string];
   return { ...params.state, requests };
 }
+
+export function applyAgentStatePublishedRequest(params: {
+  state: AgentState;
+  requestId: string;
+  toolName: string;
+  toolArguments: unknown;
+  createdAtMs: number;
+  kind?: string;
+  source?: string;
+  permissionSuggestions?: unknown;
+}): AgentState {
+  type RequestsRecord = NonNullable<AgentState['requests']>;
+  const requests = cloneStringKeyedRecordToNullProto<RequestsRecord[string]>(params.state.requests);
+  const entry = Object.create(null) as RequestsRecord[string] & {
+    source?: string;
+    permissionSuggestions?: unknown;
+  };
+  entry.tool = params.toolName;
+  if (typeof params.kind === 'string' && params.kind.length > 0) {
+    entry.kind = params.kind;
+  }
+  entry.arguments = params.toolArguments;
+  entry.createdAt = params.createdAtMs;
+  if (typeof params.source === 'string' && params.source.length > 0) {
+    entry.source = params.source;
+  }
+  if (typeof params.permissionSuggestions !== 'undefined') {
+    entry.permissionSuggestions = params.permissionSuggestions;
+  }
+  requests[params.requestId] = entry as RequestsRecord[string];
+  return { ...params.state, requests };
+}

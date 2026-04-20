@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { HttpStatusError } from '@/api/client/httpStatusError';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpRuntime } from '../createAcpRuntime';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
@@ -141,6 +142,45 @@ describe('createAcpRuntime pending queue pump', () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(pending).toBe(0);
+
+    await runtime.reset();
+  });
+
+  it('stops the pending pump after a terminal auth failure instead of retrying forever', async () => {
+    const { session } = createSessionClientWithMetadata();
+
+    let popCalls = 0;
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => {
+        throw new Error('backend should not be created for pending pump test');
+      },
+      inFlightSteer: { enabled: true },
+      pendingQueue: {
+        drainDuringTurn: true,
+        pollIntervalMs: 5,
+        waitForMetadataUpdate: async (abortSignal?: AbortSignal) =>
+          await new Promise<boolean>((resolve) => {
+            if (abortSignal?.aborted) return resolve(false);
+            abortSignal?.addEventListener('abort', () => resolve(false), { once: true });
+          }),
+        popPendingMessage: async () => {
+          popCalls += 1;
+          throw new HttpStatusError(401, 'Authentication failed');
+        },
+      },
+    });
+
+    runtime.beginTurn();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(popCalls).toBe(1);
 
     await runtime.reset();
   });

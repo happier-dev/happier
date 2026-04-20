@@ -68,7 +68,7 @@ describe('ensureDirectSessionLink', () => {
     expect(createdMetadata).toMatchObject({
       codexSessionId: 'thread_runtime',
       codexBackendMode: 'appServer',
-      agentRuntimeDescriptorV1: {
+      runtimeDescriptorV1: {
         v: 1,
         providerId: 'codex',
         provider: {
@@ -83,7 +83,7 @@ describe('ensureDirectSessionLink', () => {
       directSessionV1: {
         remoteSessionId: 'thread_runtime',
         source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
           provider: {
@@ -97,6 +97,8 @@ describe('ensureDirectSessionLink', () => {
         },
       },
     });
+    expect(createdMetadata).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(createdMetadata?.directSessionV1).not.toHaveProperty('agentRuntimeDescriptorV1');
   });
 
   it('prefers providerExtra when linked direct-session runtime descriptors carry stale top-level codex fields', async () => {
@@ -143,7 +145,7 @@ describe('ensureDirectSessionLink', () => {
     expect(createdMetadata).toMatchObject({
       codexSessionId: 'thread_runtime',
       codexBackendMode: 'appServer',
-      agentRuntimeDescriptorV1: {
+      runtimeDescriptorV1: {
         provider: {
           backendMode: 'appServer',
           vendorSessionId: 'thread_runtime',
@@ -225,7 +227,7 @@ describe('ensureDirectSessionLink', () => {
     expect(createdMetadata).toMatchObject({
       codexSessionId: 'thread_alias',
       codexBackendMode: 'acp',
-      agentRuntimeDescriptorV1: {
+      runtimeDescriptorV1: {
         providerId: 'codex',
         provider: {
           backendMode: 'acp',
@@ -266,7 +268,7 @@ describe('ensureDirectSessionLink', () => {
       opencodeBackendMode: 'server',
       opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
       opencodeServerBaseUrlExplicit: true,
-      agentRuntimeDescriptorV1: {
+      runtimeDescriptorV1: {
         v: 1,
         providerId: 'opencode',
         provider: {
@@ -278,7 +280,7 @@ describe('ensureDirectSessionLink', () => {
       },
       directSessionV1: {
         remoteSessionId: 'oc_runtime',
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'opencode',
           provider: {
@@ -290,6 +292,8 @@ describe('ensureDirectSessionLink', () => {
         },
       },
     });
+    expect(createdMetadata).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(createdMetadata?.directSessionV1).not.toHaveProperty('agentRuntimeDescriptorV1');
   });
 
   it('forces OpenCode direct-session runtime descriptors to server mode when the source is opencodeServer', async () => {
@@ -327,7 +331,7 @@ describe('ensureDirectSessionLink', () => {
       opencodeBackendMode: 'server',
       opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
       opencodeServerBaseUrlExplicit: true,
-      agentRuntimeDescriptorV1: {
+      runtimeDescriptorV1: {
         v: 1,
         providerId: 'opencode',
         provider: {

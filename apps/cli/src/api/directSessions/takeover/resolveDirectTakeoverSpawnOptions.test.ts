@@ -99,7 +99,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
 
     expect(spawnOptions).toEqual({
       directory: '/tmp/direct-codex-takeover-project',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       existingSessionId: 'sess_happy_direct_codex',
       resume: '11111111-1111-1111-1111-111111111111',
       approvedNewDirectoryCreation: true,
@@ -128,7 +128,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
 
     expect(spawnOptions).toEqual({
       directory: '/tmp/direct-codex-app-server-project',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       existingSessionId: 'sess_happy_direct_codex',
       resume: '11111111-1111-1111-1111-111111111111',
       approvedNewDirectoryCreation: true,
@@ -249,7 +249,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
 
     expect(spawnOptions).toEqual({
       directory: '/tmp/direct-codex-acp-project',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       existingSessionId: 'sess_happy_direct_codex_acp',
       resume: 'acp-thread-1',
       approvedNewDirectoryCreation: true,
@@ -287,7 +287,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
 
     expect(spawnOptions).toEqual({
       directory: '/tmp/direct-codex-app-server-cwd-project',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       existingSessionId: 'sess_happy_direct_codex_app_server_cwd',
       resume: '22222222-2222-2222-2222-222222222222',
       approvedNewDirectoryCreation: true,
@@ -311,7 +311,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
 
     expect(spawnOptions).toEqual({
       directory: '/tmp/direct-opencode-takeover-project',
-      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      backendTarget: { kind: 'backend', backendId: 'opencode', sourceKind: 'built_in' },
       existingSessionId: 'sess_happy_direct_opencode',
       resume: 'opencode-session-1',
       approvedNewDirectoryCreation: true,

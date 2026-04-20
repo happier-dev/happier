@@ -1,11 +1,10 @@
 import { z } from 'zod';
 
-import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
 import {
   BackendTargetRefV2Schema,
-  normalizeBackendTargetRefV2InputToV1,
   normalizeBackendTargetRefV2InputToV2,
 } from './backendTargets/backendTargetRefV2.js';
+import { hasLegacyCustomAcpConcreteBackendId, isLegacyCustomAcpId } from './backendTargets/compat/customAcp.js';
 import { HappierReplayStrategySchema } from './sessionContinueWithReplay.js';
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
 
@@ -46,29 +45,32 @@ export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): u
     return {
       ...record,
       backendTarget: {
-        kind: 'configuredAcpBackend',
+        kind: 'backend',
         backendId: legacyConfiguredBackendId || legacyBackendId,
+        configuredBackendId: legacyConfiguredBackendId || legacyBackendId,
+        sourceKind: 'configured',
       },
     };
   }
-  if (legacyBackendId === 'customAcp') {
+  if (isLegacyCustomAcpId(legacyBackendId)) {
     return value;
   }
   return {
     ...record,
     backendTarget: {
-      kind: 'builtInAgent',
-      agentId: legacyBackendId,
+      kind: 'backend',
+      backendId: legacyBackendId,
+      sourceKind: 'built_in',
     },
   };
 }
 
 const ExecutionRunResumeHandleVendorSessionV1SchemaCore = z.object({
   kind: z.literal('vendor_session.v1'),
-  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV1, BackendTargetRefSchema),
+  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
   vendorSessionId: z.string().min(1),
 }).passthrough().superRefine((value, ctx) => {
-  if (value.backendTarget.kind === 'builtInAgent' && value.backendTarget.agentId === 'customAcp') {
+  if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'backendTarget must identify a concrete backend',
@@ -84,11 +86,11 @@ export type ExecutionRunResumeHandleVendorSessionV1 = z.infer<typeof ExecutionRu
 
 const ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore = z.object({
   kind: z.literal('voice_agent_sessions.v1'),
-  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV1, BackendTargetRefSchema),
+  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
   chatVendorSessionId: z.string().min(1),
   commitVendorSessionId: z.string().min(1),
 }).passthrough().superRefine((value, ctx) => {
-  if (value.backendTarget.kind === 'builtInAgent' && value.backendTarget.agentId === 'customAcp') {
+  if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'backendTarget must identify a concrete backend',
@@ -137,7 +139,7 @@ export const ExecutionRunReplaySeedRequestSchema = z.discriminatedUnion('kind', 
     recentMessagesCount: z.number().int().min(1).max(500).optional(),
     maxSeedChars: z.number().int().min(200).max(200_000).optional(),
     summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
-  }).strict(),
+  }).passthrough(),
 ]);
 export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySeedRequestSchema>;
 
@@ -150,11 +152,13 @@ export const ExecutionRunStartRequestSchema = z.object({
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
+  initialContext: z.string().optional(),
   initialContextMode: z.enum(['bootstrap', 'first_turn']).optional(),
+  bootstrapMode: z.enum(['none', 'ready_handshake']).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
   replay: ExecutionRunReplaySeedRequestSchema.optional(),
 }).passthrough().superRefine((value, ctx) => {
-  if (value.backendTarget.backendId === 'customAcp' || value.backendTarget.configuredBackendId === 'customAcp') {
+  if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'backendTarget must identify a concrete backend',

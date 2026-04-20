@@ -5,12 +5,12 @@ import { access } from 'fs/promises';
 import { join, delimiter as PATH_DELIMITER } from 'path';
 import { promisify } from 'util';
 
-import { AGENTS, type CatalogAgentId, type CliDetectSpec } from '@/backends/catalog';
+import { AGENTS, type CatalogAgentLookupId, type CliDetectSpec } from '@/backends/catalog';
 import { resolveCliAuthHomeDir } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatus } from '@/backends/types';
-import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
+import { resolveProviderCliCommandForRuntime } from '@/runtime/managedTools/providerCliResolution';
 import { AsyncTtlCache } from '@happier-dev/protocol';
-import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { getProviderCliRuntimeSpec, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
 import {
     isProviderCliPathRunnable,
     providerCliPathRequiresJavaScriptRuntime,
@@ -22,7 +22,7 @@ import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@h
 const execFileAsync = promisify(execFile);
 type ExecFileBestEffortOptions = ExecOptions & Readonly<{ windowsVerbatimArguments?: boolean }>;
 
-export type DetectCliName = CatalogAgentId;
+export type DetectCliName = CatalogAgentLookupId;
 
 export interface DetectCliRequest {
     /**
@@ -102,6 +102,16 @@ const cliSnapshotCache = new AsyncTtlCache<DetectCliSnapshot>({
 const DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = process.env.CI ? 3_000 : 1_500;
 const DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = process.env.CI ? 7_000 : 6_500;
 const CLI_SNAPSHOT_PROBE_TIMEOUT = Symbol('CLI_SNAPSHOT_PROBE_TIMEOUT');
+
+function resolveProviderCliRuntimeSpecForLookupId(name: DetectCliName) {
+    if (isAgentId(name)) {
+        return getProviderCliRuntimeSpec(name);
+    }
+    if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(name)) {
+        return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+    }
+    throw new Error(`Unsupported CLI snapshot lookup id '${name}'`);
+}
 
 function resolveCliSnapshotProbeTimeoutMs(includeLoginStatus: boolean): number {
     if (includeLoginStatus) {
@@ -244,7 +254,7 @@ async function resolveCliOverridePath(name: DetectCliName): Promise<string | nul
         await access(override, accessMode);
         return override;
     } catch {
-        const runtimeSpec = getProviderCliRuntimeSpec(name);
+        const runtimeSpec = resolveProviderCliRuntimeSpecForLookupId(name);
         if (!runtimeSpec.acceptsJavaScriptFileOverride || isWindows) return null;
         if (!/\.(?:js|cjs|mjs)$/i.test(override)) return null;
         try {
@@ -583,7 +593,7 @@ async function resolveCliPathForName(
         return { resolvedPath: override, resolutionSource: 'override' };
     }
 
-    const managedResolution = resolveProviderCliCommand(name);
+    const managedResolution = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(name));
     if (managedResolution) {
         if (!await isCliPathRunnable(managedResolution.command)) return null;
         return {

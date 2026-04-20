@@ -3,10 +3,40 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCodexAgentRuntimeDescriptor,
   buildOpenCodeAgentRuntimeDescriptor,
+  readNormalizedRuntimeDescriptor,
   readSessionMetadataRuntimeDescriptor,
 } from './agentRuntimeDescriptor.js';
 
 describe('readSessionMetadataRuntimeDescriptor', () => {
+  it('prefers canonical runtimeDescriptorV1 over the legacy agentRuntimeDescriptorV1 carrier', () => {
+    expect(readSessionMetadataRuntimeDescriptor({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'canonical-thread',
+        },
+      },
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'acp',
+          vendorSessionId: 'legacy-thread',
+        },
+      },
+    }, 'codex')).toEqual({
+      providerId: 'codex',
+      backendMode: 'appServer',
+      vendorSessionId: 'canonical-thread',
+      home: null,
+      connectedServiceId: null,
+      connectedServiceProfileId: null,
+      homePath: null,
+    });
+  });
+
   it('builds a canonical codex runtime descriptor with provider-owned runtime affinity', () => {
     const descriptor = buildCodexAgentRuntimeDescriptor({
       backendMode: 'appServer',
@@ -180,5 +210,197 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
       serverBaseUrl: 'http://127.0.0.1:4096/',
       serverBaseUrlExplicit: true,
     });
+  });
+
+  it('normalizes plugin-shaped runtime descriptors without built-in provider id assumptions', () => {
+    expect(readNormalizedRuntimeDescriptor({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'acmePlugin',
+        provider: {
+          backendMode: 'daemon',
+          vendorSessionId: 'plugin-session-1',
+          providerExtra: {
+            owner: 'acme',
+            schemaId: 'acme.runtimeDescriptor',
+            v: 1,
+            runtimeHandle: {
+              endpoint: 'ws://127.0.0.1:7777',
+            },
+          },
+        },
+      },
+    })).toEqual({
+      providerId: 'acmePlugin',
+      runtimeKind: 'daemon',
+      vendorSessionId: 'plugin-session-1',
+      runtimeHandle: {
+        endpoint: 'ws://127.0.0.1:7777',
+      },
+      rawProvider: {
+        backendMode: 'daemon',
+        vendorSessionId: 'plugin-session-1',
+        providerExtra: {
+          owner: 'acme',
+          schemaId: 'acme.runtimeDescriptor',
+          v: 1,
+          runtimeHandle: {
+            endpoint: 'ws://127.0.0.1:7777',
+          },
+        },
+      },
+    });
+  });
+
+  it('does not treat legacy runtimeAffinity carriers as canonical runtime handles for unknown providers', () => {
+    expect(readNormalizedRuntimeDescriptor({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'acmePlugin',
+        provider: {
+          backendMode: 'daemon',
+          vendorSessionId: 'plugin-session-1',
+          providerExtra: {
+            owner: 'acme',
+            schemaId: 'acme.runtimeDescriptor',
+            v: 1,
+            runtimeAffinity: {
+              endpoint: 'ws://127.0.0.1:7777',
+            },
+          },
+        },
+      },
+    })).toEqual({
+      providerId: 'acmePlugin',
+      runtimeKind: 'daemon',
+      vendorSessionId: 'plugin-session-1',
+      runtimeHandle: null,
+      rawProvider: {
+        backendMode: 'daemon',
+        vendorSessionId: 'plugin-session-1',
+        providerExtra: {
+          owner: 'acme',
+          schemaId: 'acme.runtimeDescriptor',
+          v: 1,
+          runtimeAffinity: {
+            endpoint: 'ws://127.0.0.1:7777',
+          },
+        },
+      },
+    });
+  });
+
+  it('normalizes supported codex runtime affinity carriers into canonical runtime handles', () => {
+    expect(readNormalizedRuntimeDescriptor({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'mcp',
+          vendorSessionId: 'legacy-thread',
+          providerExtra: {
+            owner: 'codex',
+            schemaId: 'codex.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeHandle: {
+              backendMode: 'appServer',
+              vendorSessionId: 'thread-runtime',
+              home: 'connectedService',
+              connectedServiceId: 'openai-codex',
+              connectedServiceProfileId: 'work',
+              homePath: '/tmp/codex-home',
+            },
+          },
+        },
+      },
+    })).toEqual({
+      providerId: 'codex',
+      runtimeKind: 'appServer',
+      vendorSessionId: 'thread-runtime',
+      runtimeHandle: {
+        backendMode: 'appServer',
+        vendorSessionId: 'thread-runtime',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceProfileId: 'work',
+        homePath: '/tmp/codex-home',
+      },
+      rawProvider: {
+        backendMode: 'mcp',
+        vendorSessionId: 'legacy-thread',
+        providerExtra: {
+          owner: 'codex',
+          schemaId: 'codex.agentRuntimeDescriptorExtra',
+          v: 1,
+          runtimeHandle: {
+            backendMode: 'appServer',
+            vendorSessionId: 'thread-runtime',
+            home: 'connectedService',
+            connectedServiceId: 'openai-codex',
+            connectedServiceProfileId: 'work',
+            homePath: '/tmp/codex-home',
+          },
+        },
+      },
+    });
+
+    expect(readNormalizedRuntimeDescriptor({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'mcp',
+          vendorSessionId: 'legacy-thread',
+          providerExtra: {
+            owner: 'codex',
+            schemaId: 'codex.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeAffinity: {
+              backendMode: 'appServer',
+              vendorSessionId: 'thread-runtime',
+              home: 'connectedService',
+              connectedServiceId: 'openai-codex',
+              connectedServiceProfileId: 'work',
+              homePath: '/tmp/codex-home',
+            },
+          },
+        },
+      },
+    })).toEqual({
+      providerId: 'codex',
+      runtimeKind: 'appServer',
+      vendorSessionId: 'thread-runtime',
+      runtimeHandle: {
+        backendMode: 'appServer',
+        vendorSessionId: 'thread-runtime',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceProfileId: 'work',
+        homePath: '/tmp/codex-home',
+      },
+      rawProvider: {
+        backendMode: 'mcp',
+        vendorSessionId: 'legacy-thread',
+        providerExtra: {
+          owner: 'codex',
+          schemaId: 'codex.agentRuntimeDescriptorExtra',
+          v: 1,
+          runtimeAffinity: {
+            backendMode: 'appServer',
+            vendorSessionId: 'thread-runtime',
+            home: 'connectedService',
+            connectedServiceId: 'openai-codex',
+            connectedServiceProfileId: 'work',
+            homePath: '/tmp/codex-home',
+          },
+        },
+      },
+    });
+  });
+
+  it('returns null when runtime descriptor metadata is absent', () => {
+    expect(readNormalizedRuntimeDescriptor({
+      unrelated: 'value',
+    })).toBeNull();
   });
 });

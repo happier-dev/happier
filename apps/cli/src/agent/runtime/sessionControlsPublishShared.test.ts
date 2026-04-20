@@ -4,6 +4,8 @@ import {
   computeNextPermissionIntentMetadata,
   computeNextMetadataStringOverrideV1,
 } from '@happier-dev/agents';
+import type { Metadata } from '@/api/types';
+import { publishSessionControlsMetadataBestEffort } from './controls/publishSessionControlsMetadataBestEffort';
 
 describe('sessionControls publish helpers (shared)', () => {
   it('canonicalizes permission intent aliases and stamps updatedAt when newer', () => {
@@ -38,5 +40,79 @@ describe('sessionControls publish helpers (shared)', () => {
     }) as any;
 
     expect(next.modelOverrideV1).toEqual({ v: 1, updatedAt: 11, modelId: 'model-b' });
+  });
+
+  it('publishes config options only to canonical metadata keys from the shared publisher', async () => {
+    const state: { metadata: Metadata } = { metadata: {} as Metadata };
+
+    await publishSessionControlsMetadataBestEffort({
+      session: {
+        ensureMetadataSnapshot: async () => state.metadata,
+        updateMetadata: async (updater) => {
+          state.metadata = updater(state.metadata);
+        },
+      },
+      sessionConfigOptionsState: {
+        v: 1,
+        provider: 'codex',
+        updatedAt: 42,
+        configOptions: [
+          {
+            id: 'service_tier',
+            name: 'Speed',
+            type: 'select',
+            currentValue: 'fast',
+            options: [
+              { value: 'standard', name: 'Standard' },
+              { value: 'fast', name: 'Fast' },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(state.metadata.sessionConfigOptionsV1).toEqual(
+      expect.objectContaining({
+        v: 1,
+        provider: 'codex',
+        updatedAt: 42,
+        configOptions: expect.any(Array),
+      }),
+    );
+    expect((state.metadata as Record<string, unknown>).acpConfigOptionsV1).toBeUndefined();
+  });
+
+  it('publishes session controls even when a legacy session only exposes updateMetadata', async () => {
+    const state: { metadata: Metadata } = { metadata: { machineId: 'machine_1' } as Metadata };
+
+    await publishSessionControlsMetadataBestEffort({
+      session: {
+        updateMetadata: async (updater: (prev: Metadata) => Metadata) => {
+          state.metadata = updater(state.metadata);
+        },
+      } as any,
+      sessionModesState: {
+        v: 1,
+        provider: 'codex',
+        updatedAt: 99,
+        currentModeId: 'default',
+        availableModes: [
+          {
+            id: 'default',
+            name: 'Default',
+          },
+        ],
+      },
+    });
+
+    expect(state.metadata.sessionModesV1).toEqual(
+      expect.objectContaining({
+        v: 1,
+        provider: 'codex',
+        updatedAt: 99,
+        currentModeId: 'default',
+      }),
+    );
+    expect((state.metadata as Record<string, unknown>).acpSessionModesV1).toBeUndefined();
   });
 });

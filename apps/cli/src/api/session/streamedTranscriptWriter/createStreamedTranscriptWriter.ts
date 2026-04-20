@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { logger } from '@/ui/logger';
+import { logger } from '../../../ui/logger';
 
 import type { ACPProvider } from '../sessionMessageTypes';
 import {

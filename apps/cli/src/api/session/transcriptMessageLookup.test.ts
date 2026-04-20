@@ -3,6 +3,7 @@ import fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
+import { HttpStatusError } from '@/api/client/httpStatusError';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 
 describe('waitForTranscriptEncryptedMessageByLocalId', () => {
@@ -223,5 +224,82 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
     });
 
     expect(result).toBeNull();
+  });
+
+  it('rethrows terminal auth failures instead of polling them as missing messages', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    reloadConfiguration();
+
+    const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
+
+    const getSpy = vi.spyOn(axios, 'get').mockRejectedValueOnce(new HttpStatusError(401, 'Authentication failed'));
+
+    try {
+      await expect(
+        waitForTranscriptEncryptedMessageByLocalId({
+          token: 'token',
+          sessionId: 'sid',
+          localId: 'l1',
+          maxWaitMs: 200,
+          pollIntervalMs: 10,
+          errorBackoffBaseMs: 10,
+          errorBackoffMaxMs: 10,
+          onError: () => {},
+        }),
+      ).rejects.toMatchObject({
+        name: 'HttpStatusError',
+        response: { status: 401 },
+      });
+      expect(getSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      getSpy.mockRestore();
+    }
+  });
+
+  it('stops transcript polling when stale auth appears after an earlier not-found response', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    reloadConfiguration();
+
+    const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
+
+    let requestCount = 0;
+    const getSpy = vi.spyOn(axios, 'get').mockImplementation(async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        const error = new Error('Message not found') as Error & {
+          response?: { status: number; data: { error: string } };
+        };
+        error.response = { status: 404, data: { error: 'Message not found' } };
+        throw error;
+      }
+      throw new HttpStatusError(403, 'Authentication failed');
+    });
+
+    try {
+      const promise = waitForTranscriptEncryptedMessageByLocalId({
+        token: 'token',
+        sessionId: 'sid',
+        localId: 'l1',
+        maxWaitMs: 500,
+        pollIntervalMs: 10,
+        errorBackoffBaseMs: 10,
+        errorBackoffMaxMs: 10,
+        onError: () => {},
+      });
+      const assertion = expect(promise).rejects.toMatchObject({
+        name: 'HttpStatusError',
+        response: { status: 403 },
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      await assertion;
+      expect(requestCount).toBe(2);
+    } finally {
+      getSpy.mockRestore();
+    }
   });
 });

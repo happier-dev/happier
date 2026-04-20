@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../index.js';
+import { normalizeLegacyContinueWithReplayRpcParamsInput } from './compat/continueWithReplayRpcParamsCompat.js';
 
 describe('BackendTargetRefV2 compatibility', () => {
   it('exports additive V2 backend target schemas and helpers', () => {
@@ -73,6 +74,26 @@ describe('BackendTargetRefV2 compatibility', () => {
     });
   });
 
+  it('retains the legacy builtInAgent carrier for plugin backend ids at V1 compatibility boundaries', () => {
+    expect((protocol as any).readBackendTargetRefV2({
+      kind: 'builtInAgent',
+      agentId: 'acme.review.backend',
+    })).toEqual({
+      kind: 'backend',
+      backendId: 'acme.review.backend',
+      sourceKind: 'built_in',
+    });
+
+    expect((protocol as any).convertBackendTargetRefV2ToV1({
+      kind: 'backend',
+      backendId: 'acme.review.backend',
+      sourceKind: 'built_in',
+    })).toEqual({
+      kind: 'builtInAgent',
+      agentId: 'acme.review.backend',
+    });
+  });
+
   it('converts additive V2 targets back to the legacy V1 transport shape for compatibility boundaries', () => {
     expect((protocol as any).convertBackendTargetRefV2ToV1({
       kind: 'backend',
@@ -106,5 +127,68 @@ describe('BackendTargetRefV2 compatibility', () => {
       backendId: 'codex',
       sourceKind: 'configured',
     })).toThrow();
+  });
+
+  it('rejects customAcp placeholders as concrete backend targets', () => {
+    expect(() => (protocol as any).readBackendTargetRefV2({
+      kind: 'backend',
+      backendId: 'customAcp',
+      sourceKind: 'built_in',
+    })).toThrow();
+
+    expect(() => (protocol as any).readBackendTargetRefV2({
+      kind: 'backend',
+      backendId: 'codex',
+      configuredBackendId: 'customAcp',
+      sourceKind: 'configured',
+    })).toThrow();
+
+    expect(() => (protocol as any).readBackendTargetRefV2('backend:customAcp')).toThrow();
+
+    expect(() => (protocol as any).readBackendTargetRefV2({
+      kind: 'builtInAgent',
+      agentId: 'customAcp',
+    })).toThrow();
+  });
+
+  it('rejects legacy configured ACP flavor carriers as concrete backend targets', () => {
+    expect(() => (protocol as any).readBackendTargetRefV2({
+      kind: 'backend',
+      backendId: 'acp:review-bot',
+      sourceKind: 'built_in',
+    })).toThrow();
+
+    expect(() => (protocol as any).readBackendTargetRefV2({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'acp:review-bot',
+      sourceKind: 'configured',
+    })).toThrow();
+  });
+
+  it('normalizes legacy continueWithReplay agent carriers into additive V2 backend targets at the backend-target compatibility seam', () => {
+    const builtInCompat = normalizeLegacyContinueWithReplayRpcParamsInput({
+      directory: '/repo',
+      agent: 'claude',
+      replay: { previousSessionId: 'sess-prev' },
+    }) as { backendTarget?: unknown };
+
+    const configuredCompat = normalizeLegacyContinueWithReplayRpcParamsInput({
+      directory: '/repo',
+      agent: 'acp:review-bot',
+      replay: { previousSessionId: 'sess-prev' },
+    }) as { backendTarget?: unknown };
+
+    expect((protocol as any).readBackendTargetRefV2(builtInCompat.backendTarget)).toEqual({
+      kind: 'backend',
+      backendId: 'claude',
+      sourceKind: 'built_in',
+    });
+    expect((protocol as any).readBackendTargetRefV2(configuredCompat.backendTarget)).toEqual({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
   });
 });

@@ -1,4 +1,8 @@
-import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import {
+    openEncryptedDataKeyEnvelopeV1,
+    readRuntimeDescriptorV1FromMetadata,
+    writeRuntimeDescriptorV1ToMetadata,
+} from '@happier-dev/protocol';
 
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from './rpcCrypto';
 import { decryptLegacyBase64, encryptLegacyBase64 } from './messageCrypto';
@@ -189,19 +193,17 @@ export function buildPatchedSessionHandoffMetadata(metadataBefore: Record<string
 
     const directSessionBefore = asRecord(metadataBefore.directSessionV1);
     const externalHistoryImportBefore = asRecord(metadataBefore.externalHistoryImportV1);
+    const directSessionRuntimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(directSessionBefore);
 
     if (params.sessionStorageAfter === 'direct') {
-        nextMetadata.directSessionV1 = {
+        nextMetadata.directSessionV1 = writeRuntimeDescriptorV1ToMetadata({
             v: 1,
             providerId: params.providerId,
             machineId: params.targetMachineId,
             remoteSessionId,
             source: directSessionBefore?.source ?? externalHistoryImportBefore?.source,
             linkedAtMs: params.completedAtMs,
-            ...(directSessionBefore?.agentRuntimeDescriptorV1
-                ? { agentRuntimeDescriptorV1: directSessionBefore.agentRuntimeDescriptorV1 }
-                : {}),
-        };
+        }, directSessionRuntimeDescriptorV1);
         delete nextMetadata.externalHistoryImportV1;
     } else {
         nextMetadata.externalHistoryImportV1 = {

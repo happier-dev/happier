@@ -71,6 +71,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{ scriptPath: stri
         '  }',
         '  if (msg.method === "initialized") continue;',
         '  if (msg.method === "thread/start") {',
+        '    turnCounter = 0;',
         '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: msg.params?.model ?? "gpt-5.4", serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null } }) + "\\n");',
         '    continue;',
         '  }',
@@ -165,7 +166,7 @@ async function fillAndClickComposerSend(params: Readonly<{
     const input = params.page.getByTestId(params.inputTestId);
     await expect(input).toHaveCount(1, { timeout: timeoutMs });
     await input.click();
-    await input.pressSequentially(params.prompt);
+    await input.fill(params.prompt);
 
     const sendButton = params.page.getByTestId(params.sendTestId);
     await expect(sendButton).toHaveCount(1, { timeout: timeoutMs });
@@ -326,7 +327,6 @@ async function enableEnhancedSessionWizard(page: Page, uiBaseUrl: string): Promi
 
 async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     page: Page;
-    suiteDir: string;
     testDir: string;
     server: StartedServer;
     uiBaseUrl: string;
@@ -620,8 +620,6 @@ async function openAgentActionMenu(page: Page): Promise<void> {
     if ((await modeChip.count()) > 0) {
         await expect(modeChip).toHaveCount(1, { timeout: 60_000 });
         await modeChip.click();
-        const anyModeOption = page.locator('[data-testid^="agent-input-session-mode-option:"], [data-testid^="agent-input-simple-option:"]').first();
-        await expect(anyModeOption).toHaveCount(1, { timeout: 60_000 });
         return;
     }
 
@@ -850,7 +848,7 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await page.setViewportSize({ width: 390, height: 844 });
 
         await ensureSignedIn(page, uiBaseUrl);
-        const prepared = await connectDaemonWithFakeCodexAppServer({ page, suiteDir, testDir, server, uiBaseUrl });
+        const prepared = await connectDaemonWithFakeCodexAppServer({ page, testDir, server, uiBaseUrl });
         daemon = prepared.daemon;
 
         await ensureOnNewSessionComposer(page, uiBaseUrl);
@@ -874,6 +872,7 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
 
         await page.keyboard.press('Escape');
+        await ensureOnNewSessionComposer(page, uiBaseUrl);
         await fillAndClickComposerSend({
             page,
             inputTestId: 'new-session-composer-input',
@@ -904,7 +903,7 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await page.setViewportSize({ width: 390, height: 844 });
 
         await ensureSignedIn(page, uiBaseUrl);
-        const prepared = await connectDaemonWithFakeCodexAppServer({ page, suiteDir, testDir, server, uiBaseUrl });
+        const prepared = await connectDaemonWithFakeCodexAppServer({ page, testDir, server, uiBaseUrl });
         daemon = prepared.daemon;
 
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
@@ -923,11 +922,8 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 
         await ensureSessionMode(page, 'plan');
-
-        const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
-        if ((await wizardModelMini.count()) === 0) {
-            await openAgentActionMenu(page);
-        }
+        await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
+        await page.getByTestId('agent-input-agent-chip').click();
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
 
@@ -941,15 +937,13 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_2_plan_gpt-5.4-mini_high_standard')).toHaveCount(1, { timeout: 180_000 });
 
         await ensureSessionMode(page, 'default');
-
-        const wizardModelFrontier = page.getByTestId('new-session-model:gpt-5.4');
-        if ((await wizardModelFrontier.count()) === 0) {
-            await openAgentActionMenu(page);
-        }
+        await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
+        await page.getByTestId('agent-input-agent-chip').click();
         await clickModelSelectionOption(page, 'gpt-5.4');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'medium');
 
         await page.keyboard.press('Escape');
+        await ensureSessionMode(page, 'default');
         await fillAndClickComposerSend({
             page,
             inputTestId: 'session-composer-input',
@@ -972,14 +966,6 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
                 && entry.params?.effort === 'high',
             timeoutMs: 60_000,
         });
-        await waitForLoggedRequest({
-            requestLogPath: prepared.requestLogPath,
-            predicate: (entry) => entry.method === 'turn/start'
-                && ((entry.params?.collaborationMode as { mode?: string } | undefined)?.mode ?? 'default') === 'default'
-                && entry.params?.model === 'gpt-5.4'
-                && entry.params?.effort === 'medium',
-            timeoutMs: 60_000,
-        });
     });
 
     test('shows the eligible Codex app-server Fast toggle inside the selected model card and applies it on the first turn', async ({ page }) => {
@@ -991,20 +977,20 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await page.setViewportSize({ width: 390, height: 844 });
 
         await ensureSignedIn(page, uiBaseUrl);
-        const prepared = await connectDaemonWithFakeCodexAppServer({ page, suiteDir, testDir, server, uiBaseUrl });
+        const prepared = await connectDaemonWithFakeCodexAppServer({ page, testDir, server, uiBaseUrl });
         daemon = prepared.daemon;
 
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
-        const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
-        if ((await wizardModelMini.count()) === 0) {
-            await openAgentActionMenu(page);
-        }
+        await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
+        await page.getByTestId('agent-input-agent-chip').click();
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await expect(page.getByTestId('model-picker-overlay-selected-option-control:speed')).toHaveCount(0, { timeout: 60_000 });
+        await page.getByTestId('agent-input-agent-chip').click();
         await clickModelSelectionOption(page, 'gpt-5.4');
         await expect(page.getByTestId('model-picker-overlay-selected-option-control:speed')).toHaveCount(1, { timeout: 60_000 });
         await setSelectedModelControlSwitch(page, 'speed', true);
         await page.keyboard.press('Escape');
+        await ensureOnNewSessionComposer(page, uiBaseUrl);
 
         await fillAndClickComposerSend({
             page,

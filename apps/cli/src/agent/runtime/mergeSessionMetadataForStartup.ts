@@ -1,15 +1,14 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import {
     computeMonotonicUpdatedAt,
-    LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
     SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 import {
-    buildAcpSessionModeOverrideV1,
     buildModelOverrideV1,
     readSessionMcpSelectionV1FromMetadata,
     type SessionAttachMetadataIdentityPolicy,
 } from '@happier-dev/protocol';
+import { buildSessionModeOverrideV1 } from './compat/sessionMetadataOverrides';
 
 export type PermissionModeOverride = {
     mode: PermissionMode;
@@ -85,7 +84,7 @@ function resolvePermissionModeForStartup(opts: {
     return { mode, updatedAt };
 }
 
-export type AcpSessionModeOverride = {
+export type SessionModeOverride = {
     modeId: string;
     updatedAt?: number | null;
 };
@@ -112,17 +111,17 @@ function resolveSessionMcpSelectionForStartup(opts: {
     return null;
 }
 
-function resolveAcpSessionModeOverrideForStartup(opts: {
+function resolveSessionModeOverrideForStartup(opts: {
     current: Metadata;
     next: Metadata;
     nowMs: number;
-    override?: AcpSessionModeOverride | null;
+    override?: SessionModeOverride | null;
     mode: StartupMergeMode;
 }): { modeId: string; updatedAt: number } | null {
-    const currentOverride = ((opts.current as any)[SESSION_MODE_OVERRIDE_KEY] ?? (opts.current as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY]) as
+    const currentOverride = (opts.current as any)[SESSION_MODE_OVERRIDE_KEY] as
         | { v: 1; updatedAt: number; modeId: string }
         | undefined;
-    const nextOverride = ((opts.next as any)[SESSION_MODE_OVERRIDE_KEY] ?? (opts.next as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY]) as
+    const nextOverride = (opts.next as any)[SESSION_MODE_OVERRIDE_KEY] as
         | { v: 1; updatedAt: number; modeId: string }
         | undefined;
 
@@ -270,7 +269,7 @@ export function mergeSessionMetadataForStartup(opts: {
     next: Metadata;
     nowMs: number;
     permissionModeOverride?: PermissionModeOverride | null;
-    acpSessionModeOverride?: AcpSessionModeOverride | null;
+    sessionModeOverride?: SessionModeOverride | null;
     modelOverride?: ModelOverride | null;
     metadataKeysToUnsetOnAttach?: readonly string[] | null;
     attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
@@ -341,21 +340,21 @@ export function mergeSessionMetadataForStartup(opts: {
         delete (merged as any).permissionModeUpdatedAt;
     }
 
-    const acpMode = resolveAcpSessionModeOverrideForStartup({
+    const sessionMode = resolveSessionModeOverrideForStartup({
         current: opts.current,
         next: opts.next,
         nowMs: opts.nowMs,
-        override: opts.acpSessionModeOverride,
+        override: opts.sessionModeOverride,
         mode,
     });
-    if (acpMode) {
-        const builtOverride = buildAcpSessionModeOverrideV1({ updatedAt: acpMode.updatedAt, modeId: acpMode.modeId });
+    if (sessionMode) {
+        const builtOverride = buildSessionModeOverrideV1({ updatedAt: sessionMode.updatedAt, modeId: sessionMode.modeId });
         (merged as any)[SESSION_MODE_OVERRIDE_KEY] = builtOverride;
-        (merged as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY] = builtOverride;
+        delete (merged as any).acpSessionModeOverrideV1;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
         delete (merged as any)[SESSION_MODE_OVERRIDE_KEY];
-        delete (merged as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY];
+        delete (merged as any).acpSessionModeOverrideV1;
     }
 
     const model = resolveModelOverrideForStartup({

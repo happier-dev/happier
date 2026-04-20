@@ -101,7 +101,7 @@ describe('ACP update message handlers', () => {
     expect(idleTimeoutMs.current).toBe(1_000);
   });
 
-  it('falls back to the regular idle timeout after a tool call has started', () => {
+  it('uses the post-tool idle timeout after a tool call has started', () => {
     const { ctx, idleTimeoutMs } = createHandlerContext({
       transport: {
         getIdleTimeout: () => 500,
@@ -113,6 +113,6 @@ describe('ACP update message handlers', () => {
     const result = handleAgentMessageChunk({ content: { text: 'Done.' } }, ctx);
 
     expect(result.handled).toBe(true);
-    expect(idleTimeoutMs.current).toBe(500);
+    expect(idleTimeoutMs.current).toBe(1_000);
   });
 });

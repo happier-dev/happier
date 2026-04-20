@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from './voiceAgentRunMetadataV1';
 
 const sessionSocketStubState = vi.hoisted(() => ({
   sessionSocketStub: null as any,
   userSocketStub: null as any,
   executionRunHandlerContext: null as any,
-  createExecutionRunBackendMock: vi.fn(),
+  createExecutionRunRuntimeMock: vi.fn(),
   executionRunServiceMocks: {
     startExecutionRun: vi.fn(),
     listExecutionRuns: vi.fn(),
@@ -15,6 +16,7 @@ const sessionSocketStubState = vi.hoisted(() => ({
     sendExecutionRunMessage: vi.fn(),
     stopExecutionRun: vi.fn(),
     executeExecutionRunAction: vi.fn(),
+    waitForExecutionRun: vi.fn(),
   },
 }));
 
@@ -64,8 +66,8 @@ vi.mock('@/rpc/handlers/executionRuns', () => ({
   },
 }));
 
-vi.mock('@/agent/executionRuns/runtime/createExecutionRunBackend', () => ({
-  createExecutionRunBackend: (...args: unknown[]) => sessionSocketStubState.createExecutionRunBackendMock(...args),
+vi.mock('@/agent/executionRuns/runtime/createExecutionRunRuntime', () => ({
+  createExecutionRunRuntime: (...args: unknown[]) => sessionSocketStubState.createExecutionRunRuntimeMock(...args),
 }));
 
 vi.mock('@/session/services/executionRuns', () => ({
@@ -75,6 +77,7 @@ vi.mock('@/session/services/executionRuns', () => ({
   sendExecutionRunMessage: (...args: unknown[]) => sessionSocketStubState.executionRunServiceMocks.sendExecutionRunMessage(...args),
   stopExecutionRun: (...args: unknown[]) => sessionSocketStubState.executionRunServiceMocks.stopExecutionRun(...args),
   executeExecutionRunAction: (...args: unknown[]) => sessionSocketStubState.executionRunServiceMocks.executeExecutionRunAction(...args),
+  waitForExecutionRun: (...args: unknown[]) => sessionSocketStubState.executionRunServiceMocks.waitForExecutionRun(...args),
 }));
 
 vi.mock('@/settings/accountSettings/activeAccountSettingsSnapshot', () => ({
@@ -88,13 +91,13 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     sessionSocketStubState.sessionSocketStub = createApiSessionSocketStub({ id: 'session-socket', connected: true });
     sessionSocketStubState.userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
     sessionSocketStubState.executionRunHandlerContext = null;
-    sessionSocketStubState.createExecutionRunBackendMock.mockReset();
-    sessionSocketStubState.createExecutionRunBackendMock.mockReturnValue({
-      startSession: vi.fn(),
+    sessionSocketStubState.createExecutionRunRuntimeMock.mockReset();
+    sessionSocketStubState.createExecutionRunRuntimeMock.mockReturnValue({
+      readResumeSupport: vi.fn(async () => false),
+      provisionSession: vi.fn(async () => ({ sessionId: 'run-session-1' })),
       sendPrompt: vi.fn(),
       cancel: vi.fn(),
-      onMessage: vi.fn(),
-      offMessage: vi.fn(),
+      subscribeMessages: vi.fn(() => () => {}),
       dispose: vi.fn(),
     });
     for (const mock of Object.values(sessionSocketStubState.executionRunServiceMocks)) {
@@ -122,12 +125,35 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       accountSettings,
     });
 
-    expect(sessionSocketStubState.createExecutionRunBackendMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(sessionSocketStubState.createExecutionRunRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
       backendId: 'customAcp',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       permissionMode: 'read_only',
       accountSettings,
     }));
+
+    await client.close();
+  });
+
+  it('derives the execution-run parent provider from runtimeDescriptorV1 when flavor is absent', async () => {
+    const { ApiSessionClient } = await import('./sessionClient');
+    const metadata = createTestMetadata({
+      path: '/tmp/project',
+      flavor: undefined,
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+        },
+      },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1', metadata }),
+    );
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.parentProvider).toBe('codex');
 
     await client.close();
   });
@@ -142,6 +168,11 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     await client.executionRuns.send({ runId: 'run_1', message: 'hello' });
     await client.executionRuns.stop({ runId: 'run_1' });
     await client.executionRuns.action({ runId: 'run_1', actionId: 'review.apply' });
+    const wait = client.executionRuns.wait;
+    expect(wait).toBeDefined();
+    if (!wait) throw new Error('Expected executionRuns.wait to be defined');
+    await wait({ runId: 'run_1', timeoutSeconds: 2, pollIntervalMs: 10 });
+    await wait({ runId: 'run_2', pollIntervalMs: 10 });
 
     expect(sessionSocketStubState.executionRunServiceMocks.startExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
@@ -203,6 +234,161 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         encryptionKey: expect.any(Uint8Array),
       }),
     }));
+    expect(sessionSocketStubState.executionRunServiceMocks.waitForExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
+      token: 'tok',
+      sessionId: 's1',
+      mode: 'plain',
+      runId: 'run_1',
+      timeoutMs: 2_000,
+      pollIntervalMs: 10,
+      ctx: expect.objectContaining({
+        encryptionVariant: 'dataKey',
+        encryptionKey: expect.any(Uint8Array),
+      }),
+    }));
+    expect(sessionSocketStubState.executionRunServiceMocks.waitForExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
+      token: 'tok',
+      sessionId: 's1',
+      mode: 'plain',
+      runId: 'run_2',
+      timeoutMs: null,
+      pollIntervalMs: 10,
+      ctx: expect.objectContaining({
+        encryptionVariant: 'dataKey',
+        encryptionKey: expect.any(Uint8Array),
+      }),
+    }));
+
+    await client.close();
+  });
+
+  it('persists voiceAgentRunV1 metadata when the execution-run public state updates', async () => {
+    const session = createPlainSessionFixture({
+      id: 's1',
+      metadata: createTestMetadata({ path: '/tmp/project' }),
+    });
+    let persistedMetadata = session.metadata;
+    let persistedMetadataVersion = session.metadataVersion;
+
+    sessionSocketStubState.sessionSocketStub = (await import('@/testkit/backends/apiSessionSocketHarness')).createApiSessionSocketStub({
+      id: 'session-socket',
+      connected: true,
+      emitWithAck: async (event, payload) => {
+        if (event !== 'update-metadata') {
+          return { result: 'success', version: persistedMetadataVersion, metadata: JSON.stringify(persistedMetadata) };
+        }
+        const nextMetadata = JSON.parse(String((payload as { metadata?: string }).metadata ?? 'null'));
+        persistedMetadata = nextMetadata;
+        persistedMetadataVersion += 1;
+        return {
+          result: 'success' as const,
+          version: persistedMetadataVersion,
+          metadata: JSON.stringify(nextMetadata),
+        };
+      },
+    });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', session);
+    const callback = sessionSocketStubState.executionRunHandlerContext.onExecutionRunPublicStateUpdated as
+      | ((run: Record<string, unknown>) => void)
+      | undefined;
+
+    expect(callback).toBeTypeOf('function');
+    callback?.({
+      runId: 'run_voice_1',
+      callId: 'call_1',
+      sidechainId: 'side_1',
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      status: 'running',
+      startedAtMs: 100,
+      transcript: { persistenceMode: 'persistent', epoch: 11 },
+      resumeHandle: {
+        kind: 'vendor_session.v1',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        vendorSessionId: 'vs_1',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(persistedMetadata).toMatchObject({
+        voiceAgentRunV1: {
+          v: 1,
+          runId: 'run_voice_1',
+          backendId: 'claude',
+          transcriptContractVersion: VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION,
+          resumeHandle: {
+            kind: 'vendor_session.v1',
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+            vendorSessionId: 'vs_1',
+          },
+        },
+      });
+    });
+
+    expect(sessionSocketStubState.sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
+      'update-metadata',
+      expect.objectContaining({
+        sid: 's1',
+        expectedVersion: 0,
+      }),
+    );
+
+    await client.close();
+  });
+
+  it('uses deterministic localIds for committed persistent voice transcript rows', async () => {
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
+
+    const transcriptWriter = sessionSocketStubState.executionRunHandlerContext.transcriptWriter as
+      | {
+          appendUserTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
+          appendAssistantTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
+        }
+      | undefined;
+
+    expect(transcriptWriter?.appendUserTextCommitted).toBeTypeOf('function');
+    expect(transcriptWriter?.appendAssistantTextCommitted).toBeTypeOf('function');
+
+    await transcriptWriter?.appendUserTextCommitted?.('hello', {
+      happier: {
+        kind: 'voice_agent_turn.v1',
+        payload: {
+          v: 1,
+          epoch: 7,
+          role: 'user',
+          voiceAgentId: 'va_1',
+          ts: 123,
+        },
+      },
+    });
+
+    await transcriptWriter?.appendAssistantTextCommitted?.('world', {
+      happier: {
+        kind: 'voice_agent_turn.v1',
+        payload: {
+          v: 1,
+          epoch: 7,
+          role: 'assistant',
+          voiceAgentId: 'va_1',
+          ts: 456,
+        },
+      },
+    });
+
+    const messageCalls = sessionSocketStubState.sessionSocketStub.emitWithAck.mock.calls
+      .filter((call: unknown[]) => call[0] === 'message')
+      .map((call: unknown[]) => call[1] as { localId?: unknown });
+
+    expect(messageCalls).toHaveLength(2);
+    expect(messageCalls[0]?.localId).toBe('voice-turn:va_1:7:user:123');
+    expect(messageCalls[1]?.localId).toBe('voice-turn:va_1:7:assistant:456');
 
     await client.close();
   });

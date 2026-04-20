@@ -1,9 +1,62 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
+
+const {
+  dispatchBridgeLifecycleHookEvent,
+  readCredentials,
+  resolveReplaySeedDraft,
+} = vi.hoisted(() => ({
+  dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue(undefined),
+  readCredentials: vi.fn(),
+  resolveReplaySeedDraft: vi.fn(),
+}));
+
+vi.mock('../../../extensions/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
+  dispatchBridgeLifecycleHookEvent,
+}));
+
+vi.mock('@/persistence', () => ({
+  readCredentials,
+}));
+
+vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
+  resolveReplaySeedDraft,
+}));
 
 import { ExecutionRunManager } from './ExecutionRunManager';
+
+function asExecutionRunHostRuntime(backend: AgentBackend) {
+  return createExecutionRunHostRuntimeFromAgentBackend(backend);
+}
+
+async function readExecutionRunTurnStreamUntilDone(args: Readonly<{
+  manager: ExecutionRunManager;
+  runId: string;
+  streamId: string;
+  maxEvents?: number;
+  maxReads?: number;
+}>): Promise<Array<unknown>> {
+  let lastEvents: Array<unknown> = [];
+
+  for (let i = 0; i < (args.maxReads ?? 8); i += 1) {
+    const read = await args.manager.readTurnStream(args.runId, {
+      streamId: args.streamId,
+      cursor: 0,
+      ...(typeof args.maxEvents === 'number' ? { maxEvents: args.maxEvents } : {}),
+    });
+    expect(read.ok).toBe(true);
+    lastEvents = (read as { events: Array<unknown> }).events;
+    if ((read as { done?: boolean }).done === true) {
+      return lastEvents;
+    }
+    await Promise.resolve();
+  }
+
+  return lastEvents;
+}
 
 function createStaticJsonBackend(responseText: string): AgentBackend {
   let handler: AgentMessageHandler | null = null;
@@ -135,7 +188,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: 'claude',
       cwd: process.cwd(),
       createBackend: (_opts: { backendId: string; permissionMode: string }) =>
-        ({
+        asExecutionRunHostRuntime({
           async startSession() {
             return { sessionId: 'child_session_1' as SessionId };
           },
@@ -177,7 +230,7 @@ describe('ExecutionRunManager (review intent)', () => {
           },
           async dispose() {},
           async waitForResponseComplete() {},
-        } as any),
+        } as AgentBackend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -234,7 +287,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => createDelayedJsonBackend(JSON.stringify({ findings: [], summary: 'late' }), 30),
+      createBackend: () => asExecutionRunHostRuntime(createDelayedJsonBackend(JSON.stringify({ findings: [], summary: 'late' }), 30)),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
       boundedTimeoutMs: 10,
@@ -294,7 +347,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -364,7 +417,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -437,7 +490,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -470,7 +523,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: 'claude',
       cwd: process.cwd(),
       createBackend: (_opts: { backendId: string; permissionMode: string }) =>
-        createStaticJsonBackend(
+        asExecutionRunHostRuntime(createStaticJsonBackend(
           JSON.stringify({
             findings: [
               {
@@ -483,7 +536,7 @@ describe('ExecutionRunManager (review intent)', () => {
             ],
             summary: 'Summary.',
           }),
-        ),
+        )),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -524,7 +577,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: 'claude',
       cwd: process.cwd(),
       createBackend: (_opts: { backendId: string; permissionMode: string }) =>
-        createStaticJsonBackend(
+        asExecutionRunHostRuntime(createStaticJsonBackend(
           JSON.stringify({
             findings: [
               {
@@ -537,7 +590,7 @@ describe('ExecutionRunManager (review intent)', () => {
             ],
             summary: 'Summary.',
           }),
-        ),
+        )),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -594,7 +647,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: 'claude',
       cwd: process.cwd(),
       createBackend: (_opts: { backendId: string; permissionMode: string }) =>
-        createStaticJsonBackend(
+        asExecutionRunHostRuntime(createStaticJsonBackend(
           JSON.stringify({
             findings: [
               {
@@ -607,7 +660,7 @@ describe('ExecutionRunManager (review intent)', () => {
             ],
             summary: 'Summary.',
           }),
-        ),
+        )),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -659,7 +712,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -706,7 +759,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: 'claude',
       cwd: process.cwd(),
       createBackend: () =>
-        ({
+        asExecutionRunHostRuntime({
           async startSession() {
             return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
           },
@@ -749,7 +802,7 @@ describe('ExecutionRunManager (review intent)', () => {
           },
           async dispose() {},
           async waitForResponseComplete() {},
-        } as any),
+        } as AgentBackend),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -791,7 +844,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: 'claude',
       cwd: process.cwd(),
       createBackend: () =>
-        ({
+        asExecutionRunHostRuntime({
           async startSession() {
             return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
           },
@@ -834,7 +887,7 @@ describe('ExecutionRunManager (review intent)', () => {
           },
           async dispose() {},
           async waitForResponseComplete() {},
-        } as any),
+        } as AgentBackend),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -870,7 +923,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: 'claude',
       cwd: process.cwd(),
       createBackend: (_opts: { backendId: string; permissionMode: string }) =>
-        createDelayedJsonBackend(JSON.stringify({ summary: 'late', findings: [] }), 50_000),
+        asExecutionRunHostRuntime(createDelayedJsonBackend(JSON.stringify({ summary: 'late', findings: [] }), 50_000)),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -920,7 +973,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -950,7 +1003,7 @@ describe('ExecutionRunManager (memory_hints intent)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => createStaticJsonBackend('{"ok":true}'),
+      createBackend: () => asExecutionRunHostRuntime(createStaticJsonBackend('{"ok":true}')),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1015,7 +1068,7 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1097,7 +1150,7 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1132,11 +1185,12 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     expect(concatenatedStreamingText).toContain('Working');
     expect(concatenatedStreamingText).not.toContain('"findings"');
 
-    // A final summary message is still allowed so users get a clear terminal note.
+    // A final prose message is allowed so users get a clear terminal note.
     const finalNonStreaming = sent.find(
       (m) => (m.body as any)?.type === 'message' && (m.body as any)?.sidechainId === started.sidechainId,
     );
-    expect(String((finalNonStreaming?.body as any)?.message ?? '')).toContain('Ok');
+    expect(String((finalNonStreaming?.body as any)?.message ?? '')).toContain('Working');
+    expect(String((finalNonStreaming?.body as any)?.message ?? '')).not.toContain('"findings"');
   });
 });
 
@@ -1150,6 +1204,51 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       },
       async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
         handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+  }
+
+  function createPromptEchoResumeBackend(): AgentBackend {
+    let handler: AgentMessageHandler | null = null;
+    return {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async loadSession(sessionId: string): Promise<{ sessionId: SessionId }> {
+        return { sessionId: sessionId as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+        handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+  }
+
+  function createReadyHandshakePromptEchoBackend(): AgentBackend {
+    let handler: AgentMessageHandler | null = null;
+    const sessionId: SessionId = 'child_session_ready' as SessionId;
+    let sendCount = 0;
+    return {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+        sendCount += 1;
+        handler?.({
+          type: 'model-output',
+          fullText: sendCount === 1 ? 'READY' : `reply:${prompt}`,
+        } as AgentMessage);
       },
       async cancel(_sessionId: SessionId): Promise<void> {},
       onMessage(next: AgentMessageHandler): void {
@@ -1188,7 +1287,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1226,7 +1325,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => createPromptEchoBackend(),
+      createBackend: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1271,7 +1370,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => createPromptEchoBackend(),
+      createBackend: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1295,6 +1394,92 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     });
   });
 
+  it('applies voice_agent prepareStartParams before starting replay-backed runs', async () => {
+    vi.mocked(readCredentials).mockResolvedValue({
+      token: 'credential-token',
+    } as never);
+    vi.mocked(resolveReplaySeedDraft).mockResolvedValue({
+      seedDraft: 'Replay seed summary',
+    } as never);
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: '/tmp/voice-agent-manager',
+      createBackend: () => asExecutionRunHostRuntime(createReadyHandshakePromptEchoBackend()),
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Operator supplied context.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      bootstrapMode: 'ready_handshake',
+      replay: {
+        kind: 'voice_session.v1',
+        previousSessionId: 'sess_voice',
+        transcriptEpoch: 4,
+      },
+    } as any);
+
+    expect(resolveReplaySeedDraft).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/tmp/voice-agent-manager',
+      source: {
+        kind: 'voice_session.v1',
+        previousSessionId: 'sess_voice',
+        transcriptEpoch: 4,
+      },
+    }));
+    expect(manager.get(started.runId)?.voiceAgentConfig).toMatchObject({
+      initialContextMode: 'first_turn',
+    });
+    expect(manager.get(started.runId)?.voiceAgentConfig?.initialContext).toContain('Replay seed summary');
+  });
+
+  it('emits a fresh public-state update when a resumable voice_agent run is ensured after stop', async () => {
+    const publicStates: Array<Record<string, unknown>> = [];
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => asExecutionRunHostRuntime(createPromptEchoResumeBackend()),
+      sendAcp: () => {},
+      onPublicStateUpdated: (run) => {
+        publicStates.push(run as Record<string, unknown>);
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      transcript: { persistenceMode: 'persistent', epoch: 11 },
+    });
+
+    await manager.stop(started.runId);
+    const beforeEnsureUpdates = publicStates.length;
+
+    const ensured = await manager.ensure(started.runId, { resume: true });
+
+    expect(ensured.ok).toBe(true);
+    expect(publicStates).toHaveLength(beforeEnsureUpdates + 1);
+    expect(publicStates.at(-1)).toMatchObject({
+      runId: started.runId,
+      intent: 'voice_agent',
+      status: 'running',
+      transcript: { persistenceMode: 'persistent', epoch: 11 },
+    });
+  });
+
   it('builds voice-agent prompts from resolved account settings instead of local CLI settings', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const seenCalls: Array<{ settings?: unknown; profileId?: string | null; sessionId?: string | null; workingDirectory?: string | null }> = [];
@@ -1302,7 +1487,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => createPromptEchoBackend(),
+      createBackend: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1328,13 +1513,13 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
     const streamStart = await manager.startTurnStream(started.runId, { message: 'hello' });
     expect(streamStart.ok).toBe(true);
-    const read = await manager.readTurnStream(started.runId, {
+    const events = await readExecutionRunTurnStreamUntilDone({
+      manager,
+      runId: started.runId,
       streamId: (streamStart as { streamId: string }).streamId,
-      cursor: 0,
       maxEvents: 128,
     });
-    expect(read.ok).toBe(true);
-    expect(JSON.stringify((read as { events: unknown[] }).events)).toContain('Voice stack block');
+    expect(JSON.stringify(events)).toContain('Voice stack block');
     expect(seenCalls).toEqual([{
       settings: { promptStacksSource: 'account-settings' },
       profileId: 'work',
@@ -1351,7 +1536,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => createDelayedJsonBackend('{"ok":true}', 50_000),
+      createBackend: () => asExecutionRunHostRuntime(createDelayedJsonBackend('{"ok":true}', 50_000)),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1381,7 +1566,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       cwd: process.cwd(),
       createBackend: (opts) => {
         seen.push(opts as Record<string, unknown>);
-        return createPromptEchoBackend();
+        return asExecutionRunHostRuntime(createPromptEchoBackend());
       },
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
@@ -1416,7 +1601,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       cwd: process.cwd(),
       createBackend: (opts) => {
         seen.push(opts as Record<string, unknown>);
-        return createPromptEchoBackend();
+        return asExecutionRunHostRuntime(createPromptEchoBackend());
       },
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
@@ -1470,7 +1655,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1554,7 +1739,7 @@ describe('ExecutionRunManager (bounded external send)', () => {
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
       cwd: process.cwd(),
-      createBackend: () => backend,
+      createBackend: () => asExecutionRunHostRuntime(backend),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });

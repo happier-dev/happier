@@ -20,7 +20,7 @@ const { createConfiguredAcpProbeBackendMock } = vi.hoisted(() => ({
   createConfiguredAcpProbeBackendMock: vi.fn(async () => null),
 }));
 
-vi.mock('./createConfiguredAcpProbeBackend', () => ({
+vi.mock('./configuredAcpProbeBackend', () => ({
   createConfiguredAcpProbeBackend: createConfiguredAcpProbeBackendMock,
 }));
 
@@ -77,6 +77,11 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
     expect(res.availableModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'default', name: 'Default' }),
       expect.objectContaining({
+        id: 'claude-opus-4-7',
+        name: 'Opus 4.7',
+        description: expect.any(String),
+      }),
+      expect.objectContaining({
         id: 'claude-opus-4-6',
         name: 'Opus 4.6',
         description: expect.any(String),
@@ -88,8 +93,10 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
       }),
     ]));
 
-    const opus = res.availableModels.find((model) => model.id === 'claude-opus-4-6') ?? null;
+    const opus = res.availableModels.find((model) => model.id === 'claude-opus-4-7') ?? null;
     expect(opus?.modelOptions?.some((opt) => opt.id === 'reasoning_effort')).toBe(true);
+    expect(opus?.modelOptions?.[0]?.currentValue).toBe('xhigh');
+    expect(opus?.modelOptions?.[0]?.options?.some((opt) => opt.value === 'xhigh')).toBe(true);
     expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
   });
 });

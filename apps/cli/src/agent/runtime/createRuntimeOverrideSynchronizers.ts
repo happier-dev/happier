@@ -2,20 +2,22 @@ import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOp
 import { createSessionModeOverrideSynchronizer } from './sessionModeOverrideSync';
 import { createModelOverrideSynchronizer } from './modelOverrideSync';
 
-type AcpRuntimeOverrideTarget = {
+export type RuntimeOverrideTarget = Readonly<{
   setSessionMode: (modeId: string) => Promise<void>;
-  setSessionConfigOption: (configId: string, valueId: string) => Promise<void>;
+  setSessionConfigOption: (configId: string, valueId: string | number | boolean | null) => Promise<void>;
   setSessionModel: (modelId: string) => Promise<void>;
-};
+}>;
+
+export type RuntimeOverrideSynchronizers = Readonly<{
+  syncFromMetadata: () => void;
+  flushPendingAfterStart: () => Promise<void>;
+}>;
 
 export function createRuntimeOverrideSynchronizers(params: Readonly<{
   session: { getMetadataSnapshot: () => import('@/api/types').Metadata | null };
-  runtime: AcpRuntimeOverrideTarget;
+  runtime: RuntimeOverrideTarget;
   isStarted: () => boolean;
-}>): {
-  syncFromMetadata: () => void;
-  flushPendingAfterStart: () => Promise<void>;
-} {
+}>): RuntimeOverrideSynchronizers {
   const modeSync = createSessionModeOverrideSynchronizer({
     session: params.session,
     runtime: params.runtime,

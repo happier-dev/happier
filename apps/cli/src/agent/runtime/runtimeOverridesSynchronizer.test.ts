@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { initializeRuntimeOverridesSynchronizer } from './runtimeOverridesSynchronizer';
+import {
+  initializeRuntimeOverridesSynchronizer,
+  setupRuntimeMetadataDrivenOverridesSync,
+} from './runtimeOverridesSynchronizer';
 
 describe('initializeRuntimeOverridesSynchronizer', () => {
   it('prefers newer transcript intent over older metadata when seeding attach sessions', async () => {
@@ -110,5 +113,90 @@ describe('initializeRuntimeOverridesSynchronizer', () => {
     expect(sync.getSnapshot().modelOverride.updatedAt).toBe(50);
     expect(onPermissionModeApplied).toHaveBeenCalledTimes(1);
     expect(onModelOverrideApplied).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('setupRuntimeMetadataDrivenOverridesSync', () => {
+  it('performs an immediate shared metadata sync and persists startup overrides without waiting for transcript seeding', async () => {
+    let resolveTranscriptSeed: ((value: { intent: any; updatedAt: number } | null) => void) | undefined;
+    const persistStartupOverridesCache = vi.fn();
+
+    const permissionMode = { current: 'default' as any, updatedAt: 0 };
+    const modelOverride = { current: null as string | null, updatedAt: 0 };
+
+    await setupRuntimeMetadataDrivenOverridesSync({
+      explicitPermissionMode: undefined,
+      sessionKind: 'attach',
+      session: {
+        getMetadataSnapshot: () =>
+          ({
+            permissionMode: 'acceptEdits',
+            permissionModeUpdatedAt: 11,
+            modelOverrideV1: { v: 1, updatedAt: 12, modelId: 'gpt-4.1' },
+          }) as any,
+        fetchLatestUserPermissionIntentFromTranscript: () =>
+          new Promise((resolve) => {
+            resolveTranscriptSeed = resolve;
+          }),
+        waitForMetadataUpdate: async () => false,
+      },
+      permissionMode,
+      modelOverride,
+      persistStartupOverridesCache,
+      shouldExit: () => true,
+      getAbortSignal: () => undefined,
+    });
+
+    expect(permissionMode).toEqual({ current: 'safe-yolo', updatedAt: 11 });
+    expect(modelOverride).toEqual({ current: 'gpt-4.1', updatedAt: 12 });
+    expect(persistStartupOverridesCache).toHaveBeenCalledTimes(1);
+
+    if (resolveTranscriptSeed) {
+      resolveTranscriptSeed(null);
+    }
+    await Promise.resolve();
+  });
+
+  it('replays metadata updates through the shared watcher loop', async () => {
+    let metadata = {
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+      modelOverrideV1: { v: 1, updatedAt: 2, modelId: 'gpt-4o-mini' },
+    } as any;
+    let shouldExit = false;
+    let waitCalls = 0;
+
+    const permissionMode = { current: 'default' as any, updatedAt: 0 };
+    const modelOverride = { current: null as string | null, updatedAt: 0 };
+
+    await setupRuntimeMetadataDrivenOverridesSync({
+      explicitPermissionMode: undefined,
+      sessionKind: 'fresh',
+      session: {
+        getMetadataSnapshot: () => metadata,
+        fetchLatestUserPermissionIntentFromTranscript: async () => null,
+        waitForMetadataUpdate: async () => {
+          waitCalls += 1;
+          metadata = {
+            permissionMode: 'plan',
+            permissionModeUpdatedAt: 20,
+            modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'gpt-5' },
+          } as any;
+          shouldExit = true;
+          return waitCalls === 1;
+        },
+      },
+      permissionMode,
+      modelOverride,
+      persistStartupOverridesCache: () => {},
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => undefined,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(permissionMode).toEqual({ current: 'plan', updatedAt: 20 });
+    expect(modelOverride).toEqual({ current: 'gpt-5', updatedAt: 21 });
   });
 });

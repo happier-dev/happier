@@ -1,15 +1,21 @@
 import type { RpcHandlerManagerLike } from '@/api/rpc/types';
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
 import type { AgentState, Metadata } from '../types';
+import type { ProviderTranscriptDispatchRequest } from './client/transcript/providerDispatch';
 
 export interface SessionClientPort {
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
 
   sendSessionEvent(event: SessionEventMessage, id?: string): void;
+  sendProviderMessage?(request: ProviderTranscriptDispatchRequest): void;
+  // Compat-only aliases for existing provider-owned callers. New callers should use sendProviderMessage().
   sendClaudeSessionMessage(message: RawJSONLines, meta?: Record<string, unknown>): void;
+  // Compat-only alias for existing provider-owned callers. New callers should use sendProviderMessage().
+  sendCodexMessage?(body: unknown): void;
   sendAgentMessage(provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }): void;
+  sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }): Promise<void>;
 
   updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
   updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void>;

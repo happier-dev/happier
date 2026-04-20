@@ -14,7 +14,7 @@ import { EventEmitter } from 'node:events';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import type { AgentState, Metadata, Usage, UserMessage } from '@/api/types';
+import type { AgentState, Metadata, UserMessage } from '@/api/types';
 
 type ApiSessionClientStubContract = Pick<
     ApiSessionClient,
@@ -26,7 +26,6 @@ type ApiSessionClientStubContract = Pick<
     | 'sendSessionEvent'
     | 'keepAlive'
     | 'sendSessionDeath'
-    | 'sendUsageData'
     | 'updateMetadata'
     | 'updateAgentState'
     | 'onUserMessage'
@@ -62,7 +61,6 @@ class OfflineSessionStub extends EventEmitter implements ApiSessionClientStubCon
     ): void {}
     keepAlive(_thinking: boolean, _mode: 'local' | 'remote'): void {}
     sendSessionDeath(): void {}
-    sendUsageData(_usage: Usage): void {}
     async updateMetadata(_handler: (metadata: Metadata) => Metadata): Promise<void> {}
     async updateAgentState(_handler: (metadata: AgentState) => AgentState): Promise<void> {}
     onUserMessage(_callback: (data: UserMessage) => void): void {}

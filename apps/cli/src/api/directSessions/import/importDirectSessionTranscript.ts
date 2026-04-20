@@ -12,7 +12,7 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { LoadedLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
-import { getDirectSessionProviderOps } from '@/backends/catalog';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 
 function sha256(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
@@ -52,7 +52,11 @@ async function loadDirectTranscriptPage(params: Readonly<{
   maxBytes: number;
   maxItems: number;
 }>): Promise<DirectTranscriptPage> {
-  return await (await getDirectSessionProviderOps(params.linked.providerId)).pageTranscript({
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.linked.providerId)).directSessions;
+  if (!providerOps) {
+    throw new Error(`Unsupported direct-session provider: ${params.linked.providerId}`);
+  }
+  return await providerOps.pageTranscript({
     source: params.linked.source,
     remoteSessionId: params.linked.remoteSessionId,
     direction: 'older',

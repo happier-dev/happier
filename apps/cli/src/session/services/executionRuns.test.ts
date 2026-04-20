@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 const { callSessionRpc, listExecutionRunMarkers, readRawSessionHistoryRows } = vi.hoisted(() => ({
     callSessionRpc: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock('./getSessionHistory', () => ({
     readRawSessionHistoryRows,
 }));
 
-import { getExecutionRun, listExecutionRuns, normalizeExecutionRunRpcPayload } from './executionRuns';
+import { getExecutionRun, listExecutionRuns, normalizeExecutionRunRpcPayload, waitForExecutionRun } from './executionRuns';
 
 function createRun(params: Readonly<{
     runId: string;
@@ -47,7 +47,7 @@ function createMarker(params: Readonly<{
     status: 'running' | 'succeeded';
     startedAtMs: number;
     agentId?: 'claude' | 'opencode';
-    backendTarget?: BackendTargetRefV1;
+    backendTarget?: BackendTargetRefV2Input;
 }>) {
     return {
         happySessionId: 'sess-1',
@@ -55,7 +55,11 @@ function createMarker(params: Readonly<{
         callId: `${params.runId}-call`,
         sidechainId: `${params.runId}-sidechain`,
         intent: 'plan',
-        backendTarget: params.backendTarget ?? { kind: 'builtInAgent', agentId: params.agentId ?? 'claude' },
+        backendTarget: params.backendTarget ?? {
+            kind: 'backend',
+            backendId: params.agentId ?? 'claude',
+            sourceKind: 'built_in',
+        },
         permissionMode: 'workspace_write',
         retentionPolicy: 'ephemeral',
         runClass: 'bounded',
@@ -92,7 +96,11 @@ function createTranscriptRows(params: Readonly<{
                             callId,
                             sidechainId: callId,
                             intent: 'plan',
-                            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                            backendTarget: {
+                                kind: 'backend',
+                                backendId: 'claude',
+                                sourceKind: 'built_in',
+                            },
                             permissionMode: 'workspace_write',
                             retentionPolicy: 'ephemeral',
                             runClass: 'bounded',
@@ -121,7 +129,11 @@ function createTranscriptRows(params: Readonly<{
                             runId: params.runId,
                             callId,
                             sidechainId: callId,
-                            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                            backendTarget: {
+                                kind: 'backend',
+                                backendId: 'claude',
+                                sourceKind: 'built_in',
+                            },
                             intent: 'plan',
                             permissionMode: 'workspace_write',
                             retentionPolicy: 'ephemeral',
@@ -235,14 +247,19 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('matches configured ACP marker-backed runs when filtering by the legacy customAcp backend id', async () => {
+    it('matches canonical V2 configured ACP marker-backed runs when filtering by the legacy customAcp backend id', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([
             createMarker({
                 runId: 'run-marker-configured',
                 status: 'running',
                 startedAtMs: 20,
-                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'review-bot',
+                    configuredBackendId: 'review-bot',
+                    sourceKind: 'configured',
+                },
             }),
             createMarker({ runId: 'run-marker-built-in', status: 'succeeded', startedAtMs: 30 }),
         ]);
@@ -258,10 +275,19 @@ describe('listExecutionRuns', () => {
             ok: true,
             data: {
                 runs: [
-                    expect.objectContaining({
+                    {
                         runId: 'run-marker-configured',
+                        callId: 'run-marker-configured-call',
+                        sidechainId: 'run-marker-configured-sidechain',
+                        intent: 'plan',
                         backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-                    }),
+                        permissionMode: 'workspace_write',
+                        retentionPolicy: 'ephemeral',
+                        runClass: 'bounded',
+                        ioMode: 'request_response',
+                        status: 'running',
+                        startedAtMs: 20,
+                    },
                 ],
             },
         });
@@ -274,7 +300,11 @@ describe('listExecutionRuns', () => {
                 runId: 'run-marker-legacy-custom-acp',
                 status: 'running',
                 startedAtMs: 20,
-                backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'customAcp',
+                    sourceKind: 'built_in',
+                },
             }),
         ]);
         readRawSessionHistoryRows.mockResolvedValueOnce([]);
@@ -294,14 +324,19 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('matches configured ACP marker-backed runs when filtering by the concrete configured backend id', async () => {
+    it('matches canonical V2 configured ACP marker-backed runs when filtering by the concrete configured backend id', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([
             createMarker({
                 runId: 'run-marker-configured',
                 status: 'running',
                 startedAtMs: 20,
-                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'review-bot',
+                    configuredBackendId: 'review-bot',
+                    sourceKind: 'configured',
+                },
             }),
             createMarker({ runId: 'run-marker-built-in', status: 'succeeded', startedAtMs: 30 }),
         ]);
@@ -317,10 +352,19 @@ describe('listExecutionRuns', () => {
             ok: true,
             data: {
                 runs: [
-                    expect.objectContaining({
+                    {
                         runId: 'run-marker-configured',
+                        callId: 'run-marker-configured-call',
+                        sidechainId: 'run-marker-configured-sidechain',
+                        intent: 'plan',
                         backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-                    }),
+                        permissionMode: 'workspace_write',
+                        retentionPolicy: 'ephemeral',
+                        runClass: 'bounded',
+                        ioMode: 'request_response',
+                        status: 'running',
+                        startedAtMs: 20,
+                    },
                 ],
             },
         });
@@ -333,13 +377,22 @@ describe('listExecutionRuns', () => {
                 runId: 'run-marker-configured-codex',
                 status: 'running',
                 startedAtMs: 20,
-                backendTarget: { kind: 'configuredAcpBackend', backendId: 'codex' },
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'codex',
+                    configuredBackendId: 'codex',
+                    sourceKind: 'configured',
+                },
             }),
             createMarker({
                 runId: 'run-marker-built-in-codex',
                 status: 'succeeded',
                 startedAtMs: 30,
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'codex',
+                    sourceKind: 'built_in',
+                },
             }),
         ]);
 
@@ -536,7 +589,11 @@ describe('listExecutionRuns', () => {
                                 runId: 'run_hist_2',
                                 callId: 'call_hist_2',
                                 sidechainId: 'call_hist_2',
-                                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                                backendTarget: {
+                                    kind: 'backend',
+                                    backendId: 'claude',
+                                    sourceKind: 'built_in',
+                                },
                                 intent: 'plan',
                                 permissionMode: 'workspace_write',
                                 retentionPolicy: 'ephemeral',
@@ -568,7 +625,11 @@ describe('listExecutionRuns', () => {
                                 callId: 'call_hist_2',
                                 sidechainId: 'call_hist_2',
                                 intent: 'plan',
-                                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                                backendTarget: {
+                                    kind: 'backend',
+                                    backendId: 'claude',
+                                    sourceKind: 'built_in',
+                                },
                                 permissionMode: 'workspace_write',
                                 retentionPolicy: 'ephemeral',
                                 runClass: 'bounded',
@@ -654,6 +715,26 @@ describe('listExecutionRuns', () => {
 });
 
 describe('normalizeExecutionRunRpcPayload', () => {
+    it('unwraps successful service envelopes without adding another data layer', () => {
+        expect(
+            normalizeExecutionRunRpcPayload({
+                ok: true,
+                data: {
+                    runId: 'run_1',
+                    callId: 'call_1',
+                    sidechainId: 'side_1',
+                },
+            }),
+        ).toEqual({
+            ok: true,
+            data: {
+                runId: 'run_1',
+                callId: 'call_1',
+                sidechainId: 'side_1',
+            },
+        });
+    });
+
     it('treats raw rpc error payloads as failures even when ok is absent', () => {
         expect(
             normalizeExecutionRunRpcPayload({
@@ -740,7 +821,11 @@ describe('getExecutionRun', () => {
                                 callId: 'call_hist_1',
                                 sidechainId: 'call_hist_1',
                                 intent: 'plan',
-                                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                                backendTarget: {
+                                    kind: 'backend',
+                                    backendId: 'claude',
+                                    sourceKind: 'built_in',
+                                },
                                 permissionMode: 'workspace_write',
                                 retentionPolicy: 'ephemeral',
                                 runClass: 'bounded',
@@ -769,7 +854,11 @@ describe('getExecutionRun', () => {
                                 runId: 'run_hist_1',
                                 callId: 'call_hist_1',
                                 sidechainId: 'call_hist_1',
-                                backendId: 'claude',
+                                backendTarget: {
+                                    kind: 'backend',
+                                    backendId: 'claude',
+                                    sourceKind: 'built_in',
+                                },
                                 intent: 'plan',
                                 permissionMode: 'workspace_write',
                                 retentionPolicy: 'ephemeral',
@@ -874,5 +963,47 @@ describe('getExecutionRun', () => {
             code: 'unknown_error',
             message: 'Socket connect timeout',
         });
+    });
+});
+
+describe('waitForExecutionRun', () => {
+    beforeEach(() => {
+        callSessionRpc.mockReset();
+        listExecutionRunMarkers.mockReset();
+        readRawSessionHistoryRows.mockReset();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('does not apply a product timeout when timeoutMs is null', async () => {
+        vi.useFakeTimers();
+        const succeededRun = createRun({ runId: 'run_1', status: 'succeeded', startedAtMs: 1 });
+        callSessionRpc
+            .mockResolvedValueOnce({
+                run: createRun({ runId: 'run_1', status: 'running', startedAtMs: 1 }),
+            })
+            .mockResolvedValueOnce({
+                run: succeededRun,
+            });
+
+        const waitPromise = waitForExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            runId: 'run_1',
+            timeoutMs: null,
+            pollIntervalMs: 1_000,
+        });
+
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        await expect(waitPromise).resolves.toEqual({
+            ok: true,
+            status: 'succeeded',
+            result: { run: succeededRun },
+        });
+        expect(callSessionRpc).toHaveBeenCalledTimes(2);
     });
 });

@@ -1,11 +1,10 @@
-import { z } from 'zod';
+import { type ActionId, type ResolvedActionOption } from '@happier-dev/protocol';
 import {
-  buildBackendTargetKey,
-  listActionSpecs,
-  type ActionId,
-  type ResolvedActionOption,
-} from '@happier-dev/protocol';
-import { getEquivalentActionIdForBuiltInTool, isActionAvailableOnToolSurface } from './actionToolCatalog';
+  getActionToolIdForToolName,
+  getEquivalentActionIdForBuiltInTool,
+  isActionKnownToToolCatalog,
+  isActionAvailableOnToolSurface,
+} from './actionToolCatalog';
 import type { HappierBuiltInToolDispatchResult } from './types';
 import {
   getActionSpecForSurface,
@@ -15,14 +14,15 @@ import {
 import {
   actionExecuteToolInputSchema,
   changeTitleToolInputSchema,
-  executionRunStartToolInputSchema,
   normalizeExecutionRunStartToolInput,
+  pluginsReloadToolInputSchema,
 } from './manualToolContracts';
+import { reloadTrustedLocalPluginTool } from './reloadTrustedLocalPluginTool';
 
 type DispatchDeps = Readonly<{
   changeTitle: (sessionId: string, title: string) => Promise<unknown>;
-  startExecutionRun: (sessionId: string, request: unknown) => Promise<HappierBuiltInToolDispatchResult>;
   executeActionByToolName: (toolName: string, args: unknown, defaultSessionId: string) => Promise<HappierBuiltInToolDispatchResult>;
+  reloadPlugin?: (pluginId: string) => Promise<HappierBuiltInToolDispatchResult>;
   resolveActionOptions?: (args: Readonly<{
     actionId: ActionId | null;
     fieldPath: string | null;
@@ -46,18 +46,6 @@ type DispatchDeps = Readonly<{
   isActionEnabled?: (id: ActionId) => boolean;
 }>;
 
-const ACTION_TOOL_NAMES = new Set(
-  listActionSpecs()
-    .map((spec) => String(spec.bindings?.mcpToolName ?? '').trim())
-    .filter((toolName) => toolName.length > 0),
-);
-
-const ACTION_ID_BY_TOOL_NAME = new Map(
-  listActionSpecs()
-    .map((spec) => [String(spec.bindings?.mcpToolName ?? '').trim(), spec.id] as const)
-    .filter(([toolName]) => toolName.length > 0),
-);
-
 function getExecutionRunStartEquivalentActionId(args: unknown): ActionId | null {
   const intent = typeof (args as { intent?: unknown } | null)?.intent === 'string'
     ? String((args as { intent?: unknown }).intent).trim()
@@ -75,12 +63,6 @@ function getExecutionRunStartEquivalentActionId(args: unknown): ActionId | null 
       return null;
   }
 }
-
-const EXECUTION_RUN_START_ACTION_TOOL_NAME_BY_INTENT = Object.freeze({
-  plan: 'subagents_plan_start',
-  delegate: 'subagents_delegate_start',
-  voice_agent: 'voice_agent_start',
-} as const);
 
 function ok(result: unknown): HappierBuiltInToolDispatchResult {
   return { ok: true, result };
@@ -111,18 +93,20 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   args: unknown;
   sessionId: string;
   surface?: 'mcp' | 'cli' | 'session_agent';
+  registry?: import('@/extensions/registry/types').ResolvedContributionRegistry;
   deps: DispatchDeps;
 }>): Promise<HappierBuiltInToolDispatchResult> {
   const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
   const surface = params.surface ?? 'session_agent';
 
-  const gatedManualActionId = getEquivalentActionIdForBuiltInTool(params.toolName);
+  const gatedManualActionId = getEquivalentActionIdForBuiltInTool(params.toolName, { registry: params.registry });
   if (
     gatedManualActionId
     && !isActionAvailableOnToolSurface({
       actionId: gatedManualActionId,
       surface,
       isActionEnabled,
+      registry: params.registry,
     })
   ) {
     return err('action_disabled', 'Action is disabled');
@@ -132,6 +116,17 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     const parsed = changeTitleToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid title payload');
     return normalizeChangeTitleResult(await params.deps.changeTitle(params.sessionId, parsed.data.title));
+  }
+
+  if (params.toolName === 'plugins_reload') {
+    const parsed = pluginsReloadToolInputSchema.safeParse(params.args ?? {});
+    if (!parsed.success) return err('invalid_action_input', 'Invalid plugin reload payload');
+    if (params.deps.reloadPlugin) {
+      return await params.deps.reloadPlugin(parsed.data.pluginId);
+    }
+    return await reloadTrustedLocalPluginTool({
+      pluginId: parsed.data.pluginId,
+    });
   }
 
   if (params.toolName === 'action_spec_search') {
@@ -145,48 +140,18 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   }
 
   if (params.toolName === 'execution_run_start') {
-    const equivalentActionId = getExecutionRunStartEquivalentActionId(params.args);
-    if (equivalentActionId && !isActionEnabled(equivalentActionId)) {
-      return err('action_disabled', 'Action is disabled');
-    }
-
-    const parsed = executionRunStartToolInputSchema.safeParse(params.args ?? {});
-    if (parsed.success) {
-      const intent = parsed.data.intent;
-      const actionToolName = EXECUTION_RUN_START_ACTION_TOOL_NAME_BY_INTENT[intent as keyof typeof EXECUTION_RUN_START_ACTION_TOOL_NAME_BY_INTENT];
-
-      // Prefer action-backed intent starts (plan/delegate/voice) for convergence across CLI/MCP/built-in tools.
-      // Fall back to the legacy execution.run.start path for older payloads that cannot satisfy action schemas.
-      const instructions = typeof parsed.data.instructions === 'string' ? parsed.data.instructions.trim() : '';
-      if (actionToolName && instructions) {
-        if (typeof parsed.data.sessionId === 'string' && parsed.data.sessionId.trim() !== params.sessionId) {
-          return err('execution_run_not_allowed', 'This tool call is scoped to a different session');
-        }
-
-        const backendTarget = parsed.data.backendTarget ?? {
-          kind: 'builtInAgent' as const,
-          agentId: String(parsed.data.backendId ?? '').trim(),
-        };
-
-        return await params.deps.executeActionByToolName(
-          actionToolName,
-          {
-            ...(typeof (params.args as any) === 'object' && params.args !== null ? (params.args as Record<string, unknown>) : {}),
-            sessionId: params.sessionId,
-            instructions,
-            backendTargetKeys: [buildBackendTargetKey(backendTarget)],
-          },
-          params.sessionId,
-        );
-      }
-    }
-
     const normalized = normalizeExecutionRunStartToolInput({
       sessionId: params.sessionId,
       args: params.args,
     });
     if (!normalized.ok) return err(normalized.errorCode, normalized.error);
-    return await params.deps.startExecutionRun(params.sessionId, normalized.request);
+
+    const equivalentActionId = getExecutionRunStartEquivalentActionId(normalized.request);
+    if (equivalentActionId && !isActionEnabled(equivalentActionId)) {
+      return err('action_disabled', 'Action is disabled');
+    }
+
+    return await params.deps.executeActionByToolName('execution_run_start', normalized.request, params.sessionId);
   }
 
   if (params.toolName === 'action_options_resolve') {
@@ -199,10 +164,14 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   if (params.toolName === 'action_execute') {
     const parsed = actionExecuteToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid action execute request');
-    if (!isActionAvailableOnToolSurface({
-      actionId: parsed.data.actionId as ActionId,
+    const actionKnownToLocalCatalog = isActionKnownToToolCatalog(parsed.data.actionId, {
+      registry: params.registry,
+    });
+    if (actionKnownToLocalCatalog && !isActionAvailableOnToolSurface({
+      actionId: parsed.data.actionId,
       surface,
       isActionEnabled,
+      registry: params.registry,
     })) {
       return err('action_disabled', 'Action is disabled');
     }
@@ -216,12 +185,13 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     );
   }
 
-  if (ACTION_TOOL_NAMES.has(params.toolName)) {
-    const actionId = ACTION_ID_BY_TOOL_NAME.get(params.toolName) ?? null;
-    if (actionId && !isActionAvailableOnToolSurface({
+  const actionId = getActionToolIdForToolName(params.toolName, { registry: params.registry });
+  if (actionId) {
+    if (!isActionAvailableOnToolSurface({
       actionId,
       surface,
       isActionEnabled,
+      registry: params.registry,
     })) {
       return err('action_disabled', 'Action is disabled');
     }

@@ -2,6 +2,7 @@ import { logger } from '@/ui/logger';
 
 import { extractTextFromContentBlock } from './content';
 import { DEFAULT_IDLE_TIMEOUT_MS, type HandlerContext, type HandlerResult, type SessionUpdate } from './types';
+import { resolvePostToolCallIdleTimeoutMs } from '../timeouts/acpBackendTimeouts';
 
 /**
  * Handle agent_message_chunk update (text output from model).
@@ -29,6 +30,9 @@ export function handleAgentMessageChunk(
   const idleTimeoutMs =
     (ctx.toolCallCountSincePrompt === 0
       ? ctx.transport.getPreToolCallIdleTimeoutMs?.()
+      : null) ??
+    (ctx.toolCallCountSincePrompt > 0 && ctx.activeToolCalls.size === 0
+      ? resolvePostToolCallIdleTimeoutMs(ctx.transport)
       : null) ??
     ctx.transport.getIdleTimeout?.() ??
     DEFAULT_IDLE_TIMEOUT_MS;

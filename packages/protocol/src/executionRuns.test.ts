@@ -3,7 +3,9 @@ import * as Protocol from './index.js';
 
 import {
   ExecutionRunIntentSchema,
+  ExecutionRunActionRequestSchema,
   ExecutionRunPublicStateSchema,
+  ExecutionRunListRequestSchema,
   ExecutionRunSendRequestSchema,
   ExecutionRunStartRequestSchema,
   ExecutionRunTransportErrorCodeSchema,
@@ -15,6 +17,7 @@ import { ReviewFindingsV1Schema } from './structuredMessages/reviewFindingsV1.js
 import { ReviewFindingsV2Schema } from './structuredMessages/reviewFindingsV2.js';
 import { ReviewFollowUpV1Schema } from './structuredMessages/reviewFollowUpV1.js';
 import { ReviewPublishRequestV1Schema } from './structuredMessages/reviewPublishRequestV1.js';
+import { ExecutionRunStructuredRunRefSchema } from './structuredMessages/executionRunStructuredRunRef.js';
 import { PlanOutputV1Schema } from './structuredMessages/planOutputV1.js';
 import { DelegateOutputV1Schema } from './structuredMessages/delegateOutputV1.js';
 import { ParticipantMessageV1Schema } from './structuredMessages/participantMessageV1.js';
@@ -44,10 +47,12 @@ describe('executionRuns protocol', () => {
       startedAtMs: now,
       finishedAtMs: now + 1,
       transcript: { persistenceMode: 'persistent', epoch: 2 },
+      futurePublicStateFlag: 'state-extra',
     });
     expect(parsed.intent).toBe('review');
     expect((parsed as any).turnInFlight).toBe(true);
     expect((parsed as any).transcript).toMatchObject({ persistenceMode: 'persistent', epoch: 2 });
+    expect((parsed as any).futurePublicStateFlag).toBe('state-extra');
 
     expect(() => ExecutionRunPublicStateSchema.parse({
       runId: 'run_1',
@@ -60,6 +65,62 @@ describe('executionRuns protocol', () => {
     })).toThrow();
   });
 
+  it('preserves additive fields on execution run list requests', () => {
+    const parsed = ExecutionRunListRequestSchema.parse({
+      backendId: 'claude',
+      status: 'running',
+      limit: 5,
+      futureListFlag: 'keep-me',
+    });
+
+    expect(parsed).toMatchObject({
+      backendId: 'claude',
+      status: 'running',
+      limit: 5,
+    });
+    expect((parsed as any).futureListFlag).toBe('keep-me');
+  });
+
+  it('accepts canonical V2 backendTarget inputs on execution run list requests', () => {
+    const parsed = ExecutionRunListRequestSchema.parse({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+      status: 'running',
+      limit: 5,
+    });
+
+    expect(parsed).toMatchObject({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+      status: 'running',
+      limit: 5,
+    });
+  });
+
+  it('preserves additive fields on execution run action requests', () => {
+    const parsed = ExecutionRunActionRequestSchema.parse({
+      runId: 'run_1',
+      actionId: 'session.message.send',
+      input: { message: 'Continue.' },
+      futureActionFlag: 'keep-me',
+    });
+
+    expect(parsed).toMatchObject({
+      runId: 'run_1',
+      actionId: 'session.message.send',
+      input: { message: 'Continue.' },
+    });
+    expect((parsed as any).futureActionFlag).toBe('keep-me');
+  });
+
   it('validates start request', () => {
     const parsed = ExecutionRunStartRequestSchema.parse({
       intent: 'review',
@@ -69,8 +130,10 @@ describe('executionRuns protocol', () => {
       retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
+      futureRunFlag: 'run-extra',
     });
     expect(parsed.intent).toBe('review');
+    expect((parsed as any).futureRunFlag).toBe('run-extra');
   });
 
   it('accepts V2 backendTarget input on start requests and preserves the canonical backend transport shape', () => {
@@ -109,7 +172,21 @@ describe('executionRuns protocol', () => {
     ).toThrow();
   });
 
-  it('accepts V2 configured backend targets in resume handles and normalizes them to the legacy transport shape', () => {
+  it('rejects start requests that use legacy configured ACP flavor carriers as concrete backend ids', () => {
+    expect(() =>
+      ExecutionRunStartRequestSchema.parse({
+        intent: 'review',
+        backendId: 'acp:review-bot',
+        instructions: 'Review.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+      } as any),
+    ).toThrow();
+  });
+
+  it('accepts V2 configured backend targets in resume handles and preserves canonical backend transport shape', () => {
     const parsed = ExecutionRunStartRequestSchema.parse({
       intent: 'review',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -132,7 +209,12 @@ describe('executionRuns protocol', () => {
 
     expect(parsed.resumeHandle).toMatchObject({
       kind: 'vendor_session.v1',
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
       vendorSessionId: 'vendor_1',
     });
   });
@@ -152,6 +234,7 @@ describe('executionRuns protocol', () => {
         transcriptEpoch: 3,
         strategy: 'summary_plus_recent',
         recentMessagesCount: 16,
+        futureReplayFlag: 'keep-me',
       },
     }) as any;
     expect(parsed.replay).toMatchObject({
@@ -160,6 +243,7 @@ describe('executionRuns protocol', () => {
       transcriptEpoch: 3,
     });
     expect((parsed as any).initialContextMode).toBe('first_turn');
+    expect((parsed.replay as any).futureReplayFlag).toBe('keep-me');
 
     expect(() => ExecutionRunStartRequestSchema.parse({
       intent: 'voice_agent',
@@ -173,6 +257,27 @@ describe('executionRuns protocol', () => {
         previousSessionId: 'sess_voice',
       },
     })).toThrow();
+  });
+
+  it('accepts voice-agent initial context and bootstrap mode fields on start requests', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      initialContext: 'Resume with the latest summary.',
+      bootstrapMode: 'ready_handshake',
+      replay: {
+        kind: 'voice_session.v1',
+        previousSessionId: 'sess_voice',
+        transcriptEpoch: 3,
+      },
+    }) as any;
+
+    expect(parsed.initialContext).toBe('Resume with the latest summary.');
+    expect(parsed.bootstrapMode).toBe('ready_handshake');
   });
 
   it('validates optional resumeHandle on start requests', () => {
@@ -222,7 +327,7 @@ describe('executionRuns protocol', () => {
 
     expect(parsed.resumeHandle).toMatchObject({
       kind: 'vendor_session.v1',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       vendorSessionId: 'vendor_1',
     });
   });
@@ -247,7 +352,12 @@ describe('executionRuns protocol', () => {
 
     expect(parsed.resumeHandle).toMatchObject({
       kind: 'vendor_session.v1',
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
       vendorSessionId: 'vendor_1',
     });
   });
@@ -339,6 +449,7 @@ describe('executionRuns protocol', () => {
         backendId: 'claude',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         retentionPolicy: 'resumable',
+        futureRunRefField: 'keep-me',
       },
       summary: 'Summary.',
       findings: [
@@ -348,11 +459,16 @@ describe('executionRuns protocol', () => {
           severity: 'low',
           category: 'style',
           summary: 'One paragraph.',
+          futureFindingField: true,
         },
       ],
+      futureReviewFindingsField: 'keep-me',
       generatedAtMs: now,
     });
     expect(parsed.findings).toHaveLength(1);
+    expect((parsed as any).futureReviewFindingsField).toBe('keep-me');
+    expect((parsed.runRef as any).futureRunRefField).toBe('keep-me');
+    expect((parsed.findings[0] as any).futureFindingField).toBe(true);
   });
 
   it('validates review_findings.v2 structured payload', () => {
@@ -364,6 +480,7 @@ describe('executionRuns protocol', () => {
         backendId: 'claude',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         retentionPolicy: 'resumable',
+        futureRunRefField: 'keep-me',
       },
       summary: 'Summary.',
       overviewMarkdown: '## Overview\n\nThis needs attention.',
@@ -377,22 +494,36 @@ describe('executionRuns protocol', () => {
           whyItMatters: 'Consistency matters here.',
           evidence: 'The old branch handles this differently.',
           confidence: 0.6,
+          futureFindingField: 'keep-me',
         },
       ],
-      questions: [{ id: 'q1', text: 'Should this support empty input?', status: 'open', findingIds: ['f1'] }],
-      assumptions: [{ id: 'a1', text: 'Assumed strict mode is enabled.', findingIds: ['f1'] }],
-      publication: { findings: [{ id: 'f1', published: false }] },
+      questions: [{ id: 'q1', text: 'Should this support empty input?', status: 'open', findingIds: ['f1'], futureQuestionField: 'keep-me' }],
+      assumptions: [{ id: 'a1', text: 'Assumed strict mode is enabled.', findingIds: ['f1'], futureAssumptionField: 'keep-me' }],
+      publication: { findings: [{ id: 'f1', published: false, futurePublicationField: 'keep-me' }], futurePublicationEnvelope: 'keep-me' },
+      futureReviewFindingsField: 'keep-me',
       generatedAtMs: now,
     });
     expect(parsed.overviewMarkdown).toContain('Overview');
     expect(parsed.questions[0]?.status).toBe('open');
     expect(parsed.findings[0]?.confidence).toBe(0.6);
+    expect((parsed as any).futureReviewFindingsField).toBe('keep-me');
+    expect((parsed.runRef as any).futureRunRefField).toBe('keep-me');
+    expect((parsed.findings[0] as any).futureFindingField).toBe('keep-me');
+    expect((parsed.questions[0] as any).futureQuestionField).toBe('keep-me');
+    expect((parsed.assumptions[0] as any).futureAssumptionField).toBe('keep-me');
+    expect((parsed.publication as any).futurePublicationEnvelope).toBe('keep-me');
+    expect((parsed.publication?.findings[0] as any).futurePublicationField).toBe('keep-me');
   });
 
   it('validates review_follow_up.v1 structured payload', () => {
     const now = Date.now();
     const parsed = ReviewFollowUpV1Schema.parse({
-      parentRunRef: { runId: 'run_1', callId: 'subagent_run_1', backendId: 'claude' },
+      parentRunRef: {
+        runId: 'run_1',
+        callId: 'subagent_run_1',
+        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      },
       threadId: 'thread_1',
       findingIds: ['f1'],
       requestMarkdown: 'Can you clarify why this is risky?',
@@ -419,7 +550,13 @@ describe('executionRuns protocol', () => {
 
   it('validates review_publish_request.v1 structured payload', () => {
     const parsed = ReviewPublishRequestV1Schema.parse({
-      sourceRunRef: { runId: 'run_1', callId: 'subagent_run_1', backendId: 'claude' },
+      sourceRunRef: {
+        runId: 'run_1',
+        callId: 'subagent_run_1',
+        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        futureSourceRunRefField: 'keep-me',
+      },
       findingIds: ['f1'],
       publishedFindings: [
         {
@@ -431,11 +568,20 @@ describe('executionRuns protocol', () => {
           whyItMatters: 'It crashes production input.',
           evidence: 'Reproduced locally.',
           confidence: 0.95,
+          futureFindingField: 'keep-me',
         },
       ],
       threadRefs: ['thread_1'],
+      futurePublishRequestField: 'keep-me',
     });
     expect(parsed.publishedFindings[0]?.id).toBe('f1');
+    expect((parsed as any).futurePublishRequestField).toBe('keep-me');
+    expect((parsed.sourceRunRef as any).futureSourceRunRefField).toBe('keep-me');
+    expect((parsed.publishedFindings[0] as any).futureFindingField).toBe('keep-me');
+  });
+
+  it('exports the shared structured run ref schema from the protocol root entrypoint', () => {
+    expect(Protocol.ExecutionRunStructuredRunRefSchema).toBe(ExecutionRunStructuredRunRefSchema);
   });
 
   it('validates review follow-up action input', () => {
@@ -457,17 +603,23 @@ describe('executionRuns protocol', () => {
         callId: 'subagent_run_1',
         backendId: 'claude',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        futureRunRefField: 'keep-me',
       },
       summary: 'Plan summary.',
       sections: [
-        { title: 'Approach', items: ['Step 1', 'Step 2'] },
+        { title: 'Approach', items: ['Step 1', 'Step 2'], futureSectionField: 'keep-me' },
       ],
       risks: ['Risk 1'],
-      milestones: [{ title: 'Milestone 1', details: 'Soon' }],
+      milestones: [{ title: 'Milestone 1', details: 'Soon', futureMilestoneField: 'keep-me' }],
       recommendedBackendId: 'claude',
+      futurePlanField: 'keep-me',
       generatedAtMs: now,
     });
     expect(parsed.sections).toHaveLength(1);
+    expect((parsed as any).futurePlanField).toBe('keep-me');
+    expect((parsed.runRef as any).futureRunRefField).toBe('keep-me');
+    expect((parsed.sections[0] as any).futureSectionField).toBe('keep-me');
+    expect((parsed.milestones?.[0] as any).futureMilestoneField).toBe('keep-me');
   });
 
   it('validates delegate_output.v1 structured payload', () => {
@@ -478,14 +630,19 @@ describe('executionRuns protocol', () => {
         callId: 'subagent_run_1',
         backendId: 'claude',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        futureRunRefField: 'keep-me',
       },
       summary: 'Delegation summary.',
       deliverables: [
-        { id: 'd1', title: 'Deliverable 1', details: 'Do it' },
+        { id: 'd1', title: 'Deliverable 1', details: 'Do it', futureDeliverableField: 'keep-me' },
       ],
+      futureDelegateField: 'keep-me',
       generatedAtMs: now,
     });
     expect(parsed.deliverables).toHaveLength(1);
+    expect((parsed as any).futureDelegateField).toBe('keep-me');
+    expect((parsed.runRef as any).futureRunRefField).toBe('keep-me');
+    expect((parsed.deliverables[0] as any).futureDeliverableField).toBe('keep-me');
   });
 
   it('keeps legacy structured runRef payloads parseable without backendTarget', () => {

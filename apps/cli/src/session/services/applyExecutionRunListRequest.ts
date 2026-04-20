@@ -1,5 +1,6 @@
 import {
-    buildBackendTargetKey,
+    buildBackendTargetKeyV2,
+    readBackendTargetRefV2,
     type ExecutionRunListRequest,
     type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
@@ -20,7 +21,7 @@ export function applyExecutionRunListRequest(
     const requestedBackendId =
         typeof request.backendId === 'string' && request.backendId.trim().length > 0 ? request.backendId.trim() : null;
     const requestedBackendTargetKey =
-        request.backendTarget ? buildBackendTargetKey(request.backendTarget) : null;
+        request.backendTarget ? buildBackendTargetKeyV2(readBackendTargetRefV2(request.backendTarget)) : null;
     const requestedStatus =
         typeof request.status === 'string' && request.status.trim().length > 0 ? request.status.trim() : null;
     const requestedLimit =
@@ -29,11 +30,10 @@ export function applyExecutionRunListRequest(
             : null;
 
     let filtered = [...runs].sort(compareExecutionRunPublicStates);
-    if (requestedBackendId) {
-        filtered = filtered.filter((run) => matchesExecutionRunLegacyBackendId(run.backendTarget, requestedBackendId));
-    }
     if (requestedBackendTargetKey) {
-        filtered = filtered.filter((run) => buildBackendTargetKey(run.backendTarget) === requestedBackendTargetKey);
+        filtered = filtered.filter((run) => buildBackendTargetKeyV2(readBackendTargetRefV2(run.backendTarget)) === requestedBackendTargetKey);
+    } else if (requestedBackendId) {
+        filtered = filtered.filter((run) => matchesExecutionRunLegacyBackendId(run.backendTarget, requestedBackendId));
     }
     if (requestedStatus) {
         filtered = filtered.filter((run) => run.status === requestedStatus);

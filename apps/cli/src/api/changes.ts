@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as z from 'zod';
 import { configuration } from '@/configuration';
+import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from './client/httpStatusError';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 
 export const ChangeEntrySchema = z.object({
@@ -26,6 +27,36 @@ export const CursorGoneErrorSchema = z.object({
 });
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
+
+export async function fetchChangesAccountId(opts: { token: string }): Promise<string> {
+  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const response = await axios.get(`${serverUrl}/v1/account/profile`, {
+    headers: {
+      Authorization: `Bearer ${opts.token}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 15_000,
+    validateStatus: () => true,
+  });
+
+  if (isAuthenticationStatus(response.status)) {
+    throw createAuthenticationHttpStatusError(
+      response.status,
+      `Authentication failed while fetching account profile (${response.status})`,
+    );
+  }
+
+  if (response.status < 200 || response.status >= 300) {
+    throw createHttpStatusError(response.status, `Failed to fetch account profile (${response.status})`);
+  }
+
+  const data = response.data as { id?: unknown };
+  const id = data.id;
+  if (typeof id !== 'string' || id.length === 0) {
+    throw new Error('Invalid /v1/account/profile response');
+  }
+  return id;
+}
 
 export async function fetchChanges(opts: { token: string; after: number; limit?: number }): Promise<{
   status: 'ok';
@@ -61,6 +92,12 @@ export async function fetchChanges(opts: { token: string; after: number; limit?:
     }
 
     if (response.status < 200 || response.status >= 300) {
+      if (isAuthenticationStatus(response.status)) {
+        return {
+          status: 'error',
+          error: createAuthenticationHttpStatusError(response.status, `Authentication failed while fetching changes (${response.status})`),
+        };
+      }
       return { status: 'error', error: { status: response.status, body: response.data } };
     }
 

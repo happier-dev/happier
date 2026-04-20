@@ -6,12 +6,12 @@ import { z } from 'zod';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol';
 
 import type { SessionHandoffProviderBundle } from '../types';
-import { parseCanonicalSessionHandoffProviderBundle } from '../parseCanonicalSessionHandoffProviderBundle';
-import { buildSessionHandoffProviderBundleTransferId } from '../sessionHandoffProviderBundleTransferPublication';
+import { parseCanonicalSessionHandoffProviderBundle } from '../providerBundle/parse';
+import { buildSessionHandoffProviderBundleTransferId } from '../providerBundle/transferPublication';
 import {
   buildSessionHandoffWorkspaceManifestTransferId,
-} from '@/workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
-import { writeWorkspaceReplicationManifestToFile } from '@/workspace/handoff/workspaceReplicationAdapter/workspaceReplicationManifestFile';
+} from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
+import { writeWorkspaceReplicationManifestToFile } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 import { resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 

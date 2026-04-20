@@ -4,7 +4,7 @@ import { getProviderNativeForkHandler } from '@/backends/catalog';
 import {
   type ProviderNativeForkDispatchResult,
   type ProviderNativeForkPoint,
-} from '@/backends/forking/providerNativeForkHandler';
+} from '@/session/fork/providerNativeForkHandler';
 
 export async function dispatchProviderNativeFork(params: Readonly<{
   credentials: Credentials;

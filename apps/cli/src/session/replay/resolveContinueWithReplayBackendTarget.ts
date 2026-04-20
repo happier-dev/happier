@@ -1,7 +1,13 @@
 import type { BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input } from '@happier-dev/protocol';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
-import { isLegacyCustomAcpId } from '@/agent/runtime/compat/isLegacyCustomAcpId';
-import { resolveConcreteBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
+import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
+import {
+  isLegacyConfiguredBackendAgentCompatible,
+  isLegacyConfiguredBackendSentinelId,
+  LEGACY_REPLAY_BACKEND_TARGET_REQUIRED_ERROR,
+  readLegacyConfiguredBackendIdFromLegacyAgent,
+  readLegacyReplayCompatBackendTargetInput,
+} from '@/session/backendTargets/compat/legacyConfiguredBackend';
 
 export type ContinueWithReplayBackendTargetResolution =
   | Readonly<{
@@ -9,7 +15,7 @@ export type ContinueWithReplayBackendTargetResolution =
       backendTargetV2: BackendTargetRefV2;
       backendTarget: BackendTargetRefV1;
       replayFlavor: string;
-      providerHintAgentId: CatalogAgentId;
+      providerHintProviderId: string;
     }>
   | Readonly<{
       ok: false;
@@ -17,7 +23,7 @@ export type ContinueWithReplayBackendTargetResolution =
     }>;
 
 function isCatalogAgentId(value: string): value is CatalogAgentId {
-  return value !== 'customAcp' && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
+  return !isLegacyConfiguredBackendSentinelId(value) && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
 }
 
 export function resolveContinueWithReplayBackendTarget(params: Readonly<{
@@ -26,7 +32,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
 }>): ContinueWithReplayBackendTargetResolution {
   const legacyAgent = typeof params.agent === 'string' ? params.agent.trim() : '';
   const rawBackendTarget = params.backendTarget ?? null;
-  const backendTarget = resolveConcreteBackendTargetRefs(rawBackendTarget);
+  const backendTarget = resolveConcreteCompatBackendTargetRefs(rawBackendTarget);
 
   if (!backendTarget) {
     if (rawBackendTarget !== null) {
@@ -35,8 +41,32 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
     if (!legacyAgent) {
       return { ok: false, errorMessage: 'agent or backendTarget is required' };
     }
-    if (isLegacyCustomAcpId(legacyAgent)) {
-      return { ok: false, errorMessage: 'backendTarget is required for customAcp' };
+    const compatBackendTargetInput = readLegacyReplayCompatBackendTargetInput(legacyAgent);
+    if (compatBackendTargetInput) {
+      const refs = resolveConcreteCompatBackendTargetRefs(compatBackendTargetInput);
+      if (!refs) {
+        return { ok: false, errorMessage: 'Unknown agent id' };
+      }
+      const configuredBackendId = readLegacyConfiguredBackendIdFromLegacyAgent(legacyAgent);
+      if (!configuredBackendId) {
+        return {
+          ok: true,
+          backendTargetV2: refs.backendTargetV2,
+          backendTarget: refs.backendTarget,
+          replayFlavor: refs.backendTargetV2.backendId,
+          providerHintProviderId: refs.backendTargetV2.backendId,
+        };
+      }
+      return {
+        ok: true,
+        backendTargetV2: refs.backendTargetV2,
+        backendTarget: refs.backendTarget,
+        replayFlavor: `acp:${configuredBackendId}`,
+        providerHintProviderId: `acp:${configuredBackendId}`,
+      };
+    }
+    if (isLegacyConfiguredBackendSentinelId(legacyAgent)) {
+      return { ok: false, errorMessage: LEGACY_REPLAY_BACKEND_TARGET_REQUIRED_ERROR };
     }
     if (!isCatalogAgentId(legacyAgent)) {
       return { ok: false, errorMessage: 'Unknown agent id' };
@@ -50,7 +80,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
       },
       backendTarget: { kind: 'builtInAgent', agentId: legacyAgent },
       replayFlavor: legacyAgent,
-      providerHintAgentId: legacyAgent,
+      providerHintProviderId: legacyAgent,
     };
   }
 
@@ -67,11 +97,16 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
       backendTargetV2: backendTarget.backendTargetV2,
       backendTarget: backendTarget.backendTarget,
       replayFlavor: backendId,
-      providerHintAgentId: backendId,
+      providerHintProviderId: backendId,
     };
   }
 
-  if (legacyAgent && !isLegacyCustomAcpId(legacyAgent)) {
+  const configuredBackendId = backendTarget.backendTargetV2.configuredBackendId ?? backendTarget.backendTargetV2.backendId;
+  const isCompatibleLegacyConfiguredAgent = isLegacyConfiguredBackendAgentCompatible({
+    legacyAgent,
+    configuredBackendId,
+  });
+  if (!isCompatibleLegacyConfiguredAgent) {
     return { ok: false, errorMessage: 'agent must match backendTarget' };
   }
 
@@ -79,7 +114,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
     ok: true,
     backendTargetV2: backendTarget.backendTargetV2,
     backendTarget: backendTarget.backendTarget,
-    replayFlavor: `acp:${backendTarget.backendTargetV2.configuredBackendId ?? backendTarget.backendTargetV2.backendId}`,
-    providerHintAgentId: 'customAcp',
+    replayFlavor: `acp:${configuredBackendId}`,
+    providerHintProviderId: `acp:${configuredBackendId}`,
   };
 }

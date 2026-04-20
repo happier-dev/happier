@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, SessionId, StartSessionResult } from '@/agent/core/AgentBackend';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import { sendBackendLongLivedRun } from '@/agent/executionRuns/runtime/backendLongLivedSend';
+import { sendBackendLongLivedRun } from './backendLongLivedSend';
 
 function createResumableBackendHarness(): Readonly<{
   backend: AgentBackend;
@@ -53,7 +54,7 @@ function createLongLivedResumableRun(overrides?: Partial<ExecutionRunState>): Ex
     startedAtMs: 1_700_000_000_000,
     resumeHandle: {
       kind: 'vendor_session.v1',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       vendorSessionId: 'vendor_session_1',
     },
     ...(overrides ?? {}),
@@ -78,7 +79,7 @@ describe('sendBackendLongLivedRun (resume)', () => {
       runs,
       controllers,
       budgetRegistry: null,
-      createBackend: () => backend,
+      createBackend: () => createExecutionRunHostRuntimeFromAgentBackend(backend),
       maxTurns: null,
       getNowMs: () => 123,
       finishRun: () => undefined,
@@ -105,7 +106,7 @@ describe('sendBackendLongLivedRun (resume)', () => {
       runs,
       controllers,
       budgetRegistry: null,
-      createBackend: () => backend,
+      createBackend: () => createExecutionRunHostRuntimeFromAgentBackend(backend),
       maxTurns: 2,
       getNowMs: () => 123,
       finishRun: () => undefined,

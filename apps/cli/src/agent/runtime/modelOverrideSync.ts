@@ -1,6 +1,6 @@
 import type { Metadata } from '@/api/types';
 
-import { computePendingModelOverrideApplication } from './permission/permissionModeFromMetadata';
+import { computePendingModelOverrideApplication } from './permissions/modeFromMetadata';
 
 export function createModelOverrideSynchronizer(params: Readonly<{
   session: { getMetadataSnapshot: () => Metadata | null };

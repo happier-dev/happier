@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -18,6 +19,7 @@ import {
   waitForAuthenticatedRouteUi,
 } from '../../src/testkit/uiE2e/pageNavigation';
 import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
+import { ensurePendingTerminalConnectReadyForApproval } from '../../src/testkit/uiE2e/terminalConnectApprovalFlow';
 import {
   captureAuthBootstrapStorageSnapshot,
   installAuthBootstrapStorageSnapshot,
@@ -669,16 +671,16 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await waitForAuthenticatedHomeUi({ page, timeoutMs: 180_000 });
       const startNewSessionButton = page.getByTestId('main-header-start-new-session');
       const directMachineAction = page.getByTestId(`sessions-empty-state-machine:${machineId}`);
-      const createSessionAction = page.getByTestId('session-getting-started-kind-create_session');
-      const selectSessionAction = page.getByTestId('session-getting-started-kind-select_session');
+      const createSessionState = page.getByTestId('session-getting-started-kind-create_session');
+      const selectSessionState = page.getByTestId('session-getting-started-kind-select_session');
 
       await expect
         .poll(
           async () => {
             const startNewCount = await startNewSessionButton.count();
             const directCount = await directMachineAction.count();
-            const createCount = await createSessionAction.count();
-            const selectCount = await selectSessionAction.count();
+            const createCount = await createSessionState.count();
+            const selectCount = await selectSessionState.count();
             return startNewCount > 0 || directCount > 0 || createCount > 0 || selectCount > 0;
           },
           { timeout: 120_000 },
@@ -689,10 +691,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
         await startNewSessionButton.click();
       } else if ((await directMachineAction.count()) > 0) {
         await directMachineAction.click();
-      } else if ((await createSessionAction.count()) > 0) {
-        await createSessionAction.click();
       } else {
-        await selectSessionAction.click();
+        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/new'));
       }
 
       await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
@@ -709,23 +709,40 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
 
       const currentUrl = page.url();
-      const { pathname } = new URL(currentUrl);
+      const currentRoute = new URL(currentUrl);
+      const { pathname } = currentRoute;
       const parts = pathname.split('/').filter(Boolean);
       const sessionIndex = parts.indexOf('session');
       const freshSessionId = sessionIndex >= 0 ? (parts[sessionIndex + 1] ?? null) : null;
       if (!freshSessionId) {
         throw new Error(`Failed to infer session id from url: ${currentUrl}`);
       }
-
       await expect(page.getByTestId('session-header-back')).toHaveCount(1, { timeout: 120_000 });
       await page.getByTestId('session-header-back').click();
 
-      const sessionItemSelector = `[data-testid="session-list-item-${freshSessionId}"]:visible`;
-      await expect(page.locator(sessionItemSelector)).toHaveCount(1, { timeout: 120_000 });
-      await page.locator(sessionItemSelector).click();
+      if (new URL(page.url()).pathname !== '/') {
+        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl));
+      }
+      await waitForAuthenticatedHomeUi({ page, timeoutMs: 120_000 });
+      const persistedTab = page.getByTestId('sessions-list-storage-tab:persisted');
+      if ((await persistedTab.count()) > 0) {
+        await persistedTab.click();
+      }
+
+      const sessionItem = page.getByTestId(`session-list-item-${freshSessionId}`);
+      await expect(sessionItem).toHaveCount(1, { timeout: 120_000 });
+      await sessionItem.click();
 
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
-      await expect(page).toHaveURL(`${uiBaseUrl}/session/${freshSessionId}`, { timeout: 60_000 });
+      await expect
+        .poll(
+          async () => {
+            const selectedUrl = new URL(page.url());
+            return selectedUrl.pathname;
+          },
+          { timeout: 60_000 },
+        )
+        .toBe(`/session/${freshSessionId}`);
     } catch (error) {
       thrown = error;
       throw error;
@@ -758,13 +775,19 @@ test.describe('ui e2e: auth + terminal connect', () => {
         throw new Error('missing auth bootstrap snapshot after ensureAuthenticatedAccount');
       }
     }
+    const restoredAuthBootstrapSnapshot = authBootstrapSnapshot;
 
     const pageConsole: string[] = [];
     const pageErrors: string[] = [];
     const requestFailures: string[] = [];
     const responseErrors: string[] = [];
 
-    const ctx = await browser.newContext();
+    const ctx = await browser.newContext({
+      storageState: {
+        cookies: [],
+        origins: [],
+      },
+    });
     const loggedOutPage = await ctx.newPage();
 
     loggedOutPage.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
@@ -798,15 +821,17 @@ test.describe('ui e2e: auth + terminal connect', () => {
         },
       });
 
-      await loggedOutPage.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await expect(loggedOutPage.locator('[data-testid="welcome-restore"]:visible')).toHaveCount(1, { timeout: 60_000 });
-
-      // Reapply the authenticated bootstrap state and revisit the pending connect URL.
-      await installAuthBootstrapStorageSnapshot(loggedOutPage, authBootstrapSnapshot);
-      await loggedOutPage.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await loggedOutPage.waitForURL((url) => url.pathname.startsWith('/terminal'), { timeout: 120_000 });
-      const approve = loggedOutPage.getByTestId('terminal-connect-approve');
-      await expect(approve).toHaveCount(1, { timeout: 120_000 });
+      await gotoDomContentLoadedWithRetries(loggedOutPage, cliLogin.connectUrl);
+      await ensurePendingTerminalConnectReadyForApproval({
+        page: loggedOutPage,
+        connectUrlForBrowser: cliLogin.connectUrl,
+        gotoConnectUrl: async (url) => {
+          await gotoDomContentLoadedWithRetries(loggedOutPage, url);
+        },
+        restoreAccount: async () => {
+          await installAuthBootstrapStorageSnapshot(loggedOutPage, restoredAuthBootstrapSnapshot);
+        },
+      });
 
       await approveTerminalConnect({ page: loggedOutPage });
       await cliLogin.waitForSuccess();
@@ -823,6 +848,189 @@ test.describe('ui e2e: auth + terminal connect', () => {
           `## Page errors\n\n${pageErrors.length ? pageErrors.join('\n') : '(none)'}\n\n` +
           `## Request failures\n\n${requestFailures.length ? requestFailures.join('\n') : '(none)'}\n\n` +
           `## Response errors\n\n${responseErrors.length ? responseErrors.join('\n') : '(none)'}\n`;
+        await testInfo.attach('browser-diagnostics.md', { body: diagnostic, contentType: 'text/markdown' });
+      }
+    }
+  });
+
+  test('open session converges to restore account after server auth secret rotation', async ({ page }, testInfo) => {
+    test.setTimeout(480_000);
+    if (!server || !ui) throw new Error('missing server/ui fixtures');
+    if (!uiBaseUrl) throw new Error('missing ui base url');
+
+    const pageConsole: string[] = [];
+    const pageErrors: string[] = [];
+    const requestFailures: string[] = [];
+    const responseErrors: string[] = [];
+
+    page.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
+    page.on('pageerror', (err) => pageErrors.push(String(err)));
+    page.on('requestfailed', (request) => {
+      const failure = request.failure();
+      requestFailures.push(`${request.method()} ${request.url()} ${failure ? `-> ${failure.errorText}` : ''}`.trim());
+    });
+    page.on('response', (response) => {
+      const status = response.status();
+      if (status >= 400) responseErrors.push(`${status} ${response.request().method()} ${response.url()}`);
+    });
+
+    const testDir = resolve(join(suiteDir, 't6-stale-auth-rotation'));
+    await mkdir(testDir, { recursive: true });
+
+    const collectSessionAuthSurfaceState = async () => ({
+      url: page.url(),
+      pathname: new URL(page.url()).pathname,
+      restoreCount: await page.getByTestId('session-auth-sync-error-restore').count().catch(() => 0),
+      syncErrorCount: await page.getByTestId('session-auth-sync-error').count().catch(() => 0),
+      fallbackCount: await page.getByTestId('session-auth-required-fallback').count().catch(() => 0),
+      composerCount: await getVisibleSessionComposer(page).count().catch(() => 0),
+      bodyText: (await page.locator('body').innerText().catch(() => '')).slice(0, 4_000),
+    });
+
+    let cliLogin: StartedCliTerminalConnect | null = null;
+    let thrown: unknown = null;
+    try {
+      await ensureAuthenticatedAccount(page, uiBaseUrl, server.baseUrl);
+
+      if (!daemon) {
+        cliLogin = await startCliAuthLoginForTerminalConnect({
+          testDir: resolve(join(testDir, 'cli-login')),
+          cliHomeDir,
+          serverUrl: server.baseUrl,
+          webappUrl: uiBaseUrl,
+          env: {
+            ...process.env,
+            CI: '1',
+            HAPPIER_DISABLE_CAFFEINATE: '1',
+            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+            HAPPIER_VARIANT: 'dev',
+          },
+        });
+
+        await gotoDomContentLoadedWithRetries(page, cliLogin.connectUrl);
+        await approveTerminalConnect({ page });
+        await cliLogin.waitForSuccess();
+
+        fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
+        fakeClaudePath = fakeClaudeFixturePath();
+        daemon = await startTestDaemon({
+          testDir,
+          happyHomeDir: cliHomeDir,
+          env: {
+            ...process.env,
+            CI: '1',
+            HAPPIER_HOME_DIR: cliHomeDir,
+            HAPPIER_SERVER_URL: server.baseUrl,
+            HAPPIER_WEBAPP_URL: uiBaseUrl,
+            HAPPIER_DISABLE_CAFFEINATE: '1',
+            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+            HAPPIER_VARIANT: 'dev',
+            HAPPIER_CLAUDE_PATH: fakeClaudePath,
+            HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
+            HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}-stale-auth`,
+            HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}-stale-auth`,
+          },
+        });
+      }
+
+      if (!createdSessionId) {
+        await restoreAuthenticatedAccount(page, uiBaseUrl, server.baseUrl, '/new');
+        await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+        const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
+        await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('agent-input-machine-chip').click();
+        await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId(`new-session-machine:${machineId}`).click();
+
+        const prompt = `UI_E2E_STALE_AUTH_${run.runId}`;
+        await page.getByTestId('new-session-composer-input').fill(prompt);
+        await page.getByTestId('new-session-composer-send').click();
+        await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
+        await expect.poll(async () => transcriptMessageLocator(page).count(), { timeout: 180_000 }).toBeGreaterThan(1);
+
+        const currentUrl = page.url();
+        const { pathname } = new URL(currentUrl);
+        const parts = pathname.split('/').filter(Boolean);
+        const sessionIndex = parts.indexOf('session');
+        createdSessionId = sessionIndex >= 0 ? (parts[sessionIndex + 1] ?? null) : null;
+        if (!createdSessionId) {
+          throw new Error(`Failed to infer session id from url: ${currentUrl}`);
+        }
+      } else {
+        await restoreAuthenticatedAccount(page, uiBaseUrl, server.baseUrl, `/session/${createdSessionId}`);
+        await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
+      }
+
+      const beforeRotationState = await collectSessionAuthSurfaceState();
+      await testInfo.attach('before-rotation.json', {
+        body: JSON.stringify(beforeRotationState, null, 2),
+        contentType: 'application/json',
+      });
+      await testInfo.attach('before-rotation.png', {
+        body: await page.screenshot({ fullPage: true }),
+        contentType: 'image/png',
+      });
+
+      const secretPath = resolve(join(suiteDir, 'server-light-data', 'handy-master-secret.txt'));
+      await writeFile(secretPath, `${randomBytes(32).toString('hex')}\n`, 'utf8');
+      const originalPort = server.port;
+      await server.stop();
+      server = await startServerLight({
+        testDir: suiteDir,
+        dbProvider: 'sqlite',
+        dataDirMode: 'reuse-existing',
+        extraEnv: {
+          HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+          HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
+          HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
+          HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
+          HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
+        },
+        __portAllocator: async () => originalPort,
+      });
+
+      let convergedState: Awaited<ReturnType<typeof collectSessionAuthSurfaceState>> | null = null;
+      const pollStartedAt = Date.now();
+      while (Date.now() - pollStartedAt < 30_000) {
+        const current = await collectSessionAuthSurfaceState();
+        if (current.restoreCount > 0 || current.fallbackCount > 0 || current.syncErrorCount > 0) {
+          convergedState = current;
+          break;
+        }
+        await page.waitForTimeout(1_000);
+      }
+
+      if (!convergedState) {
+        const finalState = await collectSessionAuthSurfaceState();
+        throw new Error(
+          `stale-auth session route did not converge to restore surface within 30s: ${JSON.stringify(finalState)}`,
+        );
+      }
+
+      await testInfo.attach('after-rotation.json', {
+        body: JSON.stringify(convergedState, null, 2),
+        contentType: 'application/json',
+      });
+      await testInfo.attach('after-rotation.png', {
+        body: await page.screenshot({ fullPage: true }),
+        contentType: 'image/png',
+      });
+
+      await expect(page.getByTestId('session-auth-sync-error-restore')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('session-auth-sync-error-restore').click();
+      await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/restore');
+    } catch (error) {
+      thrown = error;
+      throw error;
+    } finally {
+      await cliLogin?.stop().catch(() => {});
+      if (thrown) {
+        const diagnostic = await collectBrowserStateDiagnostics(page, {
+          pageConsole,
+          pageErrors,
+          requestFailures,
+          responseErrors,
+        });
         await testInfo.attach('browser-diagnostics.md', { body: diagnostic, contentType: 'text/markdown' });
       }
     }

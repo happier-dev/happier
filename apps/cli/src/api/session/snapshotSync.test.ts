@@ -11,6 +11,26 @@ import { fetchSessionSnapshotUpdateFromServer } from './snapshotSync';
 import { encodeBase64, encrypt } from '../encryption';
 
 describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
+    it('preserves unexpected non-auth HTTP statuses as HttpStatusError carriers', async () => {
+        const getSpy = vi.spyOn(axios, 'get');
+        getSpy.mockResolvedValueOnce({
+            status: 503,
+            data: { error: 'server busy' },
+        } as any);
+
+        await expect(fetchSessionSnapshotUpdateFromServer({
+            token: 't',
+            sessionId: 's1',
+            encryptionKey: new Uint8Array(32),
+            encryptionVariant: 'legacy',
+            currentMetadataVersion: 0,
+            currentAgentStateVersion: 0,
+        })).rejects.toMatchObject({
+            name: 'HttpStatusError',
+            response: { status: 503 },
+        });
+    });
+
     it('parses plaintext metadata/agentState when session encryptionMode is plain', async () => {
         const getSpy = vi.spyOn(axios, 'get');
         getSpy.mockResolvedValueOnce({

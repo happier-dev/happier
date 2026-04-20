@@ -1,12 +1,12 @@
 import { AGENTS } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/backends/types';
 import { configuration } from '@/configuration';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 
 export async function resolveAgentProbeVariant(params: Readonly<{
-  agentId: CatalogAgentId;
+  agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
 }>): Promise<string> {

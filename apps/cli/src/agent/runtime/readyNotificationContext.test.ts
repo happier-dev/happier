@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
-import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from './readyNotificationContext';
+import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from './notifications/readyNotificationContext';
 
 describe('readyNotificationContext', () => {
   it('returns the latest assistant message preview from the message buffer', () => {

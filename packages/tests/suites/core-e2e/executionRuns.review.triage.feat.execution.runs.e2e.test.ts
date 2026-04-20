@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
@@ -23,51 +23,9 @@ import { fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
+import { fakeClaudeLogContainsUserText } from '../../src/testkit/sessionHandoffUiMessages';
 
 const run = createRunDirs({ runLabel: 'core' });
-
-type FakeClaudePromptEvent = {
-  type: 'sdk_stdin';
-  hasUserText?: boolean;
-  userTextPreview?: string;
-};
-
-async function waitForFakeClaudeObservedPrompt(
-  logPath: string,
-  predicate: (event: FakeClaudePromptEvent) => boolean,
-  timeoutMs = 30_000,
-): Promise<FakeClaudePromptEvent> {
-  let matched: FakeClaudePromptEvent | null = null;
-
-  await waitFor(async () => {
-    const raw = await readFile(logPath, 'utf8').catch(() => '');
-    const events = raw
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .flatMap((line) => {
-        try {
-          return [JSON.parse(line)];
-        } catch {
-          return [];
-        }
-      }) as FakeClaudePromptEvent[];
-
-    matched =
-      events.find(
-        (event) =>
-          event?.type === 'sdk_stdin' &&
-          event.hasUserText === true &&
-          predicate(event),
-      ) ?? null;
-    return matched !== null;
-  }, { timeoutMs, intervalMs: 100 });
-
-  if (!matched) {
-    throw new Error(`Timed out waiting for fake Claude prompt in ${logPath}`);
-  }
-  return matched;
-}
 
 describe('core e2e: execution runs (review) supports triage updates', () => {
   let server: StartedServer | null = null;
@@ -117,19 +75,19 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       port: daemon.state.httpPort,
       path: '/spawn-session',
       controlToken,
-      body: {
-        directory: workspaceDir,
-        terminal: { mode: 'plain' },
-        environmentVariables: {
-          HAPPIER_HOME_DIR: daemonHomeDir,
-          HAPPIER_SERVER_URL: serverBaseUrl,
-          HAPPIER_WEBAPP_URL: serverBaseUrl,
-          HAPPIER_VARIANT: 'dev',
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_CLAUDE_PATH: fakeClaudePath,
-          HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
-          HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'review-json',
-        },
+        body: {
+          directory: workspaceDir,
+          terminal: { mode: 'plain' },
+          environmentVariables: {
+            HAPPIER_HOME_DIR: daemonHomeDir,
+            HAPPIER_SERVER_URL: serverBaseUrl,
+            HAPPIER_WEBAPP_URL: serverBaseUrl,
+            HAPPIER_VARIANT: 'dev',
+            HAPPIER_DISABLE_CAFFEINATE: '1',
+            HAPPIER_CLAUDE_PATH: fakeClaudePath,
+            HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
+            HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'review-json',
+          },
       },
     });
 
@@ -266,12 +224,9 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       return Boolean(applyMessage);
     }, { timeoutMs: 30_000, intervalMs: 250 });
 
-    const observedApplyPrompt = await waitForFakeClaudeObservedPrompt(
-      fakeClaudeLog,
-      (event) =>
-        typeof event.userTextPreview === 'string' &&
-        event.userTextPreview.includes('@happier/review.apply_accepted_findings'),
+    await waitFor(
+      () => fakeClaudeLogContainsUserText(fakeClaudeLog, '@happier/review.apply_accepted_findings'),
+      { timeoutMs: 30_000, intervalMs: 250 },
     );
-    expect(observedApplyPrompt.userTextPreview).toContain('@happier/review.apply_accepted_findings');
   }, 180_000);
 });

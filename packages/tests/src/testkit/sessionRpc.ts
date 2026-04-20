@@ -33,7 +33,10 @@ export async function callLegacyEncryptedSessionRpc<TReq, TRes>(params: {
   try {
     await waitFor(
       async () => {
-        const res = await params.ui.rpcCall<RpcAck>(`${params.sessionId}:${params.method}`, encryptedParams);
+        const method = params.method.startsWith(`${params.sessionId}:`)
+          ? params.method
+          : `${params.sessionId}:${params.method}`;
+        const res = await params.ui.rpcCall<RpcAck>(method, encryptedParams);
         lastAck = res;
         if (!res || res.ok !== true || typeof res.result !== 'string') return false;
         const decrypted = unwrapSerializedJsonValue(decryptLegacyBase64(res.result, params.secret));

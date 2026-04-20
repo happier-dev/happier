@@ -82,9 +82,12 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
     sessionId: [{ text: 'Optional when the active target session is already correct' }],
   },
   'agents.models.list': {
-    agentId: [{ text: 'Use listAgentBackends first if you do not already know the backend name', requiresActionIds: ['agents.backends.list'] }],
+    agentId: [{
+      text: 'Use listAgentBackends first if you do not already know the backend name; when using a canonical backend: key for a plugin or discovered backend, also pass the runtime agentId carrier returned by listAgentBackends',
+      requiresActionIds: ['agents.backends.list'],
+    }],
     backendTargetKey: [{
-      text: 'Required when using customAcp; pass the exact configured backendTargetKey such as acpBackend:review-bot',
+      text: 'Pass the exact backendTargetKey, such as backend:plugin-review-bot or acpBackend:review-bot',
     }, {
       text: 'Use listAgentBackends first if you do not already know the backend name',
       requiresActionIds: ['agents.backends.list'],

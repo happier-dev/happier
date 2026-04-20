@@ -21,7 +21,3 @@ export type {
   MobileMessage,
   NormalizedMobilePayload,
 } from './MobileMessageFormat';
-
-// Message adapter
-export type { MessageAdapterConfig } from './MessageAdapter';
-export { MessageAdapter, createMessageAdapter, adapters } from './MessageAdapter';

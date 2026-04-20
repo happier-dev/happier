@@ -1,6 +1,6 @@
 import type { SessionHandoffProviderBundle } from './types';
 
-import { exportSessionHandoffProviderBundle } from './exportSessionHandoffProviderBundle';
+import { exportSessionHandoffProviderBundle } from './providerBundle/export';
 
 export async function exportSessionHandoffState(params: Readonly<{
   metadata: Record<string, unknown>;

@@ -42,5 +42,36 @@ describe('fetchMessagesPage', () => {
     expect(url).toContain('scope=sidechain');
     expect(url).toContain('sidechainId=sc_1');
   });
-});
 
+  it('normalizes JSON-string message content envelopes returned by SQLite-backed servers', async () => {
+    globalThis.fetch = vi.fn(async () => createFakeResponse({
+      messages: [
+        {
+          id: 'msg_1',
+          seq: 1,
+          localId: 'local_1',
+          content: JSON.stringify({ t: 'encrypted', c: 'ciphertext' }),
+          createdAt: 10,
+          updatedAt: 20,
+        },
+      ],
+      hasMore: false,
+      nextAfterSeq: null,
+    })) as any;
+
+    const page = await fetchMessagesPage({
+      baseUrl: 'http://localhost:1234',
+      token: 'token',
+      sessionId: 'ses_1',
+      afterSeq: 0,
+      limit: 50,
+    });
+
+    expect(page.messages).toEqual([
+      expect.objectContaining({
+        id: 'msg_1',
+        content: { t: 'encrypted', c: 'ciphertext' },
+      }),
+    ]);
+  });
+});

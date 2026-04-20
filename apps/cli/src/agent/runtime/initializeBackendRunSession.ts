@@ -6,12 +6,14 @@ import { setupOfflineReconnection } from '@/api/offline/setupOfflineReconnection
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach'
 import {
   applyStartupMetadataUpdateToSession,
-  type AcpSessionModeOverride,
+  type SessionModeOverride,
   type ModelOverride,
   type PermissionModeOverride,
 } from '@/agent/runtime/startupMetadataUpdate'
 import { mergeSessionMetadataForStartup } from '@/agent/runtime/mergeSessionMetadataForStartup'
 import { readSessionAttachMetadataIdentityPolicyFromEnv } from '@/agent/runtime/readSessionAttachMetadataIdentityPolicyFromEnv'
+import { hasPublishedSessionRuntimeIdentityForAttach } from '@/agent/runtime/identity'
+import { normalizeLegacySessionModeMetadataCompat } from '@/agent/runtime/startup/normalizeLegacySessionModeMetadataCompat'
 import {
   persistTerminalAttachmentInfoIfNeeded,
   primeAgentStateForUi,
@@ -28,7 +30,7 @@ export interface InitializeBackendRunSessionOptions {
   uiLogPrefix: string
   startupMetadataOverrides: {
     permissionModeOverride: PermissionModeOverride
-    acpSessionModeOverride?: AcpSessionModeOverride
+    sessionModeOverride?: SessionModeOverride
     modelOverride?: ModelOverride
   }
   metadataKeysToUnsetOnAttach?: readonly string[]
@@ -74,31 +76,6 @@ function normalizeExistingSessionId(existingSessionId: string | undefined): stri
   return existingSessionId.trim()
 }
 
-function hasPublishedRuntimeIdentityForHandoffAttach(
-  snapshot: Metadata | null,
-  runtimeMetadata: Metadata,
-): boolean {
-  if (!snapshot) return false
-
-  const identityKeys: Array<keyof Metadata> = [
-    'path',
-    'host',
-    'homeDir',
-    'happyHomeDir',
-    'machineId',
-    'hostPid',
-  ]
-  for (const key of identityKeys) {
-    const expectedValue = runtimeMetadata[key]
-    if (expectedValue === undefined || expectedValue === null) continue
-    if (snapshot[key] !== expectedValue) {
-      return false
-    }
-  }
-
-  return snapshot.lifecycleState === 'running'
-}
-
 async function waitForAttachMetadataWakeup(session: Pick<ApiSessionClient, 'waitForMetadataUpdate'>): Promise<void> {
   const controller = new AbortController()
   const timer = setTimeout(() => {
@@ -131,7 +108,7 @@ async function applyAttachStartupMetadataUpdateWithRetry(opts: {
       return
     }
 
-    if (hasPublishedRuntimeIdentityForHandoffAttach(opts.session.getMetadataSnapshot(), opts.runtimeMetadata)) {
+    if (hasPublishedSessionRuntimeIdentityForAttach(opts.session.getMetadataSnapshot(), opts.runtimeMetadata)) {
       return
     }
 
@@ -210,11 +187,11 @@ export async function initializeBackendRunSession(
     if (snapshot) {
       const startupNowMs = nowFn()
       daemonReportMetadata = mergeSessionMetadataForStartup({
-        current: snapshot,
-        next: opts.metadata,
+        current: normalizeLegacySessionModeMetadataCompat(snapshot),
+        next: normalizeLegacySessionModeMetadataCompat(opts.metadata),
         nowMs: startupNowMs,
         permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
-        acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
+        sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
         modelOverride: opts.startupMetadataOverrides.modelOverride,
         metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
         attachMetadataIdentityPolicy,
@@ -227,10 +204,10 @@ export async function initializeBackendRunSession(
         applyUpdate: async () => {
           await applyStartupMetadataUpdateToSessionFn({
             session,
-            next: opts.metadata,
+            next: normalizeLegacySessionModeMetadataCompat(opts.metadata),
             nowMs: startupNowMs,
             permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
-            acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
+            sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
             modelOverride: opts.startupMetadataOverrides.modelOverride,
             metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
             attachMetadataIdentityPolicy,
@@ -253,10 +230,10 @@ export async function initializeBackendRunSession(
           applyUpdate: async () => {
             await applyStartupMetadataUpdateToSessionFn({
               session,
-              next: opts.metadata,
+              next: normalizeLegacySessionModeMetadataCompat(opts.metadata),
               nowMs: startupNowMs,
               permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
-              acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
+              sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
               modelOverride: opts.startupMetadataOverrides.modelOverride,
               metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
               attachMetadataIdentityPolicy,

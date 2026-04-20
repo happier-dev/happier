@@ -1,4 +1,7 @@
+import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
+
 import { fetchChanges } from '../changes';
+import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 
 export function isV2ChangesSyncEnabled(flagValue: string | undefined): boolean {
@@ -14,6 +17,7 @@ export async function runSessionChangesSyncOnConnect(params: {
     getAccountId: () => Promise<string | null>;
     catchUpSessionMessages: (afterSeq: number) => Promise<void>;
     syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+    connectionSupervisor?: ManagedConnectionSupervisor | null;
     onDebug: (message: string, data?: unknown) => void;
 }): Promise<void> {
     const accountId = await params.getAccountId();
@@ -37,6 +41,14 @@ export async function runSessionChangesSyncOnConnect(params: {
         return;
     }
     if (result.status !== 'ok') {
+        if (handleRequestAuthenticationFailure({
+            supervisor: params.connectionSupervisor,
+            error: result.error,
+            hadAuth: true,
+        })) {
+            return;
+        }
+
         // Backwards compatibility: old servers may not support /v2/changes yet (e.g. 404).
         // On reconnect, fall back to the snapshot-based convergence path.
         if (params.reason === 'reconnect') {

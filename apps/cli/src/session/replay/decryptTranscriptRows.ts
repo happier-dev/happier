@@ -1,5 +1,5 @@
-import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import { decryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { SessionEncryptionContext } from '../transport/encryption/sessionEncryptionContext';
+import { decryptSessionPayload } from '../transport/encryption/sessionEncryptionContext';
 
 export type DecryptedTranscriptRow = Readonly<{
   seq: number;

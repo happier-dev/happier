@@ -10,10 +10,10 @@ import {
 import type {
   ExecutionRunProfileBoundedCompleteResult,
   ExecutionRunStructuredMeta,
-} from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import { ReviewFollowUpIntentInputSchema } from '@/agent/reviews/followUp/reviewFollowUpIntentInput';
+} from '../../executionRuns/profiles/ExecutionRunIntentProfile';
+import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
 import { buildReviewFindingsV2Payload } from './buildReviewFindingsV2Payload';
-import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
+import { parseTrailingJsonObject } from '../../executionRuns/profiles/shared/parseTrailingJsonObject';
 
 export function normalizeStrictJsonReviewOutput(params: Readonly<{
   runId: string;

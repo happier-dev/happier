@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { DelegateProfile } from './DelegateProfile';
 
 describe('DelegateProfile', () => {
+  it('keeps final sidechain materialization runtime-owned for delegate runs', () => {
+    expect(DelegateProfile.emitFinalSidechainMessageWhenStreamed).toBeUndefined();
+  });
+
   it('parses trailing JSON when model output includes preamble text', () => {
     const start = {
       sessionId: 'sess_1',
@@ -280,5 +284,32 @@ describe('DelegateProfile', () => {
     expect(payload?.deliverables?.map((d: any) => d.title)).toEqual([
       'I completed the delegation successfully.',
     ]);
+  });
+
+  it('builds a delegate repair prompt and normalizes delegate sidechain text', () => {
+    const prompt = DelegateProfile.buildInvalidOutputRepairPrompt?.({
+      rawText: 'not json',
+      start: {
+        sessionId: 'sess_1',
+        runId: 'run_1',
+        callId: 'call_1',
+        sidechainId: 'call_1',
+        intent: 'delegate',
+        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'delegate this',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        startedAtMs: 1,
+      },
+    });
+
+    expect(prompt).toContain('Do not run any tools. Return ONLY valid JSON');
+    expect(prompt).toContain('"deliverables": [{ "id": "d1", "title": "Deliverable", "details": "Optional details" }]');
+    expect(prompt).toContain('not json');
+
+    expect(DelegateProfile.computeSidechainStreamText?.({ fullText: 'Delegate prose\n{"summary":"Ok","deliverables":[]}' })).toBe('Delegate prose');
   });
 });

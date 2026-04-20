@@ -1,5 +1,6 @@
-import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import type { BackendIsolationBundle, BackendIsolationRequest } from '@/runtime/isolation/types';
 
 export type ExecutionRunBackendStartContext = Readonly<{
   intentInput?: unknown;
@@ -23,4 +24,9 @@ export type ExecutionRunBackendFactoryOptions = Readonly<{
   isolation?: ExecutionRunBackendIsolation;
 }>;
 
-export type ExecutionRunBackendFactory = (opts: ExecutionRunBackendFactoryOptions) => AgentBackend;
+export type ExecutionRunBackendFactory = (opts: ExecutionRunBackendFactoryOptions) => ExecutionRunHostRuntime;
+
+export type ExecutionRunBackendDescriptor = Readonly<{
+  factory: ExecutionRunBackendFactory;
+  resolveIsolation?: (request: BackendIsolationRequest, baseBundle: BackendIsolationBundle) => BackendIsolationBundle;
+}>;

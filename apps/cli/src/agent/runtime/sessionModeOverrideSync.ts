@@ -1,7 +1,7 @@
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
 
-import { computePendingSessionModeOverrideApplication } from './permission/permissionModeFromMetadata';
+import { computePendingSessionModeOverrideApplication } from './permissions/modeFromMetadata';
 
 export function createSessionModeOverrideSynchronizer(params: Readonly<{
   session: { getMetadataSnapshot: () => Metadata | null };
@@ -23,14 +23,13 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
     if (!params.isStarted()) return Promise.resolve();
 
     const next = pending;
-    // Empty modeId is a "clear override" sentinel (normalized from modeId="default" in metadata).
-    // Not all runtimes support dynamically resetting to a provider default, so treat this as a
-    // no-op apply while still advancing lastAppliedUpdatedAt so we don't retry forever.
-    if (next.modeId === '') {
+    if (next.modeId.trim().length === 0) {
       lastAppliedUpdatedAt = next.updatedAt;
-      pending = null;
+      if (pending && pending.updatedAt <= lastAppliedUpdatedAt) pending = null;
       return Promise.resolve();
     }
+
+    const runtimeModeId = next.modeId;
     const attempt =
       next.updatedAt === lastAttemptedUpdatedAt
         ? lastAttemptNumber + 1
@@ -42,13 +41,13 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
     lastAttemptedUpdatedAt = next.updatedAt;
     lastAttemptNumber = attempt;
     logger.debug('[SessionModeOverrideSync] Applying session mode override', {
-      modeId: next.modeId,
+      modeId: runtimeModeId,
       updatedAt: next.updatedAt,
       attempt,
     });
 
     applyingPromise = params.runtime
-      .setSessionMode(next.modeId)
+      .setSessionMode(runtimeModeId)
       .then(() => {
         // Only advance lastAppliedUpdatedAt on success so failures can retry.
         lastAppliedUpdatedAt = next.updatedAt;

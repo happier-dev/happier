@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import {
   type ApiSessionSocketStub,
@@ -85,8 +85,9 @@ describe('ApiSessionClient transcript vNext transport', () => {
     const { ApiSessionClient } = await import('./sessionClient');
 
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
-    client.sendClaudeSessionMessage(
-      {
+    client.sendProviderMessage({
+      provider: 'claude',
+      body: {
         type: 'assistant',
         uuid: 'sidechain-uuid',
         sidechainId: 'tool_agent_1',
@@ -96,8 +97,8 @@ describe('ApiSessionClient transcript vNext transport', () => {
           content: [{ type: 'text', text: 'hello from teammate' }],
         },
       } satisfies RawJSONLines,
-      { importedFrom: 'claude-team-inbox' },
-    );
+      meta: { importedFrom: 'claude-team-inbox' },
+    });
 
     await flushQueuedCommits(client as unknown as ClientWithQueuedCommits);
 

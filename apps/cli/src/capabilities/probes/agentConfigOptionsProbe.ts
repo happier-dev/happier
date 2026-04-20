@@ -1,9 +1,10 @@
-import { AGENTS } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/backends/types';
 import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
+import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
+import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
 import { z } from 'zod';
 
 export type ProbedAgentConfigOptionValue = string | number | boolean | null;
@@ -24,7 +25,7 @@ export type ProbedAgentConfigOption = Readonly<{
 type ProbedAgentConfigChoice = NonNullable<ProbedAgentConfigOption['options']>[number];
 
 export type ProbedAgentConfigOptionsResult = Readonly<{
-  provider: CatalogAgentId;
+  provider: CatalogAgentLookupId;
   configOptions: ReadonlyArray<ProbedAgentConfigOption>;
   source: 'dynamic' | 'static';
 }>;
@@ -53,7 +54,7 @@ const ProbeConfigOptionInputSchema = z.object({
   options: z.array(z.unknown()).optional(),
 });
 
-function buildStatic(agentId: CatalogAgentId): ProbedAgentConfigOptionsResult {
+function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentConfigOptionsResult {
   return { provider: agentId, configOptions: [], source: 'static' };
 }
 
@@ -102,7 +103,7 @@ function normalizeDynamicConfigOptions(configOptionsRaw: unknown): ProbedAgentCo
 }
 
 export async function probeAgentConfigOptionsBestEffort(params: {
-  agentId: CatalogAgentId;
+  agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   cwd: string;
   timeoutMs?: number;
@@ -132,11 +133,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     if (cached2?.kind === 'success' && agentConfigOptionsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
-    const entry = AGENTS[params.agentId];
-
-    const preflightAdapter = entry?.getPreflightSessionControlsProbeAdapter
-      ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
-      : null;
+    const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId);
     if (preflightAdapter?.probeConfigOptionsRaw) {
       const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 15_000;
 
@@ -150,20 +147,18 @@ export async function probeAgentConfigOptionsBestEffort(params: {
         return normalizeDynamicConfigOptions(configOptionsRaw);
       };
 
-      let configOptions = await probePreflightConfigOptionsOnce();
-      // If the provider marks the preflight probe as authoritative, retry once immediately to
-      // avoid sticky "static fallback" UI states that require an explicit user refresh.
-      if (!configOptions && preflightAdapter.failureCacheStrategy === 'retry') {
-        configOptions = await probePreflightConfigOptionsOnce();
-      }
+      const probeResult = await runPreflightSessionControlsProbe({
+        adapter: preflightAdapter,
+        probeOnce: probePreflightConfigOptionsOnce,
+      });
 
-      if (configOptions) {
-        const result: ProbedAgentConfigOptionsResult = { ...fallback, configOptions, source: 'dynamic' };
+      if (probeResult.kind === 'success') {
+        const result: ProbedAgentConfigOptionsResult = { ...fallback, configOptions: probeResult.value, source: 'dynamic' };
         agentConfigOptionsProbeCache.setSuccess(cacheKey, result, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS });
         return result;
       }
 
-      if (preflightAdapter.failureCacheStrategy === 'retry') {
+      if (probeResult.kind === 'retryable_failure') {
         // For providers where this probe is the primary/authoritative source, cache an error so
         // subsequent calls retry instead of freezing the static fallback.
         agentConfigOptionsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });

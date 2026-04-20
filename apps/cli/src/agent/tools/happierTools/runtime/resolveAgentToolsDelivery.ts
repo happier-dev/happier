@@ -1,8 +1,8 @@
-import { getAgentToolsCapability, resolveAgentIdFromFlavor, type AgentId } from '@happier-dev/agents';
+import { getAgentToolsCapability, resolveCanonicalAgentIdFromFlavor, type AgentId } from '@happier-dev/agents';
 
 export function resolveAgentToolsDelivery(agentId: AgentId | string): 'native_mcp' | 'shell_bridge' | 'unsupported' {
   try {
-    const resolvedAgentId = resolveAgentIdFromFlavor(agentId);
+    const resolvedAgentId = resolveCanonicalAgentIdFromFlavor(agentId);
     if (!resolvedAgentId) return 'unsupported';
     return getAgentToolsCapability(resolvedAgentId).delivery;
   } catch {

@@ -4,11 +4,12 @@ import { configuration } from '@/configuration';
 import { isPermissionMode } from '@/api/types';
 import { readCredentials } from '@/persistence';
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
-import { resolveContinueWithReplayBackendTarget } from '@/session/replay/resolveContinueWithReplayBackendTarget';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import { archiveSessionByIdBestEffort } from '@/session/services/setSessionArchivedState';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 
 export type RunReplaySummaryForDialogFn = typeof import('@/session/replay/summary/runReplaySummaryForDialog').runReplaySummaryForDialog;
 
@@ -57,7 +58,7 @@ export async function continueSessionWithReplay(
     params: ContinueSessionWithReplayParams,
     deps: ContinueSessionWithReplayDeps,
 ): Promise<SpawnSessionResult> {
-    const {
+  const {
         directory,
         backendTarget,
         approvedNewDirectoryCreation,
@@ -68,7 +69,7 @@ export async function continueSessionWithReplay(
         replay,
   } = params;
 
-    const resolvedBackend = resolveContinueWithReplayBackendTarget({ backendTarget });
+    const resolvedBackend = getSessionHostBridge().resolveContinueWithReplayBackendTarget({ backendTarget });
     if (!resolvedBackend.ok) {
         return {
             type: 'error',
@@ -126,7 +127,6 @@ export async function continueSessionWithReplay(
 
     logger.debug('[SESSION REPLAY] Continuing session with replay', {
         directory,
-        backendTarget: resolvedBackend.backendTarget,
         backendTargetV2: resolvedBackend.backendTargetV2,
         approvedNewDirectoryCreation,
         previousSessionId: replay.previousSessionId,
@@ -150,7 +150,7 @@ export async function continueSessionWithReplay(
                         parentCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
                         createdAtMs: nowMs,
                         strategy: 'replay',
-                        providerHint: { providerId: resolvedBackend.providerHintAgentId },
+                        providerHint: { providerId: resolvedBackend.providerHintProviderId },
                     },
                     replaySeedV1: {
                         v: 1,
@@ -162,6 +162,7 @@ export async function continueSessionWithReplay(
                 },
             });
         } catch (error) {
+            if (isAuthenticationError(error)) throw error;
             logger.debug('[SESSION REPLAY] Failed to create replay-seeded session', {
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -185,7 +186,7 @@ export async function continueSessionWithReplay(
 
     const result = await deps.spawnSession({
         directory,
-        backendTarget: resolvedBackend.backendTarget,
+        backendTarget: resolvedBackend.backendTargetV2,
         approvedNewDirectoryCreation,
         existingSessionId: created.sessionId,
         permissionMode: normalizedPermissionMode,

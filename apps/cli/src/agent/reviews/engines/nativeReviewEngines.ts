@@ -1,11 +1,16 @@
-import { listNativeReviewEngines, type NativeReviewEngineId } from '@happier-dev/protocol';
+import { getNativeReviewEngine, listNativeReviewEngines, type NativeReviewEngineId } from '@happier-dev/protocol';
 import type { BackendTargetRefV1, ExecutionRunRetentionPolicy } from '@happier-dev/protocol';
 
-import type { ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import type { ExecutionRunBackendFactory } from '@/agent/executionRuns/registry/executionRunBackendTypes';
+import type { ExecutionRunProfileBoundedCompleteResult } from '../../executionRuns/profiles/ExecutionRunIntentProfile';
+import type { ExecutionRunBackendFactory } from '../../executionRuns/registry/executionRunBackendTypes';
+import type {
+  ExecutionRunIntentStartPreflightParams,
+  ExecutionRunStartIntentPolicyResult,
+} from '../../executionRuns/policy/executionRunStartPreflight';
 
 import { executionRunBackendFactory as coderabbitBackendFactory } from './coderabbit/executionRunBackendFactory';
 import { normalizeCodeRabbitPlainReviewOutput } from './coderabbit/normalizeCodeRabbitPlainReviewOutput';
+import { runCodeRabbitReviewStartPreflight } from './coderabbit/runCodeRabbitReviewStartPreflight';
 
 export type NativeReviewOutputNormalizer = (params: Readonly<{
   runId: string;
@@ -20,26 +25,61 @@ export type NativeReviewOutputNormalizer = (params: Readonly<{
   retentionPolicy?: ExecutionRunRetentionPolicy;
 }>) => ExecutionRunProfileBoundedCompleteResult;
 
-const NATIVE_BACKEND_FACTORIES: Record<NativeReviewEngineId, ExecutionRunBackendFactory> = {
-  coderabbit: coderabbitBackendFactory,
-};
+export type NativeReviewEngineDescriptor = Readonly<{
+  id: NativeReviewEngineId;
+  title: string;
+  executionRunBackendFactory: ExecutionRunBackendFactory;
+  reviewOutputNormalizer: NativeReviewOutputNormalizer;
+  reviewStartPreflight?: (
+    params: ExecutionRunIntentStartPreflightParams,
+  ) => Promise<ExecutionRunStartIntentPolicyResult>;
+}>;
 
-const NATIVE_NORMALIZERS: Record<NativeReviewEngineId, NativeReviewOutputNormalizer> = {
-  coderabbit: normalizeCodeRabbitPlainReviewOutput,
-};
+const NATIVE_REVIEW_ENGINE_BINDINGS = Object.freeze({
+  coderabbit: {
+    executionRunBackendFactory: coderabbitBackendFactory,
+    reviewOutputNormalizer: normalizeCodeRabbitPlainReviewOutput,
+    reviewStartPreflight: runCodeRabbitReviewStartPreflight,
+  },
+} satisfies Record<
+  NativeReviewEngineId,
+  Omit<NativeReviewEngineDescriptor, 'id' | 'title'>
+>);
 
-export function resolveNativeReviewExecutionRunBackendFactory(id: string): ExecutionRunBackendFactory | null {
+export function listNativeReviewEngineDescriptors(): readonly NativeReviewEngineDescriptor[] {
+  return listNativeReviewEngines().map((engine) => ({
+    id: engine.id,
+    title: engine.title,
+    ...NATIVE_REVIEW_ENGINE_BINDINGS[engine.id],
+  }));
+}
+
+export function getNativeReviewEngineDescriptor(id: string): NativeReviewEngineDescriptor | null {
   const key = String(id ?? '').trim() as NativeReviewEngineId;
   if (!key) return null;
-  return Object.prototype.hasOwnProperty.call(NATIVE_BACKEND_FACTORIES, key) ? NATIVE_BACKEND_FACTORIES[key]! : null;
+  const engine = getNativeReviewEngine(key);
+  if (!engine) return null;
+  return {
+    id: engine.id,
+    title: engine.title,
+    ...NATIVE_REVIEW_ENGINE_BINDINGS[engine.id],
+  };
+}
+
+export function resolveNativeReviewExecutionRunBackendFactory(id: string): ExecutionRunBackendFactory | null {
+  return getNativeReviewEngineDescriptor(id)?.executionRunBackendFactory ?? null;
 }
 
 export function resolveNativeReviewOutputNormalizer(id: string): NativeReviewOutputNormalizer | null {
-  const key = String(id ?? '').trim() as NativeReviewEngineId;
-  if (!key) return null;
-  return Object.prototype.hasOwnProperty.call(NATIVE_NORMALIZERS, key) ? NATIVE_NORMALIZERS[key]! : null;
+  return getNativeReviewEngineDescriptor(id)?.reviewOutputNormalizer ?? null;
+}
+
+export function resolveNativeReviewStartPreflight(
+  id: string,
+): ((params: ExecutionRunIntentStartPreflightParams) => Promise<ExecutionRunStartIntentPolicyResult>) | null {
+  return getNativeReviewEngineDescriptor(id)?.reviewStartPreflight ?? null;
 }
 
 export function listNativeReviewEngineIds(): readonly string[] {
-  return listNativeReviewEngines().map((e) => e.id);
+  return listNativeReviewEngineDescriptors().map((e) => e.id);
 }

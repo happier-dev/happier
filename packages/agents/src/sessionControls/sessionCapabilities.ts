@@ -1,6 +1,8 @@
 import type { AgentId, AgentSessionCapabilitySupportLevel, AgentSessionCapabilities } from '../types.js';
-import { AGENTS_CORE } from '../manifest.js';
+import { getAgentCore } from '../manifest.js';
 import { resolveAgentRuntimeControlSurfaceForSession } from './providerSessionBackends.js';
+import type { RuntimeCapabilities } from '../runtime/capabilities/runtimeCapabilities.js';
+import { publishRuntimeCapabilities } from '../runtime/capabilities/runtimeCapabilitiesPublication.js';
 
 export type AgentSessionCapabilityKey =
   | 'sessionListing'
@@ -20,7 +22,7 @@ export const UNSUPPORTED_AGENT_SESSION_CAPABILITIES: AgentSessionCapabilities = 
 });
 
 export function getAgentSessionCapabilities(agentId: AgentId): AgentSessionCapabilities {
-  return AGENTS_CORE[agentId].sessionCapabilities ?? UNSUPPORTED_AGENT_SESSION_CAPABILITIES;
+  return getAgentCore(agentId).sessionCapabilities ?? UNSUPPORTED_AGENT_SESSION_CAPABILITIES;
 }
 
 export function getAgentSessionCapability(agentId: AgentId, capability: AgentSessionCapabilityKey): AgentSessionCapabilitySupportLevel {
@@ -57,6 +59,23 @@ export function evaluateAgentSessionCapabilitySupport(params: Readonly<{
   }
 
   return baseSupport;
+}
+
+export function readRuntimeCapabilitiesForSession(params: Readonly<{
+  agentId: AgentId;
+  metadata: unknown;
+  accountSettings?: Record<string, unknown> | null;
+}>): RuntimeCapabilities | null {
+  const effectiveRuntimeControlSurface = resolveAgentRuntimeControlSurfaceForSession(params);
+  if (!effectiveRuntimeControlSurface) return null;
+
+  return publishRuntimeCapabilities({
+    localControl: effectiveRuntimeControlSurface.localControl ?? null,
+    sessionStorage: effectiveRuntimeControlSurface.sessionStorage,
+    sessionCapabilities: effectiveRuntimeControlSurface.sessionCapabilities,
+    tools: effectiveRuntimeControlSurface.tools,
+    handoff: effectiveRuntimeControlSurface.handoff,
+  });
 }
 
 function readCapabilityFromSurface(capabilities: AgentSessionCapabilities, capability: AgentSessionCapabilityKey): AgentSessionCapabilitySupportLevel {

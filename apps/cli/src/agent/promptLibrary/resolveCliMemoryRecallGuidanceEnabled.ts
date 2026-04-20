@@ -1,5 +1,5 @@
-import { isActionEnabledByEnv } from '@/settings/actionsSettings';
-import { resolveMemoryIndexPaths } from '@/daemon/memory/memoryIndexPaths';
+import { isActionEnabledByEnv } from '../../settings/actionsSettings';
+import { resolveMemoryIndexPaths } from '../../daemon/memory/memoryIndexPaths';
 import { stat } from 'node:fs/promises';
 import {
   isMemoryRecallGuidanceSupported,
@@ -30,7 +30,7 @@ export async function resolveCliMemoryRecallGuidanceEnabled(args?: Readonly<{
   try {
     const readMemorySettingsFromDisk =
       args?.deps?.readMemorySettingsFromDisk
-      ?? (await import('@/settings/memorySettings')).readMemorySettingsFromDisk;
+      ?? (await import('../../settings/memorySettings')).readMemorySettingsFromDisk;
     const settings = await readMemorySettingsFromDisk();
     if (settings.enabled !== true) return false;
 

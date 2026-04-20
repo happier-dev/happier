@@ -8,7 +8,9 @@ import net from 'node:net';
 import { commandExistsOnPath } from '@happier-dev/cli-common/process';
 import {
   applyServicePlan,
+  buildReadWindowsScheduledTaskStatusPowerShellCommand,
   buildServiceDefinition,
+  parseWindowsScheduledTaskStatusPowerShellJson,
   planServiceAction,
   resolveServiceBackend,
   type ServiceMode,
@@ -374,6 +376,24 @@ async function readServiceStatus(config: RelayRuntimeConfig): Promise<ServiceSta
   }
 
   if (backend.startsWith('schtasks') && commandExistsOnPath('schtasks', { path: process.env.PATH })) {
+    if (commandExistsOnPath('powershell.exe', { path: process.env.PATH })) {
+      const powerShellResult = runCommand('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        buildReadWindowsScheduledTaskStatusPowerShellCommand({
+          taskName: config.serviceName,
+        }),
+      ]);
+      const parsedPowerShellStatus = powerShellResult.status === 0
+        ? parseWindowsScheduledTaskStatusPowerShellJson(powerShellResult.stdout)
+        : null;
+      if (parsedPowerShellStatus) {
+        return {
+          backend,
+          raw: parsedPowerShellStatus,
+        };
+      }
+    }
     const result = runCommand('schtasks', ['/Query', '/TN', `Happier\\${config.serviceName}`, '/FO', 'LIST', '/V']);
     const output = result.stdout;
     return {

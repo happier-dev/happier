@@ -117,6 +117,55 @@ describe('buildPatchedSessionHandoffMetadata', () => {
       requestedTargetMachineId: 'machine_source',
     })).toBe('/Users/source/workspace');
   });
+
+  it('canonicalizes nested legacy direct-session runtime descriptors onto runtimeDescriptorV1', () => {
+    const patched = buildPatchedSessionHandoffMetadata(
+      {
+        flavor: 'codex',
+        path: '/Users/source/workspace',
+        machineId: 'machine_source',
+        codexSessionId: 'thread_old',
+        directSessionV1: {
+          v: 1,
+          providerId: 'codex',
+          machineId: 'machine_source',
+          remoteSessionId: 'thread_old',
+          source: {
+            kind: 'codexHome',
+            home: 'user',
+          },
+          linkedAtMs: 1,
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'codex',
+            provider: {
+              backendMode: 'appServer',
+              vendorSessionId: 'thread_old',
+            },
+          },
+        },
+      },
+      {
+        providerId: 'codex',
+        targetMachineId: 'machine_target',
+        targetWorkspaceRootPath: '/Users/target/workspace',
+        sessionStorageAfter: 'direct',
+        completedAtMs: 1234,
+      },
+    );
+
+    expect(patched.directSessionV1).toEqual(expect.objectContaining({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'thread_old',
+        },
+      },
+    }));
+    expect(patched.directSessionV1).not.toHaveProperty('agentRuntimeDescriptorV1');
+  });
 });
 
 describe('resolveSessionHandoffBackTargetRootPath', () => {

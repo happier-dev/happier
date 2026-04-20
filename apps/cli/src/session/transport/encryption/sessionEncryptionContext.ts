@@ -1,7 +1,7 @@
-import type { Credentials } from '@/persistence';
-import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
-import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
-import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
+import type { Credentials } from '../../../persistence';
+import { decodeBase64, decrypt, encodeBase64, encrypt } from '../../../api/encryption';
+import { openSessionDataEncryptionKey } from '../../../api/client/openSessionDataEncryptionKey';
+import { tryParseJsonRecord } from '../../../utils/tryParseJsonRecord';
 
 export type SessionEncryptionContext = Readonly<{
   encryptionKey: Uint8Array;

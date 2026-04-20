@@ -3,13 +3,13 @@ import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises
 import { basename, dirname, join } from 'node:path';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { configuration } from '@/configuration';
-import { resolveExistingManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
-import { readRuntimeInstallableLastCheckAtMs } from '@/installables/runtime/runtimeInstallableUpdateState';
+import { configuration } from '../../configuration';
+import { resolveExistingManagedJavaScriptRuntimeCommand } from '../../runtime/js/managedJavaScriptRuntime';
+import { readRuntimeInstallableLastCheckAtMs } from '../../runtime/installables/updateState';
 import { downloadGitHubReleaseAsset, extractGitHubReleaseAsset } from '@happier-dev/cli-common/providers';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
-import { resolveCodexAcpReleaseAsset, CODEX_ACP_GITHUB_REPO } from '@/runtime/managedTools/providers/codexAcpRelease';
+import { resolveCodexAcpReleaseAsset, CODEX_ACP_GITHUB_REPO } from '../../runtime/managedTools/providers/codexAcpRelease';
 
 type CodexAcpState = Readonly<{
   installedVersion: string | null;

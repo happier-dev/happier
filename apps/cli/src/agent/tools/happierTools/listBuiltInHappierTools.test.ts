@@ -1,12 +1,95 @@
+const { activeRuntimeRegistryState } = vi.hoisted(() => ({
+  activeRuntimeRegistryState: {
+    registry: null as ResolvedContributionRegistry | null,
+  },
+}));
+
+vi.mock('@/extensions/reload/singleton', () => ({
+  pluginReloadController: {
+    getState: () => ({
+      generation: 1,
+      activeRegistry: activeRuntimeRegistryState.registry
+        ? { contributions: activeRuntimeRegistryState.registry }
+        : null,
+      lastResult: null,
+    }),
+  },
+}));
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+
 const env = process.env;
+
+function createRegistryWithPluginTool(params?: Readonly<{
+  toolName?: string | null;
+  trustPolicy?: 'local_trusted' | 'prompt' | 'untrusted';
+}>): ResolvedContributionRegistry {
+  return createResolvedContributionRegistry({
+    providers: [],
+    backends: [],
+    actions: [
+      {
+        provenance: 'external',
+        source: { kind: 'path' },
+        pluginId: 'acme.review.plugin',
+        manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
+        manifestDigest: 'sha256:acme-review',
+        daemonEntryPath: '/plugins/acme/review/daemon.mjs',
+        sourceSpec: {
+          kind: 'path',
+          locator: '/plugins/acme/review',
+          trustPolicy: params?.trustPolicy ?? 'local_trusted',
+          installPolicy: 'link',
+        },
+        definition: {
+          kindVersion: 1,
+          id: 'acme.review.start',
+          title: 'Acme Review Start',
+          description: 'Start a plugin-defined review workflow',
+          safety: 'safe',
+          placements: [],
+          slash: null,
+          bindings: params?.toolName === null
+            ? null
+            : { mcpToolName: params?.toolName ?? 'acme_review_start' },
+          examples: null,
+          surfaces: {
+            ui_button: false,
+            ui_slash_command: false,
+            voice_tool: false,
+            voice_action_block: false,
+            session_agent: true,
+            mcp: true,
+            cli: true,
+          },
+          inputHints: null,
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: true,
+          },
+          execution: {
+            routing: 'plugin',
+            handler: {
+              target: 'plugin',
+              exportName: 'startReview',
+            },
+          },
+        },
+      },
+    ],
+  });
+}
 
 describe('listBuiltInHappierTools', () => {
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...env };
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    activeRuntimeRegistryState.registry = null;
   });
 
   it('filters action-backed tools dynamically using current CLI action settings', async () => {
@@ -35,5 +118,44 @@ describe('listBuiltInHappierTools', () => {
     expect(names).not.toContain('action_options_resolve');
     expect(names).toContain('action_execute');
     expect(names).toContain('review_start');
+  });
+
+  it('lists trusted plugin action tools when they explicitly opt into tool exposure', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const names = listBuiltInHappierTools({
+      surface: 'cli',
+      registry: createRegistryWithPluginTool(),
+    }).map((tool) => tool.name);
+
+    expect(names).toContain('acme_review_start');
+  });
+
+  it('fails closed for plugin action tools without explicit bindings or trust approval', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+
+    const withoutBinding = listBuiltInHappierTools({
+      surface: 'cli',
+      registry: createRegistryWithPluginTool({ toolName: null }),
+    }).map((tool) => tool.name);
+    const promptTrusted = listBuiltInHappierTools({
+      surface: 'cli',
+      registry: createRegistryWithPluginTool({ trustPolicy: 'prompt' }),
+    }).map((tool) => tool.name);
+
+    expect(withoutBinding).not.toContain('acme_review_start');
+    expect(promptTrusted).not.toContain('acme_review_start');
+  });
+
+  it('prefers active authoritative runtime registry tools when available', async () => {
+    activeRuntimeRegistryState.registry = createRegistryWithPluginTool({
+      toolName: 'acme_runtime_tool',
+    });
+
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const names = listBuiltInHappierTools({
+      surface: 'cli',
+    }).map((tool) => tool.name);
+
+    expect(names).toContain('acme_runtime_tool');
   });
 });

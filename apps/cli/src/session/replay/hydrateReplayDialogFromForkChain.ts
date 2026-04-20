@@ -1,5 +1,6 @@
 import type { Credentials } from '@/persistence';
 
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
 import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
 import { configuration } from '@/configuration';
@@ -40,7 +41,10 @@ async function tryHydrateSynopsisFromMetadataPointer(params: Readonly<{
     token: params.credentials.token,
     sessionId: params.sessionId,
     localId: pointer.localId,
-  }).catch(() => null);
+  }).catch((error) => {
+    if (isAuthenticationError(error)) throw error;
+    return null;
+  });
   if (!found) return null;
 
   const slice = decryptTranscriptReplaySlice({
@@ -91,7 +95,10 @@ async function scanOlderPagesForSynopsisText(params: Readonly<{
       sessionId: params.sessionId,
       limit: params.pageSize,
       beforeSeq: cursor,
-    }).catch(() => null);
+    }).catch((error) => {
+      if (isAuthenticationError(error)) throw error;
+      return null;
+    });
     if (!older || older.length === 0) break;
     const synopsis = params.decryptLatestSynopsisText(older);
     if (synopsis) return synopsis;
@@ -132,7 +139,10 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     if (visited.has(currentSessionId)) break;
     visited.add(currentSessionId);
 
-    const rawSession = await fetchSessionByIdCompat({ token: params.credentials.token, sessionId: currentSessionId }).catch(() => null);
+    const rawSession = await fetchSessionByIdCompat({ token: params.credentials.token, sessionId: currentSessionId }).catch((error) => {
+      if (isAuthenticationError(error)) throw error;
+      return null;
+    });
     if (!rawSession) break;
 
     segments.push({
@@ -186,7 +196,10 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       sessionId: segment.sessionId,
       limit: params.limit,
       ...(typeof beforeSeq === 'number' ? { beforeSeq } : {}),
-    }).catch(() => null);
+    }).catch((error) => {
+      if (isAuthenticationError(error)) throw error;
+      return null;
+    });
     if (!rows) continue;
 
     const encryptionMode = (segment.rawSession as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';

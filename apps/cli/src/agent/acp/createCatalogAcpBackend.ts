@@ -1,10 +1,18 @@
+import { hasBuiltInAcpConfig, isAgentId } from '@happier-dev/agents';
+
 import type { AgentFactoryOptions } from '@/agent/core';
-import { requireCatalogEntry, type CatalogAgentId } from '@/backends/catalog';
+import { requireCatalogEntry, type CatalogAgentLookupId } from '@/backends/catalog';
 import type { CatalogAcpBackendCreateResult, CatalogAcpBackendFactory } from '@/backends/types';
+import { loadBuiltInRuntimeOwners } from './catalog/builtIn/runtimeOwners';
 
-const cachedFactoryPromises = new Map<CatalogAgentId, Promise<CatalogAcpBackendFactory>>();
+const cachedFactoryPromises = new Map<CatalogAgentLookupId, Promise<CatalogAcpBackendFactory>>();
 
-async function loadCatalogAcpFactory(agentId: CatalogAgentId): Promise<CatalogAcpBackendFactory> {
+async function loadCatalogAcpFactory(agentId: CatalogAgentLookupId): Promise<CatalogAcpBackendFactory> {
+  if (isAgentId(agentId) && hasBuiltInAcpConfig(agentId)) {
+    const runtimeOwners = await loadBuiltInRuntimeOwners(agentId);
+    return (opts) => ({ backend: runtimeOwners.createRuntime(opts) });
+  }
+
   const entry = requireCatalogEntry(agentId);
   if (!entry.getAcpBackendFactory) {
     throw new Error(`Agent '${agentId}' does not support ACP backends`);
@@ -12,7 +20,7 @@ async function loadCatalogAcpFactory(agentId: CatalogAgentId): Promise<CatalogAc
   return await entry.getAcpBackendFactory();
 }
 
-async function getCatalogAcpFactory(agentId: CatalogAgentId): Promise<CatalogAcpBackendFactory> {
+async function getCatalogAcpFactory(agentId: CatalogAgentLookupId): Promise<CatalogAcpBackendFactory> {
   const existing = cachedFactoryPromises.get(agentId);
   if (existing) return await existing;
 
@@ -25,7 +33,7 @@ export async function createCatalogAcpBackend<
   TOptions extends AgentFactoryOptions,
   TResult extends CatalogAcpBackendCreateResult = CatalogAcpBackendCreateResult,
 >(
-  agentId: CatalogAgentId,
+  agentId: CatalogAgentLookupId,
   opts: TOptions,
 ): Promise<TResult> {
   const factory = await getCatalogAcpFactory(agentId);

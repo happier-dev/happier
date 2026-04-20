@@ -1,4 +1,6 @@
-import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
+import type { SessionId } from '@/agent/core/AgentBackend';
+import type { ExecutionRunControllerFailureSignal } from './failureSignal';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 
 export type ExecutionRunSendDelivery = 'prompt' | 'steer_if_supported' | 'interrupt';
@@ -12,7 +14,7 @@ export type ExecutionRunExternalMessage = Readonly<{
 
 export type ExecutionRunBackendController = {
   kind: 'backend';
-  backend: AgentBackend;
+  backend: ExecutionRunHostRuntime;
   backendSupportsResume: boolean;
   childSessionId: SessionId | null;
   buffer: string;
@@ -28,6 +30,8 @@ export type ExecutionRunBackendController = {
   pendingExternalMessages: ExecutionRunExternalMessage[];
   pendingExternalMessagesSignal: { promise: Promise<void>; resolve: () => void } | null;
   lastMarkerWriteAtMs: number;
+  failureSignal?: ExecutionRunControllerFailureSignal;
+  pendingHostBarrier?: Promise<void>;
   terminalMarkerWritePromise?: Promise<void>;
   terminalPromise: Promise<void>;
   resolveTerminal: () => void;

@@ -13,7 +13,7 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       },
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       replayFlavor: 'claude',
-      providerHintAgentId: 'claude',
+      providerHintProviderId: 'claude',
     });
   });
 
@@ -33,7 +33,7 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       },
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       replayFlavor: 'acp:review-bot',
-      providerHintAgentId: 'customAcp',
+      providerHintProviderId: 'acp:review-bot',
     });
   });
 
@@ -57,7 +57,22 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       },
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       replayFlavor: 'acp:review-bot',
-      providerHintAgentId: 'customAcp',
+      providerHintProviderId: 'acp:review-bot',
+    });
+  });
+
+  it('resolves configured ACP replay targets from legacy agent-only acp:<backendId> input', () => {
+    expect(resolveContinueWithReplayBackendTarget({ agent: 'acp:review-bot' })).toMatchObject({
+      ok: true,
+      backendTargetV2: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      replayFlavor: 'acp:review-bot',
+      providerHintProviderId: 'acp:review-bot',
     });
   });
 

@@ -4,6 +4,34 @@ import { encryptLegacyBase64 } from './messageCrypto';
 import { callLegacyEncryptedSessionRpc } from './sessionRpc';
 
 describe('callLegacyEncryptedSessionRpc', () => {
+  it('does not double-prefix fully scoped session methods', async () => {
+    const secret = new Uint8Array(32).fill(8);
+    const methods: string[] = [];
+    const ui = {
+      rpcCall: async (method: string) => {
+        methods.push(method);
+        return {
+          ok: true,
+          result: encryptLegacyBase64({ ok: true }, secret),
+        };
+      },
+    } as any;
+
+    await expect(
+      callLegacyEncryptedSessionRpc({
+        ui,
+        sessionId: 'sess_1',
+        method: 'sess_1:permission',
+        req: { id: 'perm_1', approved: true },
+        secret,
+        schema: { safeParse: (input) => ({ success: true, data: input as { ok: boolean } }) },
+        timeoutMs: 250,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(methods).toEqual(['sess_1:permission']);
+  });
+
   it('preserves decrypted application error envelopes instead of reporting them as timeouts', async () => {
     const secret = new Uint8Array(32).fill(7);
     const ui = {

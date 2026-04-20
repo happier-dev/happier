@@ -1,4 +1,4 @@
-import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { spawnDaemonSession } from '@/daemon/controlClient';
 import type { Credentials } from '@/persistence';
@@ -12,7 +12,7 @@ type CreateSpawnedSessionParams = Readonly<{
   credentials: Credentials;
   directory: string;
   machineId?: string;
-  backendTarget: BackendTargetRefV2Input;
+  backendTarget: BackendTargetRefV2;
   modelId?: string;
   title?: string;
   tag?: string;

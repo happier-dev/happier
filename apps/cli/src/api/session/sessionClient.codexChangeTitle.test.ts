@@ -66,12 +66,15 @@ describe('ApiSessionClient sendCodexMessage change_title', () => {
 
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
 
-    client.sendCodexMessage({
-      type: 'tool-call',
-      name: 'change_title',
-      callId: 'call-1',
-      input: { title: 'New title' },
-      id: 'msg-1',
+    client.sendProviderMessage({
+      provider: 'codex',
+      body: {
+        type: 'tool-call',
+        name: 'change_title',
+        callId: 'call-1',
+        input: { title: 'New title' },
+        id: 'msg-1',
+      },
     });
 
     await flushApiSessionClientMessageCommitQueue(client as any);

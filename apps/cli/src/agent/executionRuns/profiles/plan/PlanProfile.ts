@@ -9,6 +9,7 @@ import type {
 } from '../ExecutionRunIntentProfile';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
 import { deriveLoosePlanSections } from '../shared/deriveLoosePlanSections';
+import { stripTrailingJsonObjectFromText } from '../shared/stripTrailingJsonObjectFromText';
 
 function buildPlanGuidanceBlock(): string {
   return [
@@ -169,6 +170,23 @@ export const PlanProfile: ExecutionRunIntentProfile = {
   intent: 'plan',
   transcriptMaterialization: 'full',
   buildPrompt: (params) => `${params.instructions}\n\n${buildPlanGuidanceBlock()}`,
+  computeSidechainStreamText: ({ fullText }) => stripTrailingJsonObjectFromText(fullText),
+  buildInvalidOutputRepairPrompt: ({ rawText }) => [
+    'Your previous response did not include the required final JSON object.',
+    'Do not run any tools. Return ONLY valid JSON (parsable by JSON.parse).',
+    'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
+    'Return a single JSON object with this shape:',
+    '{',
+    '  "summary": "Ok",',
+    '  "sections": [{ "title": "Steps", "items": ["Step 1"] }],',
+    '  "risks": [],',
+    '  "milestones": [],',
+    '  "recommendedBackendId": "claude"',
+    '}',
+    '',
+    'Content to convert:',
+    rawText,
+  ].join('\n'),
   onBoundedComplete: ({ start, rawText, finishedAtMs }) =>
     normalizePlanBoundedCompletion({
       runId: start.runId,

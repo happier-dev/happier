@@ -1,6 +1,6 @@
 import type { BackendTargetRefV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
-import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/runEphemeralExecutionRunTextPromptWithRunnerConfig';
+import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
 
 import type { HappierReplayDialogItem } from '../types';
 

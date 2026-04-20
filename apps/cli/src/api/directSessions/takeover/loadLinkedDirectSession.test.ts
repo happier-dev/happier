@@ -36,7 +36,7 @@ describe('loadLinkedDirectSession', () => {
         remoteSessionId: 'legacy-session',
         source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
         linkedAtMs: 1,
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'opencode',
           provider: {
@@ -86,7 +86,7 @@ describe('loadLinkedDirectSession', () => {
         remoteSessionId: 'legacy-session',
         source: { kind: 'opencodeServer', directory: '/repo/opencode' },
         linkedAtMs: 1,
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'opencode',
           provider: {
@@ -129,7 +129,7 @@ describe('loadLinkedDirectSession', () => {
         remoteSessionId: 'legacy-thread',
         source: { kind: 'codexHome', home: 'user', homePath: '/tmp/stale-home' },
         linkedAtMs: 1,
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
           provider: {
@@ -198,7 +198,7 @@ describe('loadLinkedDirectSession', () => {
           homePath: '/tmp/connected-home',
         },
         linkedAtMs: 1,
-        agentRuntimeDescriptorV1: {
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
           provider: {

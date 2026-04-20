@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import type { ExecutionRunController, ExecutionRunVoiceAgentController } from '@/agent/executionRuns/controllers/types';
+import { VoiceAgentError, type VoiceAgentManager } from '../../voice/agent/VoiceAgentManager';
+import type { ExecutionRunState } from './executionRunTypes';
+import type { ExecutionRunController, ExecutionRunVoiceAgentController } from '../controllers/types';
 
 export async function startVoiceAgentTurnStream(args: Readonly<{
   runId: string;

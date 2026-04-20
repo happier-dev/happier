@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { createPluginStateStore } from '@/extensions/store/state';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 
@@ -40,7 +40,7 @@ async function writePluginFixture(rootDir: string): Promise<void> {
     join(manifestDir, 'plugin.json'),
     JSON.stringify(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         id: 'acme.probe.variant.plugin',
         version: '1.0.0',
         displayName: 'Probe Variant Plugin',
@@ -48,64 +48,71 @@ async function writePluginFixture(rootDir: string): Promise<void> {
         engines: {
           happier: '^0.2.0',
         },
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['providers', 'backends'],
+        },
         targets: {
           daemon: {
             entry: './daemon.mjs',
           },
         },
-        contributions: {
-          providers: [
-            {
-              kindVersion: 1,
-              id: 'acme.probe.variant.provider',
-              display: {
-                name: 'Probe Variant Provider',
-              },
-              ownedBackendIds: ['acme.probe.variant.backend'],
+        permissions: [],
+        contributions: [
+          {
+            kind: 'provider',
+            kindVersion: 1,
+            id: 'acme.probe.variant.provider',
+            providerAgentId: 'customAcp',
+            display: {
+              name: 'Probe Variant Provider',
+              tags: ['plugin'],
             },
-          ],
-          backends: [
-            {
-              kindVersion: 1,
-              id: 'acme.probe.variant.backend',
-              providerId: 'acme.probe.variant.provider',
-              runtimeKind: 'acp',
-              launch: {
-                command: 'plugin-variant-launch',
-                args: ['--ignored'],
-                env: {},
+            ownedBackendIds: ['acme.probe.variant.backend'],
+          },
+          {
+            kind: 'backend',
+            kindVersion: 1,
+            id: 'acme.probe.variant.backend',
+            providerId: 'acme.probe.variant.provider',
+            runtimeKind: 'acp',
+            capabilities: {
+              supportsModels: true,
+              supportsModes: true,
+              supportsConfigOptions: true,
+            },
+            runtimeAdapters: [],
+            launch: {
+              command: 'plugin-variant-launch',
+              args: ['--ignored'],
+              env: {},
+            },
+            acp: {
+              title: 'Plugin Variant Backend',
+              command: 'plugin-variant-cli',
+              args: ['acp'],
+              env: {
+                REGION: { t: 'literal', v: 'eu' },
               },
-              acp: {
-                title: 'Plugin Variant Backend',
-                command: 'plugin-variant-cli',
-                args: ['acp'],
-                env: {
-                  REGION: { t: 'literal', v: 'eu' },
-                },
-                transportProfile: 'generic',
-                capabilities: {
-                  supportsLoadSession: false,
-                  supportsModes: 'yes',
-                  supportsModels: 'yes',
-                  supportsConfigOptions: 'unknown',
-                  promptImageSupport: 'unknown',
-                },
-              },
+              transportProfile: 'generic',
               capabilities: {
-                supportsModels: true,
-                supportsModes: true,
-                supportsConfigOptions: true,
+                supportsLoadSession: false,
+                supportsModes: 'yes',
+                supportsModels: 'yes',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
               },
             },
-          ],
-          hooks: [],
-        },
+          },
+        ],
       },
       null,
       2,
     ),
     'utf8',
   );
+
+  await writeFile(join(rootDir, 'daemon.mjs'), 'export default async function activate() { return null; }\n', 'utf8');
 }
 
 describe('resolveConfiguredAcpProbeCacheVariant', () => {

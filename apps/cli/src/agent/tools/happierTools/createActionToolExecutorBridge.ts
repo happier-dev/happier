@@ -3,7 +3,8 @@ import {
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
 import { createActionToolNameToIdMap } from './actionToolCatalog';
-import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
+import { normalizeExecutionRunToolResult } from './executionRunToolResult';
+import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
 
 type ActionExecutorResult = Readonly<
   | { ok: true; result: unknown }
@@ -39,7 +40,7 @@ function normalizeActionExecutorResult(result: ActionExecutorResult): ActionTool
     : { ok: false, errorCode: result.errorCode, error: result.error };
 }
 
-function normalizeActionToolResult(actionId: ActionId, result: ActionExecutorResult): ActionToolBridgeResult {
+function normalizeActionToolResult(actionId: string, result: ActionExecutorResult): ActionToolBridgeResult {
   if (result.ok && result.result && typeof result.result === 'object' && (result.result as any).kind === 'approval_request_created') {
     return { ok: true, result: result.result };
   }
@@ -58,6 +59,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
   executor: ActionExecutorLike;
   isActionEnabled?: (id: ActionId) => boolean;
   surface?: 'mcp' | 'cli' | 'session_agent';
+  registry?: ResolvedContributionRegistry;
 }>): Readonly<{
   executeActionByToolName: (toolName: string, toolArgs: unknown, defaultSessionId: string) => Promise<ActionToolBridgeResult>;
   resolveActionOptions: (args: Readonly<{
@@ -72,7 +74,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
 }> {
   const isActionEnabled = params.isActionEnabled ?? (() => true);
   const surface = params.surface ?? 'session_agent';
-  const actionToolNameToId = createActionToolNameToIdMap({ surface, isActionEnabled });
+  const actionToolNameToId = createActionToolNameToIdMap({ surface, isActionEnabled, registry: params.registry });
 
   return {
     executeActionByToolName: async (toolName, toolArgs, defaultSessionId) => {
@@ -81,7 +83,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
         if (!actionId) {
           return { ok: false, errorCode: 'invalid_action_input', error: 'Missing actionId' };
         }
-        return normalizeActionToolResult(actionId as ActionId, await params.executor.execute(
+        return normalizeActionToolResult(actionId, await params.executor.execute(
           actionId as ActionId,
           Object.prototype.hasOwnProperty.call(toolArgs ?? {}, 'input') ? (toolArgs as any).input : {},
           { defaultSessionId, surface },
@@ -94,7 +96,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
       }
 
       return normalizeActionToolResult(actionId, await params.executor.execute(
-        actionId,
+        actionId as ActionId,
         toolArgs,
         { defaultSessionId, surface },
       ));

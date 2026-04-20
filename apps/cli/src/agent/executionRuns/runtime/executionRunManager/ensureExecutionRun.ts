@@ -1,16 +1,18 @@
-import type { AgentBackend } from '@/agent/core/AgentBackend';
-import type { ExecutionRunController, ExecutionRunVoiceAgentController } from '@/agent/executionRuns/controllers/types';
-import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import { resumeBackendControllerForResumableRun } from '@/agent/executionRuns/runtime/resumeBackendController';
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
+import type { ExecutionRunController, ExecutionRunVoiceAgentController } from '../../controllers/types';
+import { VoiceAgentManager } from '../../../voice/agent/VoiceAgentManager';
+import type { ExecutionRunState } from '../executionRunTypes';
+import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
+import { convertBackendTargetRefV2ToV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { resumeBackendControllerForResumableRun } from '../resumeBackendController';
+import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessionMessageTypes';
+import type { StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
 import {
   areExecutionRunBackendTargetsEqual,
   resolveExecutionRunBuiltInAgentId,
-} from '@/agent/executionRuns/runtime/backendTargets';
+} from '../backendTargets';
+import {
+  type ExecutionRunHostRuntime,
+} from '../../../runtime/bridges/executionRun/executionRunHostRuntime';
 
 export async function ensureExecutionRun(args: Readonly<{
   runId: string;
@@ -25,7 +27,7 @@ export async function ensureExecutionRun(args: Readonly<{
     permissionMode: string;
     modelId?: string;
     start?: any;
-  }) => AgentBackend;
+  }) => ExecutionRunHostRuntime;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -53,7 +55,7 @@ export async function ensureExecutionRun(args: Readonly<{
     if (!config) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Missing voice agent config' };
     const resumeHandle =
       run.resumeHandle
-      && areExecutionRunBackendTargetsEqual(run.resumeHandle.backendTarget, run.backendTarget)
+      && areExecutionRunBackendTargetsEqual(convertBackendTargetRefV2ToV1(run.resumeHandle.backendTarget), run.backendTarget)
       && (run.resumeHandle.kind === 'vendor_session.v1' || run.resumeHandle.kind === 'voice_agent_sessions.v1')
         ? run.resumeHandle
         : null;
@@ -76,6 +78,7 @@ export async function ensureExecutionRun(args: Readonly<{
       }
 
       const startedVoice = await args.voiceAgentManager.start({
+        voiceAgentId: args.runId,
         agentId: builtInAgentId as any,
         ...(typeof config.profileId === 'string' && config.profileId.trim().length > 0
           ? { profileId: config.profileId.trim() }
@@ -119,6 +122,7 @@ export async function ensureExecutionRun(args: Readonly<{
       });
 
       await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true });
+      args.onPublicStateUpdated?.(args.runId);
       return { ok: true };
     } catch (e: any) {
       if (needsBudget) args.budgetRegistry?.releaseExecutionRun(args.runId);
@@ -133,7 +137,8 @@ export async function ensureExecutionRun(args: Readonly<{
     runs: args.runs,
     controllers: args.controllers,
     budgetRegistry: args.budgetRegistry,
-    createBackend: ({ backendId, backendTarget, permissionMode }) => args.createBackend({ runId: args.runId, backendId, backendTarget, permissionMode }),
+    createBackend: ({ backendId, backendTarget, permissionMode }) =>
+      args.createBackend({ runId: args.runId, backendId, backendTarget, permissionMode }),
     sendAcp: args.sendAcp,
     parentProvider: args.parentProvider,
     streamedTranscriptSession: args.streamedTranscriptSession,

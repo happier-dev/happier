@@ -108,6 +108,40 @@ describe('Action Spec Registry', () => {
     ).toThrow();
   });
 
+  it('requires backendTargetKey when listing models for a legacy configured ACP flavor carrier', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'acp:review-bot',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
+  it('requires backendTargetKey when listing models for a nested customAcp configured ACP placeholder', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'acp:customAcp',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts a matching legacy configured ACP flavor carrier when listing models with a canonical configured backendTargetKey', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'acp:review-bot',
+        backendTargetKey: 'backend:review-bot:configured:review-bot',
+        machineId: 'machine-1',
+      }),
+    ).not.toThrow();
+  });
+
   it('rejects mismatched agentId and backendTargetKey when listing models', () => {
     const spec = getActionSpec('agents.models.list');
 
@@ -131,6 +165,18 @@ describe('Action Spec Registry', () => {
     ).toThrow();
   });
 
+  it('accepts a canonical plugin backendTargetKey with an explicit runtime carrier when listing models', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'claude',
+        backendTargetKey: 'backend:plugin-review-bot',
+        machineId: 'machine-1',
+      }),
+    ).not.toThrow();
+  });
+
   it('registers both friendly and namespaced slash aliases for review.start', () => {
     const spec = getActionSpec('review.start');
     expect(spec.slash?.tokens).toEqual(['/review', '/h.review']);
@@ -147,6 +193,15 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.cli).toBe(true);
     expect(spec.surfaces.mcp).toBe(true);
     expect(spec.bindings?.mcpToolName).toBe('execution_run_wait');
+    expect(spec.inputSchema.parse({ sessionId: 'session_1', runId: 'run_1' })).toEqual({
+      sessionId: 'session_1',
+      runId: 'run_1',
+    });
+    expect(spec.inputSchema.parse({ sessionId: 'session_1', runId: 'run_1', timeoutSeconds: 7_200 })).toEqual({
+      sessionId: 'session_1',
+      runId: 'run_1',
+      timeoutSeconds: 7_200,
+    });
   });
 
   it('exposes session.spawn_new as an MCP tool', () => {
@@ -159,6 +214,16 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('session.spawn_new');
     const parsed = spec.inputSchema.safeParse({
       agentId: 'customAcp',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('requires backendTargetKey when spawning a legacy configured ACP flavor carrier directly', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'acp:review-bot',
       path: '/tmp/project',
     });
 
@@ -186,10 +251,61 @@ describe('Action Spec Registry', () => {
     expect(parsed.success).toBe(false);
   });
 
+  it('accepts a canonical plugin backendTargetKey with an explicit runtime carrier when spawning a session directly', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'claude',
+      backendTargetKey: 'backend:plugin-review-bot',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts a matching legacy configured ACP flavor carrier when spawning a configured backend session directly', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'acp:review-bot',
+      backendTargetKey: 'backend:review-bot:configured:review-bot',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts a canonical built-in backendTargetKey outside the direct-session allowlist when spawning a session directly', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:gemini',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts canonical built-in backendTargetKey values for protocol-owned built-ins that rely on inferred runtime carriers', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:pi',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it('requires backendTargetKey when spawning a customAcp picker session directly', () => {
     const spec = getActionSpec('session.spawn_picker');
     const parsed = spec.inputSchema.safeParse({
       agentId: 'customAcp',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('requires backendTargetKey when spawning a legacy configured ACP flavor carrier through the picker', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'acp:review-bot',
     });
 
     expect(parsed.success).toBe(false);
@@ -212,6 +328,44 @@ describe('Action Spec Registry', () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it('accepts a canonical plugin backendTargetKey with an explicit runtime carrier when spawning through the picker', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'claude',
+      backendTargetKey: 'backend:plugin-review-bot',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts a matching legacy configured ACP flavor carrier when spawning through the picker', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'acp:review-bot',
+      backendTargetKey: 'backend:review-bot:configured:review-bot',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts a canonical built-in backendTargetKey outside the direct-session allowlist when spawning through the picker', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:gemini',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts canonical built-in backendTargetKey values for picker flows when the runtime carrier can be inferred', () => {
+    const spec = getActionSpec('session.spawn_picker');
+    const parsed = spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:pi',
+    });
+
+    expect(parsed.success).toBe(true);
   });
 
   it('does not expose legacy voice_mediator intent in ExecutionRunIntentSchema', () => {

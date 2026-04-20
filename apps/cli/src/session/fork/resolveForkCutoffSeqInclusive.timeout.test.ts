@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
 
+import { HttpStatusError } from '@/api/client/httpStatusError';
 import type { Credentials } from '@/persistence';
 
 describe('resolveForkCutoffSeqInclusive timeouts', () => {
@@ -54,5 +55,33 @@ describe('resolveForkCutoffSeqInclusive timeouts', () => {
     expect(getSpy).toHaveBeenCalledTimes(1);
     expect(getSpy.mock.calls[0]?.[1]?.timeout).toBe(54_321);
   });
-});
 
+  it('throws a stable auth status error for terminal auth failures', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+
+    vi.resetModules();
+    const { resolveForkCutoffSeqInclusive } = await import('./resolveForkCutoffSeqInclusive');
+
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 403,
+      data: {},
+    } as any);
+
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+
+    await expect(
+      resolveForkCutoffSeqInclusive({
+        credentials,
+        parentSessionId: 'sess_parent_1',
+        parentRawSession: { encryptionMode: 'plain', dataEncryptionKey: null },
+        targetSeqInclusive: 1,
+      }),
+    ).rejects.toMatchObject({
+      name: 'HttpStatusError',
+      response: { status: 403 },
+    } satisfies Partial<HttpStatusError>);
+  });
+});

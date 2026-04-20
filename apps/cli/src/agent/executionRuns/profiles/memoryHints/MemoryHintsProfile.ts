@@ -4,6 +4,7 @@ export const MemoryHintsProfile: ExecutionRunIntentProfile = {
   intent: 'memory_hints',
   transcriptMaterialization: 'none',
   buildPrompt: (params) => params.instructions,
+  computeSidechainStreamText: ({ fullText }) => fullText,
   onBoundedComplete: ({ rawText }) => ({
     status: 'succeeded',
     summary: 'Memory hints generated.',

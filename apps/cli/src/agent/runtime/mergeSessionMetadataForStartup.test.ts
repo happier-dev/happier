@@ -192,30 +192,31 @@ describe('mergeSessionMetadataForStartup', () => {
         expect(merged.permissionModeUpdatedAt).toBe(101);
     });
 
-    it('does not seed acpSessionModeOverrideV1 from next metadata when attaching', () => {
+    it('does not seed canonical session-mode override metadata from next metadata when attaching', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
             current: {} as any,
-            next: { acpSessionModeOverrideV1: { v: 1, updatedAt: 123, modeId: 'plan' } } as any,
+            next: { sessionModeOverrideV1: { v: 1, updatedAt: 123, modeId: 'plan' } } as any,
             nowMs,
             mode: 'attach',
         });
 
+        expect((merged as any).sessionModeOverrideV1).toBeUndefined();
         expect((merged as any).acpSessionModeOverrideV1).toBeUndefined();
     });
 
-    it('applies an explicit ACP session mode override with a monotonic updatedAt', () => {
+    it('applies an explicit canonical session mode override with a monotonic updatedAt', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
-            current: { acpSessionModeOverrideV1: { v: 1, updatedAt: 100, modeId: 'build' } } as any,
+            current: { sessionModeOverrideV1: { v: 1, updatedAt: 100, modeId: 'build' } } as any,
             next: {} as any,
             nowMs,
             // This will be plumbed as an explicit override from CLI/UI on startup.
-            acpSessionModeOverride: { modeId: 'plan', updatedAt: 1 } as any,
-        } as any);
+            sessionModeOverride: { modeId: 'plan', updatedAt: 1 },
+        });
 
         expect((merged as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: 'plan' });
-        expect((merged as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: 'plan' });
+        expect((merged as any).acpSessionModeOverrideV1).toBeUndefined();
     });
 
     it('does not seed modelOverrideV1 from next metadata when attaching', () => {

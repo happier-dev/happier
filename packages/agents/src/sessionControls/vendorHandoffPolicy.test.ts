@@ -72,6 +72,26 @@ describe('vendorHandoffPolicy', () => {
     ).toEqual({ eligible: true, vendorHandoffId: 'c1' });
   });
 
+  it('rejects direct OpenCode handoff when the persisted runtime kind is acp', () => {
+    expect(
+      evaluateVendorHandoffEligibility({
+        agentId: 'opencode',
+        storageMode: 'direct',
+        metadata: {
+          opencodeSessionId: 'o1',
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'opencode',
+            provider: {
+              backendMode: 'acp',
+              vendorSessionId: 'o1',
+            },
+          },
+        },
+      }),
+    ).toEqual({ eligible: false, reasonCode: 'storage_mode_unsupported' });
+  });
+
   it('marks codex handoff as experimental', () => {
     expect(
       evaluateVendorHandoffEligibility({
@@ -106,7 +126,7 @@ describe('vendorHandoffPolicy', () => {
           codexBackendMode: 'appServer',
         },
       }),
-    ).toEqual({ eligible: false, reasonCode: 'experimental_disabled' });
+    ).toEqual({ eligible: false, reasonCode: 'handoff_unsupported' });
   });
 
   it('rejects when the backend is disabled by account settings', () => {

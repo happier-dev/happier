@@ -10,8 +10,8 @@ function isTruthyEnvFlag(raw: string | undefined): boolean {
 
 async function resolveHappierMcpServerConfig(url: string, _commandMode: 'direct-script' | 'current-process'): Promise<McpServerConfig> {
   return await resolveNodeBackedMcpServerCommand({
-    distEntrypointSegments: ['backends', 'codex', 'happyMcpStdioBridge.mjs'],
-    sourceEntrypointSegments: ['backends', 'codex', 'happyMcpStdioBridge.ts'],
+    distEntrypointSegments: ['backends', 'codex', 'mcp', 'happierStdioBridge.mjs'],
+    sourceEntrypointSegments: ['backends', 'codex', 'mcp', 'happierStdioBridge.ts'],
     args: ['--url', url],
     preferSourceEntrypoint: isTruthyEnvFlag(process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT),
   })

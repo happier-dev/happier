@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { fetchJson } from './http';
+import { sleep } from './timing';
 import { createSessionScopedSocketCollector, type SocketCollector } from './socketClient';
+
+const machineCreateRetryStatuses = new Set([500, 502, 503, 504]);
+const machineCreateMaxAttempts = 3;
+const machineCreateRetryDelayMs = 250;
 
 async function ensureSessionScopedAccessKey(params: Readonly<{
   baseUrl: string;
@@ -17,17 +22,24 @@ async function ensureSessionScopedAccessKey(params: Readonly<{
     timeoutMs: 15_000,
   };
 
-  const machineRes = await fetchJson<{ machine?: { id?: string } }>(`${params.baseUrl}/v1/machines`, {
-    method: 'POST',
-    headers: requestInit.headers,
-    body: JSON.stringify({
-      id: params.machineId,
-      metadata: 'e2e-machine-metadata',
-    }),
-    timeoutMs: requestInit.timeoutMs,
-  });
-  if (machineRes.status !== 200) {
-    throw new Error(`Failed to create machine (${machineRes.status})`);
+  let machineRes: Awaited<ReturnType<typeof fetchJson<{ machine?: { id?: string } }>>>;
+  for (let attempt = 1; attempt <= machineCreateMaxAttempts; attempt += 1) {
+    machineRes = await fetchJson<{ machine?: { id?: string } }>(`${params.baseUrl}/v1/machines`, {
+      method: 'POST',
+      headers: requestInit.headers,
+      body: JSON.stringify({
+        id: params.machineId,
+        metadata: 'e2e-machine-metadata',
+      }),
+      timeoutMs: requestInit.timeoutMs,
+    });
+    if (machineRes.status === 200) {
+      break;
+    }
+    if (!machineCreateRetryStatuses.has(machineRes.status) || attempt === machineCreateMaxAttempts) {
+      throw new Error(`Failed to create machine (${machineRes.status})`);
+    }
+    await sleep(machineCreateRetryDelayMs);
   }
 
   const accessKeyRes = await fetchJson<{ success?: boolean; error?: string }>(
@@ -51,6 +63,8 @@ export async function createMachineBoundSessionScopedSocketCollector(params: Rea
   token: string;
   sessionId: string;
   machineId?: string;
+  transports?: readonly ('websocket' | 'polling')[];
+  connectTimeoutMs?: number;
 }>): Promise<{ machineId: string; socket: SocketCollector }> {
   const machineId = params.machineId ?? randomUUID();
   await ensureSessionScopedAccessKey({
@@ -62,6 +76,9 @@ export async function createMachineBoundSessionScopedSocketCollector(params: Rea
 
   return {
     machineId,
-    socket: createSessionScopedSocketCollector(params.baseUrl, params.token, params.sessionId, machineId),
+    socket: createSessionScopedSocketCollector(params.baseUrl, params.token, params.sessionId, machineId, {
+      transports: params.transports,
+      connectTimeoutMs: params.connectTimeoutMs,
+    }),
   };
 }

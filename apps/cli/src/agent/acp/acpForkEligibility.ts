@@ -1,7 +1,5 @@
-import { resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
-import { readAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
-
-const ALWAYS_ACP_PROVIDERS = new Set(['auggie', 'qwen', 'kimi', 'kilo', 'gemini', 'copilot']);
+import { AGENTS_CORE, resolvePersistedCodexRuntimeIdentity, type AgentId } from '@happier-dev/agents';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -15,12 +13,17 @@ function readProviderIdFromMetadataEntry(metadata: Record<string, unknown>, key:
 }
 
 function resolveAcpRuntimeDescriptorEligibility(metadata: Record<string, unknown>, providerId: string): boolean | null {
-  const descriptor = readAgentRuntimeDescriptorV1(metadata.agentRuntimeDescriptorV1);
+  const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
   if (!descriptor || descriptor.providerId !== providerId) return null;
   const provider = isRecord(descriptor.provider) ? descriptor.provider : null;
   const backendMode = typeof provider?.backendMode === 'string' ? provider.backendMode.trim() : '';
   if (!backendMode) return null;
   return backendMode === 'acp';
+}
+
+function isCatalogDeclaredAcpOnlyProvider(providerId: string): boolean {
+  const provider = (AGENTS_CORE as Readonly<Record<string, { tools?: { delivery?: string } }>>)[providerId];
+  return provider?.tools?.delivery === 'shell_bridge';
 }
 
 export function isAcpForkEligibleForProvider(params: Readonly<{ providerId: string; metadata: unknown }>): boolean {
@@ -30,8 +33,8 @@ export function isAcpForkEligibleForProvider(params: Readonly<{ providerId: stri
   if (!isRecord(params.metadata)) return false;
   const metadata = params.metadata;
 
-  // Providers that are integrated only via ACP today.
-  if (ALWAYS_ACP_PROVIDERS.has(providerId)) return true;
+  // Catalog-declared shell-bridge providers are ACP-only in the current product model.
+  if (isCatalogDeclaredAcpOnlyProvider(providerId)) return true;
 
   if (providerId === 'codex') {
     const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(metadata);

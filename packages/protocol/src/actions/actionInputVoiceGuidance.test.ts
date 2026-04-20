@@ -15,4 +15,19 @@ describe('actionInputVoiceGuidance', () => {
     expect(workflowNotes).toContain('backendTargetKeys');
     expect(workflowNotes).not.toContain('backendIds');
   });
+
+  it('describes canonical backend targets and runtime carrier guidance for agents.models.list', () => {
+    const backendTargetKeyNotes = getActionInputFieldVoiceNotes(
+      { id: 'agents.models.list' },
+      { path: 'backendTargetKey' } as any,
+    ).join(' ');
+    const agentIdNotes = getActionInputFieldVoiceNotes(
+      { id: 'agents.models.list' },
+      { path: 'agentId' } as any,
+    ).join(' ');
+
+    expect(backendTargetKeyNotes).toContain('backend:');
+    expect(backendTargetKeyNotes).toContain('acpBackend:');
+    expect(agentIdNotes).toContain('listAgentBackends');
+  });
 });

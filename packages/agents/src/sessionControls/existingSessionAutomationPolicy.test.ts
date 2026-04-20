@@ -41,8 +41,21 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
       }),
     ).toEqual({
       eligible: true,
-      agentId: 'customAcp',
       strategy: 'happy_attach',
+      compatBackendId: 'custom-backend',
+    });
+  });
+
+  it('rejects configured ACP compat metadata that still points at the customAcp placeholder', () => {
+    expect(
+      evaluateExistingSessionAutomationEligibility({
+        metadata: {
+          flavor: 'acp:customAcp',
+        },
+      }),
+    ).toEqual({
+      eligible: false,
+      reasonCode: 'agent_unknown',
     });
   });
 

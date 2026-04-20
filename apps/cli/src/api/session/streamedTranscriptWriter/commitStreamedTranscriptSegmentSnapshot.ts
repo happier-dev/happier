@@ -1,4 +1,4 @@
-import { logger } from '@/ui/logger';
+import { logger } from '../../../ui/logger';
 
 import type { ACPProvider } from '../sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from './types';

@@ -1,5 +1,5 @@
 import { decodeBase64, decrypt } from '@/api/encryption';
-import { fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
+import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
 import {
     applySessionTurnLifecycleEvent,
     detectSessionTurnLifecycleEvent,
@@ -53,13 +53,22 @@ export async function detectSessionTurnActivity(params: Readonly<{
     encryptionMode: SessionStoredContentEncryptionMode;
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
+    afterSeqExclusive?: number;
 }>): Promise<SessionTurnActivity> {
     try {
-        const rows = await fetchEncryptedTranscriptPageLatest({
-            token: params.token,
-            sessionId: params.sessionId,
-            limit: 20,
-        });
+        const rows =
+            typeof params.afterSeqExclusive === 'number' && Number.isFinite(params.afterSeqExclusive)
+                ? await fetchEncryptedTranscriptPageAfterSeq({
+                    token: params.token,
+                    sessionId: params.sessionId,
+                    afterSeq: Math.max(0, Math.trunc(params.afterSeqExclusive)),
+                    limit: 20,
+                })
+                : await fetchEncryptedTranscriptPageLatest({
+                    token: params.token,
+                    sessionId: params.sessionId,
+                    limit: 20,
+                });
         const orderedRows = [...rows].sort((a, b) => a.seq - b.seq);
 
         let pendingUserTurns = 0;
@@ -114,6 +123,7 @@ export async function detectSessionTurnInFlight(params: Readonly<{
     encryptionMode: SessionStoredContentEncryptionMode;
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
+    afterSeqExclusive?: number;
 }>): Promise<boolean> {
     const activity = await detectSessionTurnActivity(params);
     return activity.turnInFlight;

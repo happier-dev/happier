@@ -10,6 +10,7 @@ import {
 
 import type { Credentials } from '@/persistence';
 import { resolveSessionEncryptionContext } from '@/api/client/encryptionKey';
+import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
 import { configuration } from '@/configuration';
@@ -30,6 +31,14 @@ function encodeSessionIdPathSegment(sessionId: string): string {
   return encodeURIComponent(String(sessionId ?? ''));
 }
 
+function throwAuthenticationStatusError(status: number, message = `Unauthorized (${status})`): never {
+  throw createHttpStatusError(status, message, 'not_authenticated');
+}
+
+function throwUnexpectedStatusError(path: string, status: number): never {
+  throw createHttpStatusError(status, `Unexpected status from ${path}: ${status}`);
+}
+
 export async function fetchSessionById(params: Readonly<{ token: string; sessionId: string }>): Promise<RawSessionRecord | null> {
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
@@ -43,11 +52,11 @@ export async function fetchSessionById(params: Readonly<{ token: string; session
   });
 
   if (response.status === 404) return null;
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`Unauthorized (${response.status})`);
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
   }
   if (response.status !== 200) {
-    throw new Error(`Unexpected status from /v2/sessions/${params.sessionId}: ${response.status}`);
+    throwUnexpectedStatusError(`/v2/sessions/${params.sessionId}`, response.status);
   }
 
   return parseOrThrow<V2SessionByIdResponse>(V2SessionByIdResponseSchema, response.data, 'Unexpected /v2/sessions response shape').session;
@@ -95,11 +104,11 @@ export async function fetchSessionByIdCompat(params: Readonly<{ token: string; s
       cursor = res.nextCursor;
     }
   }
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`Unauthorized (${response.status})`);
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
   }
   if (response.status !== 200) {
-    throw new Error(`Unexpected status from /v2/sessions/${params.sessionId}: ${response.status}`);
+    throwUnexpectedStatusError(`/v2/sessions/${params.sessionId}`, response.status);
   }
 
   return parseOrThrow<V2SessionByIdResponse>(V2SessionByIdResponseSchema, response.data, 'Unexpected /v2/sessions response shape').session;
@@ -136,11 +145,11 @@ export async function fetchSessionsPage(params: Readonly<{
     validateStatus: () => true,
   });
 
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`Unauthorized (${response.status})`);
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
   }
   if (response.status !== 200) {
-    throw new Error(`Unexpected status from ${path}: ${response.status}`);
+    throwUnexpectedStatusError(path, response.status);
   }
 
   const parsed = parseOrThrow<V2SessionListResponse>(
@@ -195,8 +204,8 @@ export async function commitSessionStoredMessage(params: Readonly<{
     validateStatus: () => true,
   });
 
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`Unauthorized (${response.status})`);
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
   }
   if (response.status === 404) {
     const err = new Error('Session not found');
@@ -267,8 +276,8 @@ export async function getOrCreateSessionByTag(params: Readonly<{
     validateStatus: () => true,
   });
 
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`Unauthorized (${response.status})`);
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
   }
   if (response.status !== 200) {
     throw new Error(`Unexpected status from /v1/sessions: ${response.status}`);
@@ -304,10 +313,8 @@ async function postArchiveMutation(params: Readonly<{
     },
   );
 
-  if (response.status === 401 || response.status === 403) {
-    const err = new Error(`Unauthorized (${response.status})`);
-    (err as any).code = 'not_authenticated';
-    throw err;
+  if (isAuthenticationStatus(response.status)) {
+    throwAuthenticationStatusError(response.status);
   }
   if (response.status === 404) {
     const err = new Error('Session not found');

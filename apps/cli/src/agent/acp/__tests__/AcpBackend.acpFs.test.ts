@@ -4,7 +4,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 
 import { join } from 'node:path';
 
 import { buildInitializeRequest, createAcpClientFsMethods } from '../AcpBackend';
-import type { AcpPermissionHandler } from '../AcpBackend';
+import type { AcpPermissionHandler } from '../permissions/acpPermissionHandler';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 

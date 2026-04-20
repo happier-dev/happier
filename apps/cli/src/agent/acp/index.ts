@@ -10,7 +10,8 @@
  */
 
 // Core ACP backend
-export { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from './AcpBackend';
+export { AcpBackend, type AcpBackendOptions } from './AcpBackend';
+export type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 
 // Session update handlers (for testing and extension)
 export {

@@ -12,12 +12,9 @@ import { resolve } from 'node:path';
 
 import {
     computeNextMetadataConfigOptionOverrideV1,
-    LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
     SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 import {
-    AcpConfigOptionOverridesV1Schema,
-    buildAcpSessionModeOverrideV1,
     buildModelOverrideV1,
     parseSessionMcpSelectionV1Json,
 } from '@happier-dev/protocol';
@@ -29,6 +26,11 @@ import { logger } from '@/ui/logger';
 import packageJson from '../../../package.json';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
+import {
+    buildSessionModeOverrideV1,
+    parseSessionMetadataConfigOptionOverridesJson,
+    type SessionMetadataConfigOptionOverrides,
+} from './compat/sessionMetadataOverrides';
 import { resolveRequestedSessionDirectory } from './resolveRequestedSessionDirectory';
 
 /**
@@ -54,16 +56,16 @@ export interface CreateSessionMetadataOptions {
     permissionMode?: PermissionMode;
     /** Timestamp (ms) for permissionMode, used for arbitration across devices (optional) */
     permissionModeUpdatedAt?: number;
-    /** ACP session mode override to publish for the session (optional; ACP backends only) */
-    agentModeId?: string;
-    /** Timestamp (ms) for agentModeId, used for arbitration across devices (optional) */
-    agentModeUpdatedAt?: number;
+    /** Session mode override to publish for the session (optional) */
+    sessionModeId?: string;
+    /** Timestamp (ms) for sessionModeId, used for arbitration across devices (optional) */
+    sessionModeUpdatedAt?: number;
     /** Model override to publish for the session (optional) */
     modelId?: string;
     /** Timestamp (ms) for modelId, used for arbitration across devices (optional) */
     modelUpdatedAt?: number;
-    /** Generic ACP transport marker for sessions that run through an ACP backend. */
-    acpProviderId?: string;
+    /** Provider-owned metadata augmentation hook applied after shared metadata creation. */
+    augmentMetadata?: ((metadata: Metadata) => Metadata) | null;
 }
 
 function consumeSessionEnv(name: 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON' | 'HAPPIER_SESSION_MCP_SELECTION_JSON'): string | null {
@@ -72,24 +74,14 @@ function consumeSessionEnv(name: 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON' 
     return typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
 }
 
-function parseSessionConfigOptionOverridesFromEnvironment(): ReturnType<typeof AcpConfigOptionOverridesV1Schema.parse> | null {
+function parseSessionConfigOptionOverridesFromEnvironment(): SessionMetadataConfigOptionOverrides | null {
     const raw = consumeSessionEnv('HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON');
-    if (raw === null) {
-        return null;
-    }
-
-    try {
-        const parsed = JSON.parse(raw);
-        const validated = AcpConfigOptionOverridesV1Schema.safeParse(parsed);
-        return validated.success ? validated.data : null;
-    } catch {
-        return null;
-    }
+    return parseSessionMetadataConfigOptionOverridesJson(raw);
 }
 
 function applySessionConfigOptionOverridesToMetadata(
     metadata: Metadata,
-    overrides: ReturnType<typeof AcpConfigOptionOverridesV1Schema.parse> | null,
+    overrides: SessionMetadataConfigOptionOverrides | null,
 ): Metadata {
     if (!overrides) return metadata;
 
@@ -166,15 +158,14 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         flavor: opts.flavor,
         ...(opts.permissionMode && { permissionMode: opts.permissionMode }),
         ...(typeof opts.permissionModeUpdatedAt === 'number' && { permissionModeUpdatedAt: opts.permissionModeUpdatedAt }),
-        ...(typeof opts.agentModeId === 'string' && opts.agentModeId.trim()
+        ...(typeof opts.sessionModeId === 'string' && opts.sessionModeId.trim()
             ? (() => {
-                  const override = buildAcpSessionModeOverrideV1({
-                      updatedAt: typeof opts.agentModeUpdatedAt === 'number' ? opts.agentModeUpdatedAt : Date.now(),
-                      modeId: opts.agentModeId.trim(),
+                  const override = buildSessionModeOverrideV1({
+                      updatedAt: typeof opts.sessionModeUpdatedAt === 'number' ? opts.sessionModeUpdatedAt : Date.now(),
+                      modeId: opts.sessionModeId.trim(),
                   });
                   return {
                       [SESSION_MODE_OVERRIDE_KEY]: override,
-                      [LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY]: override,
                   };
               })()
             : {}),
@@ -186,18 +177,12 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
                   }),
               }
             : {}),
-        ...(typeof opts.acpProviderId === 'string' && opts.acpProviderId.trim().length > 0
-            ? {
-                  acpTransportV1: {
-                      v: 1 as const,
-                      provider: opts.acpProviderId.trim(),
-                  },
-              }
-            : {}),
         ...(mcpSelection ? { mcpSelectionV1: mcpSelection } : {}),
     };
 
-    const metadata = applySessionConfigOptionOverridesToMetadata(metadataBase, sessionConfigOptionOverrides);
+    const metadata = (opts.augmentMetadata ?? ((current) => current))(
+        applySessionConfigOptionOverridesToMetadata(metadataBase, sessionConfigOptionOverrides),
+    );
 
     return { state, metadata };
 }

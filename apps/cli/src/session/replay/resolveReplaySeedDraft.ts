@@ -1,6 +1,7 @@
 import { buildHappierReplayPromptFromDialog, type HappierReplayStrategy, type HappierReplayDialogItem } from '@happier-dev/agents';
 import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { Credentials } from '@/persistence';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 
@@ -48,14 +49,20 @@ export async function resolveReplaySeedDraft(params: Readonly<{
           maxTextChars: params.maxTextChars,
           wantSynopsisText: params.strategy === 'summary_plus_recent',
           ...(typeof params.source.upToSeqInclusive === 'number' ? { upToSeqInclusive: params.source.upToSeqInclusive } : {}),
-        }).catch(() => null)
+        }).catch((error) => {
+          if (isAuthenticationError(error)) throw error;
+          return null;
+        })
       : await hydrateVoiceReplayDialogFromTranscript({
           credentials: params.credentials,
           previousSessionId: params.source.previousSessionId,
           transcriptEpoch: params.source.transcriptEpoch,
           limit: params.candidateLimit,
           maxTextChars: params.maxTextChars,
-        }).catch(() => null);
+        }).catch((error) => {
+          if (isAuthenticationError(error)) throw error;
+          return null;
+        });
 
   if (!hydrated || hydrated.dialog.length === 0) return null;
 

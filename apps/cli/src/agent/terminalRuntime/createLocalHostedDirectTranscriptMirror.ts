@@ -2,7 +2,7 @@ import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { getDirectSessionProviderOps } from '@/backends/catalog';
 
-import type { DirectSessionFollowLease, DirectSessionProviderOps } from '@/backends/directSessions/providerOps';
+import type { DirectSessionFollowLease, DirectSessionProviderOps } from '@/session/directSessions/providerOps';
 import type { LocalHostedDirectTranscriptBinding } from './directTranscriptBinding';
 
 function resolvePageMaxBytes(): number {

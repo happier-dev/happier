@@ -12,6 +12,7 @@ export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'task_complete'; id: string }
   | { type: 'turn_aborted'; id: string }
   | { type: 'permission-request'; permissionId: string; toolName: string; description: string; options?: unknown }
+  | { type: 'permission-response'; permissionId: string; approved: boolean; decision?: string; toolName?: string }
   | { type: 'token_count'; [key: string]: unknown }
 );
 

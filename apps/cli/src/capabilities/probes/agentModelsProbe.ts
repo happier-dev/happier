@@ -1,19 +1,27 @@
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
+import { resolveCliPathOverride } from '@/agent/runtime/cli/resolveCliPathOverride';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import type { AgentBackend } from '@/agent/core';
+import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { AGENTS } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
-import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
+import type { CatalogAgentLookupId } from '@/backends/types';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { resolveProviderCliCommandForRuntime } from '@/runtime/managedTools/providerCliResolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import { getAgentModelConfig, getAgentStaticModels } from '@happier-dev/agents';
+import {
+  getAgentModelConfig,
+  getAgentStaticModels,
+  getProviderCliRuntimeSpec,
+  isAgentId,
+  legacyCustomAcpCompat,
+} from '@happier-dev/agents';
 import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { validateCatalogAcpProbeSpawn } from './validateCatalogAcpProbeSpawn';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
+import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
+import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
@@ -40,7 +48,7 @@ export type ProbedAgentModel = Readonly<{
 }>;
 
 export type ProbedAgentModelsResult = Readonly<{
-  provider: CatalogAgentId;
+  provider: CatalogAgentLookupId;
   availableModels: ReadonlyArray<ProbedAgentModel>;
   supportsFreeform: boolean;
   source: 'dynamic' | 'static';
@@ -86,14 +94,44 @@ export function resetAgentModelsProbeCacheForTests(): void {
   agentModelsProbeCache.clear();
 }
 
-function buildStatic(agentId: CatalogAgentId): ProbedAgentModelsResult {
-  const cfg = getAgentModelConfig(agentId);
+function resolveAgentModelConfigForLookupId(agentId: CatalogAgentLookupId) {
+  if (isAgentId(agentId)) {
+    return getAgentModelConfig(agentId);
+  }
+  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
+    return legacyCustomAcpCompat.getLegacyCustomAcpAgentModelConfig();
+  }
+  throw new Error(`Unsupported agent model lookup id '${agentId}'`);
+}
+
+function resolveAgentStaticModelsForLookupId(agentId: CatalogAgentLookupId) {
+  if (isAgentId(agentId)) {
+    return getAgentStaticModels(agentId);
+  }
+  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
+    return [] as const;
+  }
+  throw new Error(`Unsupported agent static model lookup id '${agentId}'`);
+}
+
+function resolveProviderCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
+  if (isAgentId(agentId)) {
+    return getProviderCliRuntimeSpec(agentId);
+  }
+  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
+    return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+  }
+  throw new Error(`Unsupported provider CLI runtime lookup id '${agentId}'`);
+}
+
+function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentModelsResult {
+  const cfg = resolveAgentModelConfigForLookupId(agentId);
   const supportsFreeform = cfg.supportsSelection === true && cfg.supportsFreeform === true;
   const seen = new Set<string>();
   const availableModels = (cfg.supportsSelection === true
     ? [
       { id: 'default', name: 'Default' },
-      ...getAgentStaticModels(agentId).map((model) => ({
+      ...resolveAgentStaticModelsForLookupId(agentId).map((model) => ({
         id: model.id,
         name: model.name,
         ...(typeof model.description === 'string' ? { description: model.description } : {}),
@@ -348,15 +386,10 @@ function normalizeModelsFromConfigOptions(configOptionsRaw: unknown): ProbedAgen
 }
 
 export async function probeModelsFromAcpBackend(params: {
-  backend: AgentBackend;
+  backend: AcpProbeBackend;
   timeoutMs: number;
 }): Promise<ReadonlyArray<ProbedAgentModel> | null> {
-  type ProbeModelsBackend = AgentBackend & Partial<{
-    getSessionModelState: () => { availableModels?: unknown } | null;
-    getSessionConfigOptionsState: () => unknown;
-  }>;
-
-  const backend: ProbeModelsBackend = params.backend;
+  const backend = params.backend;
 
   const timeoutMs = Math.max(250, params.timeoutMs);
   let timerId: ReturnType<typeof setTimeout> | null = null;
@@ -386,7 +419,7 @@ export async function probeModelsFromAcpBackend(params: {
 }
 
 export async function probeAgentModelsBestEffort(params: {
-  agentId: CatalogAgentId;
+  agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   cwd: string;
   timeoutMs?: number;
@@ -416,13 +449,12 @@ export async function probeAgentModelsBestEffort(params: {
     if (cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
-    const modelConfig = getAgentModelConfig(params.agentId);
+    const modelConfig = resolveAgentModelConfigForLookupId(params.agentId);
     if (modelConfig.dynamicProbe === 'static-only') {
       agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
       return fallback;
     }
     const entry = AGENTS[params.agentId];
-
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
 
     try {
@@ -445,10 +477,7 @@ export async function probeAgentModelsBestEffort(params: {
         return fallback;
       }
 
-      const getPreflightSessionControlsProbeAdapter = entry?.getPreflightSessionControlsProbeAdapter;
-      const preflightModelsAdapter = getPreflightSessionControlsProbeAdapter
-        ? await getPreflightSessionControlsProbeAdapter().catch(() => null)
-        : null;
+      const preflightModelsAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId);
       const probeModelsRaw = preflightModelsAdapter?.probeModelsRaw;
       if (probeModelsRaw) {
         const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
@@ -461,18 +490,16 @@ export async function probeAgentModelsBestEffort(params: {
           return normalizeDynamicModels(modelsRaw);
         };
 
-        let models = await probePreflightModelsOnce();
-        // If the provider marks the preflight probe as authoritative, retry once immediately to
-        // avoid sticky "static fallback" UI states that require an explicit user refresh.
-        if (!models && preflightModelsAdapter.failureCacheStrategy === 'retry') {
-          models = await probePreflightModelsOnce();
-        }
-        if (models) {
-          const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+        const probeResult = await runPreflightSessionControlsProbe({
+          adapter: preflightModelsAdapter,
+          probeOnce: probePreflightModelsOnce,
+        });
+        if (probeResult.kind === 'success') {
+          const res: ProbedAgentModelsResult = { ...fallback, availableModels: probeResult.value, source: 'dynamic' };
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
           return res;
         }
-        if (preflightModelsAdapter.failureCacheStrategy === 'retry') {
+        if (probeResult.kind === 'retryable_failure') {
           // For providers where this probe is the primary/authoritative source (e.g. Codex app-server),
           // cache an error so subsequent calls retry instead of freezing the static fallback.
           agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
@@ -485,7 +512,7 @@ export async function probeAgentModelsBestEffort(params: {
       const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs ?? null;
       if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
         const command =
-          resolveProviderCliCommand(params.agentId)?.command
+          resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(params.agentId))?.command
           ?? resolveCliPathOverride({ agentId: params.agentId })
           ?? params.agentId;
         const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
@@ -511,7 +538,7 @@ export async function probeAgentModelsBestEffort(params: {
         handleToolCall: async () => ({ decision: 'abort' }),
       };
 
-      let backend: AgentBackend | null = null;
+      let backend: AcpProbeBackend | null = null;
       try {
         const created = await createCatalogAcpBackend<any>(params.agentId, {
           cwd,

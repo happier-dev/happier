@@ -1,14 +1,19 @@
-import type { AgentBackend } from '@/agent/core/AgentBackend';
-import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import type { ExecutionBudgetRegistry } from '../../../daemon/executionBudget/ExecutionBudgetRegistry';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
-import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
-import { resumeBackendControllerForResumableRun } from '@/agent/executionRuns/runtime/resumeBackendController';
-import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '@/agent/executionRuns/runtime/turnDelivery';
+import type { ACPMessageData, ACPProvider } from '../../../api/session/sessionMessageTypes';
+import type { StreamedTranscriptWriterSession } from '../../../api/session/streamedTranscriptWriter';
+import type { ExecutionRunState } from './executionRunTypes';
+import type { ExecutionRunController } from '../controllers/types';
+import {
+  readExecutionRunControllerHostBarrier,
+  raceExecutionRunControllerFailure,
+  throwIfExecutionRunControllerFailed,
+} from '../controllers/failureSignal';
+import type { FinishExecutionRun } from './executionRunFinishRun';
+import { resumeBackendControllerForResumableRun } from './resumeBackendController';
+import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from './turnDelivery';
+import type { ExecutionRunHostRuntime } from '../../runtime/bridges/executionRun/executionRunHostRuntime';
 
 function readAbortRetryConfig(): { maxAttempts: number; delayMs: number } {
   const parseIntOr = (raw: unknown, fallback: number): number => {
@@ -54,7 +59,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => AgentBackend;
+  createBackend: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => ExecutionRunHostRuntime;
   maxTurns: number | null;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
@@ -169,9 +174,14 @@ export async function sendBackendLongLivedRun(args: Readonly<{
 
   const runCompletionLoop = async (): Promise<void> => {
     try {
-      if (ctrl2.backend.waitForResponseComplete) {
-        await ctrl2.backend.waitForResponseComplete();
+      if (ctrl2.backend.waitForTurnCompletion) {
+        await raceExecutionRunControllerFailure(ctrl2, ctrl2.backend.waitForTurnCompletion());
       }
+      const completionHostBarrier = readExecutionRunControllerHostBarrier(ctrl2);
+      if (completionHostBarrier) {
+        await completionHostBarrier;
+      }
+      throwIfExecutionRunControllerFailed(ctrl2);
 
       if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
       await ctrl2.streamWriter?.flushAll({ reason: 'turn-end' });
@@ -250,7 +260,12 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   // Completion is handled asynchronously; output is streamed via onMessage and flushed
   // to the sidechain once the backend signals the turn has completed.
   try {
-    await sendPromise;
+    await raceExecutionRunControllerFailure(ctrl2, sendPromise);
+    const initialHostBarrier = readExecutionRunControllerHostBarrier(ctrl2);
+    if (initialHostBarrier) {
+      await initialHostBarrier;
+    }
+    throwIfExecutionRunControllerFailed(ctrl2);
     // Attach completion handlers before any other awaited work to avoid unhandled rejections when
     // backends signal cancellation/completion on a near-zero timer.
     void runCompletionLoop();

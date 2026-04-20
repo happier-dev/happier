@@ -13,9 +13,7 @@ import {
   type Client,
   type Agent,
   type SessionNotification,
-  type RequestPermissionRequest,
   type RequestPermissionResponse,
-  type InitializeRequest,
   type InitializeResponse,
   type NewSessionRequest,
   type ForkSessionRequest,
@@ -27,8 +25,8 @@ import {
 } from '@agentclientprotocol/sdk';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
-import { createWriteStream, promises as fs } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createWriteStream } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type {
   AgentBackend,
   AgentMessage,
@@ -37,6 +35,12 @@ import type {
   StartSessionResult,
   McpServerConfig,
 } from '../core';
+import type {
+  ExecutionRunHostRuntime,
+  ExecutionRunHostRuntimeMessageHandler,
+  ExecutionRunSessionProvisionOptions,
+  ExecutionRunSessionProvisionResult,
+} from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
@@ -45,50 +49,21 @@ import packageJson from '../../../package.json';
 import {
   type TransportHandler,
   type StderrContext,
-  type ToolNameContext,
   DefaultTransport,
 } from '../transport';
 import {
-  type SessionUpdate,
   type HandlerContext,
   DEFAULT_IDLE_TIMEOUT_MS,
   DEFAULT_TOOL_CALL_TIMEOUT_MS,
-  handleAgentMessageChunk,
-  handleUserMessageChunk,
-  handleAgentThoughtChunk,
-  handleToolCallUpdate,
-  handleToolCall,
-  handleLegacyMessageChunk,
-  handlePlanUpdate,
-  handleThinkingUpdate,
-  handleAvailableCommandsUpdate,
-  handleCurrentModeUpdate,
-  markToolCallRunningAfterPermission,
-  markToolCallWaitingForPermission,
 } from './sessionUpdateHandlers';
 import { withRetry } from './withRetry';
 import { nodeToWebStreams } from './nodeToWebStreams';
 import { buildAcpSpawnSpec } from './acpSpawn';
-import { killProcessTree } from './killProcessTree';
-import {
-  pickPermissionOutcome,
-} from './permissions/permissionMapping';
-import {
-  extractPermissionInputWithFallback,
-  extractPermissionToolNameHint,
-  refinePermissionToolNameWithInput,
-  resolvePermissionToolName,
-  shouldReplaceCachedPermissionToolName,
-  type PermissionRequestLike,
-} from './permissions/permissionRequest';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 import { AcpReplayCapture, type AcpReplayEvent } from './history/acpReplayCapture';
 import { createAcpFilteredStdoutReadable, type DroppedStdoutLine } from './createAcpFilteredStdoutReadable';
 import { createAcpNdJsonStream } from './createAcpNdJsonStream';
-import {
-  buildStructuredAgentMessageChunkMirrorSet,
-  shouldSkipLegacyMessageChunkMirror,
-} from './updates/legacyMessageChunkMirrorDedup';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { buildTokenCountAgentMessageFromUsageObservation } from '@/usage/usageObservation';
 import {
@@ -96,73 +71,47 @@ import {
   buildAcpSessionUpdateUsageObservation,
   buildAcpUsageUpdateObservation,
 } from './usage/buildAcpUsageObservation';
+import {
+  buildInitializeRequest,
+  createAcpClientFsMethods,
+  isAcpFsEnabled,
+} from './fs/acpClientFsMethods';
+import {
+  makeAbortError,
+  resolveIdleWithoutAssistantMessageTimeoutMs,
+  resolvePostPromptNoUpdatesTimeoutMs,
+  resolvePostToolCallIdleTimeoutMs,
+  resolvePromptLivenessTimeoutMs,
+} from './timeouts/acpBackendTimeouts';
+import type {
+  SessionConfigOption,
+  SessionModeState,
+  SessionModelState,
+} from './sessionSettings/sessionSettingsState';
+import {
+  normalizeSessionConfigOptions,
+  readSessionConfigOptionsFromSessionResponse,
+  readSessionModeStateFromSessionResponse,
+  readSessionModelStateFromSessionResponse,
+} from './sessionSettings/sessionSettingsState';
+import {
+  provisionAcpBackendExecutionRunSession,
+  readAcpBackendExecutionRunResumeSupport,
+  subscribeAcpBackendExecutionRunMessages,
+} from './executionRuns/hostRuntime';
+import { createAcpSdkClient } from './createAcpSdkClient';
+import { handleAcpSessionNotification } from './updates/handleSessionNotification';
 
-function makeAbortError(message: string): Error {
-  const err = new Error(message);
-  err.name = 'AbortError';
-  return err;
-}
-
-const DEFAULT_POST_PROMPT_NO_UPDATES_TIMEOUT_MS = 30_000;
-const DEFAULT_PROMPT_LIVENESS_TIMEOUT_MS = 30_000;
-const DEFAULT_POST_TOOL_CALL_IDLE_TIMEOUT_MS = 1_000;
-const DEFAULT_IDLE_WITHOUT_ASSISTANT_MESSAGE_TIMEOUT_MS = 0;
-
-function resolvePostPromptNoUpdatesTimeoutMs(transport: TransportHandler): number {
-  const transportValue = transport.getPostPromptNoUpdatesTimeoutMs?.();
-  if (typeof transportValue === 'number' && Number.isFinite(transportValue) && transportValue > 0) {
-    return Math.trunc(transportValue);
-  }
-
-  const envValue =
-    readPositiveIntEnv('HAPPIER_ACP_POST_PROMPT_NO_UPDATES_TIMEOUT_MS') ??
-    readPositiveIntEnv('HAPPY_ACP_POST_PROMPT_NO_UPDATES_TIMEOUT_MS');
-  if (envValue != null) return envValue;
-
-  return DEFAULT_POST_PROMPT_NO_UPDATES_TIMEOUT_MS;
-}
-
-function resolvePromptLivenessTimeoutMs(transport: TransportHandler): number {
-  const transportValue = transport.getPromptLivenessTimeoutMs?.();
-  if (typeof transportValue === 'number' && Number.isFinite(transportValue) && transportValue > 0) {
-    return Math.trunc(transportValue);
-  }
-
-  const envValue =
-    readPositiveIntEnv('HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS') ??
-    readPositiveIntEnv('HAPPY_ACP_PROMPT_LIVENESS_TIMEOUT_MS');
-  if (envValue != null) return envValue;
-
-  return DEFAULT_PROMPT_LIVENESS_TIMEOUT_MS;
-}
-
-function resolvePostToolCallIdleTimeoutMs(transport: TransportHandler): number {
-  const transportValue = transport.getPostToolCallIdleTimeoutMs?.();
-  if (typeof transportValue === 'number' && Number.isFinite(transportValue) && transportValue > 0) {
-    return Math.trunc(transportValue);
-  }
-
-  const envValue =
-    readPositiveIntEnv('HAPPIER_ACP_POST_TOOL_IDLE_TIMEOUT_MS') ??
-    readPositiveIntEnv('HAPPY_ACP_POST_TOOL_IDLE_TIMEOUT_MS');
-  if (envValue != null) return envValue;
-
-  return DEFAULT_POST_TOOL_CALL_IDLE_TIMEOUT_MS;
-}
-
-function resolveIdleWithoutAssistantMessageTimeoutMs(transport: TransportHandler): number {
-  const transportValue = transport.getIdleWithoutAssistantMessageTimeoutMs?.();
-  if (typeof transportValue === 'number' && Number.isFinite(transportValue) && transportValue > 0) {
-    return Math.trunc(transportValue);
-  }
-
-  const envValue =
-    readPositiveIntEnv('HAPPIER_ACP_IDLE_WITHOUT_ASSISTANT_MESSAGE_TIMEOUT_MS') ??
-    readPositiveIntEnv('HAPPY_ACP_IDLE_WITHOUT_ASSISTANT_MESSAGE_TIMEOUT_MS');
-  if (envValue != null) return envValue;
-
-  return DEFAULT_IDLE_WITHOUT_ASSISTANT_MESSAGE_TIMEOUT_MS;
-}
+export type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
+export { isAcpFsEnabled, buildInitializeRequest, createAcpClientFsMethods } from './fs/acpClientFsMethods';
+export type {
+  SessionConfigOptionValueId,
+  SessionConfigOption,
+  SessionMode,
+  SessionModeState,
+  SessionModel,
+  SessionModelState,
+} from './sessionSettings/sessionSettingsState';
 
 /**
  * Retry configuration for ACP operations
@@ -176,96 +125,8 @@ const RETRY_CONFIG = {
   maxDelayMs: 5000,
 } as const;
 
-/**
- * Extended RequestPermissionRequest with additional fields that may be present
- */
-type ExtendedRequestPermissionRequest = RequestPermissionRequest & {
-  toolCall?: {
-    toolCallId?: string;
-    id?: string;
-    kind?: string;
-    toolName?: string;
-    rawInput?: Record<string, unknown>;
-    input?: Record<string, unknown>;
-    arguments?: Record<string, unknown>;
-    content?: Record<string, unknown>;
-  };
-  kind?: string;
-  rawInput?: Record<string, unknown>;
-  input?: Record<string, unknown>;
-  arguments?: Record<string, unknown>;
-  content?: Record<string, unknown>;
-  options?: Array<{
-    optionId?: string;
-    name?: string;
-    kind?: string;
-  }>;
-};
-
 // SessionNotification payload shape differs across ACP SDK versions (some use `update`, some use `updates[]`).
 // We normalize dynamically in `handleSessionUpdate` and avoid relying on the SDK type here.
-
-export type SessionConfigOptionValueId = string;
-
-export type SessionConfigOption = Readonly<{
-  id: string;
-  name: string;
-  description?: string;
-  type: string;
-  currentValue: SessionConfigOptionValueId;
-  options?: ReadonlyArray<Readonly<{ value: SessionConfigOptionValueId; name: string; description?: string }>>;
-}>;
-
-/**
- * Permission handler interface for ACP backends
- */
-export interface AcpPermissionHandler {
-  /**
-   * Best-effort synchronous preview used to suppress UI/mobile permission prompts for
-   * requests the handler can auto-approve immediately.
-   */
-  getImmediateDecision?(
-    toolCallId: string,
-    toolName: string,
-    input: unknown
-  ): { decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort' } | null;
-
-  /**
-   * Handle a tool permission request
-   * @param toolCallId - The unique ID of the tool call
-   * @param toolName - The name of the tool being called
-   * @param input - The input parameters for the tool
-   * @returns Promise resolving to permission result with decision
-   */
-  handleToolCall(
-    toolCallId: string,
-    toolName: string,
-    input: unknown
-  ): Promise<{ decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort' }>;
-}
-
-export type SessionMode = {
-  id: string;
-  name: string;
-  description?: string;
-};
-
-export type SessionModeState = {
-  currentModeId: string;
-  availableModes: SessionMode[];
-};
-
-export type SessionModel = {
-  id: string;
-  name: string;
-  description?: string;
-  modelOptions?: SessionConfigOption[];
-};
-
-export type SessionModelState = {
-  currentModelId: string;
-  availableModels: SessionModel[];
-};
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -277,219 +138,9 @@ function getString(obj: Record<string, unknown>, key: string): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-function normalizeConfigOptionValueId(value: unknown): SessionConfigOptionValueId | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  return null;
-}
-
-function normalizeSessionConfigOptions(raw: ReadonlyArray<unknown>): SessionConfigOption[] {
-  const out: SessionConfigOption[] = [];
-
-  for (const entryRaw of raw) {
-    const entry = asRecord(entryRaw);
-    if (!entry) continue;
-
-    const id = getString(entry, 'id');
-    const name = getString(entry, 'name');
-    const type = getString(entry, 'type');
-    if (!id || !name || !type) continue;
-
-    const currentValue = normalizeConfigOptionValueId((entry as any).currentValue);
-    if (currentValue === null) continue;
-
-    const description = getString(entry, 'description');
-    const optionsCandidate = (entry as any).options;
-    const optionsRaw = Array.isArray(optionsCandidate) ? optionsCandidate : null;
-
-    let options: SessionConfigOption['options'] | undefined = undefined;
-    if (optionsRaw) {
-      const normalized: Array<{ value: SessionConfigOptionValueId; name: string; description?: string }> = [];
-      for (const optRaw of optionsRaw) {
-        const opt = asRecord(optRaw);
-        if (!opt) continue;
-        const value = normalizeConfigOptionValueId((opt as any).value);
-        const optName = getString(opt, 'name');
-        if (value === null || !optName) continue;
-        const optDescription = getString(opt, 'description');
-        normalized.push({ value, name: optName, ...(optDescription ? { description: optDescription } : {}) });
-      }
-      if (normalized.length > 0) options = normalized;
-    }
-
-    out.push({
-      id,
-      name,
-      type,
-      currentValue,
-      ...(description ? { description } : {}),
-      ...(options ? { options } : {}),
-    });
-  }
-
-  return out;
-}
-
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
-}
-
-export function isAcpFsEnabled(): boolean {
-  // Default ON: ACP agents that support the `fs` capability will route file reads/writes
-  // through the client (Happier). This is the only reliable way for Happier to enforce
-  // workspace boundaries for ACP backends.
-  const raw = process.env.HAPPIER_ACP_FS;
-  if (raw === undefined) return true;
-  return isTruthyEnv(raw);
-}
-
-export function buildInitializeRequest(params: {
-  clientName: string;
-  clientVersion: string;
-}): InitializeRequest {
-  const fsEnabled = isAcpFsEnabled();
-  return {
-    protocolVersion: 1,
-    clientCapabilities: {
-      fs: {
-        readTextFile: fsEnabled,
-        writeTextFile: fsEnabled,
-      },
-    },
-    clientInfo: {
-      name: params.clientName,
-      version: params.clientVersion,
-    },
-  };
-}
-
-export function createAcpClientFsMethods(params: {
-  cwd: string;
-  permissionHandler?: AcpPermissionHandler;
-}): Pick<Client, 'readTextFile' | 'writeTextFile'> {
-  const rootResolved = resolve(params.cwd);
-  const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
-
-  const isWithinRoot = (root: string, target: string): boolean => {
-    const rel = relative(root, target);
-    return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
-  };
-
-  const isWithinAnyRoot = (roots: string[], target: string): boolean => {
-    for (const root of roots) {
-      if (isWithinRoot(root, target)) return true;
-    }
-    return false;
-  };
-
-  const assertWithinCwd = async (targetPath: string, opts: { kind: 'read' | 'write' }): Promise<void> => {
-    const targetResolved = resolve(targetPath);
-    if (!isWithinRoot(rootResolved, targetResolved)) {
-      throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
-    }
-
-    const rootReal = await rootRealPromise;
-    // `realpath()` can normalize the same directory into different spellings on some platforms
-    // (for example: Windows mapped drive letters vs UNC paths). Treat both spellings as valid roots.
-    const roots = rootReal === rootResolved ? [rootResolved] : [rootResolved, rootReal];
-    const resolveExistingAncestorRealPath = async (startPath: string): Promise<string> => {
-      let candidate = startPath;
-      while (true) {
-        const candidateReal = await fs.realpath(candidate).catch((error) => {
-          const errno = (error as NodeJS.ErrnoException | undefined)?.code;
-          if (errno === 'ENOENT') return null;
-          throw new Error(`Permission denied for ${opts.kind}TextFile (cannot resolve path)`);
-        });
-        if (candidateReal) return candidateReal;
-        const parent = dirname(candidate);
-        if (parent === candidate) {
-          throw new Error(`Permission denied for ${opts.kind}TextFile (cannot resolve path)`);
-        }
-        candidate = parent;
-      }
-    };
-
-    if (opts.kind === 'read') {
-      const targetReal = await fs.realpath(targetResolved).catch((error) => {
-        const errno = (error as NodeJS.ErrnoException | undefined)?.code;
-        if (errno === 'ENOENT') return targetResolved;
-        throw new Error(`Permission denied for ${opts.kind}TextFile (cannot resolve path)`);
-      });
-      if (!isWithinAnyRoot(roots, targetReal)) {
-        throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
-      }
-      return;
-    }
-
-    const targetReal = await fs.realpath(targetResolved).catch((error) => {
-      const errno = (error as NodeJS.ErrnoException | undefined)?.code;
-      if (errno === 'ENOENT') return null;
-      throw new Error(`Permission denied for ${opts.kind}TextFile (cannot resolve path)`);
-    });
-    if (targetReal && !isWithinAnyRoot(roots, targetReal)) {
-      throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
-    }
-
-    const existingAncestorReal = await resolveExistingAncestorRealPath(dirname(targetResolved));
-    if (!isWithinAnyRoot(roots, existingAncestorReal)) {
-      throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
-    }
-  };
-
-  const readTextFile: NonNullable<Client['readTextFile']> = async (req) => {
-    const targetPath = isAbsolute(req.path) ? resolve(req.path) : resolve(rootResolved, req.path);
-    await assertWithinCwd(targetPath, { kind: 'read' });
-    const full = await fs.readFile(targetPath, 'utf8');
-    const line = typeof req.line === 'number' ? req.line : null;
-    const limit = typeof req.limit === 'number' ? req.limit : null;
-
-    if (line === null && limit === null) {
-      return { content: full };
-    }
-
-    const lines = full.split('\n');
-    const startIdx = Math.max(0, (line ?? 1) - 1);
-    const endIdx = limit === null ? lines.length : startIdx + Math.max(0, limit);
-    const slice = lines.slice(startIdx, endIdx);
-    // Preserve behavior similar to "read lines": remove trailing empty line if caused by final newline.
-    if (slice.length > 0 && slice[slice.length - 1] === '') slice.pop();
-    return { content: slice.join('\n') };
-  };
-
-  const writeTextFile: NonNullable<Client['writeTextFile']> = async (req) => {
-    const targetPath = isAbsolute(req.path) ? resolve(req.path) : resolve(rootResolved, req.path);
-    await assertWithinCwd(targetPath, { kind: 'write' });
-    const reqRecord = asRecord(req) ?? {};
-    const meta = asRecord(reqRecord._meta) ?? {};
-    const toolCallId = typeof meta.toolCallId === 'string' ? meta.toolCallId : `acp-fs-write:${randomUUID()}`;
-
-    if (params.permissionHandler) {
-      const result = await params.permissionHandler.handleToolCall(toolCallId, 'writeTextFile', {
-        path: targetPath,
-        bytes: Buffer.byteLength(req.content, 'utf8'),
-      });
-
-      const approved =
-        result.decision === 'approved' ||
-        result.decision === 'approved_for_session' ||
-        result.decision === 'approved_execpolicy_amendment';
-
-      if (!approved) {
-        throw new Error(`Permission denied for writeTextFile (${toolCallId})`);
-      }
-    }
-
-    await fs.mkdir(dirname(targetPath), { recursive: true });
-    await fs.writeFile(targetPath, req.content, 'utf8');
-    return {};
-  };
-
-  return { readTextFile, writeTextFile };
 }
 
 /**
@@ -535,7 +186,7 @@ export interface AcpBackendOptions {
 /**
  * ACP backend using the official @agentclientprotocol/sdk
  */
-export class AcpBackend implements AgentBackend {
+export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
   private listeners: AgentMessageHandler[] = [];
   private process: ChildProcess | null = null;
   private stderrAppender: BoundedTextFileAppender | null = null;
@@ -607,6 +258,20 @@ export class AcpBackend implements AgentBackend {
     if (index !== -1) {
       this.listeners.splice(index, 1);
     }
+  }
+
+  async readResumeSupport(opts?: Readonly<{ captureReplay?: boolean }>): Promise<boolean> {
+    return readAcpBackendExecutionRunResumeSupport(this, opts);
+  }
+
+  async provisionSession(
+    opts?: ExecutionRunSessionProvisionOptions,
+  ): Promise<ExecutionRunSessionProvisionResult> {
+    return await provisionAcpBackendExecutionRunSession(this, opts);
+  }
+
+  subscribeMessages(handler: ExecutionRunHostRuntimeMessageHandler): () => void {
+    return subscribeAcpBackendExecutionRunMessages(this, handler);
   }
 
   private emit(msg: AgentMessage): void {
@@ -722,9 +387,10 @@ export class AcpBackend implements AgentBackend {
       // Let transport handler process stderr and optionally emit messages
       if (stderrResult?.message) {
         this.emit(stderrResult.message);
-        // If the transport surfaces a fatal error via a status message, fail any pending
-        // `waitForResponseComplete()` caller so we don't degrade into a generic timeout.
-        if (stderrResult.message.type === 'status' && stderrResult.message.status === 'error' && this.waitingForResponse) {
+        // If the transport surfaces a fatal error via a status message, record it as the response
+        // completion error. This must not depend on `waitingForResponse` because idle/cancel signals
+        // can race with stderr delivery (especially under parallel load).
+        if (stderrResult.message.type === 'status' && stderrResult.message.status === 'error') {
           const detail =
             typeof stderrResult.message.detail === 'string' && stderrResult.message.detail.trim()
               ? stderrResult.message.detail
@@ -893,202 +559,27 @@ export class AcpBackend implements AgentBackend {
     // Create ndJSON stream for ACP
     const stream = createAcpNdJsonStream(writable, filteredReadable);
 
-    // Create Client implementation
-    const client: Client = {
-      sessionUpdate: async (params: SessionNotification) => {
-        this.handleSessionUpdate(params);
-      },
-      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
-
-        const extendedParams = params as ExtendedRequestPermissionRequest;
-        const toolCall = extendedParams.toolCall;
-        const options = extendedParams.options || [];
-        // ACP spec: toolCall.toolCallId is the correlation ID. Fall back to legacy fields when needed.
-        const toolCallId =
-          (typeof toolCall?.toolCallId === 'string' && toolCall.toolCallId.trim().length > 0)
-            ? toolCall.toolCallId.trim()
-            : (typeof toolCall?.id === 'string' && toolCall.id.trim().length > 0)
-              ? toolCall.id.trim()
-              : randomUUID();
-        const permissionId = toolCallId;
-
-        let toolNameHint = extractPermissionToolNameHint(extendedParams as PermissionRequestLike);
-        const input = extractPermissionInputWithFallback(
-          extendedParams as PermissionRequestLike,
-          toolCallId,
-          this.toolCallIdToInputMap
-        );
-        toolNameHint = refinePermissionToolNameWithInput(toolNameHint, input);
-        let toolName = resolvePermissionToolName({
-          toolNameHint,
-          toolCallId,
-          toolCallIdToNameMap: this.toolCallIdToNameMap,
-        });
-
-        // If the agent re-prompts with the same toolCallId, reuse the previous selection when possible.
-        const cachedOptionId = this.lastSelectedPermissionOptionIdByToolCallId.get(toolCallId);
-        if (cachedOptionId && options.some((opt) => opt.optionId === cachedOptionId)) {
-          logger.debug(`[AcpBackend] Duplicate permission prompt for ${toolCallId}, reusing cached optionId=${cachedOptionId}`);
-          return { outcome: { outcome: 'selected', optionId: cachedOptionId } };
-        }
-
-        // If toolName is "other" or "Unknown tool", try to determine real tool name
-        const context: ToolNameContext = {
-          recentPromptHadChangeTitle: this.recentPromptHadChangeTitle,
-          toolCallCountSincePrompt: this.toolCallCountSincePrompt,
-        };
-        toolName = this.transport.determineToolName?.(toolName, toolCallId, input, context) ?? toolName;
-
-        if (toolName !== (toolCall?.kind || toolCall?.toolName || extendedParams.kind || 'Unknown tool')) {
-          logger.debug(`[AcpBackend] Detected tool name: ${toolName} from toolCallId: ${toolCallId}`);
-        }
-
-        // Seed tool-call identity for later tool_call_update events.
-        // Some providers emit a permission prompt before (or instead of) an initial tool_call update.
-        // When the subsequent tool_call_update omits kind/title, we still want stable tool names and
-        // the correct renderer in the UI.
-        const cachedToolName = this.toolCallIdToNameMap.get(toolCallId);
-        if (
-          !cachedToolName ||
-          shouldReplaceCachedPermissionToolName(cachedToolName, toolName)
-        ) {
-          this.toolCallIdToNameMap.set(toolCallId, toolName);
-        }
-        if (input && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).length > 0) {
-          if (!this.toolCallIdToInputMap.has(toolCallId)) {
-            this.toolCallIdToInputMap.set(toolCallId, input);
-          }
-        }
-        markToolCallWaitingForPermission(toolCallId, this.createHandlerContext());
-
-        // Increment tool call counter for context tracking
+    const client: Client = createAcpSdkClient({
+      onSessionUpdate: (notification) => this.handleSessionUpdate(notification),
+      transport: this.transport,
+      emit: (message) => this.emit(message),
+      permissionHandler: this.options.permissionHandler,
+      createHandlerContext: () => this.createHandlerContext(),
+      getToolNameContext: () => ({
+        recentPromptHadChangeTitle: this.recentPromptHadChangeTitle,
+        toolCallCountSincePrompt: this.toolCallCountSincePrompt,
+      }),
+      getActiveSessionId: () => this.acpSessionId,
+      cancel: async (sessionId) => this.cancel(sessionId),
+      respondToPermission: async (requestId, approved) => this.respondToPermission(requestId, approved),
+      clearTrackedToolCall: (toolCallId, reason) => this.clearTrackedToolCall(toolCallId, reason),
+      incrementToolCallCountSincePrompt: () => {
         this.toolCallCountSincePrompt++;
-
-        const inputKeys = input && typeof input === 'object' && !Array.isArray(input)
-          ? Object.keys(input as Record<string, unknown>)
-          : [];
-        logger.debug(`[AcpBackend] Permission request: tool=${toolName}, toolCallId=${toolCallId}, inputKeys=${inputKeys.join(',')}`);
-        logger.debug(`[AcpBackend] Permission request params structure:`, JSON.stringify({
-          hasToolCall: !!toolCall,
-          toolCallToolCallId: toolCall?.toolCallId,
-          toolCallKind: toolCall?.kind,
-          toolCallToolName: toolCall?.toolName,
-          toolCallId: toolCall?.id,
-          paramsKind: extendedParams.kind,
-          options: options.map((opt) => ({ optionId: opt.optionId, kind: opt.kind, name: opt.name })),
-          paramsKeys: Object.keys(params),
-        }, null, 2));
-
-        const immediateDecision = this.options.permissionHandler?.getImmediateDecision?.(
-          toolCallId,
-          toolName,
-          input,
-        ) ?? null;
-
-        if (!immediateDecision) {
-          // Emit permission request event for UI/mobile handling only when the handler cannot
-          // auto-approve synchronously. This avoids noisy prompt flashes for shell-bridge tools.
-          this.emit({
-            type: 'permission-request',
-            id: permissionId,
-            reason: toolName,
-            payload: {
-              ...params,
-              permissionId,
-              toolCallId,
-              toolName,
-              input,
-              options: options.map((opt) => ({
-                id: opt.optionId,
-                name: opt.name,
-                kind: opt.kind,
-              })),
-            },
-          });
-        }
-
-        // Use permission handler if provided, otherwise auto-approve
-        if (this.options.permissionHandler) {
-          try {
-            const result = await this.options.permissionHandler.handleToolCall(
-              toolCallId,
-              toolName,
-              input
-            );
-
-            const isApproved = result.decision === 'approved'
-              || result.decision === 'approved_for_session'
-              || result.decision === 'approved_execpolicy_amendment';
-
-            const resolvedDecision = String(result.decision);
-            const overrideOptionId = this.transport.pickPermissionOptionId?.(
-              options,
-              resolvedDecision,
-              { toolCallId, toolName, input },
-            );
-            const outcome = (() => {
-              if (overrideOptionId === null) return { outcome: 'cancelled' as const };
-              if (typeof overrideOptionId === 'string' && overrideOptionId.trim().length > 0) {
-                if (options.some((opt) => opt.optionId === overrideOptionId)) {
-                  return { outcome: 'selected' as const, optionId: overrideOptionId };
-                }
-                logger.debug('[AcpBackend] Transport returned unknown permission optionId override; falling back to default mapping', {
-                  toolCallId,
-                  toolName,
-                  optionId: overrideOptionId,
-                });
-              }
-              return pickPermissionOutcome(options, resolvedDecision);
-            })();
-            if (outcome.outcome === 'selected') {
-              this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
-            } else {
-              this.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
-            }
-
-            await this.respondToPermission(permissionId, isApproved);
-
-            if (result.decision === 'denied' || result.decision === 'abort') {
-              // When the user declines a permission prompt, abort the in-flight prompt turn so the
-              // agent doesn't continue and retry tool calls. This matches our non-ACP behavior.
-              //
-              // Important: still return the actual permission outcome (e.g. "deny") so ACP agents
-              // can distinguish an explicit rejection from a transport cancellation.
-              const requestSessionId =
-                typeof (extendedParams as any).sessionId === 'string'
-                  ? String((extendedParams as any).sessionId)
-                  : (this.acpSessionId ?? '');
-              void this.cancel(requestSessionId);
-              this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
-              return { outcome };
-            }
-
-            if (isApproved) {
-              markToolCallRunningAfterPermission(toolCallId, this.createHandlerContext());
-            } else {
-              this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
-            }
-            return { outcome };
-          } catch (error) {
-            // Log to file only, not console
-            logger.debug('[AcpBackend] Error in permission handler:', error);
-            this.clearTrackedToolCall(toolCallId, 'permission handler error');
-            // Fallback to deny on error
-            return { outcome: { outcome: 'cancelled' } };
-          }
-        }
-
-        // Auto-approve once if no permission handler.
-        const outcome = pickPermissionOutcome(options, 'approved');
-        if (outcome.outcome === 'selected') {
-          this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
-        } else {
-          this.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
-        }
-        markToolCallRunningAfterPermission(toolCallId, this.createHandlerContext());
-        return { outcome };
       },
-    };
+      toolCallIdToNameMap: this.toolCallIdToNameMap,
+      toolCallIdToInputMap: this.toolCallIdToInputMap,
+      lastSelectedPermissionOptionIdByToolCallId: this.lastSelectedPermissionOptionIdByToolCallId,
+    });
 
     if (isAcpFsEnabled()) {
       Object.assign(
@@ -1492,406 +983,70 @@ export class AcpBackend implements AgentBackend {
   }
 
   private handleSessionUpdate(params: SessionNotification): void {
-    const raw = asRecord(params) ?? {};
-    const updateCandidates: unknown[] = [];
-
-    const maxUpdatesPerNotification = (() => {
-      const rawMax =
-        process.env.HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION ??
-        process.env.HAPPY_ACP_MAX_UPDATES_PER_NOTIFICATION ??
-        '';
-      const parsed = Number.parseInt(String(rawMax).trim(), 10);
-      if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 10_000);
-      return 1000;
-    })();
-
-    const pushUpdateCandidate = (value: unknown): boolean => {
-      if (updateCandidates.length >= maxUpdatesPerNotification) return false;
-      updateCandidates.push(value);
-      return true;
-    };
-
-    if (raw.update !== undefined) {
-      const updateField = raw.update;
-      if (Array.isArray(updateField)) {
-        for (const item of updateField) {
-          if (!pushUpdateCandidate(item)) {
-            logger.warn(
-              `[AcpBackend] Received ${updateField.length} updates in a single notification; truncating to ${maxUpdatesPerNotification}`
-            );
-            break;
-          }
+    handleAcpSessionNotification({
+      notification: params,
+      agentName: this.options.agentName,
+      transport: this.transport,
+      replayCapture: this.replayCapture,
+      sessionUpdateShapeLogger: this.sessionUpdateShapeLogger,
+      waitingForResponse: this.waitingForResponse,
+      onResponseTrafficObserved: () => {
+        this.sawSessionUpdateSincePrompt = true;
+        if (this.postPromptCompletionIdleTimeout) {
+          clearTimeout(this.postPromptCompletionIdleTimeout);
+          this.postPromptCompletionIdleTimeout = null;
         }
-      } else {
-        pushUpdateCandidate(updateField);
-      }
-    } else if (Array.isArray(raw.updates)) {
-      for (const item of raw.updates) {
-        if (!pushUpdateCandidate(item)) {
-          logger.warn(
-            `[AcpBackend] Received ${raw.updates.length} updates in a single notification; truncating to ${maxUpdatesPerNotification}`
-          );
-          break;
+        if (this.postIdleWithoutAssistantMessageTimeout) {
+          clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
+          this.postIdleWithoutAssistantMessageTimeout = null;
         }
-      }
-    }
-
-    if (updateCandidates.length === 0) {
-      logger.debug('[AcpBackend] Received session update without update field:', params);
-      return;
-    }
-
-    if (this.waitingForResponse) {
-      this.sawSessionUpdateSincePrompt = true;
-      if (this.postPromptCompletionIdleTimeout) {
-        clearTimeout(this.postPromptCompletionIdleTimeout);
-        this.postPromptCompletionIdleTimeout = null;
-      }
-      if (this.postIdleWithoutAssistantMessageTimeout) {
-        clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
-        this.postIdleWithoutAssistantMessageTimeout = null;
-      }
-      if (this.firstSessionUpdateSincePromptResolver) {
-        const resolve = this.firstSessionUpdateSincePromptResolver;
-        this.firstSessionUpdateSincePromptResolver = null;
-        resolve();
-      }
-      // Treat response-completion timeouts as a stall budget: as long as ACP session/update
-      // traffic keeps arriving, continue waiting.
-      this.bumpResponseCompletionTimeout();
-    }
-
-    const isGeminiAcpDebugEnabled = (() => {
-      const flag = process.env.HAPPIER_STACK_GEMINI_ACP_DEBUG;
-      return flag === '1' || flag === 'true';
-    })();
-
-    const sanitizeForLogs = (value: unknown, depth = 0): unknown => {
-      if (depth > 4) return '[truncated depth]';
-      if (typeof value === 'string') {
-        const max = 400;
-        if (value.length <= max) return value;
-        return `${value.slice(0, max)}… [truncated ${value.length - max} chars]`;
-      }
-      if (Array.isArray(value)) {
-        if (value.length > 50) {
-          return [...value.slice(0, 50).map((v) => sanitizeForLogs(v, depth + 1)), `… [truncated ${value.length - 50} items]`];
+        if (this.firstSessionUpdateSincePromptResolver) {
+          const resolve = this.firstSessionUpdateSincePromptResolver;
+          this.firstSessionUpdateSincePromptResolver = null;
+          resolve();
         }
-        return value.map((v) => sanitizeForLogs(v, depth + 1));
-      }
-      if (value && typeof value === 'object') {
-        const obj = value as Record<string, unknown>;
-        const out: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(obj)) {
-          if (/(token|secret|authorization|cookie|api[_-]?key|password)/i.test(k)) {
-            out[k] = '[redacted]';
-            continue;
-          }
-          out[k] = sanitizeForLogs(v, depth + 1);
-        }
-        return out;
-      }
-      return value;
-    };
-
-    const handleOneUpdate = (update: SessionUpdate): void => {
-      const sessionUpdateType = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
-      this.sessionUpdateShapeLogger?.log?.(
-        `inbound:${this.options.agentName}:${sessionUpdateType ?? 'unknown'}`,
-        update,
-      );
-      if (
-        sessionUpdateType === 'agent_message_chunk'
-        || (update.messageChunk && typeof update.messageChunk.textDelta === 'string' && update.messageChunk.textDelta.length > 0)
-      ) {
+        this.bumpResponseCompletionTimeout();
+      },
+      onAssistantMessageObserved: () => {
         this.sawAssistantMessageSincePrompt = true;
-      }
-
-      if (this.replayCapture) {
-        try {
-          this.replayCapture.handleUpdate(update as SessionUpdate);
-        } catch (error) {
-          logger.debug('[AcpBackend] Replay capture failed (non-fatal)', { error });
-        }
-
-        // Suppress transcript-affecting updates during loadSession replay.
-        const suppress = sessionUpdateType === 'user_message_chunk'
-          || sessionUpdateType === 'agent_message_chunk'
-          || sessionUpdateType === 'agent_thought_chunk'
-          || sessionUpdateType === 'tool_call'
-          || sessionUpdateType === 'tool_call_update'
-          || sessionUpdateType === 'plan';
-        if (suppress) {
-          return;
-        }
-      }
-
-      // Log session updates for debugging (but not every chunk to avoid log spam)
-      if (sessionUpdateType !== 'agent_message_chunk') {
-        logger.debug(`[AcpBackend] Received session update: ${sessionUpdateType}`, JSON.stringify({
-          sessionUpdate: sessionUpdateType,
-          toolCallId: update.toolCallId,
-          status: update.status,
-          kind: update.kind,
-          hasContent: !!update.content,
-          hasLocations: !!update.locations,
-        }, null, 2));
-      }
-
-      // Gemini ACP deep debug: dump raw terminal tool updates to verify where tool outputs live.
-      if (
-        isGeminiAcpDebugEnabled &&
-        this.transport.agentName === 'gemini' &&
-        (sessionUpdateType === 'tool_call_update' || sessionUpdateType === 'tool_call') &&
-        (update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled')
-      ) {
-        const keys = Object.keys(update);
-        logger.debug('[AcpBackend] [GeminiACP] Terminal tool update keys:', keys);
-        logger.debug('[AcpBackend] [GeminiACP] Terminal tool update payload:', JSON.stringify(sanitizeForLogs(update), null, 2));
-      }
-
-      const ctx = this.createHandlerContext();
-
-      // Dispatch to appropriate handler based on update type
-      if (sessionUpdateType === 'agent_message_chunk') {
-        handleAgentMessageChunk(update, ctx);
-        return;
-      }
-
-      if (sessionUpdateType === 'user_message_chunk') {
-        handleUserMessageChunk(update, ctx);
-        return;
-      }
-
-      if (sessionUpdateType === 'tool_call_update') {
-        const result = handleToolCallUpdate(update, ctx);
-        if (result.toolCallCountSincePrompt !== undefined) {
-          this.toolCallCountSincePrompt = result.toolCallCountSincePrompt;
-        }
-        return;
-      }
-
-      if (sessionUpdateType === 'agent_thought_chunk') {
-        handleAgentThoughtChunk(update, ctx);
-        return;
-      }
-
-      if (sessionUpdateType === 'tool_call') {
-        handleToolCall(update, ctx);
-        return;
-      }
-
-      if (sessionUpdateType === 'available_commands_update') {
-        handleAvailableCommandsUpdate(update, ctx);
-        return;
-      }
-
-      if (sessionUpdateType === 'current_mode_update') {
-        const modeId = typeof update.currentModeId === 'string' ? update.currentModeId : null;
-        if (modeId && this.sessionModeState) {
-          this.sessionModeState = {
-            ...this.sessionModeState,
-            currentModeId: modeId,
-          };
-        }
-        handleCurrentModeUpdate(update, ctx);
-        return;
-      }
-
-      if (sessionUpdateType === 'current_model_update') {
-        const modelId =
-          typeof (update as any).currentModelId === 'string'
-            ? (update as any).currentModelId
-            : (typeof (update as any).currentModel === 'string' ? (update as any).currentModel : null);
-        if (modelId && this.sessionModelState) {
-          this.sessionModelState = {
-            ...this.sessionModelState,
-            currentModelId: modelId,
-          };
-        }
-        this.emit({ type: 'event', name: 'current_model_update', payload: { currentModelId: modelId ?? '' } });
-        return;
-      }
-
-      if (sessionUpdateType === 'config_option_update') {
-        const configOptionsCandidate = (update as any).configOptions;
-        const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
-        if (configOptionsRaw) {
-          const next = normalizeSessionConfigOptions(configOptionsRaw);
-          this.sessionConfigOptionsState = next;
-        }
-        this.emit({
-          type: 'event',
-          name: 'config_options_update',
-          payload: { configOptions: this.sessionConfigOptionsState ?? [] },
-        });
-        return;
-      }
-
-      if (sessionUpdateType === 'plan') {
-        handlePlanUpdate(update, ctx);
-        return;
-      }
-
-      if (sessionUpdateType === 'usage_update') {
-        const observation = buildAcpUsageUpdateObservation({
-          provider: this.options.agentName,
-          update,
-        });
-        const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
-        if (telemetry) {
-          this.emit(telemetry);
-        }
-        return;
-      }
-
-      // Best-effort: some ACP providers attach usage to non-usage session updates (e.g. task_complete).
-      const usageCandidate = (update as any).usage;
-      const usageObservation = usageCandidate
-        ? buildAcpSessionUpdateUsageObservation({
-            provider: this.options.agentName,
-            usage: usageCandidate,
-          })
-        : null;
-      const usageTelemetry = usageObservation ? buildTokenCountAgentMessageFromUsageObservation(usageObservation) : null;
-      if (usageTelemetry) {
-        this.emit(usageTelemetry);
-      }
-
-      // Handle legacy and auxiliary update types
-      handleLegacyMessageChunk(update, ctx);
-      handlePlanUpdate(update, ctx);
-      handleThinkingUpdate(update, ctx);
-
-      // Log unhandled session update types for debugging
-      // Cast to string to avoid TypeScript errors (SDK types don't include all Gemini-specific update types)
-      const updateTypeStr = sessionUpdateType as string;
-      const handledTypes = [
-        'agent_message_chunk',
-        'user_message_chunk',
-        'tool_call_update',
-        'agent_thought_chunk',
-        'tool_call',
-        'available_commands_update',
-        'current_mode_update',
-        'current_model_update',
-        'config_option_update',
-        'plan',
-        'usage_update',
-      ];
-      if (updateTypeStr &&
-        !handledTypes.includes(updateTypeStr) &&
-        !update.messageChunk &&
-        !update.plan &&
-        !update.thinking &&
-        !update.availableCommands &&
-        !update.currentModeId &&
-        !update.entries) {
-        logger.debug(
-          `[AcpBackend] Unhandled session update type: ${updateTypeStr}`,
-          JSON.stringify(
-            {
-              // Avoid logging payloads: content/tool outputs can contain secrets.
-              keys: Object.keys(update as unknown as Record<string, unknown>).slice(0, 50),
-            },
-            null,
-            2
-          )
-        );
-      }
-    };
-
-    const normalizedUpdates: SessionUpdate[] = [];
-    for (const candidate of updateCandidates) {
-      const update = (asRecord(candidate) ?? {}) as SessionUpdate;
-      if (Object.keys(update).length === 0) continue;
-      normalizedUpdates.push(update);
-    }
-
-    const mirroredStructuredChunkTexts = buildStructuredAgentMessageChunkMirrorSet(normalizedUpdates);
-
-    for (const update of normalizedUpdates) {
-      if (shouldSkipLegacyMessageChunkMirror(update, mirroredStructuredChunkTexts)) {
-        continue;
-      }
-      handleOneUpdate(update);
-    }
+      },
+      createHandlerContext: () => this.createHandlerContext(),
+      setToolCallCountSincePrompt: (count) => {
+        this.toolCallCountSincePrompt = count;
+      },
+      emit: (message) => this.emit(message),
+      sessionModeState: this.sessionModeState,
+      setSessionModeState: (state) => {
+        this.sessionModeState = state;
+      },
+      sessionModelState: this.sessionModelState,
+      setSessionModelState: (state) => {
+        this.sessionModelState = state;
+      },
+      sessionConfigOptionsState: this.sessionConfigOptionsState,
+      setSessionConfigOptionsState: (state) => {
+        this.sessionConfigOptionsState = state;
+      },
+    });
   }
 
   private seedSessionModesFromSessionResponse(sessionResponse: unknown): void {
-    const response = asRecord(sessionResponse);
-    if (!response) return;
-    const modesRaw = asRecord(response.modes);
-    if (!modesRaw) return;
-
-    const currentModeId = getString(modesRaw, 'currentModeId');
-    const availableModesRaw = Array.isArray(modesRaw.availableModes) ? modesRaw.availableModes : null;
-    if (!currentModeId || !availableModesRaw) return;
-
-    const availableModes: SessionMode[] = availableModesRaw
-      .map((mode) => asRecord(mode))
-      .filter((mode): mode is Record<string, unknown> => Boolean(mode))
-      .map((mode) => {
-        const id = getString(mode, 'id');
-        const name = getString(mode, 'name');
-        if (!id || !name) return null;
-        const description = getString(mode, 'description');
-        return { id, name, ...(description ? { description } : {}) };
-      })
-      .filter((mode): mode is SessionMode => Boolean(mode));
-
-    if (availableModes.length === 0) return;
-
-    this.sessionModeState = { currentModeId, availableModes };
+    const state = readSessionModeStateFromSessionResponse(sessionResponse);
+    if (!state) return;
+    this.sessionModeState = state;
     this.emit({ type: 'event', name: 'session_modes_state', payload: this.sessionModeState });
   }
 
   private seedSessionModelsFromSessionResponse(sessionResponse: unknown): void {
-    const response = asRecord(sessionResponse);
-    if (!response) return;
-    const modelsRaw = asRecord(response.models);
-    if (!modelsRaw) return;
-
-    const currentModelId = getString(modelsRaw, 'currentModelId');
-    const availableModelsCandidate = (modelsRaw as { availableModels?: unknown }).availableModels;
-    const availableModelsRaw: unknown[] | null = Array.isArray(availableModelsCandidate) ? availableModelsCandidate : null;
-    if (!currentModelId || !availableModelsRaw) return;
-
-    const availableModels: SessionModel[] = availableModelsRaw
-      .map((model: unknown) => asRecord(model))
-      .filter((model): model is Record<string, unknown> => Boolean(model))
-      .map((model) => {
-        const id = getString(model, 'id') ?? getString(model, 'modelId');
-        const name = getString(model, 'name');
-        if (!id || !name) return null;
-        const description = getString(model, 'description');
-        const modelOptionsCandidate = model['modelOptions'] ?? model['model_options'];
-        const modelOptionsRaw: unknown[] | null = Array.isArray(modelOptionsCandidate) ? modelOptionsCandidate : null;
-        const modelOptions = modelOptionsRaw ? normalizeSessionConfigOptions(modelOptionsRaw) : null;
-        return {
-          id,
-          name,
-          ...(description ? { description } : {}),
-          ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
-        };
-      })
-      .filter((model): model is SessionModel => Boolean(model));
-
-    if (availableModels.length === 0) return;
-
-    this.sessionModelState = { currentModelId, availableModels };
+    const state = readSessionModelStateFromSessionResponse(sessionResponse);
+    if (!state) return;
+    this.sessionModelState = state;
     this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
   }
 
   private seedSessionConfigOptionsFromSessionResponse(sessionResponse: unknown): void {
-    const response = asRecord(sessionResponse);
-    if (!response) return;
-
-    const configOptionsCandidate = (response as { configOptions?: unknown }).configOptions;
-    const configOptionsRaw: unknown[] | null = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
-    if (!configOptionsRaw) return;
-
-    const configOptions = normalizeSessionConfigOptions(configOptionsRaw);
+    const configOptions = readSessionConfigOptionsFromSessionResponse(sessionResponse);
+    if (!configOptions) return;
     this.sessionConfigOptionsState = configOptions;
     this.emit({ type: 'event', name: 'config_options_state', payload: { configOptions } });
   }
@@ -1997,6 +1152,20 @@ export class AcpBackend implements AgentBackend {
     // Multiple sources can surface the same underlying failure (stderr parsing, transport errors, process exit).
     // Preserve the first error to keep `waitForResponseComplete()` deterministic and avoid churn.
     if (this.responseCompletionError) {
+      // Prefer surfacing a non-abort failure over a late "Cancelled by user" abort, so fatal transport
+      // errors don't get masked by incidental cancellation (for example permission-denied shutdown).
+      const existing = this.responseCompletionError;
+      const existingIsAbort = existing.name === 'AbortError';
+      const incomingIsAbort = error.name === 'AbortError';
+      if (existingIsAbort && !incomingIsAbort) {
+        logger.debug('[AcpBackend] Replacing abort response completion error with non-abort error', {
+          existing: existing.message,
+          incoming: error.message,
+        });
+        this.responseCompletionError = error;
+        return;
+      }
+
       logger.debug('[AcpBackend] Additional response completion error observed (ignored)', error);
       return;
     }
@@ -2373,7 +1542,10 @@ export class AcpBackend implements AgentBackend {
     }
 
     if (this.activeToolCalls.size === 0) {
-      this.emitIdleStatus();
+      // Tool completion often precedes trailing assistant message chunks. Respect the transport's
+      // post-tool quiet period before emitting idle so `waitForResponseComplete()` does not settle
+      // prematurely (especially for OpenCode-family agents).
+      this.scheduleIdleStatusAfterToolCompletion();
     }
   }
 
@@ -2425,6 +1597,10 @@ export class AcpBackend implements AgentBackend {
         reject(error);
       };
     });
+  }
+
+  async waitForTurnCompletion(timeoutMs?: number | null): Promise<void> {
+    await this.waitForResponseComplete(timeoutMs);
   }
 
   /**

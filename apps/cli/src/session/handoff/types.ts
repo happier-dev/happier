@@ -1,37 +1,36 @@
 import type {
-  AgentRuntimeDescriptorV1,
   DirectSessionsSource,
+  RuntimeDescriptorV1,
+  SessionHandoffResumePlan,
   SessionHandoffCodexAffinity,
-  SessionHandoffCodexBackendMode,
 } from '@happier-dev/protocol';
 
-export type HandoffProviderId = 'claude' | 'codex' | 'opencode';
+export type HandoffProviderId = SessionHandoffResumePlan['agent'];
 
-export type HandoffResumePlan = Readonly<{
-  directory: string;
-  agent: HandoffProviderId;
-  resume: string;
-  environmentVariables?: Record<string, string>;
-  transcriptStorage: 'direct' | 'persisted';
-  approvedNewDirectoryCreation: true;
-  codexBackendMode?: SessionHandoffCodexBackendMode;
-}>; 
+export const SESSION_HANDOFF_PROVIDER_BUNDLE_IDS_V1 = Object.freeze({
+  claude: 'claude',
+  codex: 'codex',
+  opencode: 'opencode',
+} as const);
+export type SessionHandoffProviderBundleId = (typeof SESSION_HANDOFF_PROVIDER_BUNDLE_IDS_V1)[keyof typeof SESSION_HANDOFF_PROVIDER_BUNDLE_IDS_V1];
+
+export type HandoffResumePlan = SessionHandoffResumePlan;
 
 export type ClaudeSessionBundle = Readonly<{
-  providerId: 'claude';
+  providerId: typeof SESSION_HANDOFF_PROVIDER_BUNDLE_IDS_V1.claude;
   remoteSessionId: string;
   transcriptBase64: string;
 }>;
 
 export type CodexSessionBundle = Readonly<{
-  providerId: 'codex';
+  providerId: typeof SESSION_HANDOFF_PROVIDER_BUNDLE_IDS_V1.codex;
   remoteSessionId: string;
   affinity?: SessionHandoffCodexAffinity;
   files: readonly Readonly<{ relativePath: string; contentBase64: string }>[];
 }>;
 
 export type OpenCodeSessionBundle = Readonly<{
-  providerId: 'opencode';
+  providerId: typeof SESSION_HANDOFF_PROVIDER_BUNDLE_IDS_V1.opencode;
   remoteSessionId: string;
   exportJsonBase64: string;
   affinity: Readonly<{
@@ -46,6 +45,6 @@ export type SessionHandoffProviderBundle = ClaudeSessionBundle | CodexSessionBun
 export type ImportedSessionHandoffBundle = Readonly<{
   remoteSessionId: string;
   directSource: DirectSessionsSource;
-  agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
   resume: HandoffResumePlan;
 }>;

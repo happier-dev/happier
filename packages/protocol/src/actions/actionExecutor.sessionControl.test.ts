@@ -256,6 +256,113 @@ describe('createActionExecutor (session control)', () => {
     }));
   });
 
+  it('executes session.spawn_new for a canonical built-in backend key without requiring agentId', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        path: '/repo',
+        backendTargetKey: 'backend:claude',
+        title: 'Canonical backend spawn',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/repo',
+      backendTargetKey: 'backend:claude',
+      title: 'Canonical backend spawn',
+    }));
+  });
+
+  it('executes session.spawn_picker for a canonical built-in backend key without requiring agentId', async () => {
+    const sessionSpawnPicker = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnPicker });
+
+    const res = await executor.execute(
+      'session.spawn_picker' as any,
+      {
+        backendTargetKey: 'backend:claude',
+        initialMessage: 'Inspect this workspace',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnPicker).toHaveBeenCalledWith(expect.objectContaining({
+      backendTargetKey: 'backend:claude',
+      initialMessage: 'Inspect this workspace',
+    }));
+  });
+
+  it('executes session.spawn_new for a canonical built-in backend key outside the direct-session allowlist', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        path: '/repo',
+        backendTargetKey: 'backend:gemini',
+        title: 'Gemini backend spawn',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/repo',
+      backendTargetKey: 'backend:gemini',
+      agentId: 'gemini',
+      title: 'Gemini backend spawn',
+    }));
+  });
+
+  it('executes session.spawn_picker for a canonical built-in backend key outside the direct-session allowlist', async () => {
+    const sessionSpawnPicker = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnPicker });
+
+    const res = await executor.execute(
+      'session.spawn_picker' as any,
+      {
+        backendTargetKey: 'backend:gemini',
+        initialMessage: 'Inspect this workspace',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnPicker).toHaveBeenCalledWith(expect.objectContaining({
+      backendTargetKey: 'backend:gemini',
+      agentId: 'gemini',
+      initialMessage: 'Inspect this workspace',
+    }));
+  });
+
+  it('rejects session.spawn_picker for a canonical plugin backend key without an explicit runtime carrier', async () => {
+    const sessionSpawnPicker = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnPicker });
+
+    const res = await executor.execute(
+      'session.spawn_picker' as any,
+      {
+        backendTargetKey: 'backend:plugin-review-bot',
+        initialMessage: 'Inspect this workspace',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(sessionSpawnPicker).not.toHaveBeenCalled();
+  });
+
   it('executes session.list via deps.sessionList (including cli filter flags)', async () => {
     const sessionList = vi.fn(async () => ({ sessions: [] }));
     const executor = createExecutor({ sessionList });

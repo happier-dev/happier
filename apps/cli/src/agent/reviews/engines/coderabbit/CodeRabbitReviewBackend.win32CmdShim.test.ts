@@ -62,8 +62,7 @@ describe('CodeRabbitReviewBackend Windows .CMD shim spawning', () => {
         env: { ...process.env, HAPPIER_CODERABBIT_REVIEW_CMD: cmdPath },
       });
       try {
-        const started = await backend.startSession();
-        await backend.sendPrompt(started.sessionId, 'test');
+        await backend.provisionSession({ initialPrompt: 'test' });
       } finally {
         await backend.dispose();
       }

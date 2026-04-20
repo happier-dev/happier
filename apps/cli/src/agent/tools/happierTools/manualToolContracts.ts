@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  BackendTargetRefSchema,
+  BackendTargetRefV2InputSchema,
   ExecutionRunIntentSchema,
   ExecutionRunStartRequestSchema,
 } from '@happier-dev/protocol';
@@ -19,10 +19,14 @@ export const actionExecuteToolInputSchema = z.object({
   input: z.unknown().optional(),
 }).passthrough();
 
+export const pluginsReloadToolInputSchema = z.object({
+  pluginId: z.string().min(1),
+}).passthrough();
+
 export const executionRunStartToolInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   intent: ExecutionRunIntentSchema,
-  backendTarget: BackendTargetRefSchema.optional(),
+  backendTarget: BackendTargetRefV2InputSchema.optional(),
   backendId: z.string().min(1).optional(),
   instructions: z.string().optional(),
   display: z.unknown().optional(),

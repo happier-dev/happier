@@ -142,6 +142,9 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       runtime.beginTurn();
 
       backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
+      await vi.waitFor(() => {
+        expect(durableCalls.length).toBeGreaterThanOrEqual(1);
+      });
       backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
 
       await vi.waitFor(() => {
@@ -221,7 +224,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     await flushPromise;
 
     expect(didResolveFlushTurn).toBe(true);
-    expect(durableCommitCount).toBe(1);
+    expect(durableCommitCount).toBe(2);
   });
 
   it('flushes the active assistant segment before forwarding a permission request', async () => {
@@ -259,14 +262,16 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(durableCalls.length).toBeGreaterThanOrEqual(1);
-    expect(durableCalls[durableCalls.length - 1]).toMatchObject({
-      body: { type: 'message', message: 'The directory is empty.' },
-      meta: {
-        happierStreamSegmentV1: expect.objectContaining({
-          segmentState: 'complete',
-        }),
-      },
+    await vi.waitFor(() => {
+      expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+      expect(durableCalls[durableCalls.length - 1]).toMatchObject({
+        body: { type: 'message', message: 'The directory is empty.' },
+        meta: {
+          happierStreamSegmentV1: expect.objectContaining({
+            segmentState: 'complete',
+          }),
+        },
+      });
     });
   });
 });

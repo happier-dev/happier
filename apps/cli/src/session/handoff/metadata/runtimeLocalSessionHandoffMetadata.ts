@@ -1,11 +1,12 @@
-import type { Metadata } from '@/api/types';
+import {
+    cloneSessionRuntimeLocalMetadata,
+    pickSessionRuntimeLocalMetadata,
+    type SessionRuntimeLocalMetadata,
+} from '@/agent/runtime/identity';
 
 type MetadataRecord = Record<string, unknown>;
 
-export type SessionHandoffRuntimeLocalMetadata = Readonly<Partial<Pick<
-    Metadata,
-    'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'directSessionV1'
->>>;
+export type SessionHandoffRuntimeLocalMetadata = SessionRuntimeLocalMetadata;
 
 export type SessionHandoffMetadataSplit = Readonly<{
     exportMetadata: MetadataRecord;
@@ -29,27 +30,6 @@ function normalizeMetadataMachineId(metadata: MetadataRecord | null): string {
     return typeof metadata?.machineId === 'string' ? metadata.machineId.trim() : '';
 }
 
-function cloneRuntimeLocalMetadata(
-    runtimeLocalMetadata: SessionHandoffRuntimeLocalMetadata,
-): SessionHandoffRuntimeLocalMetadata {
-    return {
-        ...runtimeLocalMetadata,
-        ...(runtimeLocalMetadata.directSessionV1
-            ? {
-                directSessionV1: {
-                    ...runtimeLocalMetadata.directSessionV1,
-                    source:
-                        runtimeLocalMetadata.directSessionV1.source
-                        && typeof runtimeLocalMetadata.directSessionV1.source === 'object'
-                        && !Array.isArray(runtimeLocalMetadata.directSessionV1.source)
-                            ? { ...runtimeLocalMetadata.directSessionV1.source }
-                            : runtimeLocalMetadata.directSessionV1.source,
-                },
-            }
-            : {}),
-    };
-}
-
 export function isSessionHandoffMetadataSplit(value: unknown): value is SessionHandoffMetadataSplit {
     const record = asMetadataRecord(value);
     if (!record) {
@@ -61,20 +41,7 @@ export function isSessionHandoffMetadataSplit(value: unknown): value is SessionH
 export function pickSessionHandoffRuntimeLocalMetadata(
     metadata: MetadataRecord | null,
 ): SessionHandoffRuntimeLocalMetadata | undefined {
-    if (!metadata) {
-        return undefined;
-    }
-
-    const picked: SessionHandoffRuntimeLocalMetadata = {
-        ...(typeof metadata.claudeSessionId === 'string' ? { claudeSessionId: metadata.claudeSessionId } : {}),
-        ...(typeof metadata.codexSessionId === 'string' ? { codexSessionId: metadata.codexSessionId } : {}),
-        ...(typeof metadata.opencodeSessionId === 'string' ? { opencodeSessionId: metadata.opencodeSessionId } : {}),
-        ...(metadata.directSessionV1 && typeof metadata.directSessionV1 === 'object' && !Array.isArray(metadata.directSessionV1)
-            ? { directSessionV1: metadata.directSessionV1 as Metadata['directSessionV1'] }
-            : {}),
-    };
-
-    return Object.keys(picked).length > 0 ? cloneRuntimeLocalMetadata(picked) : undefined;
+    return pickSessionRuntimeLocalMetadata(metadata);
 }
 
 export function createSessionHandoffMetadataSplit(input: Readonly<{
@@ -84,7 +51,7 @@ export function createSessionHandoffMetadataSplit(input: Readonly<{
     return {
         exportMetadata: cloneMetadataRecord(input.exportMetadata),
         ...(input.runtimeLocalMetadata
-            ? { runtimeLocalMetadata: cloneRuntimeLocalMetadata(input.runtimeLocalMetadata) }
+            ? { runtimeLocalMetadata: cloneSessionRuntimeLocalMetadata(input.runtimeLocalMetadata) }
             : {}),
     };
 }
@@ -146,6 +113,6 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
 
     return {
         ...exportMetadata,
-        ...cloneRuntimeLocalMetadata(runtimeLocalMetadata),
+        ...cloneSessionRuntimeLocalMetadata(runtimeLocalMetadata),
     };
 }

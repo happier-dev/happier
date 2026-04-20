@@ -1,5 +1,12 @@
-import type { ExecutionRunIntent, ExecutionRunIoMode } from '@happier-dev/protocol';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import type { ExecutionRunIoMode } from '@happier-dev/protocol';
+
+export {
+  EXECUTION_RUN_INTENT_POLICY_REGISTRY,
+  isSafePermissionModeForIntent,
+  validateExecutionRunStartIntentPolicy,
+  resolveExecutionRunIntentPolicy,
+  resolveExecutionRunStartBoundedTimeoutMs,
+} from './intentPolicyRegistry';
 
 export type ExecutionRunPolicy = Readonly<{
   maxConcurrentRuns: number | null;
@@ -67,26 +74,4 @@ export function resolveExecutionRunPolicy(params: Readonly<{
     // Streaming is supported only for specific intents (e.g. voice_agent). Handlers enforce intent-level rules.
     allowIoModes: new Set<ExecutionRunIoMode>(['request_response', 'streaming']),
   };
-}
-
-export function resolveExecutionRunStartBoundedTimeoutMs(args: Readonly<{
-  policy: Pick<ExecutionRunPolicy, 'boundedTimeoutMs' | 'reviewBoundedTimeoutMs'>;
-  intent: ExecutionRunIntent;
-}>): number | null {
-  if (args.intent === 'review' && typeof args.policy.reviewBoundedTimeoutMs === 'number') {
-    return args.policy.reviewBoundedTimeoutMs;
-  }
-  return args.policy.boundedTimeoutMs;
-}
-
-export function isSafePermissionModeForIntent(intent: ExecutionRunIntent, permissionModeRaw: string): boolean {
-  const raw = permissionModeRaw.trim().toLowerCase();
-  const mode =
-    raw === 'no_tools' || raw === 'read_only' || raw === 'workspace_write'
-      ? raw
-      : parsePermissionIntentAlias(raw);
-  if (intent === 'review' || intent === 'plan' || intent === 'voice_agent' || intent === 'memory_hints') {
-    return mode === 'no_tools' || mode === 'read_only' || mode === 'read-only';
-  }
-  return true;
 }

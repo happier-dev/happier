@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { registerRunnerTerminationHandlers } from './runnerTerminationHandlers';
+import { registerRunnerTerminationHandlers } from './lifecycle/runnerTerminationHandlers';
 
 function createFakeProcess() {
   return new EventEmitter();

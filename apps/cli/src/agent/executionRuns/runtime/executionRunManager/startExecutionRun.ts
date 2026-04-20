@@ -1,31 +1,35 @@
 import { randomUUID } from 'node:crypto';
 
-import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
-import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import type { SessionId } from '../../../core/AgentBackend';
+import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessionMessageTypes';
+import { resolveExecutionRunIntentProfile } from '../../profiles/intentRegistry';
+import type { ExecutionRunStructuredMeta } from '../../profiles/ExecutionRunIntentProfile';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { ExecutionRunHostRuntime } from '../../../runtime/bridges/executionRun/executionRunHostRuntime';
 import type {
   ExecutionRunManagerStartParams,
   ExecutionRunStartResult,
   ExecutionRunState,
-} from '@/agent/executionRuns/runtime/executionRunTypes';
+} from '../executionRunTypes';
 import type {
   ExecutionRunBackendController,
   ExecutionRunController,
   ExecutionRunVoiceAgentController,
-} from '@/agent/executionRuns/controllers/types';
-import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
-import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
-import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
-import { createBackendControllerMessageHandler } from '@/agent/executionRuns/runtime/createBackendControllerMessageHandler';
+} from '../../controllers/types';
+import { failureSignal } from '../../controllers/failureSignal';
+import { VoiceAgentError, type VoiceAgentManager } from '../../../voice/agent/VoiceAgentManager';
+import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
+import { writeExecutionRunMarker } from '../../../../daemon/executionRunRegistry';
+import type { ExecutionRunBackendStartContext } from '../../registry/executionRunBackendTypes';
+import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
+import { createBackendControllerMessageHandler } from '../createBackendControllerMessageHandler';
+import { createExecutionRunSidechainStreamText } from '../sidechainStreamText';
 import {
   areExecutionRunBackendTargetsEqual,
   resolveExecutionRunBuiltInAgentId,
   resolveExecutionRunRuntimeBackendId,
-} from '@/agent/executionRuns/runtime/backendTargets';
+} from '../backendTargets';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 
 type SendAcp = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
 
@@ -77,15 +81,15 @@ export async function startExecutionRun(args: Readonly<{
   parentProvider: ACPProvider;
   sendAcp: SendAcp;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
-    createBackend: (opts: {
-      runId?: string;
-      backendId: string;
-      backendTarget?: BackendTargetRefV1;
-      permissionMode: string;
-      modelId?: string;
-      accountSettings?: Readonly<Record<string, unknown>> | null;
-      start?: ExecutionRunBackendStartContext;
-    }) => AgentBackend;
+  createBackend: (opts: {
+    runId?: string;
+    backendId: string;
+    backendTarget?: BackendTargetRefV1;
+    permissionMode: string;
+    modelId?: string;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+    start?: ExecutionRunBackendStartContext;
+  }) => ExecutionRunHostRuntime;
   getNowMs: () => number;
   budgetRegistry: ExecutionBudgetRegistry | null;
   runs: Map<string, ExecutionRunState>;
@@ -105,6 +109,7 @@ export async function startExecutionRun(args: Readonly<{
   const profile = resolveExecutionRunIntentProfile(args.params.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
+  const computeSidechainStreamText = createExecutionRunSidechainStreamText(profile);
 
   const runId = `run_${randomUUID()}`;
   const callId = `subagent_run_${randomUUID()}`;
@@ -197,6 +202,8 @@ export async function startExecutionRun(args: Readonly<{
     });
   }
 
+  let backendBeforeControllerRegistration: ExecutionRunHostRuntime | null = null;
+
   try {
     if (args.params.intent === 'voice_agent' && args.params.ioMode === 'streaming') {
       let resolveTerminal!: () => void;
@@ -238,6 +245,7 @@ export async function startExecutionRun(args: Readonly<{
       }
 
       const startedVoice = await args.voiceAgentManager.start({
+        voiceAgentId: runId,
         agentId: builtInAgentId as any,
         ...(profileId ? { profileId } : {}),
         contextSessionId: args.params.sessionId,
@@ -303,11 +311,15 @@ export async function startExecutionRun(args: Readonly<{
       accountSettings: args.params.accountSettings ?? null,
       start: args.params,
     });
+    backendBeforeControllerRegistration = backend;
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
       resolveTerminal = resolve;
     });
-    const backendSupportsResume = Boolean(backend.loadSessionWithReplayCapture || backend.loadSession);
+    const backendSupportsResume = await backend.readResumeSupport({
+      captureReplay: args.params.runClass === 'long_lived',
+    });
+    const backendSupportsInitialResume = await backend.readResumeSupport();
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
       backend,
@@ -332,17 +344,20 @@ export async function startExecutionRun(args: Readonly<{
       pendingExternalMessages: [],
       pendingExternalMessagesSignal: null,
       lastMarkerWriteAtMs: 0,
+      failureSignal: failureSignal(),
+      pendingHostBarrier: Promise.resolve(),
       terminalPromise,
       resolveTerminal,
     };
     args.controllers.set(runId, ctrl);
+    backendBeforeControllerRegistration = null;
 
-    const onMessage: AgentMessageHandler = createBackendControllerMessageHandler({
+    const onMessage = createBackendControllerMessageHandler({
       ctrl,
       runId,
       sidechainId,
-      intent: args.params.intent,
       ioMode: args.params.ioMode,
+      computeSidechainStreamText,
       sendAcp,
       parentProvider: args.parentProvider,
       runs: args.runs,
@@ -352,7 +367,7 @@ export async function startExecutionRun(args: Readonly<{
       onPublicStateUpdated: args.onPublicStateUpdated,
     });
 
-    backend.onMessage(onMessage);
+    backend.subscribeMessages(onMessage);
 
     if (args.params.runClass === 'bounded') {
       // Provision the backend session and run kickoff asynchronously so the caller can dismiss
@@ -366,27 +381,25 @@ export async function startExecutionRun(args: Readonly<{
                 ? handle.vendorSessionId
                 : null;
             if (wantsResume) {
-              if (!backend.loadSessionWithReplayCapture && !backend.loadSession) {
+              if (!backendSupportsInitialResume) {
                 const err: any = new Error('Backend does not support resume');
                 err.code = 'execution_run_not_allowed';
                 throw err;
               }
-              const loaded = backend.loadSessionWithReplayCapture
-                ? await backend.loadSessionWithReplayCapture(wantsResume as any)
-                : await backend.loadSession!(wantsResume as any);
+              const loaded = await backend.provisionSession({ resumeSessionId: wantsResume });
               return loaded.sessionId;
             }
-            const started = await backend.startSession();
+            const started = await backend.provisionSession();
             return started.sessionId;
           })();
           ctrl.childSessionId = childSessionId;
 
           const existing = args.runs.get(runId);
           if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
-            args.runs.set(runId, {
-              ...existing,
-              resumeHandle: { kind: 'vendor_session.v1', backendTarget: args.params.backendTarget, vendorSessionId: childSessionId },
-            });
+              args.runs.set(runId, {
+                ...existing,
+                resumeHandle: { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), vendorSessionId: childSessionId },
+              });
             void args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
             args.onPublicStateUpdated?.(runId);
           }
@@ -451,17 +464,17 @@ export async function startExecutionRun(args: Readonly<{
           ? handle.vendorSessionId
           : null;
       if (wantsResume) {
-        if (!backend.loadSessionWithReplayCapture && !backend.loadSession) {
+        if (!backendSupportsInitialResume) {
           const err: any = new Error('Backend does not support resume');
           err.code = 'execution_run_not_allowed';
           throw err;
         }
-        const loaded = backend.loadSessionWithReplayCapture
-          ? await backend.loadSessionWithReplayCapture(wantsResume as any)
-          : await backend.loadSession!(wantsResume as any);
+        const loaded = await backend.provisionSession({
+          resumeSessionId: wantsResume,
+        });
         return loaded.sessionId;
       }
-      const started = await backend.startSession();
+      const started = await backend.provisionSession();
       return started.sessionId;
     })();
     ctrl.childSessionId = childSessionId;
@@ -470,7 +483,7 @@ export async function startExecutionRun(args: Readonly<{
     if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
       args.runs.set(runId, {
         ...existing,
-        resumeHandle: { kind: 'vendor_session.v1', backendTarget: args.params.backendTarget, vendorSessionId: childSessionId },
+        resumeHandle: { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), vendorSessionId: childSessionId },
       });
       await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
       args.onPublicStateUpdated?.(runId);
@@ -533,6 +546,12 @@ export async function startExecutionRun(args: Readonly<{
       }
       ctrl.resolveTerminal();
       args.controllers.delete(runId);
+    } else if (backendBeforeControllerRegistration) {
+      try {
+        await backendBeforeControllerRegistration.dispose();
+      } catch {
+        // best effort
+      }
     }
     throw e;
   }

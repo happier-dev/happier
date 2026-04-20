@@ -171,12 +171,15 @@ describe('ApiSessionClient usage transport', () => {
             }),
         );
 
-        client.sendCodexMessage({
-            type: 'token_count',
-            id: 'codex-token-1',
-            tokens: { total: 9, input: 4, output: 5 },
-            source: 'codex-app-server-token-usage',
-            scope: 'session_cumulative',
+        client.sendProviderMessage({
+            provider: 'codex',
+            body: {
+                type: 'token_count',
+                id: 'codex-token-1',
+                tokens: { total: 9, input: 4, output: 5 },
+                source: 'codex-app-server-token-usage',
+                scope: 'session_cumulative',
+            },
         } as any);
 
         await vi.waitFor(() => {

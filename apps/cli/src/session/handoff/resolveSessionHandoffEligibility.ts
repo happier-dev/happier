@@ -1,13 +1,13 @@
 import {
-  AGENTS_CORE,
   evaluateVendorHandoffEligibility,
-  resolveAgentIdFromFlavor,
+  resolveAgentIdFromSessionMetadata,
   type AgentId,
 } from '@happier-dev/agents';
+import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 
 type SessionStorageMode = 'direct' | 'persisted';
 
-type SessionHandoffEligibility =
+export type SessionHandoffEligibility =
   | Readonly<{
       eligible: true;
       agentId: AgentId;
@@ -34,20 +34,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function hasKnownAgentIdentity(metadata: Record<string, unknown>): AgentId | null {
-  const byFlavor = resolveAgentIdFromFlavor(metadata.flavor);
-  if (byFlavor) return byFlavor;
-
-  for (const [agentId, core] of Object.entries(AGENTS_CORE) as [AgentId, (typeof AGENTS_CORE)[AgentId]][]) {
-    const resume = core.resume;
-    if (!('vendorResumeIdField' in resume)) continue;
-    const field = resume.vendorResumeIdField;
-    if (!field) continue;
-    const raw = metadata[field];
-    if (typeof raw === 'string' && raw.trim()) return agentId;
+function buildVendorEligibilityMetadata(
+  metadata: Record<string, unknown>,
+  runtimeDescriptorV1: unknown,
+): Record<string, unknown> {
+  if (asRecord(metadata.runtimeDescriptorV1)) {
+    return metadata;
   }
-
-  return null;
+  if (!asRecord(runtimeDescriptorV1)) {
+    return metadata;
+  }
+  return {
+    ...metadata,
+    runtimeDescriptorV1,
+  };
 }
 
 function getSessionStorageMode(metadata: Record<string, unknown>): SessionStorageMode {
@@ -65,7 +65,8 @@ export function resolveSessionHandoffEligibility(input: Readonly<{
     return { eligible: false, reasonCode: 'agent_unknown' };
   }
 
-  const agentId = hasKnownAgentIdentity(metadata);
+  const runtimeIdentity = resolveSessionRuntimeIdentityFallback({ metadata });
+  const agentId = resolveAgentIdFromSessionMetadata(metadata);
   if (!agentId) {
     return { eligible: false, reasonCode: 'agent_unknown' };
   }
@@ -76,12 +77,27 @@ export function resolveSessionHandoffEligibility(input: Readonly<{
   }
 
   const storageMode = getSessionStorageMode(metadata);
+  const vendorEligibilityMetadata = buildVendorEligibilityMetadata(
+    metadata,
+    runtimeIdentity.runtimeDescriptorV1,
+  );
   const vendor = evaluateVendorHandoffEligibility({
     agentId,
     storageMode,
-    metadata,
+    metadata: vendorEligibilityMetadata,
     accountSettings: input.accountSettings,
   });
+
+  if (!vendor.eligible && vendor.reasonCode === 'vendor_handoff_id_missing' && runtimeIdentity.vendorSessionId) {
+    return {
+      eligible: true,
+      agentId,
+      storageMode,
+      sourceMachineId,
+      vendorHandoffId: runtimeIdentity.vendorSessionId,
+    };
+  }
+
   if (!vendor.eligible) {
     return {
       eligible: false,

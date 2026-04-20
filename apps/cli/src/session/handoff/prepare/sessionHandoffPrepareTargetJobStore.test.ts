@@ -64,6 +64,81 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
     }
   });
 
+  it('prefers the target prepare job over the source job when both share a handoffId', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-prefers-target-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const handoffId = 'handoff_prefers_target_1';
+
+      await store.write({
+        jobId: 'prepare_handoff_prefers_target_1',
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId: 'prepare_handoff_prefers_target_1',
+          status: 'ready_for_cutover',
+          phase: 'staging_target',
+          transportStrategy: 'server_routed_stream',
+          recoveryActions: [],
+        },
+        prepareTargetResult: {
+          handoffId,
+          status: {
+            handoffId,
+            jobId: 'prepare_handoff_prefers_target_1',
+            status: 'ready_for_cutover',
+            phase: 'staging_target',
+            transportStrategy: 'server_routed_stream',
+            recoveryActions: [],
+          },
+          remoteSessionId: 'session_target',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: {
+            directory: '/repo-target',
+            agent: 'claude',
+            resume: 'session_target',
+            transcriptStorage: 'direct',
+            approvedNewDirectoryCreation: true,
+          },
+        },
+      });
+
+      await store.write({
+        jobId: 'source_handoff_prefers_target_1',
+        handoffId,
+        createdAtMs: 30,
+        updatedAtMs: 40,
+        status: {
+          handoffId,
+          jobId: 'source_handoff_prefers_target_1',
+          status: 'completed',
+          phase: 'finalizing',
+          recoveryActions: [],
+        },
+      });
+
+      await expect(store.findByHandoffId(handoffId)).resolves.toMatchObject({
+        jobId: 'prepare_handoff_prefers_target_1',
+        status: {
+          status: 'ready_for_cutover',
+        },
+        prepareTargetResult: {
+          status: {
+            status: 'ready_for_cutover',
+          },
+        },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('rejects incoherent records where the top-level handoffId disagrees with the status.handoffId', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-coherence-'));
     try {

@@ -2,13 +2,13 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
-import { registerPermissionModeMessageQueueBinding, type InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
-import { resolveAppendSystemPromptQueueKeyValue } from '@/agent/runtime/permission/appendSystemPromptField';
-import { readPermissionModeUpdatedAtFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeStateSync';
+import { registerPermissionModeMessageQueueBinding, type InFlightSteerController } from '@/agent/runtime/permissions/bindModeQueue';
+import { resolveAppendSystemPromptQueueKeyValue } from '@/agent/runtime/permissions/appendSystemPrompt';
+import { readPermissionModeUpdatedAtFromMetadataSnapshot } from '@/agent/runtime/permissions/modeStateSync';
 import {
   combinePermissionModeQueuedPrompts,
   type PermissionModeQueuedPrompt,
-} from '@/agent/runtime/permission/permissionModeQueuedPrompt';
+} from '@/agent/runtime/permissions/queuedPrompt';
 
 export function createPermissionModeQueueState(opts: {
   session: ApiSessionClient;
@@ -23,6 +23,7 @@ export function createPermissionModeQueueState(opts: {
   resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
   messageQueue: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
+  rebindSession: (session: ApiSessionClient) => void;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   getCurrentPermissionModeUpdatedAt: () => number;
@@ -45,7 +46,7 @@ export function createPermissionModeQueueState(opts: {
     opts.session.getMetadataSnapshot(),
   );
 
-  registerPermissionModeMessageQueueBinding({
+  const binding = registerPermissionModeMessageQueueBinding({
     session: opts.session,
     queue: messageQueue,
     getCurrentPermissionMode: () => currentPermissionMode,
@@ -57,6 +58,9 @@ export function createPermissionModeQueueState(opts: {
 
   return {
     messageQueue,
+    rebindSession: (session) => {
+      binding.bindSession(session);
+    },
     getCurrentPermissionMode: () => currentPermissionMode,
     setCurrentPermissionMode: (mode) => {
       currentPermissionMode = mode;

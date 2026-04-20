@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentBackend, SessionId, StartSessionResult } from '@/agent/core/AgentBackend';
-
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import { resumeBackendControllerForResumableRun } from '@/agent/executionRuns/runtime/resumeBackendController';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
+import { resumeBackendControllerForResumableRun } from './resumeBackendController';
 
 describe('resumeBackendControllerForResumableRun', () => {
   it('resumes using loadSession when loadSessionWithReplayCapture is unavailable', async () => {
@@ -41,7 +41,7 @@ describe('resumeBackendControllerForResumableRun', () => {
       startedAtMs: 1_700_000_000_000,
       resumeHandle: {
         kind: 'vendor_session.v1',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         vendorSessionId: 'vendor_session_1',
       },
     };
@@ -54,7 +54,7 @@ describe('resumeBackendControllerForResumableRun', () => {
       runs,
       controllers,
       budgetRegistry: null,
-      createBackend: (_opts) => backend,
+      createBackend: (_opts) => createExecutionRunHostRuntimeFromAgentBackend(backend),
       sendAcp: () => undefined,
       parentProvider: 'claude' as any,
       streamedTranscriptSession: null,

@@ -13,8 +13,9 @@
  * @module createAcpBackend
  */
 
-import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from './AcpBackend';
-import type { AgentBackend, McpServerConfig } from '../core';
+import { AcpBackend, type AcpBackendOptions } from './AcpBackend';
+import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
+import type { McpServerConfig } from '../core';
 import { DefaultTransport, type TransportHandler } from '../transport';
 
 /**
@@ -68,9 +69,9 @@ export interface CreateAcpBackendOptions {
  * ```
  *
  * @param options - Configuration options
- * @returns AgentBackend instance
+ * @returns AcpBackend instance
  */
-export function createAcpBackend(options: CreateAcpBackendOptions): AgentBackend {
+export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
   const backendOptions: AcpBackendOptions = {
     agentName: options.agentName,
     cwd: options.cwd,

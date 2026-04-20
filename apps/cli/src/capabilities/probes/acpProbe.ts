@@ -15,7 +15,7 @@ import {
 import { logger } from '@/ui/logger';
 import type { TransportHandler } from '@/agent/transport';
 import { nodeToWebStreams } from '@/agent/acp/nodeToWebStreams';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 

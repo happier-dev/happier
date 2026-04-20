@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { HttpStatusError } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
 import { waitForMessagesOrPending } from './waitForMessagesOrPending';
 
@@ -23,6 +24,24 @@ describe('waitForMessagesOrPending', () => {
         });
 
         expect(result?.message).toBe('hello');
+    });
+
+    it('rethrows terminal auth failures from pending materialization instead of treating them as no-op wakes', async () => {
+        const queue = new MessageQueue2<{ id: string }>(() => 'hash');
+
+        await expect(
+            waitForMessagesOrPending({
+                messageQueue: queue,
+                abortSignal: new AbortController().signal,
+                popPendingMessage: async () => {
+                    throw new HttpStatusError(401, 'Authentication failed');
+                },
+                waitForMetadataUpdate: async () => false,
+            }),
+        ).rejects.toMatchObject({
+            name: 'HttpStatusError',
+            response: { status: 401 },
+        });
     });
 
     it('wakes on metadata update and then processes a pending item', async () => {

@@ -17,21 +17,25 @@ import {
   type PermissionResult,
   type PendingRequest,
 } from '@/agent/permissions/BasePermissionHandler';
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissions/modeFromMetadata';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import {
   extractShellCommand,
   parseHappierToolsShellBridgeCommand,
   type AccountSettings,
 } from '@happier-dev/protocol';
-import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
+import { isSharedHappierShellBridgeToolName, isSharedPermissionSafeToolName } from './permissionTaxonomy';
 import { resolveAgentRequestKind } from './requestKind';
 
 export type { PermissionResult, PendingRequest };
 
-const ALWAYS_AUTO_APPROVE_TOKENS = ['change_title', 'session_title_set', 'save_memory', 'think'] as const;
-const AUTO_APPROVE_HAPPIER_SHELL_BRIDGE_TOOLS = new Set<string>(ALWAYS_AUTO_APPROVE_TOKENS);
+const SAFE_HAPPIER_SHELL_BRIDGE_TOOLS = new Set<string>([
+  'change_title',
+  'session_title_set',
+  'save_memory',
+  'think',
+]);
 export { isDefaultWriteLikeToolName };
 
 export class CodexLikePermissionHandler extends BasePermissionHandler {
@@ -172,13 +176,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
   }
 
   private isAlwaysAutoApproveTool(toolName: string, toolCallId: string): boolean {
-    if (isChangeTitleToolLikeName(toolName)) return true;
-    const lowerToolName = toolName.toLowerCase();
-    const lowerToolCallId = toolCallId.toLowerCase();
-    return (
-      ALWAYS_AUTO_APPROVE_TOKENS.some((token) => lowerToolName.includes(token)) ||
-      ALWAYS_AUTO_APPROVE_TOKENS.some((token) => lowerToolCallId.includes(token))
-    );
+    if (isSharedPermissionSafeToolName(toolName)) return true;
+    if (isSharedPermissionSafeToolName(toolCallId)) return true;
+    return false;
   }
 
   private isHappierToolsShellBridgeToolCall(toolName: string, input: unknown): boolean {
@@ -193,7 +193,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     const parsed = parseHappierToolsShellBridgeCommand(command);
     if (!parsed) return false;
     if (parsed.kind === 'list') return true;
-    return parsed.source === 'happier' && AUTO_APPROVE_HAPPIER_SHELL_BRIDGE_TOOLS.has(parsed.tool);
+    return parsed.source === 'happier' && (SAFE_HAPPIER_SHELL_BRIDGE_TOOLS.has(parsed.tool) || isSharedHappierShellBridgeToolName(parsed.tool));
   }
 
   private isFullAutoApproveMode(): boolean {

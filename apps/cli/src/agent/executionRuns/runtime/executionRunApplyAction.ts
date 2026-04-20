@@ -7,10 +7,14 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
-import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
-import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import { buildExecutionRunProfileStartParams } from '@/agent/executionRuns/runtime/buildExecutionRunProfileStartParams';
+import { resolveExecutionRunIntentProfile } from '../profiles/intentRegistry';
+import { buildReviewFindingsV2Payload } from '../../reviews/normalize/buildReviewFindingsV2Payload';
+import { VoiceAgentError, type VoiceAgentManager } from '../../voice/agent/VoiceAgentManager';
+import { buildExecutionRunProfileStartParams } from './profileStart';
+import {
+  readExecutionRunParentSessionPermissionResponseTarget,
+  type ExecutionRunParentSessionPermissionResponseTarget,
+} from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type {
   ExecutionRunActionParams,
   ExecutionRunActionResult,
@@ -18,13 +22,46 @@ import type {
   ExecutionRunStartResult,
   ExecutionRunState,
 } from '@/agent/executionRuns/runtime/executionRunTypes';
-import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
+import type { ExecutionRunController } from '../controllers/types';
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readExecutionRunPermissionResponseInput(input: unknown): Readonly<{
+  requestId: string;
+  approved: boolean;
+  responseTarget: ExecutionRunParentSessionPermissionResponseTarget | null;
+}> | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const responseTarget = readExecutionRunParentSessionPermissionResponseTarget(record.responseTarget);
+  const requestId = readNonEmptyString(record.requestId) ?? responseTarget?.providerRequestId ?? null;
+  if (!requestId || typeof record.approved !== 'boolean') {
+    return null;
+  }
+
+  return {
+    requestId,
+    approved: record.approved,
+    responseTarget,
+  };
+}
 
 export async function applyExecutionRunAction(args: Readonly<{
   runId: string;
   params: ExecutionRunActionParams;
   runs: Map<string, ExecutionRunState>;
   controllers: ReadonlyMap<string, ExecutionRunController>;
+  respondToPermissionRequest: (args: Readonly<{
+    runId: string;
+    requestId: string;
+    approved: boolean;
+    responseTarget?: ExecutionRunParentSessionPermissionResponseTarget | null;
+  }>) => Promise<{ ok: boolean; errorCode?: string; error?: string }>;
   voiceAgentManager: VoiceAgentManager;
   startRun: (params: ExecutionRunManagerStartParams) => Promise<ExecutionRunStartResult>;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
@@ -34,11 +71,27 @@ export async function applyExecutionRunAction(args: Readonly<{
     opts: { localId: string; meta?: Record<string, unknown> },
   ) => Promise<void>;
   parentProvider: ACPProvider;
+  onVoiceAgentWelcomed?: (runId: string, welcomedEpoch: number) => Promise<void> | void;
 }>): Promise<ExecutionRunActionResult> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
 
+  if (String(args.params.actionId ?? '').trim() === 'permission.respond') {
+    const parsed = readExecutionRunPermissionResponseInput(args.params.input ?? null);
+    if (!parsed) {
+      return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid permission response input' };
+    }
+    return await args.respondToPermissionRequest({
+      runId: args.runId,
+      requestId: parsed.requestId,
+      approved: parsed.approved,
+      ...(parsed.responseTarget ? { responseTarget: parsed.responseTarget } : {}),
+    });
+  }
+
   if (run.intent === 'review' && String(args.params.actionId ?? '').trim() === 'review.follow_up') {
+    // This stays runtime-owned because follow-up orchestration needs the live run and
+    // startRun/retention plumbing, not just a pure profile transform.
     const canResume = run.retentionPolicy === 'resumable' && Boolean(run.resumeHandle);
     const canFallback = (() => {
       const target = run.backendTarget;
@@ -112,6 +165,9 @@ export async function applyExecutionRunAction(args: Readonly<{
   }
 
   if (run.intent === 'voice_agent') {
+    // Voice commit/welcome remain runtime-owned orchestration because they require the live
+    // VoiceAgentManager and controller identity. The profile controls visibility; the runtime
+    // owns the imperative side effects.
     const actionId = String(args.params.actionId ?? '').trim();
     if (actionId === 'voice_agent.commit') {
       const ctrl = args.controllers.get(args.runId);
@@ -154,6 +210,7 @@ export async function applyExecutionRunAction(args: Readonly<{
           return raw ? raw : undefined;
         })();
         const welcomed = await args.voiceAgentManager.welcome({ voiceAgentId: ctrl.voiceAgentId, ...(welcomeText ? { welcomeText } : {}) });
+        await args.onVoiceAgentWelcomed?.(args.runId, ctrl.transcript.epoch);
         return { ok: true, result: { assistantText: welcomed.assistantText } };
       } catch (e) {
         if (e instanceof VoiceAgentError) {

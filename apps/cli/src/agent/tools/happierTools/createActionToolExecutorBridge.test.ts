@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { createResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 
 describe('createActionToolExecutorBridge', () => {
@@ -102,6 +104,89 @@ describe('createActionToolExecutorBridge', () => {
       ok: false,
       errorCode: 'timeout',
       error: 'timeout',
+    });
+  });
+
+  it('routes plugin action-backed tool names through the shared executor without a parallel dispatcher', async () => {
+    const bridge = createActionToolExecutorBridge({
+      surface: 'cli',
+      registry: createResolvedContributionRegistry({
+        providers: [],
+        backends: [],
+        actions: [
+          {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.review.plugin',
+            manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
+            manifestDigest: 'sha256:acme-review',
+            daemonEntryPath: '/plugins/acme/review/daemon.mjs',
+            sourceSpec: {
+              kind: 'path',
+              locator: '/plugins/acme/review',
+              trustPolicy: 'local_trusted',
+              installPolicy: 'link',
+            },
+            definition: {
+              kindVersion: 1,
+              id: 'acme.review.start',
+              title: 'Acme Review Start',
+              description: 'Start a plugin-defined review workflow',
+              safety: 'safe',
+              placements: [],
+              slash: null,
+              bindings: {
+                mcpToolName: 'acme_review_start',
+              },
+              examples: null,
+              surfaces: {
+                ui_button: false,
+                ui_slash_command: false,
+                voice_tool: false,
+                voice_action_block: false,
+                session_agent: true,
+                mcp: true,
+                cli: true,
+              },
+              inputHints: null,
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: true,
+              },
+              execution: {
+                routing: 'plugin',
+                handler: {
+                  target: 'plugin',
+                  exportName: 'startReview',
+                },
+              },
+            },
+          },
+        ],
+      }),
+      executor: {
+        execute: async (actionId, input, ctx) => ({
+          ok: true,
+          result: { actionId, input, ctx },
+        }),
+      },
+    });
+
+    const res = await bridge.executeActionByToolName('acme_review_start', {
+      scope: 'diff',
+    }, 'sess-1');
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        actionId: 'acme.review.start',
+        input: { scope: 'diff' },
+        ctx: {
+          defaultSessionId: 'sess-1',
+          surface: 'cli',
+        },
+      },
     });
   });
 });

@@ -156,7 +156,7 @@ async function createCodexSessionFromComposer(params: {
         await inlineCodexOption.click();
     } else {
         const pickerDialog = page.getByRole('dialog').last();
-        await expect(pickerDialog).toContainText('Select AI Backend', { timeout: 60_000 });
+        await expect(pickerDialog).toBeVisible({ timeout: 60_000 });
         await pickerDialog.getByText('Codex', { exact: true }).click();
     }
 

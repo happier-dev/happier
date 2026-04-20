@@ -29,7 +29,7 @@ describe('codexRuntimeDescriptorExtra', () => {
   it('drops connected-service fields when the home is not connectedService', () => {
     expect(readCodexRuntimeDescriptorProviderExtra({
       v: 1,
-      runtimeAffinity: {
+      runtimeHandle: {
         home: 'user',
         connectedServiceId: 'openai-codex',
         connectedServiceProfileId: 'work',
@@ -48,12 +48,29 @@ describe('codexRuntimeDescriptorExtra', () => {
   it('normalizes whitespace-padded codex backend modes when reading provider extras', () => {
     expect(readCodexRuntimeDescriptorProviderExtra({
       v: 1,
-      runtimeAffinity: {
+      runtimeHandle: {
         backendMode: '  appServer  ',
       },
     })).toEqual({
       backendMode: 'appServer',
       vendorSessionId: null,
+      home: null,
+      connectedServiceId: null,
+      connectedServiceProfileId: null,
+      homePath: null,
+    });
+  });
+
+  it('keeps reading legacy runtimeAffinity payloads through the provider compat reader', () => {
+    expect(readCodexRuntimeDescriptorProviderExtra({
+      v: 1,
+      runtimeAffinity: {
+        backendMode: 'appServer',
+        vendorSessionId: 'thread_legacy',
+      },
+    })).toEqual({
+      backendMode: 'appServer',
+      vendorSessionId: 'thread_legacy',
       home: null,
       connectedServiceId: null,
       connectedServiceProfileId: null,

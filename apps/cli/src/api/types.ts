@@ -1,17 +1,18 @@
 import { z } from 'zod'
-import { UsageSchema } from '@/api/usage'
+import { UsageSchema } from './usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
 import { SentFromSchema } from '@happier-dev/protocol'
 import type { ExecutionRunPublicState } from '@happier-dev/protocol'
 import {
   DaemonPublicReleaseChannelLabelSchema,
   DaemonStartupSourceSchema,
-} from '@/daemon/ownership/daemonOwnershipMetadata'
+} from '../daemon/ownership/daemonOwnershipMetadata'
 import type {
   AcpConfigOptionOverridesV1,
   AcpSessionModeOverrideV1,
   DirectSessionsSource,
   ModelOverrideV1,
+  RuntimeDescriptorMetadataCarrier,
   SessionRollbackRangesV1,
   SessionTerminalMetadata,
 } from '@happier-dev/protocol'
@@ -395,7 +396,7 @@ export const MessageContentSchema = z.union([UserMessageSchema, AgentMessageSche
 
 export type MessageContent = z.infer<typeof MessageContentSchema>
 
-export type DirectSessionMetadataV1 = {
+export type DirectSessionMetadataV1 = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   v: 1,
   providerId: string,
   machineId: string,
@@ -416,7 +417,6 @@ export type DirectSessionMetadataV1 = {
     viewedAtMs?: number,
   },
   codexBackendMode?: 'mcp' | 'acp' | 'appServer',
-  agentRuntimeDescriptorV1?: unknown,
 };
 
 export type ExternalHistoryImportMetadataV1 = {
@@ -438,7 +438,7 @@ export type SessionHandoffMetadataV1 = {
   completedAtMs: number,
 };
 
-export type Metadata = {
+export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   path: string,
   host: string,
   version?: string,
@@ -466,7 +466,6 @@ export type Metadata = {
   claudeLastAssistantUuid?: string | null, // Claude SDK assistant message UUID (resume anchoring)
   codexSessionId?: string, // Codex session/conversation ID (uuid)
   codexBackendMode?: 'mcp' | 'acp' | 'appServer',
-  agentRuntimeDescriptorV1?: unknown,
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
   opencodeBackendMode?: 'server' | 'acp',

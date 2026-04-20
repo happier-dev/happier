@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { ActionIdSchema } from './actionIds.js';
+import {
+  ACTION_ID_FAMILIES_V1,
+  ACTION_IDS,
+  ActionIdSchema,
+} from './actionIds.js';
 
 describe('ActionIdSchema', () => {
   it('accepts known action ids', () => {
@@ -15,5 +19,151 @@ describe('ActionIdSchema', () => {
 
   it('does not accept unknown action ids', () => {
     expect(() => ActionIdSchema.parse('execution.run.stream.start' as any)).toThrow();
+  });
+
+  it('exposes the canonical action id groups', () => {
+    expect(ACTION_ID_FAMILIES_V1).toEqual({
+      discovery: [
+        'action.spec.search',
+        'action.spec.get',
+        'action.options.resolve',
+      ],
+      session_lifecycle: [
+        'session.open',
+        'session.fork',
+        'session.rollback',
+        'session.handoff',
+        'session.spawn_new',
+        'session.spawn_picker',
+      ],
+      inventory: [
+        'paths.list_recent',
+        'machines.list',
+        'servers.list',
+        'review.engines.list',
+        'agents.backends.list',
+        'agents.models.list',
+      ],
+      messaging: [
+        'session.message.send',
+      ],
+      session_control: [
+        'session.stop',
+        'session.title.set',
+        'session.model.set',
+        'session.permission_mode.set',
+        'session.archive',
+        'session.unarchive',
+        'session.status.get',
+        'session.history.get',
+        'session.wait.idle',
+      ],
+      intent_start: [
+        'review.start',
+        'subagents.plan.start',
+        'subagents.delegate.start',
+        'voice_agent.start',
+      ],
+      execution_run_control: [
+        'execution.run.start',
+        'execution.run.list',
+        'execution.run.get',
+        'execution.run.send',
+        'execution.run.stop',
+        'execution.run.action',
+        'execution.run.wait',
+      ],
+      session_targeting: [
+        'session.target.primary.set',
+        'session.target.tracked.set',
+        'session.list',
+        'session.activity.get',
+        'session.messages.recent.get',
+      ],
+      session_permissions: [
+        'session.permission.respond',
+        'session.user_action.answer',
+        'session.mode.set',
+      ],
+      voice_controls: [
+        'ui.voice_global.reset',
+        'ui.voice_agent.teleport',
+      ],
+      memory: [
+        'memory.search',
+        'memory.get_window',
+        'memory.ensure_up_to_date',
+      ],
+      prompt_library: [
+        'prompt_doc.update',
+        'prompt_bundle.update',
+        'prompt_asset.export',
+        'prompt_registry.install',
+      ],
+      approvals: [
+        'approval.request.create',
+        'approval.request.decide',
+      ],
+    });
+  });
+
+  it('flattens the action id groups into the canonical action id list', () => {
+    expect(ACTION_IDS).toEqual([
+      'action.spec.search',
+      'action.spec.get',
+      'action.options.resolve',
+      'session.open',
+      'session.fork',
+      'session.rollback',
+      'session.handoff',
+      'session.spawn_new',
+      'session.spawn_picker',
+      'paths.list_recent',
+      'machines.list',
+      'servers.list',
+      'review.engines.list',
+      'agents.backends.list',
+      'agents.models.list',
+      'session.message.send',
+      'session.stop',
+      'session.title.set',
+      'session.model.set',
+      'session.permission_mode.set',
+      'session.archive',
+      'session.unarchive',
+      'session.status.get',
+      'session.history.get',
+      'session.wait.idle',
+      'review.start',
+      'subagents.plan.start',
+      'subagents.delegate.start',
+      'voice_agent.start',
+      'execution.run.start',
+      'execution.run.list',
+      'execution.run.get',
+      'execution.run.send',
+      'execution.run.stop',
+      'execution.run.action',
+      'execution.run.wait',
+      'session.target.primary.set',
+      'session.target.tracked.set',
+      'session.list',
+      'session.activity.get',
+      'session.messages.recent.get',
+      'session.permission.respond',
+      'session.user_action.answer',
+      'session.mode.set',
+      'ui.voice_global.reset',
+      'ui.voice_agent.teleport',
+      'memory.search',
+      'memory.get_window',
+      'memory.ensure_up_to_date',
+      'prompt_doc.update',
+      'prompt_bundle.update',
+      'prompt_asset.export',
+      'prompt_registry.install',
+      'approval.request.create',
+      'approval.request.decide',
+    ]);
   });
 });

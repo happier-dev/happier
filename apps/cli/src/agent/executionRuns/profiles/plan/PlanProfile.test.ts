@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { PlanProfile } from './PlanProfile';
 
 describe('PlanProfile', () => {
+  it('keeps final sidechain materialization runtime-owned for plan runs', () => {
+    expect(PlanProfile.emitFinalSidechainMessageWhenStreamed).toBeUndefined();
+  });
+
   it('parses trailing JSON when model output includes preamble text', () => {
     const start = {
       sessionId: 'sess_1',
@@ -133,5 +137,32 @@ describe('PlanProfile', () => {
     expect(res.structuredMeta?.kind).toBe('plan_output.v1');
     const payload = (res.structuredMeta as any)?.payload;
     expect(payload?.sections?.[0]?.items?.length).toBeGreaterThan(0);
+  });
+
+  it('builds a plan repair prompt and normalizes plan sidechain text', () => {
+    const prompt = PlanProfile.buildInvalidOutputRepairPrompt?.({
+      rawText: 'not json',
+      start: {
+        sessionId: 'sess_1',
+        runId: 'run_1',
+        callId: 'call_1',
+        sidechainId: 'call_1',
+        intent: 'plan',
+        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'plan this',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        startedAtMs: 1,
+      },
+    });
+
+    expect(prompt).toContain('Do not run any tools. Return ONLY valid JSON');
+    expect(prompt).toContain('"sections": [{ "title": "Steps", "items": ["Step 1"] }]');
+    expect(prompt).toContain('not json');
+
+    expect(PlanProfile.computeSidechainStreamText?.({ fullText: 'Plan prose\n{"summary":"Ok","sections":[]}' })).toBe('Plan prose');
   });
 });

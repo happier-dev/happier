@@ -709,10 +709,10 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         await writeFile(resolve(join(preparedResume.directory, 'README.md')), 'server routed session handoff after second pass\n', 'utf8');
         await writeFile(resolve(join(preparedResume.directory, 'added-after-first-handoff.txt')), 'added after first handoff\n', 'utf8');
         await rm(resolve(join(preparedResume.directory, 'deleted-after-first-handoff.txt')));
-        await waitForDaemonSessionWebhookMarker({
-            happyHomeDir: targetHomeDir,
-            sessionId,
-            machineId: targetSeed.machineId,
+        await waitFor(async () => (await listDaemonSessions(targetDaemon!)).includes(sessionId) === true, {
+            timeoutMs: 30_000,
+            intervalMs: 100,
+            context: 'target daemon session active after server-routed handoff-back cutover',
         });
 
         const secondStarted = unwrapDataKeyRpcResult(

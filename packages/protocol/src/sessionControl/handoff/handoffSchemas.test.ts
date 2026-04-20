@@ -5,6 +5,182 @@ async function loadHandoffModule() {
 }
 
 describe('session handoff schemas', () => {
+  it('preserves additive fields on prepare-target and status payloads', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    const request = mod.SessionHandoffPrepareTargetRequestSchema.parse({
+      handoffId: 'handoff_1',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      negotiatedTransportStrategy: 'direct_peer',
+      allowServerRoutedFallback: true,
+      sourceSessionStorageMode: 'persisted',
+      targetSessionStorageMode: 'direct',
+      targetPath: '/repo',
+      endpointCandidates: [
+        {
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
+          authorizationToken: 'test-token',
+          expiresAt: 1,
+          futureEndpointField: 'keep-me',
+        },
+      ],
+      handoffMetadataV2: {
+        providerBundleTransferPublication: {
+          transferId: 'session-handoff:handoff_1:provider-bundle-file',
+          sizeBytes: 12,
+          manifestHash: 'sha256:manifest-hash',
+          endpointCandidates: [
+            {
+              kind: 'http',
+              url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
+              authorizationToken: 'test-token',
+              expiresAt: 1,
+              futureEndpointField: 'keep-me',
+            },
+          ],
+          futurePublicationField: 'keep-me',
+        },
+        workspaceReplicationSourceRootPath: '/repo',
+        workspaceReplicationHandoffBackTargetRootPath: '/repo-target',
+        workspaceReplicationManifestTransferPublication: {
+          transferId: 'transfer_manifest_1',
+          futureManifestPublicationField: 'keep-me',
+        },
+        workspaceReplicationSourceControllerMetadata: {
+          provider: 'git',
+        },
+        futureHandoffMetadataField: 'keep-me',
+      },
+      workspaceTransfer: {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'create_sibling_copy',
+        includeIgnoredMode: 'include_selected',
+        ignoredIncludeGlobs: ['dist/**'],
+        futureWorkspaceTransferField: 'keep-me',
+      },
+      futurePrepareTargetField: 'keep-me',
+    });
+
+    expect((request as any).futurePrepareTargetField).toBe('keep-me');
+    expect((request.handoffMetadataV2 as any).futureHandoffMetadataField).toBe('keep-me');
+    expect((request.workspaceTransfer as any).futureWorkspaceTransferField).toBe('keep-me');
+    expect((request.endpointCandidates[0] as any).futureEndpointField).toBe('keep-me');
+    expect((request.handoffMetadataV2?.providerBundleTransferPublication as any).futurePublicationField).toBe('keep-me');
+    expect((request.handoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates?.[0] as any).futureEndpointField).toBe('keep-me');
+    expect((request.handoffMetadataV2?.workspaceReplicationManifestTransferPublication as any).futureManifestPublicationField).toBe('keep-me');
+
+    const status = mod.SessionHandoffStatusSchema.parse({
+      handoffId: 'handoff_1',
+      status: 'ready_for_cutover',
+      phase: 'staging_target',
+      jobId: 'job_1',
+      workspaceReplicationJobId: 'workspace-replication-job-1',
+      progress: {
+        updatedAtMs: 123,
+        checkpoint: 'transfer_blobs',
+        planned: {
+          totalFiles: 12,
+          totalBytes: 34,
+          added: 1,
+          changed: 2,
+          removed: 3,
+          futurePlannedField: 'keep-me',
+        },
+        transferred: {
+          files: 4,
+          bytes: 5,
+          blobs: 6,
+          futureTransferredField: 'keep-me',
+        },
+        applied: {
+          files: 2,
+          bytes: 3,
+          futureCountsField: 'keep-me',
+        },
+        remaining: {
+          files: 8,
+          bytes: 29,
+          futureCountsField: 'keep-me',
+        },
+        current: {
+          relativePath: 'src/index.ts',
+          digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          phaseDetail: 'blob-pack-0',
+          futureCurrentField: 'keep-me',
+        },
+        resumable: true,
+        warnings: ['blocking_divergence_detected'],
+        futureProgressField: 'keep-me',
+      },
+      workspacePreflightSummary: {
+        addedPathsCount: 1,
+        changedPathsCount: 2,
+        removedPathsCount: 3,
+        totalBytes: 34,
+        futureSummaryField: 'keep-me',
+      },
+      transportStrategy: 'transfer_snapshot',
+      recoveryActions: [],
+      futureStatusField: 'keep-me',
+    });
+
+    expect((status as any).futureStatusField).toBe('keep-me');
+    expect((status.progress as any).futureProgressField).toBe('keep-me');
+    expect((status.progress?.planned as any).futurePlannedField).toBe('keep-me');
+    expect((status.progress?.transferred as any).futureTransferredField).toBe('keep-me');
+    expect((status.progress?.applied as any).futureCountsField).toBe('keep-me');
+    expect((status.progress?.remaining as any).futureCountsField).toBe('keep-me');
+    expect((status.progress?.current as any).futureCurrentField).toBe('keep-me');
+    expect((status.workspacePreflightSummary as any).futureSummaryField).toBe('keep-me');
+
+    const response = mod.SessionHandoffPrepareTargetResultGetResponseSchema.parse({
+      handoffId: 'handoff_1',
+      status: {
+        handoffId: 'handoff_1',
+        status: 'ready_for_cutover',
+        phase: 'staging_target',
+        workspaceReplicationJobId: 'workspace-replication-job-1',
+        recoveryActions: [],
+        futureStatusField: 'keep-me',
+      },
+      remoteSessionId: 'remote_session_1',
+      directSource: {
+        kind: 'claudeConfig',
+        configDir: '/tmp/claude',
+        futureDirectSourceField: 'keep-me',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'pi',
+        provider: {
+          resumeStrategy: 'sessionFileBySessionId',
+        },
+        futureRuntimeDescriptorField: 'keep-me',
+      },
+      resume: {
+        directory: '/repo',
+        agent: 'claude',
+        resume: 'resume-token',
+        transcriptStorage: 'persisted',
+        approvedNewDirectoryCreation: true,
+        futureResumeField: 'keep-me',
+      },
+      workspaceReplicationJobId: 'workspace-replication-job-1',
+      futurePrepareTargetResultField: 'keep-me',
+    });
+
+    expect((response as any).futurePrepareTargetResultField).toBe('keep-me');
+    expect((response.status as any).futureStatusField).toBe('keep-me');
+    expect((response.directSource as any).futureDirectSourceField).toBe('keep-me');
+    expect((response.runtimeDescriptorV1 as any).futureRuntimeDescriptorField).toBe('keep-me');
+    expect((response.resume as any).futureResumeField).toBe('keep-me');
+  }, 30_000);
+
   it('exports the handoff schema surface', async () => {
     const mod = await loadHandoffModule();
     expect(mod).not.toHaveProperty('error');
@@ -17,6 +193,30 @@ describe('session handoff schemas', () => {
     expect(typeof mod.SessionHandoffStatusSchema).toBe('object');
     expect(typeof mod.SessionHandoffProgressCheckpointSchema).toBe('object');
     expect(typeof mod.SessionHandoffProgressWarningCodeSchema).toBe('object');
+    expect(mod.SESSION_HANDOFF_PROGRESS_TIMELINES_V1).toEqual({
+      minimal: [
+        'stage_target',
+        'import_session',
+        'finalize',
+      ],
+      full: [
+        'plan',
+        'transfer_blobs',
+        'stage_target',
+        'apply',
+        'import_session',
+        'finalize',
+      ],
+      full_with_source_scan: [
+        'scan_source',
+        'plan',
+        'transfer_blobs',
+        'stage_target',
+        'apply',
+        'import_session',
+        'finalize',
+      ],
+    });
     expect(mod.SESSION_HANDOFF_PROGRESS_FULL_TIMELINE).toEqual([
       'plan',
       'transfer_blobs',
@@ -561,6 +761,71 @@ describe('session handoff schemas', () => {
           transcriptStorage: 'persisted',
           approvedNewDirectoryCreation: true,
           experimentalCodexAcp: true,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts all AgentProviderIdV1 values in resume payloads and rejects unknown providers', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    const buildPayload = (agent: string) => ({
+      handoffId: 'handoff_provider_surface',
+      status: {
+        handoffId: 'handoff_provider_surface',
+        status: 'ready_for_cutover',
+        phase: 'staging_target',
+        recoveryActions: [],
+      },
+      remoteSessionId: 'remote_session_provider_surface',
+      directSource: {
+        kind: 'ohMyPiAgentDir',
+        agentDir: '/tmp/ohmypi',
+      },
+      resume: {
+        directory: '/repo',
+        agent,
+        resume: 'resume-token',
+        transcriptStorage: 'persisted',
+        approvedNewDirectoryCreation: true,
+      },
+    });
+
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('pi')).success).toBe(true);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('ohMyPi')).success).toBe(true);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('plugin_backend')).success).toBe(false);
+  });
+
+  it('validates runtimeDescriptorV1 as a schema-owned field', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(
+      mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse({
+        handoffId: 'handoff_runtime_descriptor',
+        status: {
+          handoffId: 'handoff_runtime_descriptor',
+          status: 'ready_for_cutover',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        remoteSessionId: 'remote_session_runtime_descriptor',
+        directSource: {
+          kind: 'claudeConfig',
+          configDir: '/tmp/claude',
+        },
+        runtimeDescriptorV1: {
+          providerId: 'pi',
+        },
+        resume: {
+          directory: '/repo',
+          agent: 'claude',
+          resume: 'resume-token',
+          transcriptStorage: 'persisted',
+          approvedNewDirectoryCreation: true,
         },
       }).success,
     ).toBe(false);

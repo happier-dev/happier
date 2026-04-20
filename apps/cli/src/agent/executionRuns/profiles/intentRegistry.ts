@@ -15,6 +15,12 @@ const PROFILES: Record<ExecutionRunIntent, ExecutionRunIntentProfile> = {
   memory_hints: MemoryHintsProfile,
 };
 
+export const EXECUTION_RUN_INTENT_PROFILE_REGISTRY: Readonly<Record<ExecutionRunIntent, ExecutionRunIntentProfile>> = Object.freeze(PROFILES);
+
+export function listExecutionRunSupportedIntents(): readonly ExecutionRunIntent[] {
+  return Object.keys(EXECUTION_RUN_INTENT_PROFILE_REGISTRY) as ExecutionRunIntent[];
+}
+
 export function resolveExecutionRunIntentProfile(intent: ExecutionRunIntent): ExecutionRunIntentProfile {
-  return PROFILES[intent];
+  return EXECUTION_RUN_INTENT_PROFILE_REGISTRY[intent];
 }

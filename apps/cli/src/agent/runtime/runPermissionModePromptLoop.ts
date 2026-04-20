@@ -1,41 +1,56 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { resolveAppendSystemPromptBaseOverride } from '@/agent/runtime/permission/appendSystemPromptField';
+import { resolveAppendSystemPromptBaseOverride } from '@/agent/runtime/permissions/appendSystemPrompt';
+import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
   initializePermissionModeStateSync,
-} from '@/agent/runtime/permission/permissionModeStateSync';
+} from '@/agent/runtime/permissions/modeStateSync';
 import { waitForNextPermissionModeMessage } from '@/agent/runtime/waitForNextPermissionModeMessage';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
+import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import {
   resolveProviderPromptWithReplaySeed,
 } from '@/agent/runtime/replaySeed/replaySeedV1';
-import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
+import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 
-type PromptRuntime = {
-  beginTurn: () => void;
-  startOrLoad: (opts: { resumeId?: string; importHistory?: boolean }) => Promise<unknown>;
-  sendPrompt: (message: string) => Promise<void>;
+export type PermissionModePromptLoopTurnOperations = RuntimeTurnOperations & Readonly<{
   sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
-  flushTurn: () => void | Promise<void>;
-  reset: () => Promise<void>;
-  getSessionId: () => string | null;
   shouldResumeAfterPermissionModeChange?: () => boolean;
-};
+}>;
 
-type OverrideSynchronizer = {
+type PermissionModePromptLoopExitResult = Readonly<{
+  type: 'exit';
+  code?: number | null;
+}>;
+
+export type PromptLoopOverrideSynchronizer = Readonly<{
   syncFromMetadata: () => void;
   flushPendingAfterStart: () => Promise<void>;
-};
+}>;
+
+export type PromptLoopPermissionHandler = Readonly<
+  Pick<ProviderEnforcedPermissionHandler, 'reset' | 'setPermissionMode'>
+>;
 
 type QueuedPermissionModeMessage = {
   message: PermissionModeQueuedPrompt;
   mode: { permissionMode: PermissionMode; appendSystemPrompt?: string | null };
   hash: string;
 };
+
+export type PromptLoopResetReason =
+  | 'mode_change'
+  | 'clear'
+  | 'resume_fallback'
+  | 'strict_initial_resume_failure';
+
+export type PromptLoopBoundaryReason =
+  | 'turn_completed'
+  | 'mode_change_reset'
+  | 'clear_reset';
 
 class StrictInitialResumeError extends Error {
   public readonly cause: unknown;
@@ -46,15 +61,21 @@ class StrictInitialResumeError extends Error {
   }
 }
 
+function isPermissionModePromptLoopExitResult(value: unknown): value is PermissionModePromptLoopExitResult {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  return record.type === 'exit';
+}
+
 export async function runPermissionModePromptLoop(opts: {
   providerName: string;
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
   explicitPermissionMode: PermissionMode | undefined;
   session: ApiSessionClient;
   messageQueue: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
-  permissionHandler: ProviderEnforcedPermissionHandler;
-  runtime: PromptRuntime;
-  createOverrideSynchronizer: (isStarted: () => boolean) => OverrideSynchronizer;
+  permissionHandler: PromptLoopPermissionHandler;
+  runtime: PermissionModePromptLoopTurnOperations;
+  createOverrideSynchronizer: (isStarted: () => boolean) => PromptLoopOverrideSynchronizer;
   messageBuffer: MessageBuffer;
   shouldExit: () => boolean;
   getAbortSignal: () => AbortSignal;
@@ -68,7 +89,9 @@ export async function runPermissionModePromptLoop(opts: {
   strictInitialResume?: boolean;
   startRuntimeBeforeFirstPrompt?: boolean;
   onAfterStart?: (() => void | Promise<void>) | null;
-  onAfterReset?: (() => void | Promise<void>) | null;
+  onBeforeReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
+  onAfterReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
+  onAfterLoopBoundary?: ((params: { reason: PromptLoopBoundaryReason }) => void | Promise<void>) | null;
   resolveFreshSessionSystemPrompt?: (args: {
     baseOverride?: string | null;
   }) => Promise<string | null | undefined>;
@@ -127,8 +150,8 @@ export async function runPermissionModePromptLoop(opts: {
 
   overrideSync.syncFromMetadata();
 
-  const ensureRuntimeStarted = async (): Promise<{ startedFreshSessionForTurn: boolean }> => {
-    if (wasStarted) return { startedFreshSessionForTurn: false };
+  const ensureRuntimeStarted = async (): Promise<{ startedFreshSessionForTurn: boolean; exitRequested: boolean }> => {
+    if (wasStarted) return { startedFreshSessionForTurn: false, exitRequested: false };
 
     const resume = storedSessionIdForResume;
     const resumeId = typeof resume?.value === 'string' ? resume.value.trim() : '';
@@ -140,7 +163,10 @@ export async function runPermissionModePromptLoop(opts: {
       opts.messageBuffer.addMessage('Resuming previous context…', 'status');
       try {
         // Avoid importing ACP replay history into Happier on normal resume; Happier transcript is the source of truth.
-        await opts.runtime.startOrLoad({ resumeId, importHistory: false });
+        const startResult = await opts.runtime.startOrLoadSession({ resumeId, importHistory: false });
+        if (isPermissionModePromptLoopExitResult(startResult)) {
+          return { startedFreshSessionForTurn: false, exitRequested: true };
+        }
       } catch (error) {
         const shouldFailClosed =
           opts.strictInitialResume === true && resume?.origin === 'initial';
@@ -149,7 +175,9 @@ export async function runPermissionModePromptLoop(opts: {
           opts.messageBuffer.addMessage(`Resume failed; cannot continue: ${formatted}`, 'status');
           opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: `Resume failed; cannot continue: ${formatted}` });
           try {
-            await opts.runtime.reset();
+            await opts.onBeforeReset?.({ reason: 'strict_initial_resume_failure' });
+            await opts.runtime.resetOrDisposeRuntime();
+            await opts.onAfterReset?.({ reason: 'strict_initial_resume_failure' });
           } catch {
             // ignore cleanup failure
           }
@@ -157,13 +185,21 @@ export async function runPermissionModePromptLoop(opts: {
         } else {
           opts.messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
           opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: 'Resume failed; starting a new session.' });
-          await opts.runtime.reset();
-          await opts.runtime.startOrLoad({});
+          await opts.onBeforeReset?.({ reason: 'resume_fallback' });
+          await opts.runtime.resetOrDisposeRuntime();
+          await opts.onAfterReset?.({ reason: 'resume_fallback' });
+          const startResult = await opts.runtime.startOrLoadSession({});
+          if (isPermissionModePromptLoopExitResult(startResult)) {
+            return { startedFreshSessionForTurn: false, exitRequested: true };
+          }
           startedFreshSessionForTurn = true;
         }
       }
     } else {
-      await opts.runtime.startOrLoad({});
+      const startResult = await opts.runtime.startOrLoadSession({});
+      if (isPermissionModePromptLoopExitResult(startResult)) {
+        return { startedFreshSessionForTurn: false, exitRequested: true };
+      }
       startedFreshSessionForTurn = true;
     }
 
@@ -175,13 +211,14 @@ export async function runPermissionModePromptLoop(opts: {
     await refreshSessionSnapshotBeforeTurnBestEffort();
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();
-    return { startedFreshSessionForTurn };
+    return { startedFreshSessionForTurn, exitRequested: false };
   };
 
-  if (opts.startRuntimeBeforeFirstPrompt === true && !wasStarted) {
+  if ((opts.startRuntimeBeforeFirstPrompt === true || normalizedResumeId.length > 0) && !wasStarted) {
     await refreshSessionSnapshotBeforeTurnBestEffort();
     overrideSync.syncFromMetadata();
     const eagerStart = await ensureRuntimeStarted();
+    if (eagerStart.exitRequested) return;
     pendingFreshSessionSystemPrompt = eagerStart.startedFreshSessionForTurn;
   }
 
@@ -214,7 +251,7 @@ export async function runPermissionModePromptLoop(opts: {
     opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
 
     if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
-      const resumeId = opts.runtime.getSessionId();
+      const resumeId = opts.runtime.readSessionIdentity().sessionId;
       currentModeHash = message.hash;
       const shouldResumeAfterPermissionModeChange =
         typeof opts.runtime.shouldResumeAfterPermissionModeChange === 'function'
@@ -227,13 +264,15 @@ export async function runPermissionModePromptLoop(opts: {
       }
 
       opts.messageBuffer.addMessage(`Restarting ${opts.providerName} session (permission settings changed)…`, 'status');
-      await opts.runtime.reset();
+      await opts.onBeforeReset?.({ reason: 'mode_change' });
+      await opts.runtime.resetOrDisposeRuntime();
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
-      await opts.onAfterReset?.();
+      await opts.onAfterReset?.({ reason: 'mode_change' });
       opts.permissionHandler.reset();
       opts.setThinking(false);
       opts.keepAlive();
+      await opts.onAfterLoopBoundary?.({ reason: 'mode_change_reset' });
 
       pending = message;
       continue;
@@ -251,30 +290,38 @@ export async function runPermissionModePromptLoop(opts: {
     const special = parseSpecialCommand(message.message.text);
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
-      await opts.runtime.reset();
+      await opts.onBeforeReset?.({ reason: 'clear' });
+      await opts.runtime.resetOrDisposeRuntime();
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
-      await opts.onAfterReset?.();
+      await opts.onAfterReset?.({ reason: 'clear' });
       opts.permissionHandler.reset();
       opts.setThinking(false);
       opts.keepAlive();
       opts.messageBuffer.addMessage('Session reset.', 'status');
+      await opts.onAfterLoopBoundary?.({ reason: 'clear_reset' });
       opts.sendReady();
       continue;
     }
 
     let shouldSendReady = true;
     let suppressFlushTurnFailure = false;
+    let beganTurn = false;
     try {
       turnInFlight = true;
       let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
       pendingFreshSessionSystemPrompt = false;
-      opts.runtime.beginTurn();
       if (!wasStarted) {
         const runtimeStart = await ensureRuntimeStarted();
+        if (runtimeStart.exitRequested) {
+          shouldSendReady = false;
+          return;
+        }
         shouldApplyFreshSessionSystemPrompt =
           runtimeStart.startedFreshSessionForTurn || shouldApplyFreshSessionSystemPrompt;
       }
+      opts.runtime.beginTurnLifecycle();
+      beganTurn = true;
 
       const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
       const special = parseSpecialCommand(message.message.text);
@@ -307,7 +354,7 @@ export async function runPermissionModePromptLoop(opts: {
       if (typeof opts.runtime.sendPromptWithMeta === 'function') {
         await opts.runtime.sendPromptWithMeta({ text: providerPrompt, localId });
       } else {
-        await opts.runtime.sendPrompt(providerPrompt);
+        await opts.runtime.sendTurnPrompt(providerPrompt);
       }
     } catch (error) {
       if (error instanceof StrictInitialResumeError) {
@@ -320,19 +367,22 @@ export async function runPermissionModePromptLoop(opts: {
       }
     } finally {
       turnInFlight = false;
-      if (suppressFlushTurnFailure) {
-        try {
-          await opts.runtime.flushTurn();
-        } catch {}
-      } else {
-        await opts.runtime.flushTurn();
-      }
-      // Metadata updates can arrive while we're mid-turn.
-      overrideSync.syncFromMetadata();
-      opts.setThinking(false);
-      opts.keepAlive();
-      if (shouldSendReady) {
-        opts.sendReady();
+      if (beganTurn) {
+        if (suppressFlushTurnFailure) {
+          try {
+            await opts.runtime.waitForTurnCompletion();
+          } catch {}
+        } else {
+          await opts.runtime.waitForTurnCompletion();
+        }
+        // Metadata updates can arrive while we're mid-turn.
+        overrideSync.syncFromMetadata();
+        opts.setThinking(false);
+        opts.keepAlive();
+        await opts.onAfterLoopBoundary?.({ reason: 'turn_completed' });
+        if (shouldSendReady) {
+          opts.sendReady();
+        }
       }
     }
   }

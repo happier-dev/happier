@@ -1,23 +1,29 @@
-import { getBackendDefinition, type AgentId } from '@happier-dev/agents';
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { getBackendDefinition, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
+import {
+  buildBackendTargetKeyV2,
+  readBackendTargetRefV2,
+  type BackendTargetRefV1,
+  type BackendTargetRefV2Input,
+} from '@happier-dev/protocol';
 
-export function isExecutionRunConcreteBackendTarget(backendTarget: BackendTargetRefV1): boolean {
-  if (backendTarget.kind === 'builtInAgent') {
-    return backendTarget.agentId !== 'customAcp';
-  }
-  return backendTarget.backendId !== 'customAcp';
+export function isExecutionRunConcreteBackendTarget(backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input): boolean {
+  const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
+  return !legacyCustomAcpCompat.isLegacyCustomAcpAgentId(canonicalBackendTarget.backendId);
 }
 
-export function resolveExecutionRunRuntimeBackendId(backendTarget: BackendTargetRefV1): string {
+export function resolveExecutionRunRuntimeBackendId(backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input): string {
   return resolveExecutionRunPublicBackendId(backendTarget);
 }
 
-export function resolveExecutionRunPublicBackendId(backendTarget: BackendTargetRefV1): string {
-  return backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : backendTarget.backendId;
+export function resolveExecutionRunPublicBackendId(backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input): string {
+  const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
+  return canonicalBackendTarget.sourceKind === 'configured'
+    ? canonicalBackendTarget.configuredBackendId ?? canonicalBackendTarget.backendId
+    : canonicalBackendTarget.backendId;
 }
 
 export function matchesExecutionRunLegacyBackendId(
-  backendTarget: BackendTargetRefV1,
+  backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input,
   backendId: string,
 ): boolean {
   const normalizedBackendId = String(backendId ?? '').trim();
@@ -25,23 +31,26 @@ export function matchesExecutionRunLegacyBackendId(
 
   const publicBackendId = resolveExecutionRunPublicBackendId(backendTarget);
   if (publicBackendId === normalizedBackendId) {
-    if (backendTarget.kind === 'configuredAcpBackend' && getBackendDefinition(normalizedBackendId as AgentId)) {
+    const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
+    if (canonicalBackendTarget.sourceKind === 'configured' && isAgentId(normalizedBackendId) && getBackendDefinition(normalizedBackendId)) {
       return false;
     }
     return true;
   }
 
-  return backendTarget.kind === 'configuredAcpBackend' && normalizedBackendId === 'customAcp';
+  return readBackendTargetRefV2(backendTarget).sourceKind === 'configured'
+    && legacyCustomAcpCompat.isLegacyCustomAcpAgentId(normalizedBackendId);
 }
 
 export function areExecutionRunBackendTargetsEqual(
-  left: BackendTargetRefV1 | null | undefined,
-  right: BackendTargetRefV1 | null | undefined,
+  left: BackendTargetRefV1 | BackendTargetRefV2Input | null | undefined,
+  right: BackendTargetRefV1 | BackendTargetRefV2Input | null | undefined,
 ): boolean {
   if (!left || !right) return false;
-  return buildBackendTargetKey(left) === buildBackendTargetKey(right);
+  return buildBackendTargetKeyV2(readBackendTargetRefV2(left)) === buildBackendTargetKeyV2(readBackendTargetRefV2(right));
 }
 
-export function resolveExecutionRunBuiltInAgentId(backendTarget: BackendTargetRefV1): string | null {
-  return backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : null;
+export function resolveExecutionRunBuiltInAgentId(backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input): string | null {
+  const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
+  return canonicalBackendTarget.sourceKind === 'configured' ? null : canonicalBackendTarget.backendId;
 }

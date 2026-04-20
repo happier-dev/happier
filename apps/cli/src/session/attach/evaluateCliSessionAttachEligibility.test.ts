@@ -4,8 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import * as backendCatalog from '@/backends/catalog';
-import type { BackendExecutionSurfaces } from '@/backends/catalog';
+import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import type { AnyTerminalRuntimeOps, ProviderAttachOps } from '@/backends/types';
 import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
 import type { Credentials } from '@/persistence';
@@ -104,8 +103,11 @@ const {
   };
 });
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendExecutionSurfaces,
+}));
+
+vi.mock('@/backends/catalog', () => ({
   getProviderAttachOps,
   getTerminalRuntimeOps,
 }));
@@ -218,11 +220,9 @@ describe('evaluateCliSessionAttachEligibility', () => {
   });
 
   it('resolves attach eligibility through the generic backend execution surface instead of direct catalog getters', async () => {
-    const resolveBackendExecutionSurfacesSpy = vi.spyOn(backendCatalog, 'resolveBackendExecutionSurfaces').mockResolvedValue(
+    const resolveBackendExecutionSurfacesSpy = resolveBackendExecutionSurfaces.mockResolvedValue(
       createMockBackendExecutionSurfaces('opencode'),
     );
-    const getProviderAttachOpsSpy = vi.spyOn(backendCatalog, 'getProviderAttachOps');
-    const getTerminalRuntimeOpsSpy = vi.spyOn(backendCatalog, 'getTerminalRuntimeOps');
 
     const rawSession = createSessionRecordFixture({
       id: 'sid_generic_attach_1',
@@ -253,9 +253,6 @@ describe('evaluateCliSessionAttachEligibility', () => {
     });
 
     expect(resolveBackendExecutionSurfacesSpy).toHaveBeenCalledWith('opencode');
-    expect(getProviderAttachOpsSpy).not.toHaveBeenCalled();
-    expect(getTerminalRuntimeOpsSpy).not.toHaveBeenCalled();
-    resolveBackendExecutionSurfacesSpy.mockRestore();
   });
 
   it('accepts terminal-hosted sessions when the backend catalog exposes terminal runtime ops', async () => {

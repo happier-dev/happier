@@ -30,5 +30,30 @@ describe('extractCompactRow', () => {
       text: 'OK',
     });
   });
-});
 
+  it('extracts provider text from ACP message rows', () => {
+    const row = extractCompactRow({
+      createdAt: 1,
+      fallbackId: '4',
+      decrypted: {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          provider: 'opencode',
+          data: {
+            type: 'message',
+            message: 'provider compact text',
+          },
+        },
+      },
+    });
+
+    expect(row).toMatchObject({
+      id: '4',
+      createdAt: 1,
+      role: 'agent',
+      kind: 'acp',
+      text: 'provider compact text',
+    });
+  });
+});

@@ -1,7 +1,7 @@
 import type { DirectSessionTranscriptDeltaEphemeral } from '@happier-dev/protocol';
 
-import { dispatchActivityNotificationAsync } from '@/activity/notifications/dispatchActivityNotification';
-import type { DirectSessionFollowLease, DirectSessionFollowLeaseReason } from '@/backends/directSessions/providerOps';
+import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
+import type { DirectSessionFollowLease, DirectSessionFollowLeaseReason } from '@/session/directSessions/providerOps';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';

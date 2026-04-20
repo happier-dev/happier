@@ -20,11 +20,11 @@ vi.mock('@/agent/acp/catalog/configured/createConfiguredAcpBackend', () => ({
   createConfiguredAcpBackend: createConfiguredAcpBackendMock,
 }));
 
-vi.mock('@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings', () => ({
+vi.mock('@/agent/acp/catalog/configured/resolveBackend', () => ({
   resolveConfiguredAcpBackendFromAccountSettingsOrPlugins: resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
 }));
 
-vi.mock('@/agent/acp/catalog/configured/materializeConfiguredAcpEnvironment', () => ({
+vi.mock('@/agent/acp/catalog/configured/materializeEnvironment', () => ({
   materializeConfiguredAcpEnvironment: materializeConfiguredAcpEnvironmentMock,
 }));
 

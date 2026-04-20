@@ -4,25 +4,26 @@ import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol'
 
 import {
   mergeSessionMetadataForStartup,
-  type AcpSessionModeOverride as MergeAcpSessionModeOverride,
+  type SessionModeOverride as MergeSessionModeOverride,
   type ModelOverride as MergeModelOverride,
   type PermissionModeOverride as MergePermissionModeOverride,
 } from './mergeSessionMetadataForStartup';
+import { normalizeLegacySessionModeMetadataCompat } from './startup/normalizeLegacySessionModeMetadataCompat';
 
 export type PermissionModeOverride = MergePermissionModeOverride | null;
 
-export type AcpSessionModeOverride = MergeAcpSessionModeOverride | null;
+export type SessionModeOverride = MergeSessionModeOverride | null;
 
 export type ModelOverride = MergeModelOverride | null;
 
-export function buildAcpSessionModeOverride(opts: {
-  agentModeId?: string;
-  agentModeUpdatedAt?: number;
-}): AcpSessionModeOverride {
-  if (typeof opts.agentModeId !== 'string') return null;
-  const normalized = opts.agentModeId.trim();
+export function buildSessionModeOverride(opts: {
+  sessionModeId?: string;
+  sessionModeUpdatedAt?: number;
+}): SessionModeOverride {
+  if (typeof opts.sessionModeId !== 'string') return null;
+  const normalized = opts.sessionModeId.trim();
   if (!normalized) return null;
-  return { modeId: normalized, updatedAt: opts.agentModeUpdatedAt };
+  return { modeId: normalized, updatedAt: opts.sessionModeUpdatedAt };
 }
 
 export function buildPermissionModeOverride(opts: {
@@ -50,7 +51,7 @@ export function applyStartupMetadataUpdateToSession(opts: {
   next: Metadata;
   nowMs?: number;
   permissionModeOverride: PermissionModeOverride;
-  acpSessionModeOverride?: AcpSessionModeOverride;
+  sessionModeOverride?: SessionModeOverride;
   modelOverride?: ModelOverride;
   metadataKeysToUnsetOnAttach?: readonly string[] | null;
   attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
@@ -61,11 +62,11 @@ export function applyStartupMetadataUpdateToSession(opts: {
   try {
     const result = opts.session.updateMetadata((currentMetadata) =>
       mergeSessionMetadataForStartup({
-        current: currentMetadata,
-        next: opts.next,
+        current: normalizeLegacySessionModeMetadataCompat(currentMetadata),
+        next: normalizeLegacySessionModeMetadataCompat(opts.next),
         nowMs,
         permissionModeOverride: opts.permissionModeOverride ?? null,
-        acpSessionModeOverride: opts.acpSessionModeOverride ?? null,
+        sessionModeOverride: opts.sessionModeOverride ?? null,
         modelOverride: opts.modelOverride ?? null,
         metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach ?? null,
         attachMetadataIdentityPolicy: opts.attachMetadataIdentityPolicy ?? null,

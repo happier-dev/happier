@@ -8,7 +8,9 @@ vi.mock('../client/loopbackUrl', () => ({
   resolveLoopbackHttpUrl: (url: string) => url,
 }));
 
-import axios from 'axios';
+import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
+
+import { HttpStatusError } from '@/api/client/httpStatusError';
 
 import { catchUpSessionMessagesAfterSeq } from './sessionMessageCatchUp';
 
@@ -44,5 +46,29 @@ describe('sessionMessageCatchUp (plaintext envelopes)', () => {
     expect(updates[0]?.body?.message?.sidechainId).toBeNull();
     expect(updates[0]?.body?.message?.createdAt).toBe(123);
     expect(updates[0]?.body?.message?.updatedAt).toBe(123);
+  });
+
+  it('throws terminal auth responses instead of treating them as empty catch-up', async () => {
+    const authResponse: AxiosResponse = {
+      status: 401,
+      statusText: 'Unauthorized',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { messages: [] },
+    };
+    vi.spyOn(axios, 'get').mockResolvedValueOnce(authResponse);
+
+    await expect(
+      catchUpSessionMessagesAfterSeq({
+        token: 'expired',
+        sessionId: 's1',
+        afterSeq: 10,
+        onUpdate: vi.fn(),
+      }),
+    ).rejects.toMatchObject({
+      name: 'HttpStatusError',
+      code: 'not_authenticated',
+      response: { status: 401 },
+    } satisfies Partial<HttpStatusError & { code: string }>);
   });
 });

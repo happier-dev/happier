@@ -49,4 +49,13 @@ describe('backendTargetRef', () => {
     });
     expect(() => parseBackendTargetKey('claude')).toThrow();
   });
+
+  it('rejects customAcp placeholders from the legacy V1 backend-target seam', () => {
+    expect(() => BackendTargetRefSchema.parse({ kind: 'builtInAgent', agentId: 'customAcp' })).toThrow();
+    expect(() => BackendTargetRefSchema.parse({ kind: 'configuredAcpBackend', backendId: 'customAcp' })).toThrow();
+    expect(() => BackendTargetKeySchema.parse('agent:customAcp')).toThrow();
+    expect(() => BackendTargetKeySchema.parse('acpBackend:customAcp')).toThrow();
+    expect(() => parseBackendTargetKey('agent:customAcp')).toThrow();
+    expect(() => parseBackendTargetKey('acpBackend:customAcp')).toThrow();
+  });
 });

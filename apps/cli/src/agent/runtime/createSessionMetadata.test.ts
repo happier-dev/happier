@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import type { Metadata } from '@/api/types';
+
 import { createSessionMetadata } from './createSessionMetadata';
 
 describe('createSessionMetadata', () => {
@@ -13,17 +15,17 @@ describe('createSessionMetadata', () => {
         expect((metadata as any).messageQueueV1).toBeUndefined();
     });
 
-    it('seeds acpSessionModeOverrideV1 when agentModeId is provided', () => {
+    it('seeds only the canonical sessionModeOverrideV1 when sessionModeId is provided', () => {
         const { metadata } = createSessionMetadata({
             flavor: 'opencode',
             machineId: 'machine-1',
             startedBy: 'terminal',
-            agentModeId: 'plan',
-            agentModeUpdatedAt: 123,
+            sessionModeId: 'plan',
+            sessionModeUpdatedAt: 123,
         } as any);
 
         expect((metadata as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
-        expect((metadata as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
+        expect((metadata as any).acpSessionModeOverrideV1).toBeUndefined();
     });
 
     it('seeds modelOverrideV1 when modelId is provided', () => {
@@ -164,12 +166,28 @@ describe('createSessionMetadata', () => {
         }
     });
 
-    it('seeds acpTransportV1 when acpProviderId is provided', () => {
+    it('does not seed acpTransportV1 from the shared metadata factory defaults', () => {
         const { metadata } = createSessionMetadata({
             flavor: 'opencode',
             machineId: 'machine-1',
             startedBy: 'terminal',
-            acpProviderId: 'opencode',
+        } as any);
+
+        expect((metadata as any).acpTransportV1).toBeUndefined();
+    });
+
+    it('applies provider-owned metadata augmentation after building neutral shared metadata', () => {
+        const { metadata } = createSessionMetadata({
+            flavor: 'opencode',
+            machineId: 'machine-1',
+            startedBy: 'terminal',
+            augmentMetadata: (current: Metadata) => ({
+                ...current,
+                acpTransportV1: {
+                    v: 1,
+                    provider: 'opencode',
+                },
+            }),
         } as any);
 
         expect((metadata as any).acpTransportV1).toEqual({

@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 import type { McpServerConfig } from '@/agent';
+import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { createCustomMcpClientTransport } from './createCustomMcpClientTransport';
 
 export async function callResolvedCustomHappierTool(params: Readonly<{
@@ -20,7 +21,11 @@ export async function callResolvedCustomHappierTool(params: Readonly<{
 
   try {
     await client.connect(transport);
-    const result = await client.callTool({ name: params.toolName, arguments: params.args as any });
+    const result = await callMcpToolWithResolvedTimeout({
+      client,
+      toolName: params.toolName,
+      args: params.args,
+    });
     return { ok: true, result };
   } catch (error) {
     return {

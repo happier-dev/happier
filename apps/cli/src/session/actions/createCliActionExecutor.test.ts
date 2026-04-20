@@ -113,8 +113,8 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 }));
 
 import { createCliActionExecutor } from './createCliActionExecutor';
-import { deriveBoxPublicKeyFromSeed, encodeBase64, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { deriveBoxPublicKeyFromSeed, encodeBase64, sealEncryptedDataKeyEnvelopeV1, type ActionId } from '@happier-dev/protocol';
+import { createPluginStateStore } from '@/extensions/store/state';
 import { configuration } from '@/configuration';
 
 const env = process.env;
@@ -126,7 +126,7 @@ async function writePluginBackendFixture(rootDir: string): Promise<void> {
     join(manifestDir, 'plugin.json'),
     JSON.stringify(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         id: 'acme.cli-action.plugin',
         version: '1.0.0',
         displayName: 'CLI Action Plugin',
@@ -134,61 +134,191 @@ async function writePluginBackendFixture(rootDir: string): Promise<void> {
         engines: {
           happier: `^${configuration.currentCliVersion}`,
         },
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['providers', 'backends'],
+        },
         targets: {
           daemon: {
             entry: './daemon.mjs',
           },
         },
-        contributions: {
-          providers: [
-            {
-              kindVersion: 1,
-              id: 'acme.cli-action.provider',
-              display: {
-                name: 'CLI Action Provider',
-              },
-              ownedBackendIds: ['acme.cli-action.backend'],
+        permissions: [],
+        contributions: [
+          {
+            kind: 'provider',
+            kindVersion: 1,
+            id: 'acme.cli-action.provider',
+            display: {
+              name: 'CLI Action Provider',
             },
-          ],
-          backends: [
-            {
-              kindVersion: 1,
-              id: 'acme.cli-action.backend',
-              providerId: 'acme.cli-action.provider',
-              runtimeKind: 'acp',
-              launch: {
-                command: 'ignored-launch-command',
-                args: ['--ignored'],
-                env: {},
-              },
-              acp: {
-                title: 'Plugin Review Bot',
-                description: 'Plugin-sourced ACP backend',
-                command: 'plugin-review-bot',
-                args: ['acp'],
-                env: {},
-                transportProfile: 'generic',
-                capabilities: {
-                  supportsLoadSession: false,
-                  supportsModes: 'unknown',
-                  supportsModels: 'unknown',
-                  supportsConfigOptions: 'unknown',
-                  promptImageSupport: 'unknown',
-                },
-              },
+            ownedBackendIds: ['acme.cli-action.backend'],
+          },
+          {
+            kind: 'backend',
+            kindVersion: 1,
+            id: 'acme.cli-action.backend',
+            providerId: 'acme.cli-action.provider',
+            runtimeKind: 'acp',
+            launch: {
+              command: 'ignored-launch-command',
+              args: ['--ignored'],
+              env: {},
+            },
+            acp: {
+              title: 'Plugin Review Bot',
+              description: 'Plugin-sourced ACP backend',
+              command: 'plugin-review-bot',
+              args: ['acp'],
+              env: {},
+              transportProfile: 'generic',
               capabilities: {
-                supportsModels: true,
-                supportsModes: true,
-                supportsConfigOptions: true,
+                supportsLoadSession: false,
+                supportsModes: 'unknown',
+                supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
               },
             },
-          ],
-          hooks: [],
-        },
+            capabilities: {
+              supportsModels: true,
+              supportsModes: true,
+              supportsConfigOptions: true,
+            },
+          },
+        ],
       },
       null,
       2,
     ),
+    'utf8',
+  );
+
+  // The manifest references a daemon entrypoint; keep the fixture structurally valid so plugin
+  // contribution discovery doesn't fail closed on missing files.
+  await writeFile(join(rootDir, 'daemon.mjs'), 'export {};\n', 'utf8');
+}
+
+async function writePluginActionFixture(rootDir: string): Promise<void> {
+  const manifestDir = join(rootDir, '.happier-plugin');
+  await mkdir(manifestDir, { recursive: true });
+  await writeFile(
+    join(manifestDir, 'plugin.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 2,
+        id: 'acme.cli-action-exec.plugin',
+        version: '1.0.0',
+        displayName: 'CLI Action Execution Plugin',
+        description: 'Contributes a daemon-executed action',
+        engines: {
+          happier: `^${configuration.currentCliVersion}`,
+        },
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['actions'],
+        },
+        permissions: [],
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributions: [
+          {
+            kind: 'action',
+            id: 'acme.review.start',
+            title: 'Start Acme Review',
+            description: 'Starts an Acme review workflow',
+            scopes: ['global'],
+            surfaces: ['cli'],
+            placement: 'commandPalette',
+            dangerLevel: 'safe',
+            handler: {
+              target: 'daemon',
+              exportName: 'startReview',
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+  await writeFile(
+    join(rootDir, 'daemon.mjs'),
+    [
+      'export async function startReview(request) {',
+      '  return {',
+      '    pluginHandled: true,',
+      '    actionId: request.actionId,',
+      '    input: request.input,',
+      '    surface: request.context.surface,',
+      '  };',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
+async function writeActivatedPluginActionFixture(rootDir: string): Promise<void> {
+  const manifestDir = join(rootDir, '.happier-plugin');
+  await mkdir(manifestDir, { recursive: true });
+  await writeFile(
+    join(manifestDir, 'plugin.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 2,
+        id: 'acme.cli-activated-action.plugin',
+        version: '1.0.0',
+        displayName: 'CLI Activated Action Plugin',
+        description: 'Registers a daemon action during activation',
+        engines: {
+          happier: `^${configuration.currentCliVersion}`,
+        },
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['actions'],
+        },
+        permissions: [
+          {
+            capability: 'actions.register',
+            reason: 'Registers activation-time actions for CLI execution tests',
+          },
+        ],
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributions: [],
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+  await writeFile(
+    join(rootDir, 'daemon.mjs'),
+    [
+      'export async function activate(api) {',
+      '  api.registerAction({',
+      '    id: "acme.activated.review.start",',
+      '    title: "Activated Review Start",',
+      '    description: "Starts an activated review workflow",',
+      '    surface: "cli",',
+      '    handler: async (request) => ({',
+      '      pluginHandled: true,',
+      '      actionId: request.actionId,',
+      '      input: request.input,',
+      '      surface: request.context.surface,',
+      '    }),',
+      '  });',
+      '}',
+      '',
+    ].join('\n'),
     'utf8',
   );
 }
@@ -339,11 +469,11 @@ describe('createCliActionExecutor', () => {
     expect((result as any).result.options).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          value: 'agent:claude',
+          value: 'backend:claude',
           label: expect.any(String),
         }),
         expect.objectContaining({
-          value: 'acpBackend:review-bot',
+          value: 'backend:review-bot:configured:review-bot',
           label: 'Review Bot',
         }),
       ]),
@@ -354,7 +484,7 @@ describe('createCliActionExecutor', () => {
           value: 'agent:customAcp',
         }),
         expect.objectContaining({
-          value: 'acpBackend:disabled-bot',
+          value: 'backend:disabled-bot:configured:disabled-bot',
         }),
       ]),
     );
@@ -424,11 +554,173 @@ describe('createCliActionExecutor', () => {
     expect((result as any).result.options).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          value: 'acpBackend:acme.cli-action.backend',
+          value: 'backend:acme.cli-action.backend:configured:acme.cli-action.backend',
           label: 'Plugin Review Bot',
         }),
       ]),
     );
+  });
+
+  it('executes plugin-contributed actions through the daemon action handler', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-plugin-action-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-plugin-action-root-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writePluginActionFixture(pluginRoot);
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.cli-action-exec.plugin': {
+          source: {
+            kind: 'path',
+            locator: pluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: pluginRoot,
+            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    const executor = createPlainExecutor({ happyHomeDir });
+
+    const result = await executor.execute(
+      'acme.review.start' as ActionId,
+      { scope: 'diff' },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        pluginHandled: true,
+        actionId: 'acme.review.start',
+        input: {
+          scope: 'diff',
+        },
+        surface: 'cli',
+      },
+    });
+  });
+
+  it('executes activation-time plugin actions through the authoritative runtime registry', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-plugin-activated-action-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-plugin-activated-action-root-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writeActivatedPluginActionFixture(pluginRoot);
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.cli-activated-action.plugin': {
+          source: {
+            kind: 'path',
+            locator: pluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: pluginRoot,
+            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    const executor = createPlainExecutor({ happyHomeDir });
+
+    const result = await executor.execute(
+      'acme.activated.review.start' as ActionId,
+      { scope: 'activation' },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        pluginHandled: true,
+        actionId: 'acme.activated.review.start',
+        input: {
+          scope: 'activation',
+        },
+        surface: 'cli',
+      },
+    });
+  });
+
+  it('fails plugin-contributed actions closed when the requested surface is not declared', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-plugin-action-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-plugin-action-root-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writePluginActionFixture(pluginRoot);
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.cli-action-exec.plugin': {
+          source: {
+            kind: 'path',
+            locator: pluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: pluginRoot,
+            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    const executor = createPlainExecutor({ happyHomeDir });
+
+    const result = await executor.execute(
+      'acme.review.start' as ActionId,
+      {},
+      { surface: 'mcp', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'plugin_action_unavailable',
+      error: 'Plugin action is not available on the requested surface',
+    });
   });
 
   it('returns configured ACP backends from agents.backends.list when disabled entries are requested', async () => {
@@ -505,12 +797,17 @@ describe('createCliActionExecutor', () => {
       result: {
         items: expect.arrayContaining([
           expect.objectContaining({
-            targetKey: 'acpBackend:review-bot',
+            targetKey: 'backend:pi',
+            agentId: 'pi',
+            enabled: true,
+          }),
+          expect.objectContaining({
+            targetKey: 'backend:review-bot:configured:review-bot',
             label: 'Review Bot',
             enabled: true,
           }),
           expect.objectContaining({
-            targetKey: 'acpBackend:disabled-bot',
+            targetKey: 'backend:disabled-bot:configured:disabled-bot',
             label: 'Disabled Bot',
             description: 'Disabled review backend',
             enabled: false,
@@ -898,8 +1195,9 @@ describe('createCliActionExecutor', () => {
     expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo/current',
       machineId: 'machine-1',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' },
       modelId: 'gpt-5',
+      modelUpdatedAt: expect.any(Number),
       initialPrompt: 'Hello from CLI action',
     }));
     expect(updateSessionMetadataWithRetry).toHaveBeenCalledWith(expect.objectContaining({

@@ -2,21 +2,22 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 
 import {
-  AGENTS_CORE,
+  getAgentResumeConfig,
   type CodexBackendMode,
 } from '@happier-dev/agents';
 import {
   resolveDirectSessionsSourceKey,
-  type AgentRuntimeDescriptorV1,
+  writeRuntimeDescriptorV1ToMetadata,
   type DirectSessionsProviderId,
   type DirectSessionsSource,
+  type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
-import { getDirectSessionProviderOps } from '@/backends/catalog';
 import type { Credentials } from '@/persistence';
 import { fetchSessionById, fetchSessionsPage, getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { resolveDirectSessionLinkIdentity } from '@/agent/runtime/bridges/session/directSessionSourceCanonicalization';
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -178,7 +179,7 @@ function buildDirectSessionMetadata(params: Readonly<{
   remoteSessionId: string;
   source: DirectSessionsSource;
   codexBackendMode?: CodexBackendMode | null;
-  runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+  runtimeDescriptor?: RuntimeDescriptorV1 | null;
   vendorMetadata?: Record<string, unknown>;
   directSessionMetadata?: Record<string, unknown>;
   titleHint?: string | null;
@@ -187,8 +188,16 @@ function buildDirectSessionMetadata(params: Readonly<{
 }>): Record<string, unknown> {
   const titleHint = normalizeNullableString(params.titleHint);
   const directoryHint = normalizeNullableString(params.directoryHint) ?? '';
-  const resume = AGENTS_CORE[params.providerId].resume;
+  const resume = getAgentResumeConfig(params.providerId);
   const vendorResumeIdField = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
+  const directSessionMetadata = writeRuntimeDescriptorV1ToMetadata(
+    params.directSessionMetadata ?? {},
+    null,
+  );
+  const vendorMetadata = writeRuntimeDescriptorV1ToMetadata(
+    params.vendorMetadata ?? {},
+    null,
+  );
   const base: Record<string, unknown> = {
     tag: params.tag,
     path: directoryHint,
@@ -203,17 +212,19 @@ function buildDirectSessionMetadata(params: Readonly<{
       source: params.source,
       linkedAtMs: params.nowMs,
       ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
-      ...(params.directSessionMetadata ?? {}),
-      ...(params.runtimeDescriptor ? { agentRuntimeDescriptorV1: params.runtimeDescriptor } : {}),
+      ...writeRuntimeDescriptorV1ToMetadata(
+        directSessionMetadata as Record<string, unknown>,
+        params.runtimeDescriptor ?? null,
+      ),
     },
     ...(vendorResumeIdField ? { [vendorResumeIdField]: params.remoteSessionId } : {}),
-    ...(params.vendorMetadata ?? {}),
+    ...writeRuntimeDescriptorV1ToMetadata(
+      vendorMetadata as Record<string, unknown>,
+      params.runtimeDescriptor ?? null,
+    ),
   };
   if (titleHint) {
     base.name = titleHint;
-  }
-  if (params.runtimeDescriptor) {
-    base.agentRuntimeDescriptorV1 = params.runtimeDescriptor;
   }
 
   return base;
@@ -226,25 +237,19 @@ export async function ensureDirectSessionLink(params: Readonly<{
   remoteSessionId: string;
   source: DirectSessionsSource;
   codexBackendMode?: CodexBackendMode | null;
-  runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+  runtimeDescriptor?: RuntimeDescriptorV1 | null;
   titleHint?: string | null;
   directoryHint?: string | null;
   nowMs?: () => number;
 }>): Promise<{ sessionId: string; created: boolean; tag: string }> {
   const nowMs = params.nowMs ?? (() => Date.now());
-  const providerOps = await getDirectSessionProviderOps(params.providerId);
-  const linkIdentity = providerOps.resolveLinkIdentity
-    ? await providerOps.resolveLinkIdentity({
-        remoteSessionId: params.remoteSessionId,
-        source: params.source,
-        runtimeDescriptor: params.runtimeDescriptor,
-        metadata: params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : undefined,
-      })
-    : {
-        remoteSessionId: params.remoteSessionId,
-        source: params.source,
-        runtimeDescriptor: params.runtimeDescriptor ?? null,
-      };
+  const linkIdentity = await resolveDirectSessionLinkIdentity({
+    providerId: params.providerId,
+    remoteSessionId: params.remoteSessionId,
+    source: params.source,
+    runtimeDescriptor: params.runtimeDescriptor,
+    metadata: params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : undefined,
+  });
   const remoteSessionId = linkIdentity.remoteSessionId;
   const source = linkIdentity.source;
   const codexBackendMode = typeof linkIdentity.vendorMetadata?.codexBackendMode === 'string'

@@ -654,6 +654,7 @@ export function handleToolCallUpdate(
   // If we didn't track this tool call as active, seed a synthetic tool-call so downstream normalization
   // can map tool-result to a canonical tool family.
   if (isTerminalStatus && !ctx.activeToolCalls.has(toolCallId)) {
+    toolCallCountSincePrompt++;
     startToolCall(toolCallId, toolKind, { ...update, status: 'pending' }, ctx, 'tool_call_update');
   }
 
@@ -741,9 +742,9 @@ export function handleToolCall(
 
   if (ctx.activeToolCalls.has(toolCallId)) {
     logger.debug(`[AcpBackend] Tool call ${toolCallId} already in active set, skipping`);
-    return { handled: true };
+    return { handled: true, toolCallCountSincePrompt: ctx.toolCallCountSincePrompt };
   }
 
   startToolCall(toolCallId, update.kind, update, ctx, 'tool_call');
-  return { handled: true };
+  return { handled: true, toolCallCountSincePrompt: ctx.toolCallCountSincePrompt + 1 };
 }

@@ -1,8 +1,13 @@
-import axios from 'axios';
+import axios, { type AxiosResponse } from 'axios';
 
 import { configuration } from '@/configuration';
 import { SessionMessageContentSchema, type Update } from '../types';
 import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
+import {
+    createAuthenticationHttpStatusError,
+    isAuthenticationStatus,
+    readAuthenticationStatus,
+} from '../client/httpStatusError';
 
 export async function catchUpSessionMessagesAfterSeq(params: {
     token: string;
@@ -13,17 +18,36 @@ export async function catchUpSessionMessagesAfterSeq(params: {
     let cursor = Number.isFinite(params.afterSeq) && params.afterSeq >= 0 ? Math.floor(params.afterSeq) : 0;
     const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
     for (let page = 0; page < 10; page++) {
-        const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
-            headers: {
-                Authorization: `Bearer ${params.token}`,
-                'Content-Type': 'application/json',
-            },
-            params: {
-                afterSeq: cursor,
-                limit: 200,
-            },
-            timeout: 15_000,
-        });
+        let response: AxiosResponse<unknown>;
+        try {
+            response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
+                headers: {
+                    Authorization: `Bearer ${params.token}`,
+                    'Content-Type': 'application/json',
+                },
+                params: {
+                    afterSeq: cursor,
+                    limit: 200,
+                },
+                timeout: 15_000,
+            });
+        } catch (error) {
+            const status = readAuthenticationStatus(error);
+            if (status) {
+                throw createAuthenticationHttpStatusError(
+                    status,
+                    `Authentication failed during session message catch-up (HTTP ${status})`,
+                );
+            }
+            throw error;
+        }
+        const status = response?.status;
+        if (isAuthenticationStatus(status)) {
+            throw createAuthenticationHttpStatusError(
+                status,
+                `Authentication failed during session message catch-up (HTTP ${status})`,
+            );
+        }
 
         const messages = (response?.data as any)?.messages;
         const nextAfterSeq = (response?.data as any)?.nextAfterSeq;

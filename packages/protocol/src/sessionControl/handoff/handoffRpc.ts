@@ -41,9 +41,11 @@ export {
 export type {
   SessionHandoffProgressCheckpoint,
   SessionHandoffProgressWarningCode,
+  SessionHandoffProgressTimelineKindV1,
   SessionHandoffStatus,
 } from './handoffStatus.js';
 export {
+  SESSION_HANDOFF_PROGRESS_TIMELINES_V1,
   SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
   SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN,
   SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE,

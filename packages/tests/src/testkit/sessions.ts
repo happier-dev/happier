@@ -5,7 +5,7 @@ import { fetchJson } from './http';
 export async function createSession(
   baseUrl: string,
   token: string,
-  opts?: { dataEncryptionKeyBase64?: string | null },
+  opts?: { dataEncryptionKeyBase64?: string | null; timeoutMs?: number },
 ): Promise<{ sessionId: string; tag: string }> {
   const tag = `e2e-${randomUUID()}`;
   const metadata = Buffer.from(JSON.stringify({ v: 1, tag, createdAt: Date.now() }), 'utf8').toString('base64');
@@ -22,7 +22,7 @@ export async function createSession(
       agentState: null,
       dataEncryptionKey: typeof opts?.dataEncryptionKeyBase64 === 'string' ? opts.dataEncryptionKeyBase64 : undefined,
     }),
-    timeoutMs: 15_000,
+    timeoutMs: opts?.timeoutMs ?? 15_000,
   });
 
   const sessionId = res.data?.session?.id;
@@ -137,6 +137,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function parseSessionMessageContentEnvelope(value: unknown, context: string): SessionMessageRow['content'] {
+  const parsed = (() => {
+    if (typeof value !== 'string') return value;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  })();
+
+  if (!isRecord(parsed) || parsed.t !== 'encrypted' || typeof parsed.c !== 'string') {
+    throw new Error(`Invalid message row content (${context})`);
+  }
+
+  return { t: 'encrypted', c: parsed.c };
+}
+
 function parseSessionMessageRow(value: unknown, context: string): SessionMessageRow {
   if (!isRecord(value)) throw new Error(`Invalid message row shape (${context})`);
 
@@ -150,9 +167,7 @@ function parseSessionMessageRow(value: unknown, context: string): SessionMessage
   if (typeof id !== 'string' || id.length === 0) throw new Error(`Invalid message row id (${context})`);
   if (typeof seq !== 'number' || !Number.isFinite(seq)) throw new Error(`Invalid message row seq (${context})`);
   if (!(localId === null || typeof localId === 'string')) throw new Error(`Invalid message row localId (${context})`);
-  if (!isRecord(content) || content.t !== 'encrypted' || typeof content.c !== 'string') {
-    throw new Error(`Invalid message row content (${context})`);
-  }
+  const parsedContent = parseSessionMessageContentEnvelope(content, context);
   if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) throw new Error(`Invalid message row createdAt (${context})`);
   if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) throw new Error(`Invalid message row updatedAt (${context})`);
 
@@ -160,7 +175,7 @@ function parseSessionMessageRow(value: unknown, context: string): SessionMessage
     id,
     seq,
     localId,
-    content: { t: 'encrypted', c: content.c },
+    content: parsedContent,
     createdAt,
     updatedAt,
   };

@@ -53,25 +53,40 @@ export const SessionHandoffProgressCheckpointSchema = z.enum([
 ]);
 export type SessionHandoffProgressCheckpoint = z.infer<typeof SessionHandoffProgressCheckpointSchema>;
 
-export const SESSION_HANDOFF_PROGRESS_FULL_TIMELINE = [
-  'plan',
-  'transfer_blobs',
-  'stage_target',
-  'apply',
-  'import_session',
-  'finalize',
-] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+export const SESSION_HANDOFF_PROGRESS_TIMELINES_V1 = Object.freeze({
+  minimal: [
+    'stage_target',
+    'import_session',
+    'finalize',
+  ],
+  full: [
+    'plan',
+    'transfer_blobs',
+    'stage_target',
+    'apply',
+    'import_session',
+    'finalize',
+  ],
+  full_with_source_scan: [
+    'scan_source',
+    'plan',
+    'transfer_blobs',
+    'stage_target',
+    'apply',
+    'import_session',
+    'finalize',
+  ],
+} as const satisfies Readonly<{
+  minimal: readonly SessionHandoffProgressCheckpoint[];
+  full: readonly SessionHandoffProgressCheckpoint[];
+  full_with_source_scan: readonly SessionHandoffProgressCheckpoint[];
+}>);
 
-export const SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN = [
-  'scan_source',
-  ...SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
-] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+export const SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE = SESSION_HANDOFF_PROGRESS_TIMELINES_V1.minimal;
+export const SESSION_HANDOFF_PROGRESS_FULL_TIMELINE = SESSION_HANDOFF_PROGRESS_TIMELINES_V1.full;
+export const SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN = SESSION_HANDOFF_PROGRESS_TIMELINES_V1.full_with_source_scan;
 
-export const SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE = [
-  'stage_target',
-  'import_session',
-  'finalize',
-] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+export type SessionHandoffProgressTimelineKindV1 = keyof typeof SESSION_HANDOFF_PROGRESS_TIMELINES_V1;
 
 export function resolveSessionHandoffProgressTimeline(
   checkpoint: SessionHandoffProgressCheckpoint | null | undefined,
@@ -99,7 +114,7 @@ const SessionHandoffProgressCountsSchema = z
     files: z.number().int().min(0).optional(),
     bytes: z.number().int().min(0).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const SessionHandoffProgressSchema = z
   .object({
@@ -111,23 +126,23 @@ export const SessionHandoffProgressSchema = z
       added: z.number().int().min(0).optional(),
       changed: z.number().int().min(0).optional(),
       removed: z.number().int().min(0).optional(),
-    }).strict(),
+    }).passthrough(),
     transferred: z.object({
       files: z.number().int().min(0).optional(),
       bytes: z.number().int().min(0).optional(),
       blobs: z.number().int().min(0).optional(),
-    }).strict(),
+    }).passthrough(),
     applied: SessionHandoffProgressCountsSchema.optional(),
     remaining: SessionHandoffProgressCountsSchema.optional(),
     current: z.object({
       relativePath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
       digest: z.string().min(1).max(MAX_DIGEST_LENGTH).optional(),
       phaseDetail: z.string().min(1).max(MAX_PHASE_DETAIL_LENGTH).optional(),
-    }).strict().optional(),
+    }).passthrough().optional(),
     resumable: z.boolean(),
     warnings: z.array(SessionHandoffProgressWarningCodeSchema).max(MAX_PROGRESS_WARNINGS).readonly().optional(),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffProgress = z.infer<typeof SessionHandoffProgressSchema>;
 
 export const SessionHandoffWorkspacePreflightSummarySchema = z
@@ -137,7 +152,7 @@ export const SessionHandoffWorkspacePreflightSummarySchema = z
     removedPathsCount: z.number().int().min(0),
     totalBytes: z.number().int().min(0).optional(),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffWorkspacePreflightSummary = z.infer<typeof SessionHandoffWorkspacePreflightSummarySchema>;
 
 export const SessionHandoffStatusSchema = z
@@ -156,5 +171,5 @@ export const SessionHandoffStatusSchema = z
       .readonly()
       .default(() => []),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffStatus = z.infer<typeof SessionHandoffStatusSchema>;

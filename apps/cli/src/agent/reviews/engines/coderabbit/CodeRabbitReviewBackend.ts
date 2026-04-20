@@ -1,8 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
+import type { SessionId } from '../../../core/AgentBackend';
+import type {
+  ExecutionRunHostRuntime,
+  ExecutionRunHostRuntimeMessageHandler,
+} from '../../../runtime/bridges/executionRun/executionRunHostRuntime';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { readCodeRabbitReviewConfigFromEnv } from './readCodeRabbitReviewConfig.js';
@@ -20,14 +24,16 @@ type CodeRabbitStartContext = Readonly<{
   intentInput?: unknown;
 }>;
 
-export class CodeRabbitReviewBackend implements AgentBackend {
-  private handler: AgentMessageHandler | null = null;
+// CodeRabbit review runs are native execution-run leaves. Keep any legacy AgentBackend
+// compatibility outside this provider leaf in the shared testkit/descriptor shim path.
+export class CodeRabbitReviewBackend implements ExecutionRunHostRuntime {
   private readonly cwd: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly config: ReturnType<typeof readCodeRabbitReviewConfigFromEnv>;
   private readonly start: CodeRabbitStartContext | null;
 
   private readonly pendingBySessionId = new Map<SessionId, PendingProcess>();
+  private readonly messageHandlers = new Set<ExecutionRunHostRuntimeMessageHandler>();
 
   constructor(params: Readonly<{ cwd: string; env?: NodeJS.ProcessEnv; start?: CodeRabbitStartContext }>) {
     this.cwd = params.cwd;
@@ -36,9 +42,28 @@ export class CodeRabbitReviewBackend implements AgentBackend {
     this.start = params.start ?? null;
   }
 
-  async startSession(): Promise<{ sessionId: SessionId }> {
-    // CodeRabbit runs are stateless/one-shot; each session is a handle for cancellation.
-    return { sessionId: `coderabbit_${randomUUID()}` };
+  async readResumeSupport(opts?: Readonly<{ captureReplay?: boolean }>): Promise<boolean> {
+    void opts;
+    return false;
+  }
+
+  async provisionSession(opts?: Readonly<{
+    initialPrompt?: string;
+    resumeSessionId?: string;
+    captureReplay?: boolean;
+  }>): Promise<{ sessionId: SessionId }> {
+    if (opts?.captureReplay === true) {
+      throw new Error('CodeRabbit execution runs do not support replay capture');
+    }
+    if (typeof opts?.resumeSessionId === 'string' && opts.resumeSessionId.trim().length > 0) {
+      throw new Error('CodeRabbit execution runs do not support session resume');
+    }
+    const started = { sessionId: `coderabbit_${randomUUID()}` as SessionId };
+    const initialPrompt = typeof opts?.initialPrompt === 'string' ? opts.initialPrompt : '';
+    if (initialPrompt.trim()) {
+      await this.sendPrompt(started.sessionId, initialPrompt);
+    }
+    return started;
   }
 
   async sendPrompt(sessionId: SessionId, prompt: string): Promise<void> {
@@ -130,24 +155,43 @@ export class CodeRabbitReviewBackend implements AgentBackend {
       child.stderr.on('data', (chunk) => { stderr += String(chunk); });
 
       const res = await new Promise<AttemptResult>((resolve) => {
+        let timedOut = false;
+
         const timer =
           typeof this.config.timeoutMs === 'number'
             ? setTimeout(() => {
+              timedOut = true;
               if (process.platform === 'win32') {
                 void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
               } else {
                 try { child.kill('SIGTERM'); } catch {}
               }
-              resolve({ ok: false, stdout, stderr: stderr || 'CodeRabbit timed out', exitCode: null });
             }, this.config.timeoutMs)
             : null;
 
         child.on('error', (err) => {
           if (timer) clearTimeout(timer);
-          resolve({ ok: false, stdout, stderr: err instanceof Error ? err.message : String(err), exitCode: null });
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          if (timedOut) {
+            resolve({ ok: false, stdout, stderr: stderr || 'CodeRabbit timed out', exitCode: null });
+            return;
+          }
+          if (aborted) {
+            resolve({ ok: false, stdout, stderr: stderr || 'cancelled', exitCode: null });
+            return;
+          }
+          resolve({ ok: false, stdout, stderr: errorMessage, exitCode: null });
         });
         child.on('close', (code) => {
           if (timer) clearTimeout(timer);
+          if (timedOut) {
+            resolve({ ok: false, stdout, stderr: stderr || 'CodeRabbit timed out', exitCode: typeof code === 'number' ? code : null });
+            return;
+          }
+          if (aborted) {
+            resolve({ ok: false, stdout, stderr: stderr || 'cancelled', exitCode: typeof code === 'number' ? code : null });
+            return;
+          }
           resolve({ ok: code === 0, stdout, stderr, exitCode: typeof code === 'number' ? code : null });
         });
       });
@@ -178,7 +222,7 @@ export class CodeRabbitReviewBackend implements AgentBackend {
         throw new Error(msg);
       }
 
-      this.handler?.({ type: 'model-output', fullText: res.stdout } as any);
+      this.emitMessage({ type: 'model-output', fullText: res.stdout });
     })().finally(() => {
       childRef.current = null;
       this.pendingBySessionId.delete(sessionId);
@@ -191,17 +235,34 @@ export class CodeRabbitReviewBackend implements AgentBackend {
 
   async cancel(sessionId: SessionId): Promise<void> {
     const pending = this.pendingBySessionId.get(sessionId);
-    pending?.kill();
+    if (!pending) {
+      return;
+    }
+    pending.kill();
+    await pending.done.catch(() => undefined);
   }
 
-  onMessage(handler: AgentMessageHandler): void {
-    this.handler = handler;
+  subscribeMessages(handler: ExecutionRunHostRuntimeMessageHandler): () => void {
+    this.messageHandlers.add(handler);
+    return () => {
+      this.messageHandlers.delete(handler);
+    };
   }
 
   async dispose(): Promise<void> {
-    for (const pending of this.pendingBySessionId.values()) {
+    const pendingProcesses = [...this.pendingBySessionId.values()];
+    for (const pending of pendingProcesses) {
       pending.kill();
     }
+    await Promise.allSettled(pendingProcesses.map(async (pending) => {
+      await pending.done;
+    }));
     this.pendingBySessionId.clear();
+  }
+
+  private emitMessage(message: Parameters<ExecutionRunHostRuntimeMessageHandler>[0]): void {
+    for (const handler of this.messageHandlers) {
+      handler(message);
+    }
   }
 }

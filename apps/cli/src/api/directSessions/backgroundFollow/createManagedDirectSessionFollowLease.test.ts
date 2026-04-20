@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DirectSessionFollowLease } from '@/backends/directSessions/providerOps';
+import type { DirectSessionFollowLease } from '@/session/directSessions/providerOps';
 
 const {
     dispatchActivityNotificationAsyncMock,
@@ -18,7 +18,7 @@ const {
     updateSessionMetadataWithObservedDirectSessionProgressMock: vi.fn(async () => {}),
 }));
 
-vi.mock('@/activity/notifications/dispatchActivityNotification', () => ({
+vi.mock('@/notifications/activity/dispatchActivityNotification', () => ({
     dispatchActivityNotificationAsync: dispatchActivityNotificationAsyncMock,
 }));
 

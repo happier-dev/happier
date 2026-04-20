@@ -34,13 +34,13 @@ describe('session sockets transports', () => {
     reloadConfiguration();
   });
 
-  it('uses websocket-first transports by default (fallback to polling)', async () => {
+  it('uses polling-first transports by default (upgrade to websocket when available)', async () => {
     const mod = await import('./sockets');
     mod.createUserScopedSocket({ token: 'fake-token' });
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates/');
-    expect(opts.transports).toEqual(['websocket', 'polling']);
+    expect(opts.transports).toEqual(['polling', 'websocket']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
   });

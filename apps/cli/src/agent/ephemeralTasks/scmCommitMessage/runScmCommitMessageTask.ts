@@ -1,37 +1,38 @@
-import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentBackend';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 
 import { buildCommitMessagePrompt } from './buildCommitMessagePrompt';
 import { loadScmCommitMessageContext } from './loadScmCommitMessageContext';
 import { parseCommitMessageModelOutput } from './parseCommitMessageModelOutput';
 
 async function runOneShotBackend(params: Readonly<{
-  backend: AgentBackend;
+  backend: ExecutionRunHostRuntime;
   prompt: string;
 }>): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   let buffer = '';
-  const onMessage: AgentMessageHandler = (msg) => {
+  const onMessage = (msg: AgentMessage) => {
     if (msg.type !== 'model-output') return;
-    const anyMsg = msg as any as AgentMessage;
-    if (typeof (anyMsg as any).fullText === 'string') {
-      buffer = String((anyMsg as any).fullText);
-    } else if (typeof (anyMsg as any).textDelta === 'string') {
-      buffer += String((anyMsg as any).textDelta);
+    if (typeof msg.fullText === 'string') {
+      buffer = msg.fullText;
+    } else if (typeof msg.textDelta === 'string') {
+      buffer += msg.textDelta;
     }
   };
 
-  params.backend.onMessage(onMessage);
+  const unsubscribeMessages = params.backend.subscribeMessages(onMessage);
 
   try {
-    const started = await params.backend.startSession();
-    const childSessionId: SessionId = started.sessionId;
+    const started = await params.backend.provisionSession();
+    const childSessionId = started.sessionId;
     await params.backend.sendPrompt(childSessionId, params.prompt);
-    if (params.backend.waitForResponseComplete) {
-      await params.backend.waitForResponseComplete();
+    if (params.backend.waitForTurnCompletion) {
+      await params.backend.waitForTurnCompletion();
     }
     return { ok: true, text: buffer.trim() };
   } catch (e: any) {
     return { ok: false, error: e instanceof Error ? e.message : 'Task failed' };
   } finally {
+    unsubscribeMessages();
     try {
       await params.backend.dispose();
     } catch {
@@ -42,7 +43,7 @@ async function runOneShotBackend(params: Readonly<{
 
 export async function runScmCommitMessageTask(params: Readonly<{
   workingDirectory: string;
-  createBackend: () => AgentBackend;
+  createBackend: () => ExecutionRunHostRuntime;
   instructions?: string;
   scope?: unknown;
   maxFiles?: number;

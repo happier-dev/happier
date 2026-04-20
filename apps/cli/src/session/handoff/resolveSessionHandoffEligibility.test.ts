@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveSessionHandoffEligibility } from './resolveSessionHandoffEligibility';
+import { buildOpenCodeRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol';
 
 describe('resolveSessionHandoffEligibility', () => {
   it('allows an eligible persisted Claude session', () => {
@@ -44,6 +45,60 @@ describe('resolveSessionHandoffEligibility', () => {
       storageMode: 'direct',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'sess_2',
+    });
+  });
+
+  it('resolves provider identity from runtime descriptor metadata when flavor is unavailable', () => {
+    expect(
+      resolveSessionHandoffEligibility({
+        metadata: {
+          machineId: 'machine_source',
+          directSessionV1: {
+            v: 1,
+            providerId: 'opencode',
+            machineId: 'machine_source',
+            remoteSessionId: 'opencode_runtime_1',
+            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
+            linkedAtMs: 1,
+            agentRuntimeDescriptorV1: buildOpenCodeRuntimeIdentityDescriptorV1({
+              backendMode: 'server',
+              vendorSessionId: 'opencode_runtime_1',
+              serverBaseUrl: 'http://127.0.0.1:4096/',
+              serverBaseUrlExplicit: true,
+            }),
+          },
+        },
+      }),
+    ).toEqual({
+      eligible: true,
+      agentId: 'opencode',
+      storageMode: 'direct',
+      sourceMachineId: 'machine_source',
+      vendorHandoffId: 'opencode_runtime_1',
+    });
+  });
+
+  it('resolves provider identity from direct session provider ids when flavor is unavailable', () => {
+    expect(
+      resolveSessionHandoffEligibility({
+        metadata: {
+          machineId: 'machine_source',
+          directSessionV1: {
+            v: 1,
+            providerId: 'opencode',
+            machineId: 'machine_source',
+            remoteSessionId: 'opencode_runtime_2',
+            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
+            linkedAtMs: 1,
+          },
+        },
+      }),
+    ).toEqual({
+      eligible: true,
+      agentId: 'opencode',
+      storageMode: 'direct',
+      sourceMachineId: 'machine_source',
+      vendorHandoffId: 'opencode_runtime_2',
     });
   });
 

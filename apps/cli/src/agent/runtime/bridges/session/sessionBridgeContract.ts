@@ -1,0 +1,81 @@
+import type {
+  BridgeLifecycleHookEventIdV1,
+  DirectSessionsProviderId,
+  DirectSessionsSource,
+  BackendTargetRefV2Input,
+  HookScopeV1,
+  RuntimeDescriptorV1,
+} from '@happier-dev/protocol';
+
+import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { CliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
+import type {
+  SessionForkBackendTargetResolution,
+} from '@/session/fork/backendTarget';
+import type {
+  ContinueWithReplayBackendTargetResolution,
+} from '@/session/replay/resolveContinueWithReplayBackendTarget';
+import type { SessionHandoffEligibility } from '@/session/handoff/resolveSessionHandoffEligibility';
+import type {
+  CanonicalizedDirectSessionSourceResult,
+} from './directSessionSourceCanonicalization';
+import type { DirectSessionLinkIdentity } from '@/session/directSessions/providerOps';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/lifecycle';
+
+/**
+ * Canonical live session host-bridge surface. This is the concrete owner that superseded the
+ * plan-only `AgentSessionRuntimeBridge` noun.
+ *
+ * Direct-session routing stays on these explicit bridge methods plus adjacent helpers; there is no
+ * separate `AgentSessionCatalog`, `createSessionRuntimeBridge.ts`, or bridge-local
+ * `resolveRuntimeControlSurface` owner in the live tree.
+ */
+export interface SessionHostBridgeContract {
+  resolveExecutionSurfaces(backendId?: string | null): Promise<BackendExecutionSurfaces>;
+  createSessionRuntime(backendId: string, params: unknown): Promise<HostSessionRuntimePlan>;
+  runSessionCommand(backendId: string, params: unknown): Promise<void>;
+  evaluateAttachEligibility(
+    params: Parameters<(typeof import('@/session/attach/evaluateCliSessionAttachEligibility'))['evaluateCliSessionAttachEligibility']>[0],
+  ): Promise<CliSessionAttachEligibility>;
+  resolveSessionHandoffEligibility(params: Readonly<{
+    metadata: unknown;
+    accountSettings?: Record<string, unknown> | null;
+  }>): SessionHandoffEligibility;
+  resolveContinueWithReplayBackendTarget(params: Readonly<{
+    agent?: string;
+    backendTarget?: BackendTargetRefV2Input | null;
+  }>): ContinueWithReplayBackendTargetResolution;
+  resolveSessionForkBackendTarget(
+    params: Parameters<(typeof import('@/session/fork/backendTarget'))['resolveSessionForkBackendTarget']>[0],
+  ): Promise<SessionForkBackendTargetResolution>;
+  resolveDirectSessionLinkIdentity(params: Readonly<{
+    providerId: DirectSessionsProviderId;
+    remoteSessionId: string;
+    source: DirectSessionsSource;
+    runtimeDescriptor?: RuntimeDescriptorV1 | null;
+    metadata?: Record<string, unknown>;
+  }>): Promise<DirectSessionLinkIdentity>;
+  canonicalizeLinkedDirectSessionSource(params: Readonly<{
+    providerId: DirectSessionsProviderId;
+    metadata: Record<string, unknown>;
+    remoteSessionId: string;
+    source: DirectSessionsSource;
+  }>): Promise<CanonicalizedDirectSessionSourceResult>;
+  emitLifecycleHookEvent(params: Readonly<{
+    happyHomeDir: string;
+    eventId: BridgeLifecycleHookEventIdV1;
+    scope?: HookScopeV1;
+    happySessionId?: string;
+    vendorSessionId?: string;
+    providerId?: string;
+    backendId?: string;
+    backendTarget?: string;
+    machineId?: string;
+    workspaceId?: string;
+    cwd?: string;
+    turnId?: string;
+    toolCallId?: string;
+    timestampMs?: number;
+    payload: Record<string, unknown>;
+  }>): Promise<void>;
+}

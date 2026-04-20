@@ -188,6 +188,23 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionSpawnNew).toHaveBeenCalledWith({ agentId: 'codex', modelId: 'gpt-5' });
   });
 
+  it('requires an explicit runtime carrier when spawning a canonical plugin backend session', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.spawn_new', {
+      backendTargetKey: 'backend:plugin-review-bot',
+      path: '/repo/project',
+    });
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(deps.sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
   it('routes paths.list_recent to deps.pathsListRecent', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -282,9 +299,9 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('agents.backends.list', { includeDisabled: false, limit: 2 });
+    const res = await executor.execute('agents.backends.list', { includeDisabled: false, limit: 2, machineId: 'm1' });
     expect(res.ok).toBe(true);
-    expect(deps.agentsBackendsList).toHaveBeenCalledWith({ includeDisabled: false, limit: 2 });
+    expect(deps.agentsBackendsList).toHaveBeenCalledWith({ includeDisabled: false, limit: 2, machineId: 'm1' });
   });
 
   it('routes agents.models.list to deps.agentsModelsList', async () => {
@@ -308,8 +325,64 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     expect(res.ok).toBe(true);
     expect(deps.agentsModelsList).toHaveBeenCalledWith({
-      agentId: 'customAcp',
       backendTargetKey: 'acpBackend:review-bot',
+      machineId: 'm1',
+      limit: 2,
+    });
+  });
+
+  it('does not forward legacy configured ACP agentId carriers when backendTargetKey is configured', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('agents.models.list', {
+      agentId: 'acp:review-bot',
+      backendTargetKey: 'backend:review-bot:configured:review-bot',
+      machineId: 'm1',
+      limit: 2,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.agentsModelsList).toHaveBeenCalledWith({
+      backendTargetKey: 'backend:review-bot:configured:review-bot',
+      machineId: 'm1',
+      limit: 2,
+    });
+  });
+
+  it('routes configured ACP backendTargetKey through session.spawn_new without synthesizing customAcp', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.spawn_new', {
+      backendTargetKey: 'acpBackend:review-bot',
+      path: '/repo/project',
+      tag: 'review',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.sessionSpawnNew).toHaveBeenCalledWith({
+      backendTargetKey: 'acpBackend:review-bot',
+      path: '/repo/project',
+      tag: 'review',
+    });
+  });
+
+  it('routes canonical plugin backendTargetKey plus runtime carrier through agents.models.list', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('agents.models.list', {
+      agentId: 'claude',
+      backendTargetKey: 'backend:plugin-review-bot',
+      machineId: 'm1',
+      limit: 2,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.agentsModelsList).toHaveBeenCalledWith({
+      agentId: 'claude',
+      backendTargetKey: 'backend:plugin-review-bot',
       machineId: 'm1',
       limit: 2,
     });

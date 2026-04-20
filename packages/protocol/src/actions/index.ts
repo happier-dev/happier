@@ -1,4 +1,10 @@
-export { ACTION_IDS, ActionIdSchema, type ActionId } from './actionIds.js';
+export {
+  ACTION_ID_FAMILIES_V1,
+  ACTION_IDS,
+  ActionIdSchema,
+  type ActionId,
+  type ActionIdFamilyV1,
+} from './actionIds.js';
 export { ACTION_UI_PLACEMENTS, ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 export {
   ACTION_SETTINGS_OPT_IN_PLACEMENTS,

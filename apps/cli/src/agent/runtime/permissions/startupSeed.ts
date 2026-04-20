@@ -1,0 +1,49 @@
+import type { Metadata, PermissionMode } from '@/api/types';
+import { resolveLatestPermissionIntent } from '@happier-dev/agents';
+import { normalizePermissionModeToIntent } from './modeCanonical';
+
+export async function resolveStartupPermissionModeFromSession(opts: {
+  /**
+   * Controls whether transcript-derived permission intent is allowed.
+   *
+   * - `fresh`: do not fetch transcript (avoids unnecessary network on brand-new sessions)
+   * - `attach`/`resume`: allow transcript fetch to recover newer intent when metadata write failed
+   */
+  sessionKind?: 'fresh' | 'attach' | 'resume';
+  session: {
+    getMetadataSnapshot: () => Metadata | null;
+    fetchLatestUserPermissionIntentFromTranscript: (opts?: { take?: number }) => Promise<{ intent: PermissionMode; updatedAt: number } | null>;
+  };
+  take?: number;
+}): Promise<{ mode: PermissionMode; updatedAt: number } | null> {
+  const sessionKind = opts.sessionKind ?? 'attach';
+  const metadata = opts.session.getMetadataSnapshot();
+
+  const rawMetadataMode = (metadata as any)?.permissionMode;
+  const rawMetadataUpdatedAt = (metadata as any)?.permissionModeUpdatedAt;
+
+  const metadataCandidate = {
+    rawMode: rawMetadataMode,
+    updatedAt: rawMetadataUpdatedAt,
+  };
+
+  let transcriptCandidate: { rawMode: PermissionMode | null; updatedAt: number | null } = { rawMode: null, updatedAt: null };
+  if (sessionKind !== 'fresh') {
+    const transcript = await opts.session.fetchLatestUserPermissionIntentFromTranscript({ take: opts.take });
+    transcriptCandidate = transcript
+      ? { rawMode: transcript.intent, updatedAt: transcript.updatedAt }
+      : { rawMode: null, updatedAt: null };
+  }
+
+  // Metadata is the intended source of truth for new sessions. However, in practice we can still end up with
+  // transcript messages that reflect a newer intent change (e.g. the user sent a message with an updated
+  // permission mode but the metadata write failed). To keep attach behavior consistent with the UI, resolve
+  // the latest of (metadata snapshot, transcript inference) by timestamp.
+  const resolved = resolveLatestPermissionIntent([transcriptCandidate, metadataCandidate]);
+  if (!resolved) return null;
+
+  const canonical = normalizePermissionModeToIntent(resolved.intent);
+  if (!canonical) return null;
+
+  return { mode: canonical, updatedAt: resolved.updatedAt };
+}

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import type { DirectSessionProviderOps } from '@/backends/directSessions/providerOps';
+import type { DirectSessionProviderOps } from '@/session/directSessions/providerOps';
 import { createLocalHostedDirectTranscriptMirror } from '../createLocalHostedDirectTranscriptMirror';
 
 describe('createLocalHostedDirectTranscriptMirror', () => {
@@ -55,7 +55,7 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
         const observedIds: string[] = [];
         let followListener:
             | ((update: Readonly<{
-                items: readonly DirectTranscriptRawMessageV1[];
+                items: DirectTranscriptRawMessageV1[];
                 nextCursor: string | null;
                 truncated: boolean;
             }>) => void | Promise<void>)
@@ -129,7 +129,7 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
         const observedIds: string[] = [];
         let followListener:
             | ((update: Readonly<{
-                items: readonly DirectTranscriptRawMessageV1[];
+                items: DirectTranscriptRawMessageV1[];
                 nextCursor: string | null;
                 truncated: boolean;
             }>) => void | Promise<void>)

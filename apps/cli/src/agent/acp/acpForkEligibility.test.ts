@@ -1,8 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+  const shellBridgeAcpAgent = {
+    ...actual.AGENTS_CORE.kiro,
+    id: 'shellBridgeAcp',
+    cliSubcommand: 'shellBridgeAcp',
+    tools: {
+      ...actual.AGENTS_CORE.kiro.tools,
+      delivery: 'shell_bridge',
+    },
+  } as const;
+
+  return {
+    ...actual,
+    AGENTS_CORE: {
+      ...actual.AGENTS_CORE,
+      shellBridgeAcp: shellBridgeAcpAgent,
+    } as unknown as typeof actual.AGENTS_CORE,
+  };
+});
 
 import { isAcpForkEligibleForProvider } from './acpForkEligibility';
 
 describe('isAcpForkEligibleForProvider', () => {
+  it('treats catalog-declared shell-bridge providers as ACP eligible without a hardcoded provider list', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'shellBridgeAcp',
+        metadata: {},
+      }),
+    ).toBe(true);
+  });
+
   it('treats canonical codex runtime metadata as ACP eligibility for codex', () => {
     expect(
       isAcpForkEligibleForProvider({
@@ -62,16 +92,21 @@ describe('isAcpForkEligibleForProvider', () => {
     ).toBe(true);
   });
 
-  it('does not treat stale ACP breadcrumbs as eligible when codex runtime metadata proves a non-ACP backend', () => {
+  it('prefers canonical runtimeDescriptorV1 over stale legacy ACP breadcrumbs when evaluating codex eligibility', () => {
     expect(
       isAcpForkEligibleForProvider({
         providerId: 'codex',
         metadata: {
           acpHistoryImportV1: { v: 1, provider: 'codex' },
-          agentRuntimeDescriptorV1: {
+          runtimeDescriptorV1: {
             v: 1,
             providerId: 'codex',
             provider: { backendMode: 'appServer', vendorSessionId: 'codex_parent' },
+          },
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'codex',
+            provider: { backendMode: 'acp', vendorSessionId: 'codex_parent_legacy' },
           },
           codexSessionId: 'codex_parent',
         },

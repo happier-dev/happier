@@ -5,6 +5,7 @@ import { Agent as HttpsAgent } from 'node:https';
 import { configuration } from '@/configuration';
 import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 
 const KEEP_ALIVE_HTTP_AGENT = new HttpAgent({ keepAlive: true, maxSockets: 16 });
 const KEEP_ALIVE_HTTPS_AGENT = new HttpsAgent({ keepAlive: true, maxSockets: 16 });
@@ -79,6 +80,9 @@ async function findTranscriptEncryptedMessageByLocalIdV2(params: {
         return parsed;
     } catch (error) {
         if (isV2MessageNotFoundError(error)) return null;
+        if (isAuthenticationError(error)) {
+            throw error;
+        }
         params.onError?.(error);
         return null;
     }

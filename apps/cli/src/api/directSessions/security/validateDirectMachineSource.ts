@@ -1,7 +1,7 @@
 import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
 
-import { getDirectSessionProviderOps } from '@/backends/catalog';
-import type { DirectSourceValidationResult } from '@/backends/directSessions/sourceValidation';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
+import type { DirectSourceValidationResult } from '@/session/directSessions/sourceValidation';
 
 export async function validateDirectMachineSource(params: Readonly<{
   providerId: DirectSessionsProviderId;
@@ -9,6 +9,9 @@ export async function validateDirectMachineSource(params: Readonly<{
   env: NodeJS.ProcessEnv;
 }>): Promise<DirectSourceValidationResult> {
   const { providerId, source, env } = params;
-  const providerOps = await getDirectSessionProviderOps(providerId);
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(providerId)).directSessions;
+  if (!providerOps) {
+    return { ok: false, error: `Unsupported direct-session provider: ${providerId}` };
+  }
   return await providerOps.validateSource({ source, env });
 }

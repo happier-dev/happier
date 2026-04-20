@@ -1,5 +1,7 @@
 import { resolveAgentIdFromSessionMetadata } from '../resolveAgentIdFromSessionMetadata.js';
+import { isConcreteBackendDefinitionAgentId } from '../definitions/resolveBackendOwnership.js';
 import type { AgentId } from '../types.js';
+import { readLegacyConfiguredBackendIdFromMetadata } from '../compat/legacyConfiguredBackend.js';
 import {
   evaluateVendorResumeEligibility,
   type VendorResumeEligibilityReasonCode,
@@ -10,7 +12,8 @@ export type ExistingSessionAutomationEligibilityReasonCode =
   | 'agent_unknown';
 
 export type ExistingSessionAutomationEligibility =
-  | Readonly<{ eligible: true; agentId: AgentId; strategy: 'vendor_resume' | 'happy_attach' }>
+  | Readonly<{ eligible: true; agentId: AgentId; strategy: 'vendor_resume' }>
+  | Readonly<{ eligible: true; compatBackendId: string; strategy: 'happy_attach' }>
   | Readonly<{ eligible: false; reasonCode: ExistingSessionAutomationEligibilityReasonCode }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -27,14 +30,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function hasConfiguredAcpFlavor(metadata: Record<string, unknown>): boolean {
-  const flavor = typeof metadata.flavor === 'string' ? metadata.flavor.trim() : '';
-  return flavor.toLowerCase().startsWith('acp:') && flavor.slice(4).trim().length > 0;
-}
-
 function resolveAgentIdFromMetadata(metadata: Record<string, unknown>): AgentId | null {
   const agentId = resolveAgentIdFromSessionMetadata(metadata);
-  return agentId && agentId !== 'customAcp' ? agentId : null;
+  return agentId && isConcreteBackendDefinitionAgentId(agentId) ? agentId : null;
 }
 
 export function evaluateExistingSessionAutomationEligibility(input: Readonly<{
@@ -46,10 +44,11 @@ export function evaluateExistingSessionAutomationEligibility(input: Readonly<{
     return { eligible: false, reasonCode: 'agent_unknown' };
   }
 
-  if (hasConfiguredAcpFlavor(metadata)) {
+  const compatBackendId = readLegacyConfiguredBackendIdFromMetadata(metadata);
+  if (compatBackendId) {
     return {
       eligible: true,
-      agentId: 'customAcp',
+      compatBackendId,
       strategy: 'happy_attach',
     };
   }

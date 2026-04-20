@@ -1,8 +1,8 @@
 import type { CliAuthSpec } from './types';
 import { createCatalogCliAuthSpec } from './createCatalogCliAuthSpec';
-import type { AgentId } from '@happier-dev/agents';
+import type { CatalogAgentLookupId } from '@/backends/types';
 
-export function createUnknownCliAuthSpec(agentId: AgentId): CliAuthSpec {
+export function createUnknownCliAuthSpec(agentId: CatalogAgentLookupId): CliAuthSpec {
   return createCatalogCliAuthSpec(agentId, {
     detectAuthStatus: async () => ({
       state: 'unknown',

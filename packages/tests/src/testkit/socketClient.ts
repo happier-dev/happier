@@ -8,6 +8,7 @@ export type { CapturedEvent } from './socketEventCollector';
 type RpcRequestPayload = { method: string; params: string };
 type RpcRegisterEventPayload = { method?: unknown; error?: unknown };
 type RpcResponseEnvelope = { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown };
+type SocketTransport = 'websocket' | 'polling';
 
 export class SocketCollector {
   private readonly socket: Socket;
@@ -100,11 +101,17 @@ export class SocketCollector {
   }
 }
 
-export function createUserScopedSocketCollector(baseUrl: string, token: string): SocketCollector {
+type SocketCollectorOptions = Readonly<{
+  transports?: readonly SocketTransport[];
+  connectTimeoutMs?: number;
+}>;
+
+export function createUserScopedSocketCollector(baseUrl: string, token: string, options?: SocketCollectorOptions): SocketCollector {
   const socket = io(baseUrl, {
     path: '/v1/updates/',
     auth: { token, clientType: 'user-scoped' as const },
-    transports: ['websocket'],
+    transports: [...(options?.transports ?? ['websocket'])],
+    timeout: options?.connectTimeoutMs,
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
@@ -119,6 +126,7 @@ export function createSessionScopedSocketCollector(
   token: string,
   sessionId: string,
   machineId?: string,
+  options?: SocketCollectorOptions,
 ): SocketCollector {
   const socket = io(baseUrl, {
     path: '/v1/updates/',
@@ -128,7 +136,8 @@ export function createSessionScopedSocketCollector(
       sessionId,
       ...(typeof machineId === 'string' ? { machineId } : {}),
     },
-    transports: ['websocket'],
+    transports: [...(options?.transports ?? ['websocket'])],
+    timeout: options?.connectTimeoutMs,
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,

@@ -8,14 +8,42 @@ import type {
   ExecutionRunIntentProfile,
   ExecutionRunStructuredMeta,
 } from '../ExecutionRunIntentProfile';
-import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
-import { buildStandardReviewPrompt } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
-import { normalizeReviewOutput } from '@/agent/reviews/normalize/normalizeReviewOutput';
+import { buildReviewFindingsV2Payload } from '../../../reviews/normalize/buildReviewFindingsV2Payload';
+import { buildReviewGuidanceBlock, buildStandardReviewPrompt } from '../../../reviews/prompt/buildStandardReviewPrompt';
+import { normalizeReviewOutput } from '../../../reviews/normalize/normalizeReviewOutput';
+import { stripTrailingJsonObjectFromText } from '../shared/stripTrailingJsonObjectFromText';
 
 export const ReviewProfile: ExecutionRunIntentProfile = {
   intent: 'review',
   transcriptMaterialization: 'full',
+  emitFinalSidechainMessageWhenStreamed: true,
   buildPrompt: (params) => buildStandardReviewPrompt({ instructions: params.instructions, intentInput: params.intentInput }),
+  computeSidechainStreamText: ({ fullText }) => {
+    const stripped = stripTrailingJsonObjectFromText(fullText).trimEnd();
+    if (stripped !== String(fullText ?? '').trimEnd()) return stripped;
+
+    // If the model is currently emitting the final JSON object but it's not parseable yet,
+    // avoid streaming partial JSON fragments by cutting at the JSON start marker.
+    const t = String(fullText ?? '');
+    const start = t.lastIndexOf('\n{');
+    if (start >= 0) {
+      const tail = t.slice(start, Math.min(t.length, start + 400));
+      if (tail.includes('"summary"') || tail.includes('"findings"')) {
+        return t.slice(0, start).trimEnd();
+      }
+    }
+    return t;
+  },
+  buildInvalidOutputRepairPrompt: ({ rawText }) => [
+    'Your previous response did not include the required final JSON object.',
+    'If you have already completed the review, convert your conclusions into the required JSON now.',
+    'If you have not yet inspected the workspace or gathered enough evidence, continue the review first using the available read-only tools, then return ONLY valid JSON (parsable by JSON.parse).',
+    'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
+    buildReviewGuidanceBlock(),
+    '',
+    'Content to convert:',
+    rawText,
+  ].filter((line) => line.length > 0).join('\n'),
   listAvailableActionIds: ({ structuredMeta, start }) =>
     structuredMeta?.kind === 'review_findings.v1' || structuredMeta?.kind === 'review_findings.v2'
       ? [

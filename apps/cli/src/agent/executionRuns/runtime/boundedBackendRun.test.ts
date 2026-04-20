@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 
 import { executeBoundedBackendRun } from './boundedBackendRun';
 
@@ -14,10 +15,14 @@ vi.mock('@/lib', () => ({
   logger: mockedLogger,
 }));
 
-vi.mock('@/ui/logger', async (importOriginal) => {
+vi.mock('../../../ui/logger', async (importOriginal) => {
   const original = await importOriginal<any>();
   return { ...original, logger: mockedLogger };
 });
+
+function asExecutionRunHostRuntime(backend: AgentBackend) {
+  return createExecutionRunHostRuntimeFromAgentBackend(backend);
+}
 
 function createBackendWithStuckFirstCompletion(): Readonly<{
   backend: AgentBackend;
@@ -149,7 +154,7 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId: 'child_session_1' as SessionId,
       buffer: '',
@@ -228,7 +233,7 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId: 'child_session_1' as SessionId,
       buffer: '',
@@ -307,7 +312,7 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId: 'child_session_1' as SessionId,
       buffer: '',
@@ -417,7 +422,7 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -519,7 +524,7 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -629,7 +634,7 @@ describe('executeBoundedBackendRun', () => {
 
     ctrl = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -763,7 +768,7 @@ describe('executeBoundedBackendRun', () => {
 
     ctrl = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -893,7 +898,7 @@ describe('executeBoundedBackendRun', () => {
 
     ctrl = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -983,7 +988,7 @@ describe('executeBoundedBackendRun', () => {
 
     ctrl = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -1080,7 +1085,7 @@ describe('executeBoundedBackendRun', () => {
 
     ctrl = {
       kind: 'backend',
-      backend,
+      backend: asExecutionRunHostRuntime(backend),
       backendSupportsResume: false,
       childSessionId,
       buffer: '',

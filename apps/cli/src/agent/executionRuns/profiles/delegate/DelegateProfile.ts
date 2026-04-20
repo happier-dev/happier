@@ -9,6 +9,7 @@ import type {
 } from '../ExecutionRunIntentProfile';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
 import { deriveLooseDelegateDeliverables } from '../shared/deriveLooseDelegateDeliverables';
+import { stripTrailingJsonObjectFromText } from '../shared/stripTrailingJsonObjectFromText';
 
 function buildDelegateGuidanceBlock(): string {
   return [
@@ -179,6 +180,20 @@ export const DelegateProfile: ExecutionRunIntentProfile = {
   intent: 'delegate',
   transcriptMaterialization: 'full',
   buildPrompt: (params) => `${params.instructions}\n\n${buildDelegateGuidanceBlock()}`,
+  computeSidechainStreamText: ({ fullText }) => stripTrailingJsonObjectFromText(fullText),
+  buildInvalidOutputRepairPrompt: ({ rawText }) => [
+    'Your previous response did not include the required final JSON object.',
+    'Do not run any tools. Return ONLY valid JSON (parsable by JSON.parse).',
+    'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
+    'Return a single JSON object with this shape:',
+    '{',
+    '  "summary": "Ok",',
+    '  "deliverables": [{ "id": "d1", "title": "Deliverable", "details": "Optional details" }]',
+    '}',
+    '',
+    'Content to convert:',
+    rawText,
+  ].join('\n'),
   onBoundedComplete: ({ start, rawText, finishedAtMs }) =>
     normalizeDelegateBoundedCompletion({
       runId: start.runId,

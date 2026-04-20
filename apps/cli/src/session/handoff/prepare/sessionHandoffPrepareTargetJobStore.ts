@@ -218,16 +218,36 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
     async findByHandoffId(handoffId) {
       await mkdir(jobsDirectory, { recursive: true });
       const entries = await readdir(jobsDirectory);
-      let latestMatch: SessionHandoffPrepareTargetJobRecord | null = null;
+      let latestPrepareMatch: SessionHandoffPrepareTargetJobRecord | null = null;
+      let latestSourceMatch: SessionHandoffPrepareTargetJobRecord | null = null;
+      let latestFallbackMatch: SessionHandoffPrepareTargetJobRecord | null = null;
       for (const entry of entries) {
         if (!entry.endsWith('.json')) continue;
         const record = await readPrepareTargetJobFile(join(jobsDirectory, entry));
         if (!record || record.handoffId !== handoffId) continue;
-        if (!latestMatch || record.updatedAtMs > latestMatch.updatedAtMs) {
-          latestMatch = record;
+        const bucket =
+          record.jobId.startsWith('prepare_')
+            ? 'prepare'
+            : record.jobId.startsWith('source_')
+              ? 'source'
+              : 'fallback';
+        if (bucket === 'prepare') {
+          if (!latestPrepareMatch || record.updatedAtMs > latestPrepareMatch.updatedAtMs) {
+            latestPrepareMatch = record;
+          }
+          continue;
+        }
+        if (bucket === 'source') {
+          if (!latestSourceMatch || record.updatedAtMs > latestSourceMatch.updatedAtMs) {
+            latestSourceMatch = record;
+          }
+          continue;
+        }
+        if (!latestFallbackMatch || record.updatedAtMs > latestFallbackMatch.updatedAtMs) {
+          latestFallbackMatch = record;
         }
       }
-      return latestMatch;
+      return latestPrepareMatch ?? latestSourceMatch ?? latestFallbackMatch;
     },
     async list(input) {
       await mkdir(jobsDirectory, { recursive: true });

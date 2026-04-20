@@ -1,66 +1,120 @@
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
-import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
+import {
+  isPermissionGuardToolName,
+  isSharedPermissionSafeToolName,
+  isSharedPermissionWriteLikeToolName,
+} from '@/agent/permissions/permissionTaxonomy';
 
-import { permissionModeForExecutionRunPolicy } from '@/agent/executionRuns/policy/permissionModeForExecutionRunPolicy';
+import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
 
-const EXECUTION_RUN_ALWAYS_APPROVE_TOOL_TOKENS = ['change_title', 'session_title_set', 'save_memory', 'think'] as const;
-const EXECUTION_RUN_EXTRA_WRITE_LIKE_TOOL_NAMES = new Set([
-  'external_directory',
-  'doom_loop',
-]);
+export type ExecutionRunPermissionHandler = AcpPermissionHandler & Readonly<{
+  getImmediateDecision: NonNullable<AcpPermissionHandler['getImmediateDecision']>;
+  respondToPermissionRequest: (toolCallId: string, approved: boolean) => void;
+}>;
 
 export function isExecutionRunWriteLikeToolName(toolName: string): boolean {
   const lower = String(toolName ?? '').trim().toLowerCase();
   if (!lower) return true;
-  if (EXECUTION_RUN_EXTRA_WRITE_LIKE_TOOL_NAMES.has(lower)) return true;
-  return isDefaultWriteLikeToolName(lower);
+  if (isPermissionGuardToolName(lower)) return true;
+  return isSharedPermissionWriteLikeToolName(lower);
 }
 
 export function shouldAlwaysApproveExecutionRunTool(toolName: string): boolean {
-  const lower = String(toolName ?? '').trim().toLowerCase();
-  if (!lower) return false;
-  if (isChangeTitleToolLikeName(lower)) return true;
-  return EXECUTION_RUN_ALWAYS_APPROVE_TOOL_TOKENS.some((token) => lower.includes(token));
+  return isSharedPermissionSafeToolName(toolName);
 }
 
+function resolveExecutionRunImmediateDecision(args: Readonly<{
+  permissionMode: string;
+  backendId: string;
+  toolName: string;
+}>): { decision: 'approved' | 'approved_for_session' | 'denied' } | null {
+  const rawLower = String(args.permissionMode ?? '').trim().toLowerCase();
+  const normalizedMode = permissionMode(args.permissionMode);
+
+  if (shouldAlwaysApproveExecutionRunTool(args.toolName)) return { decision: 'approved' };
+
+  // Execution runs still support legacy "no_tools" semantics: deny everything except the shared-safe tools
+  // (e.g. title changes) regardless of how it normalizes onto the canonical PermissionMode surface.
+  if (rawLower === 'no_tools') return { decision: 'denied' };
+
+  if (normalizedMode === 'read-only' || normalizedMode === 'plan') {
+    return isExecutionRunWriteLikeToolName(args.toolName) ? { decision: 'denied' } : { decision: 'approved' };
+  }
+
+  if (normalizedMode === 'yolo' || normalizedMode === 'bypassPermissions') {
+    return { decision: 'approved_for_session' };
+  }
+
+  if (normalizedMode === 'safe-yolo') {
+    // Safe-yolo: auto-approve read-like tools, prompt for write-like tools.
+    return isExecutionRunWriteLikeToolName(args.toolName) ? null : { decision: 'approved' };
+  }
+
+  // Default (and other interactive-ish modes): require an explicit response.
+  return null;
+}
+
+/**
+ * Deterministic execution-run permission decision used by non-interactive call sites that cannot
+ * block on a prompt loop.
+ *
+ * If the permission mode would normally require an interactive response, this fails closed by
+ * denying rather than auto-approving.
+ */
 export function resolveExecutionRunPermissionDecision(args: Readonly<{
   permissionMode: string;
   backendId: string;
   toolName: string;
 }>): 'approved_for_session' | 'denied' {
-  const rawMode = String(args.permissionMode ?? '').trim().toLowerCase();
-  const normalizedMode = permissionModeForExecutionRunPolicy(args.permissionMode);
-
-  if (shouldAlwaysApproveExecutionRunTool(args.toolName)) return 'approved_for_session';
-
-  if (rawMode === 'no_tools') {
-    return 'denied';
-  }
-
-  if (normalizedMode === 'read-only' || normalizedMode === 'plan') {
-    return isExecutionRunWriteLikeToolName(args.toolName) ? 'denied' : 'approved_for_session';
-  }
-
-  // Execution runs are non-interactive. Once the user starts an autonomous run in any
-  // non-read-only mode, residual ACP permission prompts must resolve deterministically
-  // instead of cancelling the run.
-  return 'approved_for_session';
+  const immediate = resolveExecutionRunImmediateDecision(args);
+  if (!immediate) return 'denied';
+  return immediate.decision === 'denied' ? 'denied' : 'approved_for_session';
 }
 
 export function createExecutionRunPermissionHandler(args: Readonly<{
   permissionMode: string;
   backendId: string;
-}>): AcpPermissionHandler {
+}>): ExecutionRunPermissionHandler {
+  const pending = new Map<string, { resolve: (value: { decision: 'approved' | 'denied' }) => void }>();
+  const buffered = new Map<string, { approved: boolean }>();
+
+  function respondToPermissionRequest(toolCallId: string, approved: boolean): void {
+    const request = pending.get(toolCallId) ?? null;
+    if (!request) {
+      buffered.set(toolCallId, { approved });
+      return;
+    }
+    pending.delete(toolCallId);
+    request.resolve({ decision: approved ? 'approved' : 'denied' });
+  }
+
+  function readImmediate(toolCallId: string, toolName: string, input: unknown) {
+    // Execution runs treat the ACP permission id as the toolCallId for correlation.
+    const bufferedResponse = buffered.get(toolCallId) ?? null;
+    if (bufferedResponse) {
+      buffered.delete(toolCallId);
+      return { decision: bufferedResponse.approved ? 'approved' : 'denied' } as const;
+    }
+
+    return resolveExecutionRunImmediateDecision({
+      permissionMode: args.permissionMode,
+      backendId: args.backendId,
+      toolName,
+    });
+  }
+
   return {
-    async handleToolCall(_toolCallId, toolName) {
-      return {
-        decision: resolveExecutionRunPermissionDecision({
-          permissionMode: args.permissionMode,
-          backendId: args.backendId,
-          toolName,
-        }),
-      };
+    respondToPermissionRequest,
+    getImmediateDecision(toolCallId, toolName, input) {
+      return readImmediate(toolCallId, toolName, input);
+    },
+    async handleToolCall(toolCallId, toolName, input) {
+      const immediate = readImmediate(toolCallId, toolName, input);
+      if (immediate) return immediate;
+
+      return await new Promise<{ decision: 'approved' | 'denied' }>((resolve) => {
+        pending.set(toolCallId, { resolve });
+      });
     },
   };
 }

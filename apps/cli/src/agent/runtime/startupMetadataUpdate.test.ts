@@ -4,7 +4,7 @@ import type { Metadata } from '@/api/types';
 
 import {
   applyStartupMetadataUpdateToSession,
-  buildAcpSessionModeOverride,
+  buildSessionModeOverride,
   buildModelOverride,
   buildPermissionModeOverride,
 } from './startupMetadataUpdate';
@@ -21,12 +21,12 @@ describe('startupMetadataUpdate', () => {
     });
   });
 
-  it('returns null when no explicit agent mode is provided', () => {
-    expect(buildAcpSessionModeOverride({})).toBeNull();
+  it('returns null when no explicit session mode is provided', () => {
+    expect(buildSessionModeOverride({})).toBeNull();
   });
 
-  it('builds an ACP session mode override when agentModeId is provided', () => {
-    expect(buildAcpSessionModeOverride({ agentModeId: 'plan', agentModeUpdatedAt: 123 })).toEqual({
+  it('builds a canonical session mode override when sessionModeId is provided', () => {
+    expect(buildSessionModeOverride({ sessionModeId: 'plan', sessionModeUpdatedAt: 123 })).toEqual({
       modeId: 'plan',
       updatedAt: 123,
     });
@@ -68,7 +68,7 @@ describe('startupMetadataUpdate', () => {
     expect((updates[0] as any).codexSessionId).toBe('codex-1');
   });
 
-  it('passes an explicit ACP session mode override through to startup metadata merge', () => {
+  it('passes an explicit canonical session mode override through to startup metadata merge', () => {
     const updates: Metadata[] = [];
     const fakeSession = {
       updateMetadata: (updater: (current: Metadata) => Metadata) => {
@@ -84,10 +84,34 @@ describe('startupMetadataUpdate', () => {
       next: { hostPid: 42 } as any,
       nowMs: 999,
       permissionModeOverride: null,
-      acpSessionModeOverride: { modeId: 'plan', updatedAt: 123 } as any,
-    } as any);
+      sessionModeOverride: { modeId: 'plan', updatedAt: 123 },
+    });
 
-    expect((updates[0] as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
+    expect((updates[0] as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
+    expect((updates[0] as any).acpSessionModeOverrideV1).toBeUndefined();
+  });
+
+  it('normalizes legacy session-mode metadata at the startup compat edge before applying updates', () => {
+    const updates: Metadata[] = [];
+    const fakeSession = {
+      updateMetadata: (updater: (current: Metadata) => Metadata) => {
+        const current = {
+          lifecycleState: 'archived',
+          acpSessionModeOverrideV1: { v: 1, updatedAt: 77, modeId: 'plan' },
+        } as any as Metadata;
+        updates.push(updater(current));
+      },
+    };
+
+    applyStartupMetadataUpdateToSession({
+      session: fakeSession,
+      next: { hostPid: 42 } as any,
+      nowMs: 999,
+      permissionModeOverride: null,
+    });
+
+    expect((updates[0] as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 77, modeId: 'plan' });
+    expect((updates[0] as any).acpSessionModeOverrideV1).toBeUndefined();
   });
 
   it('passes an explicit model override through to startup metadata merge', () => {

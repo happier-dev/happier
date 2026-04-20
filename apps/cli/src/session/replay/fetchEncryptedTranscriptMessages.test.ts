@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
+import { HttpStatusError } from '@/api/client/httpStatusError';
 
 vi.mock('@/configuration', () => ({
   configuration: {
@@ -53,5 +54,25 @@ describe('fetchEncryptedTranscriptMessages', () => {
       nextBeforeSeq: 1,
       nextAfterSeq: null,
     });
+  });
+
+  it('throws a stable auth status error for terminal auth failures', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 401,
+      data: {},
+    } as any);
+
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+
+    await expect(
+      fetchEncryptedTranscriptMessagesPage({
+        token: 't',
+        sessionId: 'sess_1',
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({
+      name: 'HttpStatusError',
+      response: { status: 401 },
+    } satisfies Partial<HttpStatusError>);
   });
 });

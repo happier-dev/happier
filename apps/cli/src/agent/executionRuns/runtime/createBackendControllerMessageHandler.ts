@@ -1,18 +1,70 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
-import type { AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
-import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import { computeSidechainStreamText } from '@/agent/executionRuns/runtime/sidechainStreamText';
+import type { ACPMessageData, ACPProvider } from '../../../api/session/sessionMessageTypes';
+import { createAcpAgentMessageForwarder } from '../../acp/bridge/createAcpAgentMessageForwarder';
+import type { AgentMessageHandler, SessionId } from '../../core/AgentBackend';
+import type { ExecutionRunParentSessionPermissionRequestEnvelope } from '../policy/executionRunPermissionInteractionPolicy';
+import type { ExecutionRunBackendController } from '../controllers/types';
+import { appendExecutionRunControllerHostBarrier } from '../controllers/failureSignal';
+import type { ExecutionRunState } from './executionRunTypes';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { normalizePermissionRequestOptionsForAcp } from '@/agent/acp/bridge/acpCommonHandlers';
+import {
+  buildExecutionRunParentSessionPermissionRequestEnvelope,
+  resolveExecutionRunPermissionInteractionMode,
+} from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function readRuntimeKindFromDescriptor(payload: unknown): string | null {
+  const descriptor = readRecord(payload);
+  if (!descriptor) return null;
+  const direct = readNonEmptyString(descriptor.runtimeKind);
+  if (direct) return direct;
+
+  const provider = readRecord(descriptor.provider);
+  if (!provider) return null;
+  return readNonEmptyString(provider.backendMode);
+}
+
+function readVendorSessionId(payload: unknown): SessionId | null {
+  return readNonEmptyString(readRecord(payload)?.sessionId) ?? null;
+}
+
+function mergePermissionRequestOptionsForParentPrompt(
+  options: unknown,
+  executionRun: ExecutionRunParentSessionPermissionRequestEnvelope,
+): unknown {
+  const optionRecord = readRecord(options);
+  if (!optionRecord) {
+    return { executionRun };
+  }
+
+  return {
+    ...optionRecord,
+    executionRun,
+  };
+}
+
+const FAIL_CLOSED_PERMISSION_REQUEST_ERROR = 'Execution-run permission request cannot be surfaced or denied';
 
 export function createBackendControllerMessageHandler(args: Readonly<{
   ctrl: ExecutionRunBackendController;
   runId: string;
   sidechainId: string;
-  intent: ExecutionRunState['intent'];
   ioMode: ExecutionRunState['ioMode'];
+  computeSidechainStreamText: (fullText: string) => string | null;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   parentProvider: ACPProvider;
   runs: Map<string, ExecutionRunState>;
@@ -28,21 +80,124 @@ export function createBackendControllerMessageHandler(args: Readonly<{
     sidechainId: args.sidechainId,
     makeId: () => randomUUID(),
   });
+  let runtimeKind: string | null = null;
+
+  function createFailClosedPermissionRequestError(): Error {
+    return new Error(FAIL_CLOSED_PERMISSION_REQUEST_ERROR);
+  }
+
+  function terminalizeFailClosedPermissionRequest(error: Error): void {
+    args.ctrl.failureSignal?.fail(error);
+    if (args.ctrl.childSessionId) {
+      void args.ctrl.backend.cancel(args.ctrl.childSessionId).catch(() => {});
+    }
+  }
+
+  function denyPermissionRequestOrFail(providerRequestId: string | null): void {
+    if (!providerRequestId || typeof args.ctrl.backend.respondToPermission !== 'function') {
+      const error = createFailClosedPermissionRequestError();
+      terminalizeFailClosedPermissionRequest(error);
+      throw error;
+    }
+
+    try {
+      const denyTransport = args.ctrl.backend.respondToPermission(providerRequestId, false).catch(() => {
+        terminalizeFailClosedPermissionRequest(createFailClosedPermissionRequestError());
+      });
+      args.ctrl.pendingHostBarrier = appendExecutionRunControllerHostBarrier(args.ctrl.pendingHostBarrier, denyTransport);
+    } catch {
+      const error = createFailClosedPermissionRequestError();
+      terminalizeFailClosedPermissionRequest(error);
+      throw error;
+    }
+  }
 
   return (msg) => {
+    if (msg.type === 'event' && msg.name === 'runtime.descriptor') {
+      // runtimeKind is a capability label for permission surfacing; the backend identity is already
+      // present on the execution-run state and descriptor payload.
+      runtimeKind = readRuntimeKindFromDescriptor(msg.payload);
+      forwarder.forward(msg);
+      return;
+    }
+
     if (msg.type === 'event' && msg.name === 'vendor_session_id') {
-      const vendorSessionId = (msg.payload as any)?.sessionId;
-      if (typeof vendorSessionId === 'string' && vendorSessionId.trim().length > 0) {
-        args.ctrl.childSessionId = vendorSessionId as SessionId;
+      const vendorSessionId = readVendorSessionId(msg.payload);
+      if (vendorSessionId) {
+        args.ctrl.childSessionId = vendorSessionId;
         const run = args.runs.get(args.runId);
         if (run?.retentionPolicy === 'resumable' && args.backendSupportsResume) {
           args.runs.set(args.runId, {
             ...run,
-            resumeHandle: { kind: 'vendor_session.v1', backendTarget: run.backendTarget, vendorSessionId },
+            resumeHandle: { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(run.backendTarget), vendorSessionId },
           });
           args.onPublicStateUpdated?.(args.runId);
         }
       }
+      return;
+    }
+
+    if (msg.type === 'permission-request') {
+      const run = args.runs.get(args.runId) ?? null;
+      if (!run) return;
+
+      const providerMetadata = readRecord(msg.payload);
+      const providerPayload = msg.payload ?? {};
+      const toolName = readNonEmptyString(providerMetadata?.toolName)
+        ?? readNonEmptyString(msg.reason)
+        ?? 'unknown';
+      const mode = resolveExecutionRunPermissionInteractionMode({
+        intent: run.intent,
+        runClass: run.runClass,
+        ioMode: run.ioMode,
+        retentionPolicy: run.retentionPolicy,
+        permissionMode: run.permissionMode,
+        parentSessionId: run.sessionId,
+        backendCapabilities: {
+          canRespondToPermission: typeof args.ctrl.backend.respondToPermission === 'function',
+          canSurfaceParentSessionPrompt: runtimeKind !== null,
+          ...(runtimeKind ? { runtimeKind } : {}),
+          backendId: run.backendId,
+        },
+      });
+
+      if (mode === 'deterministic' || mode === 'fail_closed') {
+        denyPermissionRequestOrFail(readNonEmptyString(msg.id));
+        return;
+      }
+
+      if (mode !== 'prompt_in_parent_session' || !runtimeKind) {
+        return;
+      }
+
+      const providerRequestId = readNonEmptyString(msg.id) ?? randomUUID();
+      const envelope = buildExecutionRunParentSessionPermissionRequestEnvelope({
+        sessionId: run.sessionId,
+        runId: args.runId,
+        callId: run.callId,
+        sidechainId: args.sidechainId,
+        backendId: run.backendId,
+        runtimeKind,
+        permissionMode: run.permissionMode,
+        providerRequestId,
+        providerMetadata,
+        providerPayload,
+        toolName,
+        reason: readNonEmptyString(msg.reason) ?? toolName,
+        createdAtMs: args.getNowMs(),
+      });
+
+      args.sendAcp(args.parentProvider, {
+        type: 'permission-request',
+        permissionId: providerRequestId,
+        toolName,
+        description: envelope.reason,
+        options: mergePermissionRequestOptionsForParentPrompt(
+          normalizePermissionRequestOptionsForAcp(providerPayload),
+          envelope,
+        ),
+        sidechainId: args.sidechainId,
+      });
       return;
     }
 
@@ -58,14 +213,14 @@ export function createBackendControllerMessageHandler(args: Readonly<{
       args.ctrl.streamWriter.flushAll({ reason: 'tool-call-boundary' });
     }
 
-    forwarder.forward(msg as any);
+    forwarder.forward(msg);
 
     if (msg.type !== 'model-output') return;
     const prevFullText = args.ctrl.buffer;
-    if (typeof (msg as any).fullText === 'string') {
-      args.ctrl.buffer = String((msg as any).fullText);
-    } else if (typeof (msg as any).textDelta === 'string') {
-      args.ctrl.buffer += String((msg as any).textDelta);
+    if (typeof msg.fullText === 'string') {
+      args.ctrl.buffer = msg.fullText;
+    } else if (typeof msg.textDelta === 'string') {
+      args.ctrl.buffer += msg.textDelta;
     }
 
     // Streaming: emit best-effort sidechain transcript updates.
@@ -77,7 +232,7 @@ export function createBackendControllerMessageHandler(args: Readonly<{
         args.ctrl.sidechainStreamBuffer = '';
       }
 
-      const nextStreamText = computeSidechainStreamText(args.intent, args.ctrl.buffer);
+      const nextStreamText = args.computeSidechainStreamText(args.ctrl.buffer);
       if (typeof nextStreamText === 'string') {
         const prevStreamText = args.ctrl.sidechainStreamBuffer;
 
@@ -104,4 +259,3 @@ export function createBackendControllerMessageHandler(args: Readonly<{
     args.onModelOutput?.();
   };
 }
-

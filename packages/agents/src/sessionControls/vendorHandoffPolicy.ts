@@ -1,7 +1,7 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import type { AgentId } from '../types.js';
-import { AGENTS_CORE } from '../manifest.js';
-import { getProviderSessionControlAdapter } from '../providers/sessionControlAdapterRegistry.js';
+import { getProviderSessionControlAdapter } from '../runtime/controlSurface/sessionControlAdapterRegistry.js';
+import { resolveAgentRuntimeControlSurfaceForSession } from './providerSessionBackends.js';
 import { resolveVendorResumeIdFromSessionMetadata } from './vendorResumePolicy.js';
 
 export type VendorHandoffStorageMode = 'direct' | 'persisted';
@@ -40,21 +40,29 @@ export function evaluateVendorHandoffEligibility(input: Readonly<{
   accountSettings?: Record<string, unknown> | null;
 }>): VendorHandoffEligibility {
   const accountSettings = asRecord(input.accountSettings) ?? null;
+  const runtimeControlSurface = resolveAgentRuntimeControlSurfaceForSession({
+    agentId: input.agentId,
+    metadata: input.metadata,
+    accountSettings,
+  });
+  if (!runtimeControlSurface) {
+    return { eligible: false, reasonCode: 'handoff_unsupported' };
+  }
+  const resolvedRuntimeControlSurface = runtimeControlSurface;
 
   if (isBackendDisabledByAccountSettings(input.agentId, accountSettings)) {
     return { eligible: false, reasonCode: 'backend_disabled_by_account_settings' };
   }
 
-  const agent = AGENTS_CORE[input.agentId];
-  if (!agent.sessionStorage[input.storageMode]) {
+  if (!resolvedRuntimeControlSurface.sessionStorage[input.storageMode]) {
     return { eligible: false, reasonCode: 'storage_mode_unsupported' };
   }
 
-  if (agent.handoff.vendorStateTransfer === 'unsupported') {
+  if (resolvedRuntimeControlSurface.handoff.vendorStateTransfer === 'unsupported') {
     return { eligible: false, reasonCode: 'handoff_unsupported' };
   }
 
-  if (agent.handoff.vendorStateTransfer === 'experimental') {
+  if (resolvedRuntimeControlSurface.handoff.vendorStateTransfer === 'experimental') {
     const enabled = getProviderSessionControlAdapter(input.agentId)?.isExperimentalVendorHandoffEnabled?.({
       metadata: input.metadata,
       accountSettings,

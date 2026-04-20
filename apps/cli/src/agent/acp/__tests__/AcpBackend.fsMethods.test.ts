@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createAcpClientFsMethods, type AcpPermissionHandler } from '../AcpBackend';
+import { createAcpClientFsMethods } from '../AcpBackend';
+import type { AcpPermissionHandler } from '../permissions/acpPermissionHandler';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('createAcpClientFsMethods', () => {

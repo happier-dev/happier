@@ -1,13 +1,13 @@
 import { AGENT_IDS, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev/agents'
-import { buildBackendTargetKey, type AccountSettings } from '@happier-dev/protocol'
+import { buildBackendTargetKey, buildBackendTargetKeyV2, type AccountSettings } from '@happier-dev/protocol'
 
-import { listConfiguredAcpBackendsFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings'
+import { listConfiguredAcpBackendsFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend'
 
 export type ActionBackendInventoryItem = Readonly<{
   targetKey: string;
   label: string;
   enabled: boolean;
-  agentId?: AgentId;
+  agentId?: string;
   backendId?: string;
   description?: string;
 }>
@@ -20,22 +20,32 @@ function normalizeLimit(value: unknown): number | null {
 
 function isBackendEnabled(
   accountSettings: AccountSettings | null,
-  targetKey: string,
+  targetKeys: readonly string[],
 ): boolean {
-  return accountSettings?.backendEnabledByTargetKey?.[targetKey] !== false
+  const enabledByTargetKey = accountSettings?.backendEnabledByTargetKey
+  if (!enabledByTargetKey) return true
+  for (const targetKey of targetKeys) {
+    if (enabledByTargetKey[targetKey] === false) return false
+    if (enabledByTargetKey[targetKey] === true) return true
+  }
+  return true
 }
 
 function buildBuiltInBackendInventoryItems(
   accountSettings: AccountSettings | null,
 ): readonly ActionBackendInventoryItem[] {
   return AGENT_IDS
-    .filter((agentId) => agentId !== 'customAcp')
     .map((agentId) => {
-      const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId })
+      const targetKey = buildBackendTargetKeyV2({
+        kind: 'backend',
+        backendId: agentId,
+        sourceKind: 'built_in',
+      })
+      const legacyTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId })
       return {
         targetKey,
         label: getProviderCliRuntimeSpec(agentId).title,
-        enabled: isBackendEnabled(accountSettings, targetKey),
+        enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
         agentId,
       }
     })
@@ -51,7 +61,13 @@ async function buildConfiguredAcpBackendInventoryItems(
   })
 
   return configuredBackends.map((backend) => {
-    const targetKey = buildBackendTargetKey({
+    const targetKey = buildBackendTargetKeyV2({
+      kind: 'backend',
+      backendId: backend.backendId,
+      configuredBackendId: backend.backendId,
+      sourceKind: 'configured',
+    })
+    const legacyTargetKey = buildBackendTargetKey({
       kind: 'configuredAcpBackend',
       backendId: backend.backendId,
     })
@@ -59,7 +75,7 @@ async function buildConfiguredAcpBackendInventoryItems(
       targetKey,
       label: backend.title,
       ...(backend.description ? { description: backend.description } : {}),
-      enabled: isBackendEnabled(accountSettings, targetKey),
+      enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
       backendId: backend.backendId,
     }
   })

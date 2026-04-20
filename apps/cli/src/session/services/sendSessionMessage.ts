@@ -8,14 +8,19 @@ import {
 } from '@happier-dev/agents';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
 import { waitForTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
 import type { Credentials } from '@/persistence';
-import { detectSessionTurnActivity } from '@/session/query/detectSessionTurnInFlight';
+import { detectSessionTurnActivity, isSessionUserMessage } from '@/session/query/detectSessionTurnInFlight';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import { sendSessionMessageViaSocketCommitted } from '@/session/transport/socket/sessionSocketSendMessage';
-import { encryptSessionPayload, tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+  decryptSessionPayload,
+  encryptSessionPayload,
+  tryDecryptSessionMetadata,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 
@@ -71,6 +76,64 @@ function resolveModelId(params: Readonly<{
   }
   const resolved = resolveMetadataStringOverrideV1(params.decryptedMetadata, 'modelOverrideV1', 'modelId');
   return resolved?.value ?? '';
+}
+
+async function resolveCurrentTurnAfterSeqExclusive(params: Readonly<{
+  token: string;
+  sessionId: string;
+  localId: string;
+  materializedSeq: number;
+  ctx: Readonly<{
+    encryptionKey: Uint8Array;
+    encryptionVariant: 'legacy' | 'dataKey';
+  }>;
+}>): Promise<number> {
+  const materializedSeq = Math.max(0, Math.trunc(params.materializedSeq));
+  const fallbackAfterSeqExclusive = Math.max(0, materializedSeq - 1);
+
+  try {
+    const windowSize = 50;
+    const rows = await fetchEncryptedTranscriptPageAfterSeq({
+      token: params.token,
+      sessionId: params.sessionId,
+      afterSeq: Math.max(0, materializedSeq - windowSize),
+      limit: windowSize + 1,
+    });
+    const orderedRows = [...rows].sort((a, b) => a.seq - b.seq);
+    for (let index = orderedRows.length - 1; index >= 0; index -= 1) {
+      const row = orderedRows[index];
+      if (row?.localId === params.localId) {
+        return Math.max(0, row.seq - 1);
+      }
+    }
+
+    for (let index = orderedRows.length - 1; index >= 0; index -= 1) {
+      const row = orderedRows[index];
+      if (!row) {
+        continue;
+      }
+      if (row.content.t === 'plain') {
+        if (isSessionUserMessage(row.content.v)) {
+          return Math.max(0, row.seq - 1);
+        }
+        continue;
+      }
+      try {
+        if (isSessionUserMessage(decryptSessionPayload({
+          ctx: params.ctx,
+          ciphertextBase64: row.content.c,
+        }))) {
+          return Math.max(0, row.seq - 1);
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return fallbackAfterSeqExclusive;
+  } catch {
+    return fallbackAfterSeqExclusive;
+  }
 }
 
 export async function sendSessionMessage(params: Readonly<{
@@ -187,8 +250,30 @@ export async function sendSessionMessage(params: Readonly<{
 
   const deadlineMs = Date.now() + params.timeoutMs;
   let waitSessionSnapshot = sessionTarget.rawSession;
+  let currentTurnAfterSeqExclusive: number | null = null;
 
   try {
+    if (!shouldUseRuntimeRpc) {
+      const materialized = await waitForTranscriptEncryptedMessageByLocalId({
+        token: params.credentials.token,
+        sessionId: sessionTarget.sessionId,
+        localId,
+        maxWaitMs: Math.max(1, deadlineMs - Date.now()),
+      });
+      if (!materialized) {
+        return {
+          ok: false,
+          code: 'timeout',
+        };
+      }
+      return {
+        ok: true,
+        sessionId: sessionTarget.sessionId,
+        localId,
+        waited: true,
+      };
+    }
+
     if (shouldUseRuntimeRpc) {
       const materialized = await waitForTranscriptEncryptedMessageByLocalId({
         token: params.credentials.token,
@@ -202,6 +287,13 @@ export async function sendSessionMessage(params: Readonly<{
           code: 'timeout',
         };
       }
+      currentTurnAfterSeqExclusive = await resolveCurrentTurnAfterSeqExclusive({
+        token: params.credentials.token,
+        sessionId: sessionTarget.sessionId,
+        localId,
+        materializedSeq: materialized.seq,
+        ctx: sessionTarget.ctx,
+      });
 
       const refreshedSession = await fetchSessionById({
         token: params.credentials.token,
@@ -219,6 +311,7 @@ export async function sendSessionMessage(params: Readonly<{
       encryptionMode: sessionTarget.mode,
       encryptionKey: sessionTarget.ctx.encryptionKey,
       encryptionVariant: sessionTarget.ctx.encryptionVariant,
+      ...(typeof currentTurnAfterSeqExclusive === 'number' ? { afterSeqExclusive: currentTurnAfterSeqExclusive } : {}),
     });
 
     const agentStateCiphertext =
@@ -238,6 +331,7 @@ export async function sendSessionMessage(params: Readonly<{
           encryptionMode: sessionTarget.mode,
           encryptionKey: sessionTarget.ctx.encryptionKey,
           encryptionVariant: sessionTarget.ctx.encryptionVariant,
+          ...(typeof currentTurnAfterSeqExclusive === 'number' ? { afterSeqExclusive: currentTurnAfterSeqExclusive } : {}),
         }),
       initialAgentStateCiphertextBase64:
         agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,

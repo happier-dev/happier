@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DirectSessionsSourceSchema } from '../../providers/directSessionsCatalog.js';
 import { AgentProviderIdV1Schema } from '../../providers/agentProviderIdsV1.js';
-import { AgentRuntimeDescriptorV1Schema } from '../../sessionMetadata/agentRuntimeDescriptorV1.js';
+import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
 
 import {
   SessionHandoffCodexAffinitySchema,
@@ -31,6 +31,28 @@ const MAX_INCLUDE_GLOBS = 128;
 const MAX_SOURCE_CONTROLLER_METADATA_KEYS = 50;
 const MAX_SOURCE_CONTROLLER_METADATA_JSON_BYTES = 32 * 1024;
 
+const LEGACY_HANDOFF_TRANSFER_INLINE_FIELDS = [
+  'workspaceManifestHash',
+  'transferredPayload',
+  'providerBundle',
+  'workspaceArtifacts',
+] as const;
+
+function rejectLegacyInlineTransferFields(
+  value: Record<string, unknown>,
+  context: z.RefinementCtx,
+): void {
+  for (const key of LEGACY_HANDOFF_TRANSFER_INLINE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `legacy inline handoff transfer field "${key}" is not supported`,
+      });
+    }
+  }
+}
+
 export const SessionHandoffWorkspaceTransferSchema = z
   .object({
     enabled: z.boolean(),
@@ -39,7 +61,7 @@ export const SessionHandoffWorkspaceTransferSchema = z
     includeIgnoredMode: z.enum(['exclude', 'include_selected']).default('exclude'),
     ignoredIncludeGlobs: z.array(z.string().min(1).max(512)).max(MAX_INCLUDE_GLOBS).readonly().default(() => []),
   })
-  .strict()
+  .passthrough()
   .superRefine((value, context) => {
     if (value.strategy === 'sync_changes' && value.conflictPolicy === 'create_sibling_copy') {
       context.addIssue({
@@ -58,7 +80,7 @@ const SessionHandoffProviderBundleTransferPublicationSchema = z
     manifestHash: z.string().min(1).max(MAX_MANIFEST_HASH_LENGTH),
     endpointCandidates: z.array(TransferEndpointCandidateSchema).max(MAX_ENDPOINT_CANDIDATES).readonly().optional(),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffProviderBundleTransferPublication = z.infer<
   typeof SessionHandoffProviderBundleTransferPublicationSchema
 >;
@@ -68,7 +90,7 @@ const SessionHandoffWorkspaceReplicationManifestTransferPublicationSchema = z
     transferId: z.string().min(1).max(MAX_TRANSFER_ID_LENGTH),
     endpointCandidates: z.array(TransferEndpointCandidateSchema).max(MAX_ENDPOINT_CANDIDATES).readonly().optional(),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffWorkspaceReplicationManifestTransferPublication = z.infer<
   typeof SessionHandoffWorkspaceReplicationManifestTransferPublicationSchema
 >;
@@ -112,7 +134,7 @@ export const SessionHandoffMetadataV2Schema = z
       })
       .optional(),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffMetadataV2 = z.infer<typeof SessionHandoffMetadataV2Schema>;
 
 const SessionHandoffResumePlanSchema = z
@@ -125,7 +147,16 @@ const SessionHandoffResumePlanSchema = z
     approvedNewDirectoryCreation: z.literal(true),
     codexBackendMode: SessionHandoffCodexBackendModeSchema.optional(),
   })
-  .strict();
+  .passthrough()
+  .superRefine((value, context) => {
+    if (Object.prototype.hasOwnProperty.call(value, 'experimentalCodexAcp')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['experimentalCodexAcp'],
+        message: 'experimentalCodexAcp is not supported',
+      });
+    }
+  });
 export type SessionHandoffResumePlan = z.infer<typeof SessionHandoffResumePlanSchema>;
 
 export const SessionHandoffStartRequestSchema = z
@@ -142,7 +173,8 @@ export const SessionHandoffStartRequestSchema = z
     negotiatedTransportStrategy: SessionHandoffTransportStrategySchema.optional(),
     workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
   })
-  .strict();
+  .passthrough()
+  .superRefine(rejectLegacyInlineTransferFields);
 export type SessionHandoffStartRequest = z.infer<typeof SessionHandoffStartRequestSchema>;
 
 export const SessionHandoffPrepareTargetRequestSchema = z
@@ -163,7 +195,8 @@ export const SessionHandoffPrepareTargetRequestSchema = z
     handoffMetadataV2: SessionHandoffMetadataV2Schema.optional(),
     workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
   })
-  .strict();
+  .passthrough()
+  .superRefine(rejectLegacyInlineTransferFields);
 export type SessionHandoffPrepareTargetRequest = z.infer<typeof SessionHandoffPrepareTargetRequestSchema>;
 
 export const SessionHandoffPrepareTargetResultGetRequestSchema = z
@@ -203,7 +236,8 @@ export const SessionHandoffStartResponseSchema = z
     targetPath: z.string().min(1).max(MAX_PATH_LENGTH),
     handoffMetadataV2: SessionHandoffMetadataV2Schema.optional(),
   })
-  .strict();
+  .passthrough()
+  .superRefine(rejectLegacyInlineTransferFields);
 export type SessionHandoffStartResponse = z.infer<typeof SessionHandoffStartResponseSchema>;
 
 export const SessionHandoffPrepareTargetResponseSchema = z
@@ -212,11 +246,12 @@ export const SessionHandoffPrepareTargetResponseSchema = z
     status: SessionHandoffStatusSchema,
     remoteSessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH).optional(),
     directSource: DirectSessionsSourceSchema.optional(),
-    agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema.optional(),
     workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
   })
-  .strict();
+  .passthrough()
+  .superRefine(rejectLegacyInlineTransferFields);
 export type SessionHandoffPrepareTargetResponse = z.infer<typeof SessionHandoffPrepareTargetResponseSchema>;
 
 export const SessionHandoffPrepareTargetResultGetResponseSchema = z
@@ -225,11 +260,11 @@ export const SessionHandoffPrepareTargetResultGetResponseSchema = z
     status: SessionHandoffStatusSchema,
     remoteSessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     directSource: DirectSessionsSourceSchema,
-    agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema,
     workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffPrepareTargetResultGetResponse = z.infer<typeof SessionHandoffPrepareTargetResultGetResponseSchema>;
 
 export const SessionHandoffCommitResponseSchema = z
@@ -252,7 +287,7 @@ export const SessionHandoffStatusGetRequestSchema = z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
   })
-  .strict();
+  .passthrough();
 export type SessionHandoffStatusGetRequest = z.infer<typeof SessionHandoffStatusGetRequestSchema>;
 
 export {

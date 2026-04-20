@@ -1,6 +1,6 @@
 import { ReviewStartInputSchema } from '@happier-dev/protocol';
 
-import { ReviewFollowUpIntentInputSchema } from '@/agent/reviews/followUp/reviewFollowUpIntentInput';
+import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
 
 export function buildReviewGuidanceBlock(): string {
   return [

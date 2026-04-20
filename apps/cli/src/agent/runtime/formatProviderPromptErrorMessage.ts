@@ -1,4 +1,4 @@
-import { formatErrorForUi } from '@/ui/formatErrorForUi';
+import { formatErrorForUi } from '../../ui/formatErrorForUi';
 
 const AUTH_ERROR_KEYWORDS = ['unauthorized', 'authentication', 'api key', 'token', '401'] as const;
 

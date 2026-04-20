@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { AcpBackend } from '../AcpBackend';
 import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { OpenCodeTransport } from '@/backends/opencode/acp/transport';
 import { KiloTransport } from '@/backends/kilo/acp/transport';
 
 function writeFakePermissionEchoAgentScript(params: { dir: string }): string {
@@ -140,14 +139,7 @@ async function expectPermissionOption(params: { transport: any; expectedOptionId
   });
 }
 
-describe('AcpBackend OpenCode-family permission option selection', () => {
-  it('prefers allow_always when OpenCodeTransport approves a permission', async () => {
-    await expectPermissionOption({
-      transport: new OpenCodeTransport(),
-      expectedOptionId: 'allow-always',
-    });
-  });
-
+describe('AcpBackend permission option selection', () => {
   it('prefers allow_always when KiloTransport approves a permission', async () => {
     await expectPermissionOption({
       transport: new KiloTransport(),
@@ -155,4 +147,3 @@ describe('AcpBackend OpenCode-family permission option selection', () => {
     });
   });
 });
-

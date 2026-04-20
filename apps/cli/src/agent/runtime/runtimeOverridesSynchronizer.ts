@@ -1,10 +1,18 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import { delayUnref } from '@/utils/time';
+import {
+  createRuntimeOverrideSynchronizers,
+  type RuntimeOverrideSynchronizers,
+  type RuntimeOverrideTarget,
+} from './createRuntimeOverrideSynchronizers';
 
 import {
   resolveModelOverrideFromMetadataSnapshot,
   resolvePermissionIntentFromMetadataSnapshot,
-} from './permission/permissionModeFromMetadata';
-import { resolveStartupPermissionModeFromSession } from './permission/startupPermissionModeSeed';
+} from './permissions/modeFromMetadata';
+import { resolveStartupPermissionModeFromSession } from './permissions/startupSeed';
+
+export type { RuntimeOverrideSynchronizers, RuntimeOverrideTarget } from './createRuntimeOverrideSynchronizers';
 
 type RuntimePermissionModeRef = { current: PermissionMode; updatedAt: number };
 type RuntimeModelOverrideRef = { current: string | null; updatedAt: number };
@@ -13,6 +21,31 @@ type SyncSnapshot = {
   permissionMode: RuntimePermissionModeRef;
   modelOverride: RuntimeModelOverrideRef;
 };
+
+async function runRuntimeMetadataOverridesWatcherLoop(args: Readonly<{
+  shouldExit: () => boolean;
+  getAbortSignal: () => AbortSignal | undefined;
+  waitForMetadataUpdate: (signal?: AbortSignal) => Promise<boolean>;
+  onUpdate: () => void;
+  abortedBackoffMs?: number;
+}>): Promise<void> {
+  const abortedBackoffMs =
+    typeof args.abortedBackoffMs === 'number' && Number.isFinite(args.abortedBackoffMs) && args.abortedBackoffMs > 0
+      ? Math.floor(args.abortedBackoffMs)
+      : 25;
+
+  while (!args.shouldExit()) {
+    const signal = args.getAbortSignal();
+    const didUpdate = await args.waitForMetadataUpdate(signal);
+    if (!didUpdate) {
+      if (signal?.aborted) {
+        await delayUnref(abortedBackoffMs);
+      }
+      continue;
+    }
+    args.onUpdate();
+  }
+}
 
 export async function initializeRuntimeOverridesSynchronizer(params: Readonly<{
   explicitPermissionMode: PermissionMode | undefined;
@@ -87,5 +120,79 @@ export async function initializeRuntimeOverridesSynchronizer(params: Readonly<{
     getSnapshot: () => snapshot,
     seedFromSession,
     syncFromMetadata,
+  };
+}
+
+export async function setupRuntimeMetadataDrivenOverridesSync(params: Readonly<{
+  explicitPermissionMode: PermissionMode | undefined;
+  sessionKind: 'fresh' | 'attach' | 'resume';
+  take?: number;
+  session: {
+    getMetadataSnapshot: () => Metadata | null;
+    fetchLatestUserPermissionIntentFromTranscript: (
+      opts?: Readonly<{ take?: number }>,
+    ) => Promise<{ intent: PermissionMode; updatedAt: number } | null>;
+    waitForMetadataUpdate: (signal?: AbortSignal) => Promise<boolean>;
+  };
+  permissionMode: RuntimePermissionModeRef;
+  modelOverride: RuntimeModelOverrideRef;
+  runtime?: Readonly<{
+    target: RuntimeOverrideTarget;
+    isStarted: () => boolean;
+  }> | null;
+  onPermissionModeApplied?: () => void;
+  onModelOverrideApplied?: () => void;
+  persistStartupOverridesCache: () => void;
+  shouldExit: () => boolean;
+  getAbortSignal: () => AbortSignal | undefined;
+}>): Promise<{
+  runtimeControlSync: RuntimeOverrideSynchronizers | null;
+  syncOverridesFromMetadata: () => void;
+}> {
+  const runtimeControlSync = params.runtime
+    ? createRuntimeOverrideSynchronizers({
+        session: {
+          getMetadataSnapshot: params.session.getMetadataSnapshot,
+        },
+        runtime: params.runtime.target,
+        isStarted: params.runtime.isStarted,
+      })
+    : null;
+
+  const runtimeOverridesSync = await initializeRuntimeOverridesSynchronizer({
+    explicitPermissionMode: params.explicitPermissionMode,
+    sessionKind: params.sessionKind,
+    take: params.take,
+    session: {
+      getMetadataSnapshot: params.session.getMetadataSnapshot,
+      fetchLatestUserPermissionIntentFromTranscript: params.session.fetchLatestUserPermissionIntentFromTranscript,
+    },
+    permissionMode: params.permissionMode,
+    modelOverride: params.modelOverride,
+    onPermissionModeApplied: params.onPermissionModeApplied,
+    onModelOverrideApplied: params.onModelOverrideApplied,
+  });
+
+  const syncOverridesFromMetadata = (): void => {
+    runtimeOverridesSync.syncFromMetadata();
+    runtimeControlSync?.syncFromMetadata();
+  };
+
+  syncOverridesFromMetadata();
+  params.persistStartupOverridesCache();
+  void runtimeOverridesSync.seedFromSession().catch(() => {
+    // Best-effort only.
+  });
+
+  void runRuntimeMetadataOverridesWatcherLoop({
+    shouldExit: params.shouldExit,
+    getAbortSignal: params.getAbortSignal,
+    waitForMetadataUpdate: params.session.waitForMetadataUpdate,
+    onUpdate: syncOverridesFromMetadata,
+  });
+
+  return {
+    runtimeControlSync,
+    syncOverridesFromMetadata,
   };
 }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { accountSettingsParse } from '@happier-dev/protocol'
 
-import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification'
+import { sendReadyWithPushNotification } from '@/agent/runtime/notifications/sendReadyWithPushNotification'
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot'
 
 function createSessionStub(sessionId = 'session-1') {

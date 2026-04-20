@@ -119,4 +119,16 @@ describe('providerSessionBackends', () => {
       localControl: null,
     });
   });
+
+  it('returns the base Claude session surface even without a provider session-control adapter', () => {
+    expect(resolveAgentRuntimeControlSurfaceForSession({
+      agentId: 'claude',
+      metadata: {},
+      accountSettings: null,
+    })).toMatchObject({
+      sessionStorage: { direct: true, persisted: true },
+      handoff: { vendorStateTransfer: 'supported' },
+      localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
+    });
+  });
 });

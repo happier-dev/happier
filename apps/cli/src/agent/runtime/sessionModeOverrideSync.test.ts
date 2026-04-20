@@ -45,12 +45,12 @@ describe('createSessionModeOverrideSynchronizer', () => {
     expect(setSessionMode).toHaveBeenCalledWith('plan');
   });
 
-  it('treats modeId="default" as a clear-override marker (no runtime call, no retry)', async () => {
+  it('skips applying whitespace-only clear-override markers to the runtime', async () => {
     const setSessionMode = vi.fn(async (_modeId: string) => {});
 
     const sync = createSessionModeOverrideSynchronizer({
       session: {
-        getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 22, modeId: 'default' } } as any),
+        getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 22, modeId: '   ' } } as any),
       },
       runtime: { setSessionMode },
       isStarted: () => true,
@@ -60,7 +60,7 @@ describe('createSessionModeOverrideSynchronizer', () => {
     await Promise.resolve();
     expect(setSessionMode).not.toHaveBeenCalled();
 
-    // Should not keep attempting to apply "default" on subsequent syncs.
+    // Should not keep attempting to apply the same whitespace-only clear marker on subsequent syncs.
     sync.syncFromMetadata();
     await Promise.resolve();
     expect(setSessionMode).not.toHaveBeenCalled();

@@ -1,5 +1,5 @@
-import type { Credentials } from '@/persistence';
-import { readCredentials, readSettings } from '@/persistence';
+import type { Credentials } from '../../persistence';
+import { readCredentials, readSettings } from '../../persistence';
 
 import { resolveCliPromptStackSystemAppendBlocks } from './resolveCliPromptStackSystemAppendBlocks';
 

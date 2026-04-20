@@ -8,7 +8,8 @@ import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
 import { ApprovalRequestCreatedBySchema } from '../approvals/approvalRequestV1.js';
 import { PromptRegistryConfiguredSourceV1Schema } from '../promptLibrary/promptRegistriesV1.js';
 import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../promptLibrary/promptAssetsV1.js';
-import { BackendTargetKeySchema, BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
+import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
+import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
@@ -29,7 +30,7 @@ export const ActionSurfaceSchema = z.object({
   session_agent: z.boolean(),
   mcp: z.boolean(),
   cli: z.boolean(),
-}).strict();
+}).passthrough();
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
 export const ActionSafetySchema = z.enum(['safe', 'danger']);
@@ -45,7 +46,7 @@ export const ActionInputOptionSchema = z
     description: z.string().min(1).optional(),
     disabled: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();
 export type ActionInputOption = z.infer<typeof ActionInputOptionSchema>;
 
 export const ActionInputFieldHintSchema = z
@@ -77,7 +78,7 @@ export const ActionInputFieldHintSchema = z
     requiredWhen: ActionInputPredicateSchema.optional(),
     disabledWhen: ActionInputPredicateSchema.optional(),
   })
-  .strict()
+  .passthrough()
   .superRefine((value, ctx) => {
     const widget = (value as any).widget as string;
     const options = Array.isArray((value as any).options) ? (value as any).options : null;
@@ -114,14 +115,14 @@ export const ActionInputHintsSchema = z
     description: z.string().min(1).optional(),
     fields: z.array(ActionInputFieldHintSchema).default([]),
   })
-  .strict();
+  .passthrough();
 export type ActionInputHints = z.infer<typeof ActionInputHintsSchema>;
 
 export const ActionPromptingSchema = z
   .object({
     voiceHotPath: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();
 export type ActionPrompting = z.infer<typeof ActionPromptingSchema>;
 
 export const ActionSpecSchema = z.object({
@@ -246,19 +247,8 @@ const ExecutionRunIdInputSchema = z.object({
   runId: z.string().min(1),
 }).passthrough();
 
-const ExecutionRunStartInputSchema = z.object({
+const ExecutionRunStartInputSchema = ExecutionRunStartRequestSchema.extend({
   sessionId: z.string().min(1).optional(),
-  intent: z.enum(['review', 'plan', 'delegate', 'voice_agent', 'memory_hints']),
-  backendTarget: BackendTargetRefSchema,
-  instructions: z.string().optional(),
-  display: z.unknown().optional(),
-  permissionMode: z.string().min(1),
-  retentionPolicy: z.enum(['ephemeral', 'resumable']),
-  runClass: z.enum(['bounded', 'long_lived']),
-  ioMode: z.enum(['request_response', 'streaming']),
-  initialContextMode: z.enum(['bootstrap', 'first_turn']).optional(),
-  resumeHandle: z.unknown().nullable().optional(),
-  replay: z.unknown().optional(),
 }).passthrough();
 
 const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
@@ -276,7 +266,7 @@ const ExecutionRunActionInputSchema = ExecutionRunIdInputSchema.extend({
 }).passthrough();
 
 const ExecutionRunWaitInputSchema = ExecutionRunIdInputSchema.extend({
-  timeoutSeconds: z.number().int().min(1).max(3600).optional(),
+  timeoutSeconds: z.number().int().min(1).optional(),
   pollIntervalMs: z.number().int().min(100).max(60_000).optional(),
 }).passthrough();
 
@@ -313,7 +303,7 @@ const SessionSpawnNewInputSchema = z.object({
   tag: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
-  backendTargetKey: BackendTargetKeySchema.optional(),
+  backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   title: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   host: z.string().min(1).optional(),
@@ -326,7 +316,7 @@ const SessionSpawnPickerInputSchema = z.object({
   tag: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
-  backendTargetKey: BackendTargetKeySchema.optional(),
+  backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   initialMessage: z.string().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
@@ -371,7 +361,7 @@ const AgentsBackendsListInputSchema = z.object({
 
 const AgentsModelsListInputSchema = z.object({
   agentId: z.string().min(1).optional(),
-  backendTargetKey: BackendTargetKeySchema.optional(),
+  backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   machineId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
 }).passthrough().superRefine((value, ctx) => {
@@ -915,7 +905,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     bindings: { mcpToolName: 'execution_run_start' },
     examples: {
       mcp: {
-        argsExample: '{"sessionId":"{{sessionId}}","intent":"voice_agent","backendTarget":{"kind":"builtInAgent","agentId":"codex"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response"}',
+        argsExample: '{"sessionId":"{{sessionId}}","intent":"voice_agent","backendTarget":{"kind":"backend","backendId":"codex","sourceKind":"built_in"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response"}',
       },
     },
     surfaces: {
@@ -1098,12 +1088,12 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
   {
     id: 'execution.run.wait',
     title: 'Wait for execution run',
-    description: 'Wait until an execution run reaches a terminal status (succeeded/failed/cancelled/timeout).',
+    description: 'Wait until an execution run reaches a terminal status. Pass timeoutSeconds to bound the wait; omit it for no Happier-side deadline.',
     safety: 'safe',
     placements: [],
     bindings: { mcpToolName: 'execution_run_wait' },
     examples: {
-      mcp: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","timeoutSeconds":300}' },
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123"}' },
     },
     surfaces: {
       ui_button: false,
@@ -1119,7 +1109,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
-        { path: 'timeoutSeconds', title: 'Timeout seconds', widget: 'text' },
+        { path: 'timeoutSeconds', title: 'Timeout seconds (optional)', widget: 'text' },
         { path: 'pollIntervalMs', title: 'Poll interval (ms)', widget: 'text' },
       ],
     },
@@ -1410,7 +1400,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listAgentBackends', mcpToolName: 'agents_backends_list' },
     examples: {
-      voice: { argsExample: '{"includeDisabled":false,"limit":10}' },
+      voice: { argsExample: '{"includeDisabled":false,"limit":10,"machineId":"{{machineId}}"}' },
     },
     surfaces: {
       ui_button: false,
@@ -1426,6 +1416,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       fields: [
         { path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' },
         { path: 'limit', title: 'Max results', widget: 'text' },
+        { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
       ],
     },
     inputSchema: AgentsBackendsListInputSchema,
@@ -1439,7 +1430,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listAgentModels', mcpToolName: 'agents_models_list' },
     examples: {
-      voice: { argsExample: '{"backendTargetKey":"agent:claude","limit":10}' },
+      voice: { argsExample: '{"agentId":"claude","backendTargetKey":"backend:plugin-review-bot","machineId":"{{machineId}}","limit":10}' },
     },
     surfaces: {
       ui_button: false,
@@ -1453,7 +1444,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputHints: {
       title: 'List agent models',
       fields: [
-        { path: 'agentId', title: 'Agent id', widget: 'text' },
+        { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
         { path: 'limit', title: 'Max results', widget: 'text' },
