@@ -1,6 +1,5 @@
 import { runManagedChildCommand } from './managedChildLifecycle.mjs';
 import { sweepStaleProcessOwnershipLeases } from './sweepProcessOwnershipLeases.mjs';
-import { resolvePlaywrightUiRunNamespace } from './playwrightUiArtifacts.shared.mjs';
 
 export { installParentDeathCleanupWatchdog, resolveSignalExitCode } from './managedChildLifecycle.mjs';
 
@@ -29,7 +28,6 @@ export function parseHeartbeatArgs(argv) {
 export function createPlaywrightSpawnOptions(env) {
   const nextEnv = {
     ...env,
-    HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: resolvePlaywrightUiRunNamespace(env),
     PLAYWRIGHT_HTML_OPEN: 'never',
   };
   return {

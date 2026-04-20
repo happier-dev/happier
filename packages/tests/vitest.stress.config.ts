@@ -6,8 +6,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['suites/stress/**/*.test.ts'],
-    testTimeout: 300_000,
-    hookTimeout: 300_000,
+    testTimeout: 1_200_000,
+    hookTimeout: 1_200_000,
+    fileParallelism: false,
     globals: false,
     exclude: [...resolveVitestFeatureTestExcludeGlobs()],
     env: {

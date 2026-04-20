@@ -5,7 +5,14 @@ import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-const CLI_SHARED_DEP_PACKAGE_NAMES = ['agents', 'cli-common', 'protocol', 'release-runtime'] as const;
+const CLI_SHARED_DEP_PACKAGE_NAMES = [
+  'agents',
+  'cli-common',
+  'connection-supervisor',
+  'protocol',
+  'transfers',
+  'release-runtime',
+] as const;
 
 type RunLoggedCommand = (params: {
   command: string;

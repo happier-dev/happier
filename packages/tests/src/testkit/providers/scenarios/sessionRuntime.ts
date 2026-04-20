@@ -150,6 +150,108 @@ export async function enqueueSessionPromptForScenario(params: {
   throw new Error(`timed out enqueueing prompt for ${params.sessionId}`);
 }
 
+type AssistantCandidateExtractionOptions = {
+  streamedTextByKey?: Map<string, string>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function pushTextValue(candidateTexts: string[], value: unknown): void {
+  if (typeof value === 'string' && value.length > 0) {
+    candidateTexts.push(value);
+  }
+}
+
+function pushAssistantContentTexts(candidateTexts: string[], content: unknown): void {
+  if (typeof content === 'string') {
+    pushTextValue(candidateTexts, content);
+    return;
+  }
+
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (!isRecord(part)) continue;
+      pushTextValue(candidateTexts, part.text);
+    }
+    return;
+  }
+
+  if (!isRecord(content)) return;
+
+  pushTextValue(candidateTexts, content.text);
+  const parts = Array.isArray(content.parts) ? content.parts : [];
+  for (const part of parts) {
+    if (!isRecord(part)) continue;
+    pushTextValue(candidateTexts, part.text);
+  }
+}
+
+export function extractAssistantCandidateTextsFromDecryptedRecord(
+  decrypted: Record<string, unknown>,
+  options: AssistantCandidateExtractionOptions = {},
+): string[] {
+  const role = typeof decrypted.role === 'string' ? decrypted.role : '';
+  const candidateTexts: string[] = [];
+  const meta = isRecord(decrypted.meta) ? decrypted.meta : null;
+  const streamSegmentV1 = isRecord(meta?.happierStreamSegmentV1)
+    ? meta.happierStreamSegmentV1
+    : null;
+  const streamSegmentLocalId = typeof streamSegmentV1?.segmentLocalId === 'string'
+    ? streamSegmentV1.segmentLocalId
+    : null;
+  const streamKey = typeof meta?.happierStreamKey === 'string' ? meta.happierStreamKey : null;
+  const sidechainStreamKey = typeof meta?.happierSidechainStreamKey === 'string' ? meta.happierSidechainStreamKey : null;
+  const anyStreamKey = streamSegmentLocalId ?? streamKey ?? sidechainStreamKey;
+
+  if (role === 'assistant') {
+    pushAssistantContentTexts(candidateTexts, decrypted.content);
+  }
+
+  if (role !== 'agent') return candidateTexts;
+
+  const content = isRecord(decrypted.content) ? decrypted.content : null;
+  if (content?.type === 'acp') {
+    const data = isRecord(content.data) ? content.data : null;
+    if (data?.type === 'message' && typeof data.message === 'string') {
+      candidateTexts.push(data.message);
+      if (anyStreamKey && options.streamedTextByKey) {
+        if (streamSegmentLocalId) {
+          // `StreamedTranscriptWriter` commits cumulative snapshots (not deltas).
+          // Prefer the longest snapshot observed for the segment key.
+          const prev = options.streamedTextByKey.get(anyStreamKey) ?? '';
+          const next = data.message.length >= prev.length ? data.message : prev;
+          options.streamedTextByKey.set(anyStreamKey, next);
+          candidateTexts.push(next);
+        } else {
+          const prev = options.streamedTextByKey.get(anyStreamKey) ?? '';
+          const next = prev + data.message;
+          options.streamedTextByKey.set(anyStreamKey, next);
+          candidateTexts.push(next);
+        }
+      }
+    }
+  }
+
+  if (content?.type === 'output') {
+    const data = isRecord(content.data) ? content.data : null;
+    if (data?.type === 'assistant') {
+      const message = isRecord(data.message) ? data.message : null;
+      if (message) {
+        const messageRole = typeof message.role === 'string' ? message.role : '';
+        if (messageRole === '' || messageRole === 'assistant') {
+          pushAssistantContentTexts(candidateTexts, message.content);
+        }
+      } else {
+        pushAssistantContentTexts(candidateTexts, data.content);
+      }
+    }
+  }
+
+  return candidateTexts;
+}
+
 export async function waitForAssistantMessageContaining(params: {
   baseUrl: string;
   token: string;
@@ -190,67 +292,9 @@ export async function waitForAssistantMessageContaining(params: {
       try {
         const decrypted = decryptLegacyBase64(row.content.c, params.secret) as Record<string, unknown> | null;
         if (!decrypted || typeof decrypted !== 'object') continue;
-        const role = typeof decrypted.role === 'string' ? decrypted.role : '';
         if (params.allowAnyAssistantMessage === true) return;
 
-        const candidateTexts: string[] = [];
-        const meta = decrypted.meta && typeof decrypted.meta === 'object' ? (decrypted.meta as Record<string, unknown>) : null;
-        const streamSegmentV1 =
-          meta && typeof meta.happierStreamSegmentV1 === 'object' && meta.happierStreamSegmentV1 && !Array.isArray(meta.happierStreamSegmentV1)
-            ? (meta.happierStreamSegmentV1 as Record<string, unknown>)
-            : null;
-        const streamSegmentLocalId =
-          streamSegmentV1 && typeof streamSegmentV1.segmentLocalId === 'string' ? String(streamSegmentV1.segmentLocalId) : null;
-        const streamKey = meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null;
-        const sidechainStreamKey =
-          meta && typeof meta.happierSidechainStreamKey === 'string' ? String(meta.happierSidechainStreamKey) : null;
-        const anyStreamKey = streamSegmentLocalId ?? streamKey ?? sidechainStreamKey;
-
-        if (role === 'assistant') {
-          if (typeof decrypted.content === 'string') {
-            candidateTexts.push(decrypted.content);
-          } else if (decrypted.content && typeof decrypted.content === 'object') {
-            const content = decrypted.content as Record<string, unknown>;
-            const text = typeof content.text === 'string' ? content.text : '';
-            if (text) candidateTexts.push(text);
-            const parts = Array.isArray(content.parts) ? content.parts : [];
-            for (const part of parts) {
-              if (!part || typeof part !== 'object') continue;
-              const partText = typeof (part as Record<string, unknown>).text === 'string' ? String((part as Record<string, unknown>).text) : '';
-              if (partText) candidateTexts.push(partText);
-            }
-          }
-        }
-
-        if (role === 'agent') {
-          const content = decrypted.content && typeof decrypted.content === 'object'
-            ? (decrypted.content as Record<string, unknown>)
-            : null;
-          if (content?.type === 'acp') {
-            const data = content.data && typeof content.data === 'object'
-              ? (content.data as Record<string, unknown>)
-              : null;
-            if (data?.type === 'message' && typeof data.message === 'string') {
-              candidateTexts.push(data.message);
-              if (anyStreamKey) {
-                if (streamSegmentLocalId) {
-                  // `StreamedTranscriptWriter` commits cumulative snapshots (not deltas).
-                  // Prefer the longest snapshot we observe for the segment key.
-                  const prev = streamedTextByKey.get(anyStreamKey) ?? '';
-                  const next = data.message.length >= prev.length ? data.message : prev;
-                  streamedTextByKey.set(anyStreamKey, next);
-                  candidateTexts.push(next);
-                } else {
-                  const prev = streamedTextByKey.get(anyStreamKey) ?? '';
-                  const next = prev + data.message;
-                  streamedTextByKey.set(anyStreamKey, next);
-                  candidateTexts.push(next);
-                }
-              }
-            }
-          }
-        }
-
+        const candidateTexts = extractAssistantCandidateTextsFromDecryptedRecord(decrypted, { streamedTextByKey });
         const raw = JSON.stringify(decrypted);
         const haystacks = [...candidateTexts, raw];
         if (requiredSubstring && haystacks.some((value) => value.includes(requiredSubstring))) return;

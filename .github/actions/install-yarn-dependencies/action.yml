@@ -1,0 +1,17 @@
+name: Install Yarn Dependencies
+description: Install workspace dependencies with retry handling for transient registry failures
+
+inputs:
+  args:
+    description: Arguments forwarded to yarn install before standard CI resilience flags
+    required: false
+    default: --frozen-lockfile --ignore-engines
+
+runs:
+  using: composite
+  steps:
+    - name: Install dependencies with retry
+      shell: bash
+      run: |
+        set -euo pipefail
+        bash scripts/ci/yarn-install-with-retry.sh ${{ inputs.args }} --network-timeout 600000 --prefer-offline --non-interactive

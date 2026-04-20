@@ -89,4 +89,38 @@ describe('fake Claude CLI fixture', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('publishes execution-run runtime metadata for the permission prompt scenario', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-runtime-'));
+    try {
+      const logPath = join(dir, 'fake-claude.jsonl');
+      const fixturePath = resolve(process.cwd(), 'src/fixtures/fake-claude-code-cli.cjs');
+
+      const input = JSON.stringify({
+        type: 'message',
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      });
+
+      const res = spawnSync(process.execPath, [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
+          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: 'inv-1',
+          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: 'session-1',
+          HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'permission-prompt-write',
+        },
+        input: `${input}\n`,
+        encoding: 'utf8',
+      });
+
+      expect(res.status).toBe(0);
+
+      const rows = parseJsonLines(res.stdout);
+      expect(rows.some((row) => row?.type === 'event' && row?.name === 'runtime.descriptor')).toBe(true);
+      expect(rows.some((row) => row?.type === 'event' && row?.name === 'runtime.capabilities')).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

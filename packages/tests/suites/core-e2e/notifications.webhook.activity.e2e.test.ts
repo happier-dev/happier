@@ -9,7 +9,7 @@ import {
   accountSettingsParse,
   resolveNotificationChannelsV1FromAccountSettings,
 } from '@happier-dev/protocol';
-import { sendWebhookActivityNotificationAsync } from '../../../../apps/cli/src/activity/notifications/sendWebhookActivityNotification';
+import { sendWebhookActivityNotificationAsync } from '../../../../apps/cli/src/notifications/activity/sendWebhookActivityNotification';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';

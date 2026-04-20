@@ -88,6 +88,7 @@ describe('core e2e: direct Claude session detach watcher release', () => {
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
         HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS: '2',
+        HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
       },
     });
 

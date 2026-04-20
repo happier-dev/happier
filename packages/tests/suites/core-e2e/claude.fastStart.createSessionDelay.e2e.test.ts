@@ -6,7 +6,6 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
@@ -77,12 +76,9 @@ describe('core e2e: Claude fast-start', () => {
       // Make server session creation slow enough that we can verify local spawn happens first.
       HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '30000',
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+      HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
     };
 
-    await ensureCliSharedDepsBuilt(
-      { testDir, env: cliEnv },
-      { skipSourceFreshnessCheck: true },
-    );
     const cliLaunchSpec = await resolveCliTestLaunchSpec(
       { testDir, env: cliEnv },
       { snapshotDir: resolve(join(testDir, 'cli-dist')), preferSourceEntrypoint: true },

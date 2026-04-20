@@ -104,6 +104,7 @@ describe('core e2e: direct Codex sessions browse/link/tail', () => {
         CODEX_HOME: codexHomeDir,
         HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS: '2',
         HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+        HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
       },
     });
 

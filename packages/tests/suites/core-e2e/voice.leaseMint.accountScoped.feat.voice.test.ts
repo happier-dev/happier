@@ -60,7 +60,13 @@ describe('core e2e: voice lease mint (account-scoped)', () => {
   let server: StartedServer | null = null;
 
   afterAll(async () => {
-    await new Promise<void>((resolve) => elevenStub?.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      if (!elevenStub) {
+        resolve();
+        return;
+      }
+      elevenStub.close(() => resolve());
+    });
     elevenStub = null;
     await server?.stop().catch(() => {});
     server = null;

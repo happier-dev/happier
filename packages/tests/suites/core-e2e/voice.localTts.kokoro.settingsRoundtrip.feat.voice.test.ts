@@ -58,11 +58,21 @@ describe('core e2e: voice local_neural model-pack settings roundtrip', () => {
           local_conversation: {
             tts: {
               provider: 'local_neural',
-              localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1 },
+              localNeural: {
+                model: 'kokoro',
+                assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+                voiceId: 'af_heart',
+                speed: 1,
+                execution: 'daemon',
+              },
             },
             stt: {
               provider: 'local_neural',
-              localNeural: { assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17', language: 'en' },
+              localNeural: {
+                assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+                language: 'en',
+                execution: 'device',
+              },
             },
           },
         },
@@ -109,10 +119,12 @@ describe('core e2e: voice local_neural model-pack settings roundtrip', () => {
     expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.model).toBe('kokoro');
     expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.voiceId).toBe('af_heart');
     expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.assetId).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
+    expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.execution).toBe('daemon');
 
     expect(parsed?.voice?.adapters?.local_conversation?.stt?.provider).toBe('local_neural');
     expect(parsed?.voice?.adapters?.local_conversation?.stt?.localNeural?.assetId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
     expect(parsed?.voice?.adapters?.local_conversation?.stt?.localNeural?.language).toBe('en');
+    expect(parsed?.voice?.adapters?.local_conversation?.stt?.localNeural?.execution).toBe('device');
 
     // Ensure installation state stays device-local (never synced).
     expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.packDirUri).toBeUndefined();

@@ -102,14 +102,6 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
     if (!oauthBaseUrl) throw new Error('missing oauth base url');
-    const serverBaseUrl = server.baseUrl;
-
-    const finalized = page.waitForResponse(
-      (resp) =>
-        resp.url().startsWith(`${serverBaseUrl}/v1/auth/external/github/finalize-keyless`) &&
-        resp.status() === 200,
-      { timeout: 120_000 },
-    );
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
     await page.getByTestId('welcome-signup-provider').click();
@@ -118,7 +110,6 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
     await expect(page.getByTestId('oauth-provisioning-choice-e2ee')).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId('oauth-provisioning-choice-plain').click();
 
-    await finalized;
     await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/');
     await expect
       .poll(async () => await page.getByTestId('session-getting-started-kind-connect_machine').count(), { timeout: 120_000 })

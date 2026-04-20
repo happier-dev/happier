@@ -7,10 +7,15 @@ import { formatInventoryBuckets, formatSimpleSections } from './lib/formatGovern
 import { GOVERNANCE_REPORT_PATHS } from './lib/reportPaths.ts';
 import { writeGovernanceReports } from './writeGovernanceReports.ts';
 
-export async function main(): Promise<void> {
-  const sourceFiles = collectFileInventory({
+export function collectMigrationGovernanceSourceFiles(rootDir: string = process.cwd()) {
+  return collectFileInventory({
+    rootDir,
     include: /\.[cm]?[jt]sx?$/,
-  }).filter((file) => !file.filePath.startsWith('scripts/testing/'));
+  });
+}
+
+export async function main(): Promise<void> {
+  const sourceFiles = collectMigrationGovernanceSourceFiles();
   const testFiles = sourceFiles.filter((file) => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file.filePath));
   const deprecatedImports = collectDeprecatedImportInventory(sourceFiles);
   const duplicatePatterns = collectDuplicatePatternInventory(testFiles, DUPLICATE_PATTERN_RULES);

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -13,6 +13,10 @@ import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBa
 import { fetchMessagesSince, fetchSessionV2 } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
 import { waitFor } from '../../src/testkit/timing';
+import {
+    writeEnabledLocalPathPluginState,
+    writeLocalPathPluginFixture,
+} from '../../src/testkit/plugins/localPathPluginFixture';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -49,155 +53,6 @@ function readTextMessage(value: unknown): DecryptedTextMessage | null {
 
 function readAcpAgentMessage(value: unknown): DecryptedAcpAgentMessage | null {
   return isRecord(value) ? (value as DecryptedAcpAgentMessage) : null;
-}
-
-async function writeConfiguredAcpPluginFixture(params: Readonly<{
-  pluginRoot: string;
-  backendId: string;
-  providerId: string;
-  pluginId: string;
-}>): Promise<void> {
-  const manifestDir = join(params.pluginRoot, '.happier-plugin');
-  await mkdir(manifestDir, { recursive: true });
-
-  await writeFile(
-    join(params.pluginRoot, 'daemon.mjs'),
-    [
-      'export async function bindTranscript() {',
-      "  return 'plugin-daemon-ready';",
-      '}',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-
-  await writeFile(
-    join(manifestDir, 'plugin.json'),
-    JSON.stringify(
-      {
-        schemaVersion: 1,
-        id: params.pluginId,
-        version: '1.0.0',
-        displayName: 'Plugin Backed ACP Integration',
-        description: 'Contributes a configured ACP backend through a local-path plugin',
-        engines: {
-          happier: '^0.2.0',
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        contributions: {
-          providers: [
-            {
-              kindVersion: 1,
-              id: params.providerId,
-              display: {
-                name: 'Plugin Backed ACP',
-                tags: ['plugin'],
-              },
-              ownedBackendIds: [params.backendId],
-            },
-          ],
-          backends: [
-            {
-              kindVersion: 1,
-              id: params.backendId,
-              providerId: params.providerId,
-              runtimeKind: 'acp',
-              acp: {
-                title: 'Plugin Review Bot',
-                description: 'Plugin-sourced ACP backend for end-to-end validation',
-                command: process.execPath,
-                args: [ACP_STUB_PROVIDER_PATH],
-                env: {
-                  HAPPIER_E2E_ACP_SDK_ENTRY: {
-                    t: 'literal',
-                    v: ACP_SDK_ENTRY,
-                  },
-                },
-                transportProfile: 'generic',
-                capabilities: {
-                  supportsLoadSession: true,
-                  supportsModes: 'yes',
-                  supportsModels: 'yes',
-                  supportsConfigOptions: 'unknown',
-                  promptImageSupport: 'unknown',
-                },
-                defaultMode: 'plan',
-                defaultModel: 'plugin-pro',
-              },
-              capabilities: {
-                directSessions: true,
-              },
-            },
-          ],
-          hooks: [],
-        },
-      },
-      null,
-      2,
-    ),
-    'utf8',
-  );
-}
-
-async function writeEnabledLocalPathPluginState(params: Readonly<{
-  happyHomeDir: string;
-  pluginRoot: string;
-  pluginId: string;
-}>): Promise<void> {
-  const stateDir = join(params.happyHomeDir, 'extensions', 'plugins', 'state');
-  const installedDir = join(params.happyHomeDir, 'extensions', 'plugins', 'installed');
-  const cacheDir = join(params.happyHomeDir, 'extensions', 'plugins', 'cache');
-  const logsDir = join(params.happyHomeDir, 'extensions', 'plugins', 'logs');
-  const locksDir = join(params.happyHomeDir, 'extensions', 'plugins', 'locks');
-  await Promise.all([
-    mkdir(stateDir, { recursive: true }),
-    mkdir(installedDir, { recursive: true }),
-    mkdir(cacheDir, { recursive: true }),
-    mkdir(logsDir, { recursive: true }),
-    mkdir(locksDir, { recursive: true }),
-  ]);
-
-  await writeFile(
-    join(stateDir, 'plugin-state.v1.json'),
-    JSON.stringify(
-      {
-        t: 'happier_plugin_state_v1',
-        schemaVersion: 1,
-        plugins: {
-          [params.pluginId]: {
-            source: {
-              kind: 'path',
-              locator: params.pluginRoot,
-              trustPolicy: 'local_trusted',
-              installPolicy: 'link',
-              resolvedPath: params.pluginRoot,
-              manifestPath: join(params.pluginRoot, '.happier-plugin', 'plugin.json'),
-            },
-            compatibility: {
-              status: 'unknown',
-              diagnostics: [],
-            },
-            install: {
-              mode: 'link',
-              manifestVersion: '1.0.0',
-              manifestDigest: null,
-              installedPath: null,
-            },
-            state: {
-              enabled: true,
-            },
-          },
-        },
-      },
-      null,
-      2,
-    ),
-    'utf8',
-  );
 }
 
 describe('core e2e: plugin-backed ACP configured backend', () => {
@@ -239,11 +94,76 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
       secret,
     });
 
-    await writeConfiguredAcpPluginFixture({
+    await writeLocalPathPluginFixture({
       pluginRoot,
-      backendId,
-      providerId,
-      pluginId,
+      daemonModuleContents: [
+        'export async function bindTranscript() {',
+        "  return 'plugin-daemon-ready';",
+        '}',
+        '',
+      ].join('\n'),
+      manifest: {
+        schemaVersion: 1,
+        id: pluginId,
+        version: '1.0.0',
+        displayName: 'Plugin Backed ACP Integration',
+        description: 'Contributes a configured ACP backend through a local-path plugin',
+        engines: {
+          happier: '^0.2.0',
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributions: {
+          providers: [
+            {
+              kindVersion: 1,
+              id: providerId,
+              display: {
+                name: 'Plugin Backed ACP',
+                tags: ['plugin'],
+              },
+              ownedBackendIds: [backendId],
+            },
+          ],
+          backends: [
+            {
+              kindVersion: 1,
+              id: backendId,
+              providerId,
+              runtimeKind: 'acp',
+              acp: {
+                title: 'Plugin Review Bot',
+                description: 'Plugin-sourced ACP backend for end-to-end validation',
+                command: process.execPath,
+                args: [ACP_STUB_PROVIDER_PATH],
+                env: {
+                  HAPPIER_E2E_ACP_SDK_ENTRY: {
+                    t: 'literal',
+                    v: ACP_SDK_ENTRY,
+                  },
+                },
+                transportProfile: 'generic',
+                capabilities: {
+                  supportsLoadSession: true,
+                  supportsModes: 'yes',
+                  supportsModels: 'yes',
+                  supportsConfigOptions: 'unknown',
+                  promptImageSupport: 'unknown',
+                },
+                defaultMode: 'plan',
+                defaultModel: 'plugin-pro',
+              },
+              capabilities: {
+                directSessions: true,
+              },
+            },
+          ],
+          hooks: [],
+        },
+      },
     });
     await writeEnabledLocalPathPluginState({
       happyHomeDir: cliHomeDir,
@@ -267,6 +187,7 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
       testDir,
       happyHomeDir: cliHomeDir,
       env: daemonEnv,
+      snapshotDir: resolve(testDir, 'cli-source-snapshot'),
     });
 
     const controlToken = (daemon.state as { controlToken?: string | null }).controlToken ?? undefined;
@@ -277,7 +198,12 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
       controlToken,
       body: {
         directory: workspaceDir,
-        backendTarget: { kind: 'configuredAcpBackend', backendId },
+        backendTarget: {
+          kind: 'backend',
+          backendId,
+          configuredBackendId: backendId,
+          sourceKind: 'configured',
+        },
         terminal: { mode: 'plain' },
         initialPrompt,
         environmentVariables: {

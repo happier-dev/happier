@@ -181,6 +181,40 @@ async function runSdkStreamUntilEof() {
     };
   }
 
+  function createRuntimeDescriptorMessage() {
+    return {
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: {
+        v: 1,
+        providerId: 'fake-claude',
+        provider: {
+          backendMode: 'sdk',
+          providerExtra: {
+            owner: 'happier',
+            schemaId: 'happier.executionRunRuntimeIdentity',
+            v: 1,
+            runtimeHandle: {
+              backendId: 'claude',
+              providerId: 'fake-claude',
+              source: 'built_in',
+            },
+          },
+        },
+      },
+    };
+  }
+
+  function createRuntimeCapabilitiesMessage() {
+    return {
+      type: 'event',
+      name: 'runtime.capabilities',
+      payload: {
+        executionRun: { supported: true },
+      },
+    };
+  }
+
   function createSystemInitMessage() {
     const mcpServers = Object.keys(mergedMcpServers || {}).map((name) => ({
       name,
@@ -352,6 +386,8 @@ async function runSdkStreamUntilEof() {
     }
 
     if (scenario === 'permission-prompt-write') {
+      emitSdk(createRuntimeDescriptorMessage());
+      emitSdk(createRuntimeCapabilitiesMessage());
       const writeToolUseId = `tool_write_${turn}`;
       const filePath = `/tmp/happier-e2e-permission-${turn}.txt`;
       const writeInput = { file_path: filePath, content: `hello from ui e2e ${turn}` };

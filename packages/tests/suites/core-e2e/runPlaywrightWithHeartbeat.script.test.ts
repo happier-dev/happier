@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resolve } from 'node:path';
+import { execFile } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 
 import { repoRootDir } from '../../src/testkit/paths';
 
@@ -9,11 +13,64 @@ import {
   resolveSignalExitCode,
 } from '../../scripts/runPlaywrightWithHeartbeat.shared.mjs';
 
+const execFileAsync = promisify(execFile);
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.resetModules();
 });
+
+async function createCapturingYarnBin(binDir: string, capturePath: string): Promise<void> {
+  const scriptPath = join(binDir, 'capture-yarn.cjs');
+  await writeFile(
+    scriptPath,
+    [
+      "'use strict';",
+      "const { writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2) }), 'utf8');`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const commandPath = join(binDir, process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
+  if (process.platform === 'win32') {
+    await writeFile(commandPath, ['@echo off', `node "${scriptPath}" %*`, ''].join('\r\n'), 'utf8');
+    return;
+  }
+
+  await writeFile(commandPath, ['#!/usr/bin/env node', "require('./capture-yarn.cjs');", ''].join('\n'), 'utf8');
+  await chmod(commandPath, 0o755);
+}
+
+async function captureVitestHeartbeatInvocation(args: readonly string[]): Promise<{ cwd: string; argv: string[] }> {
+  const tempDir = await mkdtemp(join(tmpdir(), 'happier-vitest-heartbeat-'));
+  try {
+    const binDir = join(tempDir, 'bin');
+    const capturePath = join(tempDir, 'capture.json');
+    await mkdir(binDir, { recursive: true });
+    await createCapturingYarnBin(binDir, capturePath);
+
+    await execFileAsync(
+      process.execPath,
+      [resolve(repoRootDir(), 'packages/tests/scripts/run-vitest-with-heartbeat.mjs'), ...args],
+      {
+        cwd: repoRootDir(),
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          HAPPIER_TEST_HEARTBEAT_MS: '1000000',
+        },
+        timeout: 10_000,
+      },
+    );
+
+    return JSON.parse(await readFile(capturePath, 'utf8')) as { cwd: string; argv: string[] };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
 
 describe('runPlaywrightWithHeartbeat helpers', () => {
   it('supports both config flag forms while preserving passthrough args', () => {
@@ -38,7 +95,7 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
     });
   });
 
-  it('assigns a per-process UI web export namespace when one is not provided', () => {
+  it('does not inject a UI web export namespace when one is not provided', () => {
     const first = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
     const second = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
 
@@ -48,8 +105,8 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
     expect(second.env).toEqual(expect.objectContaining({
       TEST_FLAG: '1',
     }));
-    expect(first.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe(`playwright-ui-${process.pid}`);
-    expect(second.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe(`playwright-ui-${process.pid}`);
+    expect(first.env).not.toHaveProperty('HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE');
+    expect(second.env).not.toHaveProperty('HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE');
   });
 
   it('preserves an explicit UI web export namespace', () => {
@@ -85,6 +142,51 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
     expect(resolveSignalExitCode('SIGINT')).toBe(130);
     expect(resolveSignalExitCode('SIGTERM')).toBe(143);
     expect(resolveSignalExitCode(null)).toBe(1);
+  });
+
+  it('runs the Vitest heartbeat child from the tests workspace when invoked at repo root', async () => {
+    const capture = await captureVitestHeartbeatInvocation([
+      '--config',
+      'vitest.core.slow.config.ts',
+      'suites/core-e2e/voice.agent.daemon.rpc.feat.voice.agent.slow.e2e.test.ts',
+      '-t',
+      'welcomedEpoch',
+    ]);
+
+    expect(capture.cwd).toBe(resolve(repoRootDir(), 'packages/tests'));
+    expect(capture.argv).toEqual([
+      '-s',
+      'vitest',
+      'run',
+      '--no-file-parallelism',
+      '-c',
+      'vitest.core.slow.config.ts',
+      'suites/core-e2e/voice.agent.daemon.rpc.feat.voice.agent.slow.e2e.test.ts',
+      '-t',
+      'welcomedEpoch',
+    ]);
+  });
+
+  it('normalizes package-prefixed Vitest heartbeat paths before spawning the child', async () => {
+    const capture = await captureVitestHeartbeatInvocation([
+      '--config',
+      'packages/tests/vitest.core.slow.config.ts',
+      'packages/tests/suites/core-e2e/voice.agent.daemon.rpc.feat.voice.agent.slow.e2e.test.ts',
+      '-t',
+      'welcomedEpoch',
+    ]);
+
+    expect(capture.argv).toEqual([
+      '-s',
+      'vitest',
+      'run',
+      '--no-file-parallelism',
+      '-c',
+      'vitest.core.slow.config.ts',
+      'suites/core-e2e/voice.agent.daemon.rpc.feat.voice.agent.slow.e2e.test.ts',
+      '-t',
+      'welcomedEpoch',
+    ]);
   });
 
   it('sweeps stale lease-owned processes before and after the wrapped child run', async () => {

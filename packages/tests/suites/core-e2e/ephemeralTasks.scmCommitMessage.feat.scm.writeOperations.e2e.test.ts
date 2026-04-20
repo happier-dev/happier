@@ -76,6 +76,7 @@ describe('core e2e: ephemeral task scm.commit_message', () => {
         HAPPIER_WEBAPP_URL: serverBaseUrl,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
+        HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
       },
     });
     const controlToken = (daemon.state as any)?.controlToken as string | undefined;
@@ -100,6 +101,7 @@ describe('core e2e: ephemeral task scm.commit_message', () => {
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
           HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'commit-message-json',
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
         },
       },
     });

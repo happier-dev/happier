@@ -7,6 +7,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { enableDirectSessionsFeature } from '../../src/testkit/uiE2e/enableDirectSessionsFeature';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 
@@ -154,6 +155,7 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     });
 
     await enableEnhancedSessionWizardInSettings(page, uiBaseUrl);
+    await enableDirectSessionsFeature(page, uiBaseUrl);
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?happier_hmr=0`, 180_000);
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });

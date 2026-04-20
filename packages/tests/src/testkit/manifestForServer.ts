@@ -11,6 +11,7 @@ export function writeTestManifestForServer(params: {
   seed?: number;
   sessionIds?: string[];
   env?: TestManifest['env'];
+  manifest?: Partial<TestManifest>;
 }): string {
   const startedAt = params.startedAt ?? new Date().toISOString();
   return writeTestManifest(params.testDir, {
@@ -22,6 +23,6 @@ export function writeTestManifestForServer(params: {
     ports: { server: params.server.port },
     sessionIds: params.sessionIds,
     env: params.env,
+    ...params.manifest,
   });
 }
-

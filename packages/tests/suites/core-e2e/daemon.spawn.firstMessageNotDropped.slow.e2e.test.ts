@@ -73,6 +73,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
       controlToken,
       body: {
         directory: workspaceDir,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         terminal: { mode: 'plain' },
         environmentVariables: {
           HAPPIER_HOME_DIR: daemonHomeDir,
@@ -165,6 +166,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
       controlToken,
       body: {
         directory: workspaceDir,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         terminal: { mode: 'plain' },
         environmentVariables: {
           HAPPIER_HOME_DIR: daemonHomeDir,

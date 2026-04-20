@@ -20,12 +20,23 @@ export default defineConfig({
   outputDir,
   use: {
     testIdAttribute: 'data-testid',
+    // Voice UI flows can touch `getUserMedia()` (mic checks, hands-free STT, realtime adapters).
+    // In headless CI this can stall on permission prompts unless we pre-grant permissions and
+    // force Chromium to use deterministic fake media devices.
+    permissions: ['microphone'],
+    launchOptions: {
+      args: [
+        '--use-fake-ui-for-media-stream',
+        '--use-fake-device-for-media-stream',
+        '--mute-audio',
+      ],
+    },
     // Keep UI e2e deterministic by avoiding responsive split-view layouts.
     // A phone-sized viewport ensures a single primary navigation stack on Expo web.
     viewport: { width: 390, height: 844 },
     actionTimeout: 15_000,
     navigationTimeout: 90_000,
-    trace: 'on-first-retry',
+    trace: process.env.HAPPIER_E2E_TRACE === '1' ? 'retain-on-failure' : 'on-first-retry',
     screenshot: 'only-on-failure',
     // Video finalization can stall long enough that the heartbeat wrapper hits its global timeout,
     // which prevents teardown and leaks server/daemon processes. Use traces/screenshots for debugging in CI.

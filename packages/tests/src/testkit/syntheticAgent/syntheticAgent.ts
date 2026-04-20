@@ -36,6 +36,7 @@ type AgentStateShape = {
       mode?: string | null;
       allowedTools?: string[] | null;
       decision?: string | null;
+      answers?: Record<string, string> | null;
     }
   >;
 };
@@ -149,6 +150,7 @@ export class SyntheticAgent {
         mode: decision.mode ?? null,
         allowedTools: decision.allowedTools ?? null,
         decision: decision.decision ?? (decision.approved ? 'approved' : 'denied'),
+        answers: decision.answers ?? null,
       };
       next.completedRequests = completedRequests;
       return next;

@@ -5,11 +5,11 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { buildAutomationTemplateEnvelope } from '../../src/testkit/automations';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { createSessionFromNewSessionComposer, openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -37,18 +37,17 @@ async function selectMachineForNewSession(params: Readonly<{
     uiBaseUrl: string;
     machineId: string;
 }>) {
-    await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
-    await expect(params.page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
     await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
 
     const exact = params.page.getByTestId(`new-session-machine:${params.machineId}`);
     if (await exact.count()) {
-        await exact.click();
+        await exact.first().click();
     } else {
         await params.page.locator('[data-testid^="new-session-machine:"]').first().click();
     }
 
     await params.page.waitForURL((url: URL) => url.pathname.endsWith('/new'), { timeout: 60_000 });
+    await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 }
 
 async function readAuthTokenFromBrowserStorage(page: Page): Promise<string> {
@@ -77,7 +76,7 @@ async function readAuthTokenFromBrowserStorage(page: Page): Promise<string> {
 }
 
 async function readMachineIdFromCliAuthLoginStdout(stdoutPath: string): Promise<string> {
-    const stdout = await readFile(stdoutPath, 'utf8');
+    const stdout = (await readFile(stdoutPath, 'utf8')).replaceAll(/\u001b\[[0-9;]*m/g, '');
     const match = stdout.match(/Machine ID:\s*([^\s]+)/);
     if (match?.[1]) {
         return match[1].trim();
@@ -116,6 +115,7 @@ test.describe('ui e2e: automations authoring', () => {
     let server: StartedServer | null = null;
     let ui: StartedUiWeb | null = null;
     let uiBaseUrl: string | null = null;
+    let daemon: StartedDaemon | null = null;
 
     test.beforeAll(async () => {
         test.setTimeout(900_000);
@@ -159,6 +159,7 @@ test.describe('ui e2e: automations authoring', () => {
 
     test.afterAll(async () => {
         test.setTimeout(120_000);
+        await daemon?.stop().catch(() => {});
         await ui?.stop().catch(() => {});
         await server?.stop().catch(() => {});
     });
@@ -170,31 +171,23 @@ test.describe('ui e2e: automations authoring', () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
 
-        await createAccountAndReachConnectMachineState({ page });
+        await page.getByTestId('welcome-create-account').click();
+        await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
 
         const testDir = resolve(join(suiteDir, 't1-automations-authoring'));
         await mkdir(testDir, { recursive: true });
 
-        const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
+        daemon = await authenticateAndStartDaemon({
+            page,
             testDir,
             cliHomeDir,
             serverUrl: server.baseUrl,
-            webappUrl: uiBaseUrl,
-            env: {
-                ...process.env,
+            uiBaseUrl,
+            createAccount: false,
+            extraEnv: {
                 HOME: cliHomeDir,
-                CI: '1',
-                HAPPIER_DISABLE_CAFFEINATE: '1',
-                HAPPIER_VARIANT: 'dev',
             },
         });
-
-        await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-        await page.getByTestId('terminal-connect-approve').click();
-        await cliLogin.waitForSuccess();
-        await acknowledgeTerminalConnectSuccessIfPresent(page);
-        await cliLogin.stop().catch(() => {});
         await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
         const authToken = await readAuthTokenFromBrowserStorage(page);
         const machineId = await readMachineIdFromCliAuthLoginStdout(resolve(join(testDir, 'cli.auth.login.stdout.log')));

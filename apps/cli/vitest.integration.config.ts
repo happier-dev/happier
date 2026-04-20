@@ -3,6 +3,11 @@ import { resolve } from 'node:path'
 
 import dotenv from 'dotenv'
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
+import {
+    workspacePackageAliases,
+    workspacePackageOptimizationExcludes,
+    workspacePackageSourcesPlugin,
+} from './scripts/vitestWorkspacePackageResolution'
 
 const testEnv = dotenv.config({
     path: '.env.integration-test'
@@ -68,9 +73,17 @@ export default defineConfig({
             ...mergedTestEnv,
         }
     },
-    resolve: {
-        alias: {
-            '@': resolve('./src'),
-        },
+    optimizeDeps: {
+        exclude: workspacePackageOptimizationExcludes,
     },
+    resolve: {
+        alias: [
+            ...workspacePackageAliases,
+            {
+                find: '@',
+                replacement: resolve('./src'),
+            },
+        ],
+    },
+    plugins: [workspacePackageSourcesPlugin],
 })

@@ -43,7 +43,9 @@ Out of scope for this package:
 - Core deterministic e2e (handoff slice): `yarn workspace @happier-dev/tests test:core:handoff`
 - UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
 - WSREPL Lima matrix (macOS/Linux host opt-in): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
-- Stress (seeded chaos): `yarn workspace @happier-dev/tests test:stress`
+- Stress (configuration-driven scale harness): `yarn workspace @happier-dev/tests test:stress`
+- Stress (full Compose topology): `yarn workspace @happier-dev/tests test:stress:full-compose`
+- Stress Compose topology only: `yarn workspace @happier-dev/tests stress:compose:up|status|down`
 - Providers (real provider CLIs, opt-in): `yarn workspace @happier-dev/tests test:providers`
 - Typecheck: `yarn workspace @happier-dev/tests typecheck`
 
@@ -98,7 +100,7 @@ Baseline updates are explicit:
 - `suites/core-e2e/*`: release-gate candidates (fast + slow split)
 - `suites/ui-e2e/*`: Playwright-driven browser E2E against Expo web (covers critical UI flows like auth + terminal connect)
 - Native desktop E2E (Tauri MCP) is app-owned in `apps/ui/scripts/qa/**` and is invoked via `yarn test:e2e:desktop:native` (or `yarn workspace @happier-dev/tests test:desktop:native`).
-- `suites/stress/*`: nightly/on-demand (repeat + chaos + flake classification)
+- `suites/stress/*`: nightly/on-demand configuration-driven scale harness (`light`, `full-compose`, `external`)
 - `suites/providers/*`: opt-in “real provider contract” tests (slow, may consume provider credits)
 
 Core E2E split convention:
@@ -110,14 +112,99 @@ Core E2E split convention:
 Every test case gets its own directory under `.project/logs/e2e/...` (see `src/testkit/runDir.ts`).
 
 Common artifacts:
-- `manifest.json`: per-test metadata (ports, baseUrl, session ids, env used)
+- `manifest.json`: per-test metadata and final scenario result (`status`, `endedAt`, topology, resolved config, summary pointers)
+- `stress-summary.json`: per-scenario final summary (`status`, `durationMs`, resolved config, counts, latencies, failures, metrics snapshots)
 - `*.events.json`: socket event timelines
 - `transcript.json`: HTTP message transcript snapshots
 - `server.*.log`, `cli.*.log`: stdout/stderr captures for spawned processes (when applicable)
 
-Artifacts are written on failure by default. You can force keeping artifacts even on success:
+Stress target modes:
+- `light`: boots the canonical local `server-light` process via the shared process testkit
+- `full-compose`: boots Postgres, Redis, Minio, scaled API/worker services, and an Nginx gateway from generated topology files inside the run directory
+- `external`: attaches to `HAPPIER_STRESS_BASE_URL` and drives load against an already running target
+
+Canonical stress env/config surface:
+- `HAPPIER_STRESS_PROFILE=capacity.small|capacity.medium|capacity.large|capacity.presence-heavy|capacity.rpc-heavy|capacity.mixed-realistic`
+- `HAPPIER_STRESS_TARGET_MODE=light|full-compose|external`
+- `HAPPIER_STRESS_BASE_URL=https://...` for `external`
+- `HAPPIER_STRESS_REPEAT`, `HAPPIER_STRESS_SEED`, `HAPPIER_STRESS_FLAKE_RETRY`
+- `HAPPIER_STRESS_USERS`, `HAPPIER_STRESS_MACHINES_PER_USER`, `HAPPIER_STRESS_SESSIONS_PER_USER`
+- `HAPPIER_STRESS_RPC_LISTENERS_PER_USER`, `HAPPIER_STRESS_RPC_CALLS_PER_SECOND`, `HAPPIER_STRESS_MESSAGES_PER_SECOND`
+- `HAPPIER_STRESS_DURATION_MS`, `HAPPIER_STRESS_WARMUP_MS`, `HAPPIER_STRESS_COOLDOWN_MS`, `HAPPIER_STRESS_SOAK_MS`
+- `HAPPIER_STRESS_RECONNECT_RATE`
+- `HAPPIER_STRESS_COMPOSE_API_REPLICAS`, `HAPPIER_STRESS_COMPOSE_WORKER_REPLICAS`
+- `HAPPIER_STRESS_COMPOSE_FRONT_DOOR=gateway|api-direct`
+- `HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=if-missing|always|never`
+- `HAPPIER_STRESS_COMPOSE_REUSE_RUNNING=1` to attach to the latest running full-compose topology instead of starting a fresh one
+- `HAPPIER_STRESS_COMPOSE_GATEWAY_PORT`, `HAPPIER_STRESS_COMPOSE_PG_PORT`, `HAPPIER_STRESS_COMPOSE_REDIS_PORT`
+- `HAPPIER_STRESS_COMPOSE_MINIO_PORT`, `HAPPIER_STRESS_COMPOSE_MINIO_CONSOLE_PORT`
+- `HAPPIER_STRESS_COMPOSE_METRICS_ENABLED`, `HAPPIER_STRESS_METRICS_SCRAPE_ENABLED`
+- `HAPPIER_STRESS_ROLLING_RESTART_ENABLED`, `HAPPIER_STRESS_KILL_TARGET=api|worker|none`
+- `HAPPIER_STRESS_KEEP_TOPOLOGY_ON_FAILURE=1` to preserve a failing Compose topology for inspection
+- `HAPPIER_STRESS_SUMMARY_OUTPUT_PATH=/abs/path/summary.json` to mirror the final scenario summary outside the run dir
+- `HAPPIER_STRESS_SOCKET_TRANSPORT=websocket|polling` for `light` and `external` modes (`full-compose` forces websocket-only synthetic clients)
+
+`HAPPIER_STRESS_COMPOSE_FRONT_DOOR=api-direct` is currently a narrow diagnostic mode only. It publishes one API container directly on a host port and therefore is only valid with `HAPPIER_STRESS_COMPOSE_API_REPLICAS=1`. The harness now rejects multi-replica `api-direct` runs instead of producing misleading capacity data. Multi-replica front-door bypass comparisons require in-network or distributed load generation.
+
+Legacy compatibility:
+- `HAPPIER_E2E_REPEAT`, `HAPPIER_E2E_SEED`, and `HAPPIER_E2E_FLAKE_RETRY` still work, but are now resolved through the canonical stress config reader.
+
+Artifacts are written on failure by default. On failure in `full-compose`, the harness collects diagnostics before teardown and preserves the topology when `HAPPIER_STRESS_KEEP_TOPOLOGY_ON_FAILURE=1` or `HAPPIER_E2E_SAVE_ARTIFACTS=1`.
+
+You can force keeping artifacts even on success:
 
 - `HAPPIER_E2E_SAVE_ARTIFACTS=1 yarn workspace @happier-dev/tests test`
+
+Common local entrypoints:
+
+- `yarn workspace @happier-dev/tests test:stress`
+- `yarn workspace @happier-dev/tests test:stress:full-compose`
+- `yarn workspace @happier-dev/tests test:stress:full-compose:reuse`
+- `HAPPIER_STRESS_BASE_URL=https://stress.example.com yarn workspace @happier-dev/tests test:stress:external`
+
+Recommended build-once / test-many full-compose loop:
+
+1. Build and launch the canonical full-compose topology once:
+
+```bash
+HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=always \
+yarn workspace @happier-dev/tests stress:compose:up
+```
+
+If Docker Desktop stalls during BuildKit image export on your machine, you can force the legacy builder for the one-time image build:
+
+```bash
+DOCKER_BUILDKIT=0 \
+HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=always \
+yarn workspace @happier-dev/tests stress:compose:up
+```
+
+2. Reuse that running topology across scenario runs without rebuilding the image:
+
+```bash
+HAPPIER_STRESS_TARGET_MODE=full-compose \
+HAPPIER_STRESS_COMPOSE_REUSE_RUNNING=1 \
+HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=never \
+yarn workspace @happier-dev/tests test:stress:sticky-affinity
+```
+
+`HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY` semantics:
+
+- `always`: rebuild the canonical image before launch
+- `if-missing`: reuse the canonical image only when it exists **and** matches the current runtime-input fingerprint; otherwise rebuild
+- `never`: true frozen-image mode; require the canonical image to exist and reuse it even if unrelated repo churn has changed the current fingerprint
+
+3. Inspect the running topology metadata at any point:
+
+```bash
+yarn workspace @happier-dev/tests stress:compose:status
+```
+
+4. Tear it down when you are finished:
+
+```bash
+yarn workspace @happier-dev/tests stress:compose:down
+```
 
 UI E2E (Playwright) notes:
 - Expo web is started via `expo start --web`; if you suspect stale Metro transforms, you can opt into cache clearing with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
@@ -181,13 +268,48 @@ Provider drift detection (unit-level, no server):
 
 These are intentionally slower and are meant for nightly/on-demand runs.
 
-- `suites/stress/reconnect.repeat.test.ts`: repeats a multi-device offline/reconnect pattern `HAPPIER_E2E_REPEAT` times.
+- `suites/stress/reconnect.repeat.test.ts`: repeats a multi-device offline/reconnect pattern `HAPPIER_STRESS_REPEAT` times.
 - `suites/stress/reconnect.chaos.test.ts`: seeded chaos runner that injects disconnect patterns and occasionally resends the same `localId` to simulate client retry noise.
+- `suites/stress/rpc.multiReplica.test.ts`: drives concurrent RPC listener registration/call churn and records routing stability under the configured topology.
+- `suites/stress/rpc.duplicateListenerPolicy.test.ts`: proves duplicate listener registration remains deterministic and flags ambiguous routing policy drift.
+- `suites/stress/presence.pressure.test.ts`: creates session + machine heartbeat pressure and records presence lag/ack behavior.
+- `suites/stress/mixed.realistic.test.ts`: combines session creation, machine-bound sockets, transcript writes, reconnect churn, and cross-socket RPC calls into one representative full-stack workload.
+- `suites/stress/stickyAffinity.validation.test.ts`: proves sticky polling continuity under correct affinity and proves degradation when affinity is removed.
+- `suites/stress/reconnect.crossReplicaFailover.test.ts`: kills the connected API replica and verifies reconnect, re-auth, room rejoin, and resumed session-scoped RPC behavior on another replica.
+- `suites/stress/redis.interruption.test.ts`: interrupts Redis and validates RPC, reconnect, and transcript recovery after the backplane returns.
+- `suites/stress/proxy.longIdleTimeout.test.ts`: verifies an unsafe proxy idle timeout drops realtime connections while a safe timeout preserves them.
+- `suites/stress/presence.workerCrashReclaim.test.ts`: crashes the worker, injects dead-consumer pending presence entries, and verifies Redis `XAUTOCLAIM` reclaim plus backlog drain after restart.
+- `suites/stress/rollingRestart.test.ts`: restarts the configured service in the active topology and verifies reconnect/RPC convergence afterward.
+
+Focused full-compose entrypoints:
+- `yarn workspace @happier-dev/tests test:stress:sticky-affinity`
+- `yarn workspace @happier-dev/tests test:stress:cross-replica-failover`
+- `yarn workspace @happier-dev/tests test:stress:redis-interruption`
+- `yarn workspace @happier-dev/tests test:stress:long-idle-proxy`
+- `yarn workspace @happier-dev/tests test:stress:duplicate-listener-policy`
+- `yarn workspace @happier-dev/tests test:stress:presence-worker-crash`
+- `yarn workspace @happier-dev/tests test:stress:mixed-realistic`
+
+Built-in capacity profiles:
+- `capacity.small`: `1 API / 1 worker`, `250` users, `250` msg/s, `10` rpc/s
+- `capacity.medium`: `2 API / 1 worker`, `500` users, `500` msg/s, `20` rpc/s
+- `capacity.large`: `2 API / 2 workers`, `1000` users, `1000` msg/s, `40` rpc/s
+- `capacity.presence-heavy`: `2 API / 2 workers`, `1500` users, low message/RPC pressure, intended to isolate presence/worker ceilings
+- `capacity.rpc-heavy`: `2 API / 1 worker`, `40` users, `80` listeners, intended to isolate multi-replica RPC routing
+- `capacity.mixed-realistic`: `2 API / 1 worker`, `250` users, `250` msg/s, `10` rpc/s, plus reconnect churn
+
+Reference mixed-load observations from the latest `full-compose` runs:
+- `1 API / 1 worker` passed `250`, `500`, `1000`, and `1500` mixed-load users with proportional `250/500/1000/1500` msg/s and `10/20/40/60` rpc/s
+- at `1500` mixed-load users, the scenario sustained `30000` acknowledged messages, `1500` routed RPC calls, and `1500` concurrent machine-bound sockets without duplicate local IDs or RPC routing drift
+- these runs indicate that the first current ceiling is still the high-cardinality presence/socket fan-in path rather than transcript writes or cluster RPC routing
 
 Recommended knobs:
-- `HAPPIER_E2E_REPEAT=...` (repetitions)
-- `HAPPIER_E2E_SEED=...` (deterministic repro)
-- `HAPPIER_E2E_FLAKE_RETRY=1` (retry once to classify flaky vs deterministic failure)
+- `HAPPIER_STRESS_REPEAT=...` (repetitions)
+- `HAPPIER_STRESS_SEED=...` (deterministic repro)
+- `HAPPIER_STRESS_FLAKE_RETRY=1` (retry once to classify flaky vs deterministic failure)
+
+Legacy compatibility:
+- `HAPPIER_E2E_REPEAT`, `HAPPIER_E2E_SEED`, and `HAPPIER_E2E_FLAKE_RETRY` are still accepted through the canonical stress config reader.
 
 ## Providers suite (opt-in)
 

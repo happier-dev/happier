@@ -71,6 +71,7 @@ describe('core e2e: voice agent daemon emits parsed voice actions from a real ba
       controlToken,
       body: {
         directory: workspaceDir,
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         terminal: { mode: 'plain' },
         environmentVariables: {
           HAPPIER_HOME_DIR: daemonHomeDir,
@@ -103,7 +104,7 @@ describe('core e2e: voice agent daemon emits parsed voice actions from a real ba
         resume: true,
         start: {
           intent: 'voice_agent',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           permissionMode: 'read_only',
           retentionPolicy: 'resumable',
           runClass: 'long_lived',
@@ -133,7 +134,7 @@ describe('core e2e: voice agent daemon emits parsed voice actions from a real ba
     let cursor = 0;
     let done: any = null;
     let streamDone = false;
-    for (let attempt = 0; attempt < 16 && !streamDone; attempt += 1) {
+    await waitFor(async () => {
       const read = await callLegacyEncryptedSessionRpc({
         ui,
         sessionId,
@@ -146,10 +147,12 @@ describe('core e2e: voice agent daemon emits parsed voice actions from a real ba
       cursor = read.nextCursor;
       done = (read.events as any[]).find((event) => event?.t === 'done') ?? done;
       streamDone = read.done;
-      if (!streamDone) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
+      return streamDone && done !== null;
+    }, {
+      timeoutMs: 45_000,
+      intervalMs: 250,
+      context: 'voice actions stream completion',
+    });
 
     expect(streamDone).toBe(true);
     expect(typeof done?.assistantText).toBe('string');
