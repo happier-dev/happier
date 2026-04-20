@@ -21,6 +21,7 @@
     "test:stress:duplicate-listener-policy": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/rpc.duplicateListenerPolicy.test.ts",
     "test:stress:presence-worker-crash": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/presence.workerCrashReclaim.test.ts",
     "test:stress:mixed-realistic": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/mixed.realistic.test.ts",
+    "test:stress:mixed-connect-ceiling": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/mixed.connectCeiling.test.ts",
     "stress:compose:up": "node scripts/runTsxEntrypoint.mjs src/testkit/stress/cli/stressComposeCli.ts up",
     "stress:compose:down": "node scripts/runTsxEntrypoint.mjs src/testkit/stress/cli/stressComposeCli.ts down",
     "stress:compose:status": "node scripts/runTsxEntrypoint.mjs src/testkit/stress/cli/stressComposeCli.ts status",
