@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -197,6 +197,68 @@ describe('installProviderCli vendor_recipe execution gating', () => {
     } finally {
       await rm(homeDir, { recursive: true, force: true });
       await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces a targeted memory-pressure hint when a vendor recipe is killed with exit 137', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-vendor-oom-home-'));
+    const logDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-vendor-oom-log-'));
+    const binDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-vendor-oom-bin-'));
+    try {
+      const platform = resolvePlatformFromNodePlatform(process.platform);
+      expect(platform).not.toBeNull();
+      if (!platform) return;
+
+      type SpawnSyncFn = typeof import('node:child_process').spawnSync;
+      type SpawnSyncMockFn = (
+        command: string,
+        args?: ReadonlyArray<string>,
+        options?: import('node:child_process').SpawnSyncOptions,
+      ) => import('node:child_process').SpawnSyncReturns<Buffer>;
+      const spawnSyncMock = vi
+        .fn<SpawnSyncMockFn>(() => ({
+          pid: 0,
+          output: [null, Buffer.alloc(0), Buffer.from('installer died')],
+          status: 137,
+          signal: 'SIGKILL',
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.from('installer died'),
+        }))
+        .mockName('spawnSync');
+
+      const bashPath = join(binDir, process.platform === 'win32' ? 'bash.cmd' : 'bash');
+      await writeFile(bashPath, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n', 'utf8');
+      if (process.platform !== 'win32') {
+        await chmod(bashPath, 0o755);
+      }
+
+      const res = await installProviderCli({
+        providerId: 'claude',
+        platform,
+        logDir,
+        env: {
+          ...process.env,
+          HAPPIER_HOME_DIR: homeDir,
+          HOME: homeDir,
+          PATH: `${binDir}:/bin`,
+        },
+        skipIfInstalled: false,
+        allowVendorRecipeExecution: true,
+        deps: {
+          spawnSync: spawnSyncMock as unknown as SpawnSyncFn,
+        },
+      });
+
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.errorCode).toBe('command-failed');
+      expect(res.errorMessage).toContain('ran out of memory');
+      expect(res.errorMessage).toContain('increase available memory or swap');
+      expect(res.logPath).not.toBeNull();
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+      await rm(logDir, { recursive: true, force: true });
+      await rm(binDir, { recursive: true, force: true });
     }
   });
 });

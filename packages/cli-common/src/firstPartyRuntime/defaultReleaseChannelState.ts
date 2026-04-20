@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -5,8 +6,14 @@ import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier
 
 import { joinPathForPathShape } from '../path/pathShape.js';
 import { resolveHappyHomeDirFromEnvironment } from '../providers/resolveHappyHomeDir.js';
+import type { FirstPartyComponentId } from './componentCatalog.js';
 
 const DEFAULT_MANAGED_RELEASE_CHANNEL: PublicReleaseRingId = 'stable';
+const DEFAULT_RELEASE_CHANNEL_COMPONENT_IDS = new Set<FirstPartyComponentId>(['happier-cli']);
+
+export function shouldPersistDefaultManagedReleaseChannel(componentId: FirstPartyComponentId): boolean {
+    return DEFAULT_RELEASE_CHANNEL_COMPONENT_IDS.has(componentId);
+}
 
 export function resolveDefaultManagedReleaseChannelStatePath(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
@@ -15,15 +22,29 @@ export function resolveDefaultManagedReleaseChannelStatePath(params: Readonly<{
     return joinPathForPathShape(happyHomeDir, 'default-cli-release-channel.json');
 }
 
+function normalizeDefaultManagedReleaseChannelPayload(raw: string): PublicReleaseRingId {
+    const parsed = JSON.parse(String(raw)) as { releaseChannel?: unknown };
+    const normalized = normalizePublicReleaseRingId(parsed.releaseChannel);
+    return normalized || DEFAULT_MANAGED_RELEASE_CHANNEL;
+}
+
+export function readDefaultManagedReleaseChannelSync(params: Readonly<{
+    processEnv?: NodeJS.ProcessEnv;
+}> = {}): PublicReleaseRingId {
+    const statePath = resolveDefaultManagedReleaseChannelStatePath(params);
+    try {
+        return normalizeDefaultManagedReleaseChannelPayload(readFileSync(statePath, 'utf8'));
+    } catch {
+        return DEFAULT_MANAGED_RELEASE_CHANNEL;
+    }
+}
+
 export async function readDefaultManagedReleaseChannel(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
 }> = {}): Promise<PublicReleaseRingId> {
     const statePath = resolveDefaultManagedReleaseChannelStatePath(params);
     try {
-        const raw = await readFile(statePath, 'utf8');
-        const parsed = JSON.parse(String(raw)) as { releaseChannel?: unknown };
-        const normalized = normalizePublicReleaseRingId(parsed.releaseChannel);
-        return normalized || DEFAULT_MANAGED_RELEASE_CHANNEL;
+        return normalizeDefaultManagedReleaseChannelPayload(await readFile(statePath, 'utf8'));
     } catch {
         return DEFAULT_MANAGED_RELEASE_CHANNEL;
     }

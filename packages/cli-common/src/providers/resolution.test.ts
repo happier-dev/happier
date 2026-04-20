@@ -3,11 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { legacyCustomAcpCompat } from '@happier-dev/agents';
 
 import {
   isProviderCliPathRunnable,
+  readBackendCliSourcePreferenceForProvider,
   readBackendCliSourcePreference,
   resolveProviderCliCommand,
+  resolveProviderCliCommandForRuntime,
 } from './resolution';
 
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -36,6 +39,10 @@ describe('readBackendCliSourcePreference', () => {
         'backend:codex': 'managed-first',
       }),
     } as NodeJS.ProcessEnv)).toBe('managed-first');
+  });
+
+  it('falls back to the default source preference for compatibility-only agent ids', () => {
+    expect(readBackendCliSourcePreferenceForProvider('customAcp', 'system-first', {} as NodeJS.ProcessEnv)).toBe('system-first');
   });
 });
 
@@ -184,6 +191,43 @@ describe('resolveProviderCliCommand', () => {
     })).toEqual({
       source: 'override',
       command: cliPath,
+    });
+  });
+
+  it('does not throw for compatibility-only customAcp resolution when no backend target preference exists', () => {
+    expect(resolveProviderCliCommandForRuntime(legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec(), {
+      processEnv: {
+        PATH: '',
+      },
+      isBunRuntime: false,
+      currentExecPath: process.execPath,
+    })).toBeNull();
+  });
+
+  it('falls back to the Windows npm user bin for opencode when PATH is missing the binary', () => {
+    if (!originalPlatformDescriptor) {
+      throw new Error('Expected process.platform to be configurable for this test');
+    }
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+
+    const root = join(tmpdir(), `happier-cli-common-provider-opencode-win-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const npmDir = join(root, 'AppData', 'Roaming', 'npm');
+    mkdirSync(npmDir, { recursive: true });
+
+    const opencodeCmdPath = join(npmDir, 'opencode.CMD');
+    writeFileSync(opencodeCmdPath, '@echo off\r\n', 'utf8');
+    chmodSync(opencodeCmdPath, 0o755);
+
+    expect(resolveProviderCliCommand('opencode', {
+      processEnv: {
+        HOME: root,
+        PATH: '',
+      },
+      isBunRuntime: false,
+      currentExecPath: process.execPath,
+    })).toEqual({
+      source: 'system',
+      command: opencodeCmdPath,
     });
   });
 

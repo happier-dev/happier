@@ -24,6 +24,39 @@ describe('cli-common atomic build contract', () => {
     expect(buildScript.resolveBuildScriptMode([])).toBe('build');
   });
 
+  it('resolves TypeScript package builds through the JavaScript CLI entrypoint instead of a shell wrapper', () => {
+    expect(buildScript).toMatchObject({
+      resolveTypeScriptBuildInvocation: expect.any(Function),
+    });
+
+    const invocation = buildScript.resolveTypeScriptBuildInvocation({
+      repoRoot: '/repo',
+      packageDir: '/repo/packages/cli-common',
+      processExecPath: '/node',
+      requireResolve: (request) => {
+        if (request === 'typescript/lib/tsc.js') {
+          return '/repo/node_modules/typescript/lib/tsc.js';
+        }
+        throw new Error(`Unexpected request: ${request}`);
+      },
+      existsSync: () => false,
+      platform: 'linux',
+      tsconfigPath: 'tsconfig.json',
+      outDir: '/repo/packages/cli-common/.dist-stage/dist',
+    });
+
+    expect(invocation).toEqual({
+      command: '/node',
+      args: [
+        '/repo/node_modules/typescript/lib/tsc.js',
+        '-p',
+        'tsconfig.json',
+        '--outDir',
+        '/repo/packages/cli-common/.dist-stage/dist',
+      ],
+    });
+  });
+
   it('builds an immutable atomic dist plan from the package directory', () => {
     expect(buildScript).toMatchObject({
       createPackageDistBuildPlan: expect.any(Function),

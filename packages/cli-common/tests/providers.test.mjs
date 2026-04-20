@@ -175,6 +175,18 @@ test('planProviderCliInstall uses managed-package installs for qwen', () => {
   assert.equal(qwen.plan.commands.length, 0);
 });
 
+test('planProviderCliInstall exposes a Windows vendor recipe for opencode', () => {
+  const opencode = planProviderCliInstall({ providerId: 'opencode', platform: 'win32' });
+  assert.equal(opencode.ok, true);
+  assert.equal(opencode.plan.installMode, 'vendor_recipe');
+  assert.deepEqual(opencode.plan.commands, [{
+    cmd: 'cmd.exe',
+    args: ['/c', 'npm install -g opencode-ai'],
+    requiresAdmin: false,
+    note: null,
+  }]);
+});
+
 test('resolvePlatformFromNodePlatform maps supported node platforms and rejects unsupported ones', () => {
   assert.equal(resolvePlatformFromNodePlatform('darwin'), 'darwin');
   assert.equal(resolvePlatformFromNodePlatform('linux'), 'linux');

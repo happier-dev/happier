@@ -1,16 +1,46 @@
 import { existsSync } from 'node:fs';
 import { mkdtemp, rename, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { verifyPackageExportTargets } from './verifyExports.mjs';
+import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
 async function removeDir(path) {
     await rm(path, { recursive: true, force: true });
 }
 
+export function resolveTypeScriptBuildInvocation({
+    packageDir,
+    repoRoot = resolve(packageDir, '..', '..'),
+    processExecPath = process.execPath,
+    requireResolve,
+    existsSync: existsSyncImpl,
+    platform,
+    tsconfigPath = 'tsconfig.json',
+    outDir,
+} = {}) {
+    const invocation = resolveTypeScriptCliInvocation({
+        repoRoot,
+        workspaceDir: packageDir,
+        processExecPath,
+        requireResolve,
+        existsSync: existsSyncImpl,
+        platform,
+    });
+
+    return {
+        command: invocation.command,
+        args: [...invocation.argsPrefix, '-p', tsconfigPath, '--outDir', outDir],
+    };
+}
+
 async function runTscBuild({ packageDir, stagingDistDir, env }) {
-    const result = spawnSync('tsc', ['-p', 'tsconfig.json', '--outDir', stagingDistDir], {
+    const invocation = resolveTypeScriptBuildInvocation({
+        packageDir,
+        outDir: stagingDistDir,
+    });
+    const result = spawnSync(invocation.command, invocation.args, {
         cwd: packageDir,
         env,
         stdio: 'inherit',

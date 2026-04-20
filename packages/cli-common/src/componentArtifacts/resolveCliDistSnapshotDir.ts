@@ -2,6 +2,11 @@ import { existsSync } from 'node:fs';
 import { cp, mkdtemp, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+function isRetryableSnapshotRenameError(error: unknown): boolean {
+  const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : null;
+  return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
+}
+
 async function snapshotCliDistDir(params: Readonly<{ cliDir: string; distDir: string }>): Promise<string> {
   const snapshotDir = await mkdtemp(join(params.cliDir, '.dist.hstack-snapshot-'));
   let liveDistRenamed = false;
@@ -11,6 +16,15 @@ async function snapshotCliDistDir(params: Readonly<{ cliDir: string; distDir: st
     await cp(snapshotDir, params.distDir, { recursive: true });
     return snapshotDir;
   } catch (error) {
+    if (!liveDistRenamed && existsSync(params.distDir) && isRetryableSnapshotRenameError(error)) {
+      try {
+        await cp(params.distDir, snapshotDir, { recursive: true });
+        return snapshotDir;
+      } catch (copyError) {
+        await rm(snapshotDir, { recursive: true, force: true }).catch(() => {});
+        throw copyError;
+      }
+    }
     if (liveDistRenamed && !existsSync(params.distDir) && existsSync(snapshotDir)) {
       await rename(snapshotDir, params.distDir).catch(() => {});
     }
@@ -24,19 +38,21 @@ export async function resolveCliDistSnapshotDir({
   distDir,
   distBackupDir,
   distEntrypointPath,
+  reuseExistingDistSnapshot = false,
   buildDist,
 }: Readonly<{
   cliDir: string;
   distDir: string;
   distBackupDir: string;
   distEntrypointPath: string;
+  reuseExistingDistSnapshot?: boolean;
   buildDist: () => Promise<void>;
 }>): Promise<string> {
   if (!existsSync(distDir) && existsSync(distBackupDir)) {
     await rename(distBackupDir, distDir);
   }
 
-  if (existsSync(distEntrypointPath)) {
+  if (reuseExistingDistSnapshot && existsSync(distEntrypointPath)) {
     return await snapshotCliDistDir({ cliDir, distDir });
   }
 

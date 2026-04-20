@@ -36,6 +36,7 @@
     },
     "./releaseRings": {
       "types": "./dist/releaseRings.d.ts",
+      "import": "./dist/releaseRings.js",
       "require": "./releaseRings.cjs",
       "default": "./dist/releaseRings.js"
     }
@@ -47,7 +48,7 @@
     "README.md"
   ],
   "scripts": {
-    "build:esm": "tsc -p tsconfig.json",
+    "build:esm": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
     "build": "yarn -s build:esm",
     "test": "yarn -s build && HAPPIER_FEATURE_POLICY_ENV= node --test \"tests/*.test.mjs\"",
     "postinstall:real": "yarn -s build",

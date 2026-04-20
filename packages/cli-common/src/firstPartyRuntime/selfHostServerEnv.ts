@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join, win32 as win32Path } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const SELF_HOST_SERVER_ENV_MANAGED_KEYS = new Set<string>([
     'DATABASE_URL',
@@ -82,22 +83,17 @@ export function renderSelfHostServerEnvText(params: Readonly<{
     const serverBinDir = typeof params.serverBinDir === 'string' && params.serverBinDir.trim()
         ? params.serverBinDir.trim()
         : '';
-    const hasBunRuntime = typeof (globalThis as unknown as { Bun?: unknown }).Bun !== 'undefined';
-    const autoMigrateSqlite = platform === 'darwin' && hasBunRuntime ? '0' : '1';
+    const autoMigrateSqlite = resolveSelfHostSqliteAutoMigrateValue();
     const migrationsDir = platform === 'win32'
         ? win32Path.join(String(params.dataDir ?? ''), 'migrations', 'sqlite')
         : `${normalizedDataDir}/migrations/sqlite`;
     const dbPath = platform === 'win32'
         ? win32Path.join(String(params.dataDir ?? ''), 'happier-server-light.sqlite')
         : `${normalizedDataDir}/happier-server-light.sqlite`;
-    const databaseUrl = platform === 'win32'
-        ? (() => {
-            const normalized = String(dbPath).replaceAll('\\', '/');
-            if (/^[a-zA-Z]:\//.test(normalized)) return `file:///${normalized}`;
-            if (normalized.startsWith('//')) return `file:${normalized}`;
-            return `file:///${normalized}`;
-        })()
-        : `file:${dbPath}`;
+    const databaseUrl = renderPrismaCompatibleSqliteDatabaseUrl({
+        dbPath,
+        platform,
+    });
 
     const prismaEngineCandidates: string[] = [];
     if (serverBinDir && platform === 'darwin' && arch === 'arm64') {
@@ -132,6 +128,26 @@ export function renderSelfHostServerEnvText(params: Readonly<{
         nodeModulesPath,
         prismaEnginePath,
     });
+}
+
+export function renderPrismaCompatibleSqliteDatabaseUrl(params: Readonly<{
+    dbPath: string;
+    platform: string;
+}>): string {
+    if (params.platform !== 'win32') {
+        return pathToFileURL(params.dbPath).href;
+    }
+
+    const fileUrl = pathToFileURL(params.dbPath, { windows: true });
+    if (fileUrl.hostname) {
+        return `file://${fileUrl.hostname}${fileUrl.pathname}`;
+    }
+
+    return `file:${fileUrl.pathname.replace(/^\/(?=[A-Za-z]:\/)/, '')}`;
+}
+
+export function resolveSelfHostSqliteAutoMigrateValue(): '1' {
+    return '1';
 }
 
 export function parseEnvText(raw: string): Record<string, string> {

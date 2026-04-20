@@ -284,6 +284,20 @@ function hasJsonFlag(args) {
   return argv.some((a) => a === '--json' || String(a).startsWith('--json='));
 }
 
+function shouldSkipBundledWorkspacePreflight(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  const command = args.find((arg) => !String(arg).startsWith('-')) ?? '';
+  if (command !== 'stack') return false;
+
+  const commandIndex = args.indexOf(command);
+  const rest = commandIndex >= 0 ? args.slice(commandIndex + 1) : [];
+  const subcommand = rest.find((arg) => !String(arg).startsWith('-')) ?? '';
+  if (subcommand !== 'dev' && subcommand !== 'start') return false;
+
+  const hasBackground = rest.some((arg) => arg === '--background');
+  return hasBackground && hasJsonFlag(rest);
+}
+
 function maybeWarnDeprecatedSetup(cmd, rest) {
   if (cmd !== 'setup') return;
   if (hasJsonFlag(rest)) return;
@@ -308,7 +322,9 @@ async function main() {
   }
 
   maybeReexecToCliRoot(cliRootDir);
-  await refreshLocalBundledWorkspacePackages(cliRootDir);
+  if (!shouldSkipBundledWorkspacePreflight(argv)) {
+    await refreshLocalBundledWorkspacePackages(cliRootDir);
+  }
 
   // If the user passed only flags (common via `npx --yes -p @happier-dev/stack hstack --help`),
   // treat it as root help rather than `help --help` (which would look like

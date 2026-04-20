@@ -30,6 +30,7 @@ export { resolveInstalledFirstPartyComponentPaths } from './resolveInstalledComp
 export type { InstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
 export {
   readDefaultManagedReleaseChannel,
+  readDefaultManagedReleaseChannelSync,
   resolveDefaultManagedReleaseChannelStatePath,
   writeDefaultManagedReleaseChannel,
 } from './defaultReleaseChannelState.js';
@@ -84,6 +85,7 @@ export type {
 export {
   applyEnvOverridesToEnvText,
   parseEnvText,
+  renderPrismaCompatibleSqliteDatabaseUrl,
   renderSelfHostServerEnvText,
 } from './selfHostServerEnv.js';
 

@@ -67,6 +67,7 @@ export type HappierService = Readonly<{
   scope: 'user' | 'system';
   definitionPath: string;
   executablePath: string | null;
+  happierHomeDir?: string | null;
   serverUrl?: string | null;
   publicServerUrl?: string | null;
   installed: boolean;

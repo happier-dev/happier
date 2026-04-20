@@ -10,6 +10,7 @@ test('release-runtime exposes a prebuilt CommonJS releaseRings entrypoint for co
   const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
   const require = createRequire(import.meta.url);
 
+  assert.equal(pkg?.exports?.['./releaseRings']?.import, './dist/releaseRings.js');
   assert.equal(pkg?.exports?.['./releaseRings']?.require, './releaseRings.cjs');
   assert.ok(fs.existsSync(path.join(pkgDir, 'releaseRings.cjs')));
   assert.equal(

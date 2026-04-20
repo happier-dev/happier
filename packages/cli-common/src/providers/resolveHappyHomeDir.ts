@@ -2,6 +2,7 @@ import { homedir, tmpdir } from 'node:os';
 
 import {
   isAbsolutePathForPathShape,
+  isWin32ShapedAbsolutePath,
   joinPathForPathShape,
   resolvePathForPathShape,
 } from '../path/pathShape.js';
@@ -21,6 +22,9 @@ function resolveConfiguredHomeOverride(rawOverride: string, processEnv: NodeJS.P
       : override.startsWith('~/') || override.startsWith('~\\')
         ? joinPathForPathShape(normalizedHome || homedir(), override.slice(2))
         : override;
+  if (process.platform !== 'win32' && isWin32ShapedAbsolutePath(expandedOverride)) {
+    throw new Error(`Windows-shaped home overrides are not supported on ${process.platform}`);
+  }
   return isAbsolutePathForPathShape(expandedOverride) ? expandedOverride : resolvePathForPathShape(expandedOverride);
 }
 

@@ -1,8 +1,9 @@
-import { cp, mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import type { FirstPartyComponentId } from './componentCatalog.js';
+import { replaceRuntimePayloadTree } from './copyRuntimePayloadTree.js';
 import { writeEmbeddedPublicReleaseRingMarker } from './embeddedPublicReleaseRingMarker.js';
 import { resolveFirstPartyInstallLayout, resolveFirstPartyVersionInstallPath } from './installLayout.js';
 import { syncInstalledPayloadPointer } from './syncInstalledPayloadPointer.js';
@@ -11,6 +12,7 @@ import { readInstalledVersionMarkers, writeInstalledVersionMarker } from './vers
 export interface FirstPartyPayloadPromotionResult {
   currentVersionId: string;
   previousVersionId: string | null;
+  hadLegacyCurrentInstallWithoutVersionMarkers: boolean;
   versionPath: string;
 }
 
@@ -36,16 +38,25 @@ export async function promoteVersionedPayload(params: Readonly<{
     processEnv: params.processEnv,
   });
   const { currentVersionId, previousVersionId } = await readInstalledVersionMarkers(layout);
+  const currentPayloadExists = await stat(layout.currentPath)
+    .then((entry) => entry.isDirectory())
+    .catch(() => false);
 
   await mkdir(layout.versionsDir, { recursive: true });
-  await rm(versionPath, { recursive: true, force: true });
-  await cp(params.stagedPayloadPath, versionPath, { recursive: true });
-  await writeEmbeddedPublicReleaseRingMarker({
-    payloadRoot: versionPath,
-    releaseRing: layout.channel,
+  await replaceRuntimePayloadTree({
+    sourcePath: params.stagedPayloadPath,
+    destinationPath: versionPath,
+    consumeSourcePath: true,
+    onTempReady: async (tempPath) => {
+      await writeEmbeddedPublicReleaseRingMarker({
+        payloadRoot: tempPath,
+        releaseRing: layout.channel,
+      });
+    },
   });
 
   let nextPreviousVersionId = previousVersionId;
+  const hadLegacyCurrentInstallWithoutVersionMarkers = !currentVersionId && currentPayloadExists;
   if (currentVersionId && currentVersionId !== params.versionId) {
     const currentVersionPath = resolveFirstPartyVersionInstallPath({
       componentId: params.componentId,
@@ -85,6 +96,7 @@ export async function promoteVersionedPayload(params: Readonly<{
   return {
     currentVersionId: params.versionId,
     previousVersionId: nextPreviousVersionId,
+    hadLegacyCurrentInstallWithoutVersionMarkers,
     versionPath,
   };
 }

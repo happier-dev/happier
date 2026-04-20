@@ -14,11 +14,13 @@ NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
 ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart
 RUN_ACTION="${HAPPIER_INSTALLER_RUN_ACTION:-}"
+SETUP_RELAY_SHORTCUT="0"
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
 VERBOSE_MODE="${HAPPIER_INSTALLER_VERBOSE:-0}"
 PURGE_INSTALL_DIR="${HAPPIER_INSTALLER_PURGE:-0}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
 GITHUB_TOKEN="${HAPPIER_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
+RELEASE_ASSETS_DIR="${HAPPIER_RELEASE_ASSETS_DIR:-}"
 DEFAULT_MINISIGN_PUBKEY="$(cat <<'EOF'
 untrusted comment: minisign public key 91AE28177BF6E43C
 RWQ85PZ7FyiukYbL3qv/bKnwgbT68wLVzotapeMFIb8n+c7pBQ7U8W2t
@@ -250,7 +252,7 @@ json_lookup_asset_url() {
   # giant line (which can overflow awk line-length limits on some platforms) and instead parse
   # line-by-line within the assets array. We intentionally return the *last* match to support
   # rolling tags that may contain multiple versions: newest assets are appended later in the JSON.
-  printf '%s' "$json" | awk -v re="$name_regex" '
+  printf '%s' "$json" | tr '{},' '\n\n\n' | awk -v re="$name_regex" '
     BEGIN {
       in_assets = 0
       name = ""
@@ -299,6 +301,71 @@ json_lookup_asset_url() {
       }
     }
   '
+}
+
+find_local_release_asset_path() {
+  local name_regex="$1"
+  if [[ -z "${RELEASE_ASSETS_DIR}" ]]; then
+    return 1
+  fi
+  if [[ ! -d "${RELEASE_ASSETS_DIR}" ]]; then
+    echo "HAPPIER_RELEASE_ASSETS_DIR does not exist: ${RELEASE_ASSETS_DIR}" >&2
+    return 1
+  fi
+
+  local matched=""
+  while IFS= read -r -d '' path; do
+    local name
+    name="$(basename "${path}")"
+    if [[ "${name}" =~ ${name_regex} ]]; then
+      matched="${path}"
+    fi
+  done < <(find "${RELEASE_ASSETS_DIR}" -maxdepth 1 -type f -print0 2>/dev/null)
+
+  if [[ -z "${matched}" ]]; then
+    return 1
+  fi
+  printf '%s' "${matched}"
+}
+
+resolve_release_asset_source() {
+  local release_json="$1"
+  local name_regex="$2"
+  if [[ -n "${RELEASE_ASSETS_DIR}" ]]; then
+    find_local_release_asset_path "${name_regex}"
+    return
+  fi
+  json_lookup_asset_url "${release_json}" "${name_regex}"
+}
+
+download_release_asset_with_retry() {
+  local output_path="$1"
+  local source="$2"
+  local attempts="${HAPPIER_INSTALLER_DOWNLOAD_RETRY_ATTEMPTS:-3}"
+  local retry_delay="${HAPPIER_INSTALLER_DOWNLOAD_RETRY_DELAY_SECONDS:-2}"
+  local attempt=1
+  while true; do
+    rm -f "${output_path}"
+    if curl_auth -o "${output_path}" "${source}"; then
+      return 0
+    fi
+    if [[ "${attempt}" -ge "${attempts}" ]]; then
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep "${retry_delay}"
+  done
+}
+
+stage_release_asset() {
+  local label="$1"
+  local output_path="$2"
+  local source="$3"
+  if [[ -f "${source}" ]]; then
+    run_installer_step "${label}" cp "${source}" "${output_path}"
+    return
+  fi
+  run_installer_step "${label}" download_release_asset_with_retry "${output_path}" "${source}"
 }
 
 resolve_exe_name() {
@@ -466,7 +533,7 @@ action_uninstall() {
 
   local binary=""
   binary="$(resolve_installed_binary 2>/dev/null || true)"
-  if [[ -n "${binary}" && "${PRODUCT}" == "cli" ]]; then
+  if [[ -n "${binary}" && "${PRODUCT}" == "cli" ]] && ! daemon_service_operations_are_explicitly_disabled; then
     "${binary}" service uninstall >/dev/null 2>&1 || true
   fi
 
@@ -636,14 +703,18 @@ resolve_with_daemon_choice() {
 
   local default_choice
   default_choice="$(default_daemon_install_choice)"
-  if [[ "${NONINTERACTIVE}" == "1" ]]; then
-    echo "${default_choice}"
-    return
-  fi
-
   local has_existing_services="0"
   if background_service_inventory_is_supported "${services_json}" && ! background_service_inventory_is_empty "${services_json}"; then
     has_existing_services="1"
+  fi
+
+  if [[ "${NONINTERACTIVE}" == "1" ]]; then
+    if [[ "${has_existing_services}" == "1" ]]; then
+      echo "1"
+      return
+    fi
+    echo "${default_choice}"
+    return
   fi
 
   prompt_for_daemon_install_choice "${default_choice}" "${has_existing_services}"
@@ -656,7 +727,7 @@ invoke_installer_command_with_daemon_service_context() {
   local channel_label=""
   channel_label="$(display_channel_label "${CHANNEL}")"
   local installer_strategy="${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-}"
-  local state_home_dir="${HAPPIER_HOME_DIR:-${HOME}/.happier}"
+  local state_home_dir="${HAPPIER_HOME_DIR:-${INSTALL_DIR}}"
 
   local -a env_cmd=(env
     "HAPPIER_HOME_DIR=${state_home_dir}"
@@ -689,11 +760,33 @@ read_background_service_preflight_json() {
   local cli_bin="$1"
   local repair_json=""
   repair_json="$(invoke_installer_command_with_daemon_service_context "${cli_bin}" service repair --json 2>/dev/null || true)"
-  if [[ "${repair_json}" == *'"existingServices":'* ]]; then
+  if background_service_inventory_json_is_supported "${repair_json}"; then
     printf '%s' "${repair_json}"
     return
   fi
   read_installed_background_service_inventory_json "${cli_bin}"
+}
+
+daemon_service_operations_are_explicitly_disabled() {
+  if [[ "${WITH_DAEMON_EXPLICIT}" != "1" ]]; then
+    return 1
+  fi
+
+  local daemon_choice
+  daemon_choice="$(normalize_installer_boolean "${WITH_DAEMON}")"
+  [[ "${daemon_choice}" == "0" ]]
+}
+
+should_read_background_service_preflight() {
+  if [[ "${PRODUCT}" != "cli" ]] || [[ "${ACTION}" != "install" ]]; then
+    return 1
+  fi
+
+  if daemon_service_operations_are_explicitly_disabled; then
+    return 1
+  fi
+
+  return 0
 }
 
 background_service_inventory_is_supported() {
@@ -706,6 +799,7 @@ background_service_inventory_json_is_supported() {
   if [[ -z "${services_json}" ]]; then
     return 1
   fi
+  printf '%s' "${services_json}" | grep -Eq '^[[:space:]]*{' || return 1
   printf '%s' "${services_json}" | grep -Eq '"(entries|services|existingServices)"[[:space:]]*:'
 }
 
@@ -1058,7 +1152,6 @@ action_version() {
   }
 
   local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}"
-  info "Fetching ${tag} release metadata..."
   curl_auth() {
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       curl -fsSL \
@@ -1071,18 +1164,21 @@ action_version() {
   }
 
   local release_json=""
-  if ! release_json="$(curl_auth "${api_url}")"; then
-    echo "Failed to fetch release metadata for ${name}." >&2
-    return 1
+  if [[ -z "${RELEASE_ASSETS_DIR}" ]]; then
+    info "Fetching ${tag} release metadata..."
+    if ! release_json="$(curl_auth "${api_url}")"; then
+      echo "Failed to fetch release metadata for ${name}." >&2
+      return 1
+    fi
   fi
-  local asset_url=""
-  asset_url="$(json_lookup_asset_url "${release_json}" "${asset_regex}")"
-  if [[ -z "${asset_url}" ]]; then
+  local asset_source=""
+  asset_source="$(resolve_release_asset_source "${release_json}" "${asset_regex}")"
+  if [[ -z "${asset_source}" ]]; then
     echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${tag}." >&2
     return 1
   fi
   local asset_name=""
-  asset_name="$(basename "${asset_url}")"
+  asset_name="$(basename "${asset_source}")"
   local version=""
   version="${asset_name#${version_prefix}}"
   version="${version%-${os}-${arch}.tar.gz}"
@@ -1204,7 +1300,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --setup-relay)
       RUN_ACTION="setup-relay"
-      RUN_ACTION_DEFAULT_ARGS=(--mode user --yes --channel "$(display_channel_label "${CHANNEL}")")
+      SETUP_RELAY_SHORTCUT="1"
       shift 1
       ;;
     --check)
@@ -1263,6 +1359,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 CHANNEL="$(normalize_channel "${CHANNEL}")"
+
+if [[ "${RUN_ACTION}" == "setup-relay" && ${#RUN_ACTION_DEFAULT_ARGS[@]} -eq 0 ]]; then
+  RUN_ACTION_DEFAULT_ARGS=(--mode user --yes --channel "$(display_channel_label "${CHANNEL}")" --preserve-active-server)
+fi
 
 if [[ "${DEBUG_MODE}" == "1" ]]; then
   VERBOSE_MODE="1"
@@ -1358,7 +1458,11 @@ run_post_install_action() {
   # We fail fast with a clear message instead of launching an unrelated flow.
   if [[ -n "${required_subcommand}" ]]; then
     local help_output=""
-    help_output="$("${cli_bin}" --help 2>/dev/null || true)"
+    if [[ "${required_subcommand}" == "relay" ]]; then
+      help_output="$("${cli_bin}" relay --help 2>/dev/null || true)"
+    else
+      help_output="$("${cli_bin}" --help 2>/dev/null || true)"
+    fi
     local help_prefix=""
     help_prefix="$(basename "${cli_bin}" 2>/dev/null || true)"
     if [[ -z "${help_prefix}" ]]; then
@@ -1414,7 +1518,7 @@ if [[ -n "${RUN_ACTION}" ]]; then
     exit 1
   fi
   INSTALLED_CLI_BIN="$(resolve_installed_cli_invoker_for_channel "${CHANNEL}" 2>/dev/null || true)"
-  if [[ -n "${INSTALLED_CLI_BIN}" ]]; then
+  if [[ -n "${INSTALLED_CLI_BIN}" && ! ( "${SETUP_RELAY_SHORTCUT}" == "1" && "${RUN_ACTION}" == "setup-relay" ) ]]; then
     run_post_install_action "${INSTALLED_CLI_BIN}"
     exit $?
   fi
@@ -1540,9 +1644,67 @@ append_path_hint() {
   if [[ "${NO_PATH_UPDATE}" == "1" ]]; then
     return
   fi
+  upsert_shell_export_line() {
+    local rc_file="$1"
+    local export_key="$2"
+    local export_line="$3"
+    local tmp_file="${rc_file}.happier-tmp.$$"
+
+    if [[ ! -f "${rc_file}" ]]; then
+      printf '\n%s\n' "${export_line}" >> "${rc_file}"
+      return
+    fi
+
+    awk -v export_key="${export_key}" -v export_line="${export_line}" '
+      BEGIN {
+        replaced = 0
+      }
+      $0 ~ ("^[[:space:]]*export[[:space:]]+" export_key "=") {
+        if (replaced == 0) {
+          print export_line
+          replaced = 1
+        }
+        next
+      }
+      {
+        print
+      }
+      END {
+        if (replaced == 0) {
+          print ""
+          print export_line
+        }
+      }
+    ' "${rc_file}" > "${tmp_file}"
+    mv "${tmp_file}" "${rc_file}"
+  }
+  remove_shell_export_line() {
+    local rc_file="$1"
+    local export_key="$2"
+    local tmp_file="${rc_file}.happier-tmp.$$"
+
+    if [[ ! -f "${rc_file}" ]]; then
+      return
+    fi
+
+    awk -v export_key="${export_key}" '
+      $0 ~ ("^[[:space:]]*export[[:space:]]+" export_key "=") {
+        next
+      }
+      {
+        print
+      }
+    ' "${rc_file}" > "${tmp_file}"
+    mv "${tmp_file}" "${rc_file}"
+  }
   local shell_name
   shell_name="$(basename "${SHELL:-}")"
   local export_line="export PATH=\"${BIN_DIR}:\$PATH\""
+  local home_export_line=""
+  local default_install_dir="${HOME}/.happier"
+  if [[ "${INSTALL_DIR}" != "${default_install_dir}" ]]; then
+    home_export_line="export HAPPIER_HOME_DIR=\"${INSTALL_DIR}\""
+  fi
   local rc_files=()
   case "${shell_name}" in
     zsh)
@@ -1569,6 +1731,21 @@ append_path_hint() {
       info "Added ${BIN_DIR} to PATH in ${rc_file}"
       updated=1
     fi
+    if [[ -n "${home_export_line}" ]]; then
+      if [[ ! -f "${rc_file}" ]] || ! grep -Eq "^[[:space:]]*export[[:space:]]+HAPPIER_HOME_DIR=" "${rc_file}"; then
+        printf '\n%s\n' "${home_export_line}" >> "${rc_file}"
+        info "Persisted HAPPIER_HOME_DIR=${INSTALL_DIR} in ${rc_file}"
+        updated=1
+      elif ! grep -Fxq "${home_export_line}" "${rc_file}" || [[ "$(grep -Ec "^[[:space:]]*export[[:space:]]+HAPPIER_HOME_DIR=" "${rc_file}")" -ne 1 ]]; then
+        upsert_shell_export_line "${rc_file}" "HAPPIER_HOME_DIR" "${home_export_line}"
+        info "Persisted HAPPIER_HOME_DIR=${INSTALL_DIR} in ${rc_file}"
+        updated=1
+      fi
+    elif [[ -f "${rc_file}" ]] && grep -Eq "^[[:space:]]*export[[:space:]]+HAPPIER_HOME_DIR=" "${rc_file}"; then
+      remove_shell_export_line "${rc_file}" "HAPPIER_HOME_DIR"
+      info "Removed stale HAPPIER_HOME_DIR from ${rc_file}"
+      updated=1
+    fi
   done
 
   if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
@@ -1576,6 +1753,9 @@ append_path_hint() {
     say "${COLOR_BOLD}Next steps${COLOR_RESET}"
     say "To use ${EXE_NAME} in your current shell:"
     say "  export PATH=\"${BIN_DIR}:\$PATH\""
+    if [[ -n "${home_export_line}" ]]; then
+      say "  export HAPPIER_HOME_DIR=\"${INSTALL_DIR}\""
+    fi
     if [[ "${shell_name}" == "bash" ]]; then
       say "  source \"$HOME/.bashrc\""
       if [[ -f "$HOME/.bash_profile" ]]; then
@@ -1659,32 +1839,27 @@ curl_auth() {
   curl "${curl_args[@]}" "$@"
 }
 
-download_release_asset() {
-  local label="$1"
-  local output_path="$2"
-  local url="$3"
-  run_installer_step "${label}" curl_auth -o "${output_path}" "${url}"
-}
-
 RELEASE_JSON=""
-if ! capture_installer_step_output "Fetching ${TAG} release metadata" RELEASE_JSON curl_auth "${API_URL}"; then
-  if [[ "${CHANNEL}" == "stable" ]]; then
-    echo "No stable releases found for ${INSTALL_NAME}." >&2
-  elif [[ "${CHANNEL}" == "publicdev" ]]; then
-    echo "No dev releases found for ${INSTALL_NAME}." >&2
-  else
-    echo "No preview releases found for ${INSTALL_NAME}." >&2
+if [[ -z "${RELEASE_ASSETS_DIR}" ]]; then
+  if ! capture_installer_step_output "Fetching ${TAG} release metadata" RELEASE_JSON curl_auth "${API_URL}"; then
+    if [[ "${CHANNEL}" == "stable" ]]; then
+      echo "No stable releases found for ${INSTALL_NAME}." >&2
+    elif [[ "${CHANNEL}" == "publicdev" ]]; then
+      echo "No dev releases found for ${INSTALL_NAME}." >&2
+    else
+      echo "No preview releases found for ${INSTALL_NAME}." >&2
+    fi
+    exit 1
   fi
-  exit 1
 fi
 
-ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${ASSET_REGEX}")"
-if [[ -z "${ASSET_URL}" ]]; then
+ASSET_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${ASSET_REGEX}")"
+if [[ -z "${ASSET_SOURCE}" ]]; then
   echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${TAG}." >&2
   exit 1
 fi
 
-ASSET_NAME="$(basename "${ASSET_URL}")"
+ASSET_NAME="$(basename "${ASSET_SOURCE}")"
 VERSION="${ASSET_NAME#${VERSION_PREFIX}}"
 VERSION="${VERSION%-${OS}-${ARCH}.tar.gz}"
 if [[ -z "${VERSION}" || "${VERSION}" == "${ASSET_NAME}" ]]; then
@@ -1694,9 +1869,9 @@ fi
 
 CHECKSUMS_REGEX="^${CHECKSUMS_PREFIX}${VERSION}[.]txt$"
 SIG_REGEX="^${CHECKSUMS_PREFIX}${VERSION}[.]txt[.]minisig$"
-CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${CHECKSUMS_REGEX}")"
-SIG_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${SIG_REGEX}")"
-if [[ -z "${CHECKSUMS_URL}" || -z "${SIG_URL}" ]]; then
+CHECKSUMS_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${CHECKSUMS_REGEX}")"
+SIG_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${SIG_REGEX}")"
+if [[ -z "${CHECKSUMS_SOURCE}" || -z "${SIG_SOURCE}" ]]; then
   echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${TAG}." >&2
   exit 1
 fi
@@ -1712,12 +1887,12 @@ trap cleanup EXIT
 
 ARCHIVE_PATH="${TMP_DIR}/happier.tar.gz"
 CHECKSUMS_PATH="${TMP_DIR}/checksums.txt"
-download_release_asset "Downloading release archive" "${ARCHIVE_PATH}" "${ASSET_URL}"
-download_release_asset "Downloading checksums" "${CHECKSUMS_PATH}" "${CHECKSUMS_URL}"
+stage_release_asset "Downloading release archive" "${ARCHIVE_PATH}" "${ASSET_SOURCE}"
+stage_release_asset "Downloading checksums" "${CHECKSUMS_PATH}" "${CHECKSUMS_SOURCE}"
 
-EXPECTED_SHA="$(grep -E "  $(basename "${ASSET_URL}")$" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1)"
+EXPECTED_SHA="$(grep -E "  $(basename "${ASSET_SOURCE}")$" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1)"
 if [[ -z "${EXPECTED_SHA}" ]]; then
-  echo "Failed to resolve checksum for $(basename "${ASSET_URL}")" >&2
+  echo "Failed to resolve checksum for $(basename "${ASSET_SOURCE}")" >&2
   exit 1
 fi
 ACTUAL_SHA="$(sha256_file "${ARCHIVE_PATH}")"
@@ -1736,7 +1911,7 @@ fi
 PUBKEY_PATH="${TMP_DIR}/minisign.pub"
 SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 write_minisign_public_key "${PUBKEY_PATH}"
-download_release_asset "Downloading minisign signature" "${SIG_PATH}" "${SIG_URL}"
+stage_release_asset "Downloading minisign signature" "${SIG_PATH}" "${SIG_SOURCE}"
 "${MINISIGN_BIN}" -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
 success "Signature verified."
 
@@ -1874,7 +2049,7 @@ append_path_hint
 
 services_json=""
 status_json=""
-if [[ "${PRODUCT}" == "cli" && "${ACTION}" == "install" ]]; then
+if should_read_background_service_preflight; then
   services_json="$(read_background_service_preflight_json "${DISPLAY_SHIM_PATH}")"
   status_json="$(read_background_service_status_json "${DISPLAY_SHIM_PATH}")"
   if [[ "${NONINTERACTIVE}" != "1" ]]; then

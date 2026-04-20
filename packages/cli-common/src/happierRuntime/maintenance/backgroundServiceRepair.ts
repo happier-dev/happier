@@ -65,6 +65,21 @@ export function buildBackgroundServiceRepairPlan(params: Readonly<{
     services: readonly HappierService[];
 }>): BackgroundServiceRepairPlan {
     const repairableServices = toRepairableDaemonServices(params.services);
+    const missingHomeServices = repairableServices.filter((service) => (
+        service.targetMode === 'default-following'
+        && !service.happierHomeDir
+    ));
+    if (missingHomeServices.length > 0) {
+        return {
+            currentReleaseChannel: params.currentReleaseChannel,
+            existingServices: repairableServices,
+            actions: [],
+            manualWarnings: [
+                `Detected default-following background services with missing Happier home metadata (${missingHomeServices.map((service) => service.definitionPath).filter(Boolean).join(', ') || 'unknown path'}). Automatic repair will not replace or remove them; remove the legacy service(s) from the owning installation first.`,
+            ],
+        };
+    }
+
     const compatibleDefaultServices = repairableServices.filter((service) => isCompatibleDefaultService({
         service,
         currentReleaseChannel: params.currentReleaseChannel,

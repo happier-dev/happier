@@ -17,17 +17,29 @@ export type DaemonServiceInstallTarget = Readonly<{
     ring: PublicReleaseRingLabel | null;
     instanceId: string | null;
     serverUrl: string | null;
+    happierHomeDir?: string | null;
 }>;
 
 export type DaemonServiceInstallConflictPlan = Readonly<{
     exactTargetExists: boolean;
     competingServices: readonly HappierService[];
+    foreignHomeConflicts: readonly HappierService[];
     servicesToRemove: readonly HappierService[];
 }>;
+
+function normalizeHomeDir(value: string | null | undefined): string | null {
+    const trimmed = String(value ?? '').trim();
+    return trimmed || null;
+}
 
 function matchesTarget(service: HappierService, target: DaemonServiceInstallTarget): boolean {
     const serviceTargetMode = service.targetMode ?? 'pinned';
     if (serviceTargetMode !== target.targetMode) {
+        return false;
+    }
+    const targetHomeDir = normalizeHomeDir(target.happierHomeDir);
+    const serviceHomeDir = normalizeHomeDir(service.happierHomeDir);
+    if (targetHomeDir !== null && serviceHomeDir !== null && targetHomeDir !== serviceHomeDir) {
         return false;
     }
     if (target.targetMode === 'default-following') {
@@ -102,6 +114,12 @@ function isCompetingService(service: HappierService, target: DaemonServiceInstal
     return false;
 }
 
+function isForeignHomeConflict(service: HappierService, target: DaemonServiceInstallTarget): boolean {
+    const targetHomeDir = normalizeHomeDir(target.happierHomeDir);
+    const serviceHomeDir = normalizeHomeDir(service.happierHomeDir);
+    return targetHomeDir !== null && serviceHomeDir !== null && targetHomeDir !== serviceHomeDir;
+}
+
 export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     target: DaemonServiceInstallTarget;
     strategy: DaemonServiceInstallStrategy;
@@ -120,15 +138,19 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     const competingServices = verifiedDaemons.filter((service) =>
         isCompetingService(service, params.target) || duplicateTupleKeys.has(resolveTupleKey(service)),
     );
+    const foreignHomeConflicts = competingServices.filter((service) => isForeignHomeConflict(service, params.target));
     const resolveServicesToRemove = (): readonly HappierService[] => {
         if (params.strategy === 'replace-all') {
-            return competingServices;
+            return competingServices.filter((service) => !foreignHomeConflicts.includes(service));
         }
         if (params.strategy === 'replace-ring') {
             if (params.target.targetMode === 'default-following') {
-                return competingServices.filter((service) => (service.targetMode ?? 'pinned') === 'default-following');
+                return competingServices.filter((service) => (
+                    (service.targetMode ?? 'pinned') === 'default-following'
+                    && !foreignHomeConflicts.includes(service)
+                ));
             }
-            return competingServices.filter((service) => service.ring === params.target.ring);
+            return competingServices.filter((service) => service.ring === params.target.ring && !foreignHomeConflicts.includes(service));
         }
         return [];
     };
@@ -137,6 +159,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
         return {
             exactTargetExists: true,
             competingServices,
+            foreignHomeConflicts,
             servicesToRemove: resolveServicesToRemove(),
         };
     }
@@ -145,6 +168,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
         return {
             exactTargetExists: false,
             competingServices,
+            foreignHomeConflicts,
             servicesToRemove: [],
         };
     }
@@ -153,6 +177,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
         return {
             exactTargetExists: false,
             competingServices,
+            foreignHomeConflicts,
             servicesToRemove: resolveServicesToRemove(),
         };
     }
@@ -161,6 +186,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
         return {
             exactTargetExists: false,
             competingServices,
+            foreignHomeConflicts,
             servicesToRemove: resolveServicesToRemove(),
         };
     }
@@ -168,6 +194,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     return {
         exactTargetExists: false,
         competingServices,
+        foreignHomeConflicts,
         servicesToRemove: [],
     };
 }

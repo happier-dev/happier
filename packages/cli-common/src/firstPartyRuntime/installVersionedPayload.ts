@@ -3,6 +3,7 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import { listInstalledVersionIdsNewestFirst } from './listInstalledVersionIdsNewestFirst.js';
 import { promoteVersionedPayload, type FirstPartyPayloadPromotionResult } from './promoteVersionedPayload.js';
 import { pruneRetainedVersions } from './pruneRetainedVersions.js';
+import { shouldPersistDefaultManagedReleaseChannel, writeDefaultManagedReleaseChannel } from './defaultReleaseChannelState.js';
 import { syncInstalledFirstPartyShims } from './syncInstalledFirstPartyShims.js';
 
 export async function installVersionedPayload(params: Readonly<{
@@ -22,12 +23,22 @@ export async function installVersionedPayload(params: Readonly<{
     processEnv: params.processEnv,
   });
 
+  const releaseChannel = params.channel ?? params.releaseRing ?? 'stable';
+
   await syncInstalledFirstPartyShims({
     componentId: params.componentId,
     channel: params.channel,
+    defaultReleaseChannelOverride: releaseChannel,
     releaseRing: params.releaseRing,
     processEnv: params.processEnv,
   });
+
+  if (shouldPersistDefaultManagedReleaseChannel(params.componentId)) {
+    await writeDefaultManagedReleaseChannel({
+      releaseChannel,
+      processEnv: params.processEnv,
+    });
+  }
 
   const orderedVersionIdsNewestFirst = await listInstalledVersionIdsNewestFirst({
     componentId: params.componentId,

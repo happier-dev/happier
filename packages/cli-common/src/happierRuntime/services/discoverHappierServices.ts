@@ -352,6 +352,7 @@ export async function discoverHappierServices(params: Readonly<{
             scope: definitionFile.scope,
             definitionPath: definitionFile.path,
             executablePath,
+            happierHomeDir: String(definition.env.HAPPIER_HOME_DIR ?? '').trim() || null,
             serverUrl: String(definition.env.HAPPIER_SERVER_URL ?? '').trim() || null,
             publicServerUrl: String(definition.env.HAPPIER_PUBLIC_SERVER_URL ?? '').trim() || null,
             installed: status.installed,

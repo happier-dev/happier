@@ -4,6 +4,11 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+const ACTUAL_VOICE_RUNTIME_LOADER_SOURCE = readFileSync(
+  new URL('../../../apps/cli/scripts/runtime/loadVoiceInferenceRuntime.mjs', import.meta.url),
+  'utf8',
+);
+
 function writeWorkspacePackageFixture({ repoRoot, packageName, relativeDir }) {
   const packageDir = join(repoRoot, ...relativeDir);
   const distDir = join(packageDir, 'dist');
@@ -52,6 +57,8 @@ function writeCliRuntimePackageFixture(
         version: '0.0.0',
         dependencies: {
           '@huggingface/transformers': '1.0.0',
+          'ffmpeg-static': '1.0.0',
+          'sherpa-onnx-node': '1.0.0',
           'node-pty': '1.0.0',
           '@homebridge/node-pty-prebuilt-multiarch': '1.0.0',
         },
@@ -68,6 +75,95 @@ function writeCliRuntimePackageFixture(
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/connection-supervisor', relativeDir: ['packages', 'connection-supervisor'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/protocol', relativeDir: ['packages', 'protocol'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/release-runtime', relativeDir: ['packages', 'release-runtime'] });
+}
+
+function prismaEngineFileNameForFixture({ platform = 'linux', arch = 'x64' } = {}) {
+  const key = `${platform}-${arch}`;
+  switch (key) {
+    case 'linux-x64':
+      return 'libquery_engine-debian-openssl-3.0.x.so.node';
+    case 'linux-arm64':
+      return 'libquery_engine-linux-arm64-openssl-3.0.x.so.node';
+    case 'darwin-x64':
+      return 'libquery_engine-darwin.dylib.node';
+    case 'darwin-arm64':
+      return 'libquery_engine-darwin-arm64.dylib.node';
+    case 'windows-x64':
+      return 'query_engine-windows.dll.node';
+    default:
+      throw new Error(`unsupported fixture platform: ${key}`);
+  }
+}
+
+function writeServerPrismaEngineFixtures({
+  sqliteClientDir,
+  mysqlClientDir,
+  postgresClientDir,
+  providers = ['sqlite'],
+  platform = 'linux',
+  arch = 'x64',
+}) {
+  const engineFileName = prismaEngineFileNameForFixture({ platform, arch });
+  if (providers.includes('sqlite') && sqliteClientDir) {
+    writeFileSync(join(sqliteClientDir, engineFileName), 'sqlite-engine\n', 'utf8');
+  }
+  if (providers.includes('mysql') && mysqlClientDir) {
+    writeFileSync(join(mysqlClientDir, engineFileName), 'mysql-engine\n', 'utf8');
+  }
+  if (postgresClientDir) {
+    writeFileSync(join(postgresClientDir, engineFileName), 'postgres-engine\n', 'utf8');
+  }
+}
+
+function writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir }) {
+  mkdirSync(join(cliDistDir, 'daemon', 'voiceInference', 'runtime'), { recursive: true });
+  writeFileSync(
+    join(cliDistDir, 'daemon', 'voiceInference', 'runtime', 'packagedVoiceInferenceRuntime.mjs'),
+    'export const voiceInferenceRuntimeEngine = { warmModel: async () => {}, synthesizeTts: async () => ({ bytes: Buffer.from("wav"), output: { codec: "wav", mimeType: "audio/wav" }, name: "runtime.wav" }), transcribeAudio: async () => ({ text: "runtime", language: "en" }) };\n',
+    'utf8',
+  );
+  writeFileSync(
+    join(cliRuntimeDir, 'loadVoiceInferenceRuntime.mjs'),
+    ACTUAL_VOICE_RUNTIME_LOADER_SOURCE,
+    'utf8',
+  );
+}
+
+function writeSherpaRuntimePackageFixture(repoRoot) {
+  const sherpaOnnxNodeDir = join(repoRoot, 'node_modules', 'sherpa-onnx-node');
+  const sherpaOnnxLinuxX64Dir = join(repoRoot, 'node_modules', 'sherpa-onnx-linux-x64');
+  mkdirSync(sherpaOnnxNodeDir, { recursive: true });
+  mkdirSync(sherpaOnnxLinuxX64Dir, { recursive: true });
+  writeFileSync(
+    join(sherpaOnnxNodeDir, 'package.json'),
+    JSON.stringify({ name: 'sherpa-onnx-node', version: '1.0.0', optionalDependencies: { 'sherpa-onnx-linux-x64': '1.0.0' } }, null, 2),
+    'utf8',
+  );
+  writeFileSync(join(sherpaOnnxNodeDir, 'sherpa-onnx.js'), 'module.exports = { version: "1.0.0" };\n', 'utf8');
+  writeFileSync(
+    join(sherpaOnnxLinuxX64Dir, 'package.json'),
+    JSON.stringify({ name: 'sherpa-onnx-linux-x64', version: '1.0.0', dependencies: {} }, null, 2),
+    'utf8',
+  );
+  writeFileSync(join(sherpaOnnxLinuxX64Dir, 'index.js'), 'module.exports = { platformBinary: true };\n', 'utf8');
+}
+
+function writeFfmpegStaticPackageFixture(repoRoot) {
+  const ffmpegStaticDir = join(repoRoot, 'node_modules', 'ffmpeg-static');
+  mkdirSync(ffmpegStaticDir, { recursive: true });
+  writeFileSync(
+    join(ffmpegStaticDir, 'package.json'),
+    JSON.stringify({ name: 'ffmpeg-static', version: '1.0.0', main: './index.js', dependencies: {} }, null, 2),
+    'utf8',
+  );
+  writeFileSync(join(ffmpegStaticDir, 'index.js'), 'module.exports = "/runtime/ffmpeg";\n', 'utf8');
+  writeFileSync(join(ffmpegStaticDir, 'ffmpeg'), '#!/bin/sh\nexit 0\n', 'utf8');
+}
+
+function resolveHostCliBinaryTarget(artifacts) {
+  return artifacts.resolveCurrentBinaryTarget({
+    availableTargets: artifacts.CLI_BINARY_TARGETS,
+  });
 }
 
 test('resolveCurrentBinaryTarget maps the current platform to a supported binary target', async () => {
@@ -113,6 +209,23 @@ test('commandExists does not execute shell metacharacters on Unix', async () => 
   }
 });
 
+test('resolveRequestedServerDbProviders accepts canonical pipe-delimited provider values', async () => {
+  const artifacts = await import('../dist/componentArtifacts/index.js');
+
+  assert.deepEqual(
+    artifacts.resolveRequestedServerDbProviders('pglite|sqlite|mysql'),
+    ['sqlite', 'mysql'],
+  );
+  assert.deepEqual(
+    artifacts.resolveRequestedServerDbProviders('postgres|mysql'),
+    ['mysql'],
+  );
+  assert.throws(
+    () => artifacts.resolveRequestedServerDbProviders('postgres|unknown'),
+    /unsupported HAPPIER_BUILD_DB_PROVIDERS token/i,
+  );
+});
+
 test('buildCliBinaryArtifactPayload compiles the local CLI binary into the payload dir', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-cli-'));
   try {
@@ -125,6 +238,8 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
     const transformersDir = join(repoRoot, 'node_modules', '@huggingface', 'transformers');
     const ortDir = join(repoRoot, 'node_modules', 'onnxruntime-node');
     const ortCommonDir = join(repoRoot, 'node_modules', 'onnxruntime-common');
+    const sherpaOnnxNodeDir = join(repoRoot, 'node_modules', 'sherpa-onnx-node');
+    const sherpaOnnxLinuxX64Dir = join(repoRoot, 'node_modules', 'sherpa-onnx-linux-x64');
     const nodePtyDir = join(repoRoot, 'node_modules', 'node-pty');
     const homebridgePtyDir = join(repoRoot, 'node_modules', '@homebridge', 'node-pty-prebuilt-multiarch');
 
@@ -139,6 +254,7 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
     writeCliRuntimePackageFixture(repoRoot);
     writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir });
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
@@ -164,6 +280,8 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
       JSON.stringify({ name: 'onnxruntime-common', version: '1.0.0', dependencies: {} }, null, 2),
     );
     writeFileSync(join(ortCommonDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeSherpaRuntimePackageFixture(repoRoot);
+    writeFfmpegStaticPackageFixture(repoRoot);
     writeFileSync(
       join(nodePtyDir, 'package.json'),
       JSON.stringify({ name: 'node-pty', version: '1.0.0', dependencies: {} }, null, 2),
@@ -178,14 +296,11 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const compileCalls = [];
     const runCalls = [];
+    const target = resolveHostCliBinaryTarget(artifacts);
     const result = await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: artifacts.resolveCurrentBinaryTarget({
-        availableTargets: artifacts.CLI_BINARY_TARGETS,
-        platform: 'linux',
-        arch: 'x64',
-      }),
+      target,
       commandProbe: () => true,
       runCommand: (cmd, args) => {
         runCalls.push({ cmd, args });
@@ -198,16 +313,18 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
       },
     });
 
-    assert.equal(result.executableName, 'happier');
-    assert.equal(result.entrypoint, 'happier');
+    assert.equal(result.executableName, artifacts.resolveExecutableName({ baseName: 'happier', target }));
+    assert.equal(result.entrypoint, artifacts.resolveExecutableName({ baseName: 'happier', target }));
     assert.deepEqual(runCalls, []);
     assert.equal(compileCalls.length, 1);
     assert.deepEqual(compileCalls[0].externals.sort(), [
       '@homebridge/node-pty-prebuilt-multiarch',
+      'ffmpeg-static',
       '@huggingface/transformers',
       'node-pty',
-    ]);
-    assert.equal(readFileSync(join(payloadDir, 'happier'), 'utf8'), '#!/bin/sh\necho happier\n');
+      'sherpa-onnx-node',
+    ].sort());
+    assert.equal(readFileSync(join(payloadDir, result.executableName), 'utf8'), '#!/bin/sh\necho happier\n');
     assert.equal(readFileSync(join(payloadDir, 'package-dist', 'index.mjs'), 'utf8'), 'console.log("cli");\n');
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.mjs'), 'utf8'),
@@ -221,6 +338,13 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '@homebridge', 'node-pty-prebuilt-multiarch', 'index.js'), 'utf8'),
       'module.exports = { spawn() {} };\n',
+    );
+    assert.equal(existsSync(join(payloadDir, 'node_modules', 'ffmpeg-static')), false);
+    assert.equal(existsSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers')), false);
+    assert.equal(existsSync(join(payloadDir, 'node_modules', 'sherpa-onnx-node')), false);
+    assert.equal(
+      existsSync(join(payloadDir, 'tools', 'archives', `voice-inference-runtime-${target.os}-${target.arch}.tar.gz`)),
+      true,
     );
     assert.equal(
       readFileSync(join(payloadDir, 'scripts', 'claude_version_utils.cjs'), 'utf8'),
@@ -237,6 +361,14 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
     assert.equal(
       readFileSync(join(payloadDir, 'scripts', 'runtime', 'loadTransformersFromRuntime.mjs'), 'utf8'),
       'export const env = {}; export async function pipeline() { return () => null; }\n',
+    );
+    assert.equal(
+      readFileSync(join(payloadDir, 'scripts', 'runtime', 'loadVoiceInferenceRuntime.mjs'), 'utf8'),
+      ACTUAL_VOICE_RUNTIME_LOADER_SOURCE,
+    );
+    assert.equal(
+      readFileSync(join(payloadDir, 'package-dist', 'daemon', 'voiceInference', 'runtime', 'packagedVoiceInferenceRuntime.mjs'), 'utf8'),
+      'export const voiceInferenceRuntimeEngine = { warmModel: async () => {}, synthesizeTts: async () => ({ bytes: Buffer.from("wav"), output: { codec: "wav", mimeType: "audio/wav" }, name: "runtime.wav" }), transcribeAudio: async () => ({ text: "runtime", language: "en" }) };\n',
     );
     assert.equal(readFileSync(join(payloadDir, 'scripts', 'shims', 'git'), 'utf8'), '#!/bin/sh\nexit 0\n');
   } finally {
@@ -278,6 +410,7 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
           version: '0.0.0',
           dependencies: {
             '@huggingface/transformers': '1.0.0',
+            'sherpa-onnx-node': '1.0.0',
             'node-pty': '1.0.0',
             '@homebridge/node-pty-prebuilt-multiarch': '1.0.0',
             tar: '7.0.0',
@@ -295,6 +428,7 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
       'utf8',
     );
     writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir });
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
@@ -304,6 +438,8 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
     writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
     writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'shims', 'git'), '#!/bin/sh\nexit 0\n', 'utf8');
+    writeSherpaRuntimePackageFixture(repoRoot);
+    writeFfmpegStaticPackageFixture(repoRoot);
     writeFileSync(
       join(transformersDir, 'package.json'),
       JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: { 'onnxruntime-node': '1.0.0' } }, null, 2),
@@ -341,11 +477,7 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: artifacts.resolveCurrentBinaryTarget({
-        availableTargets: artifacts.CLI_BINARY_TARGETS,
-        platform: 'linux',
-        arch: 'x64',
-      }),
+      target: resolveHostCliBinaryTarget(artifacts),
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -409,6 +541,7 @@ test('buildCliBinaryArtifactPayload snapshots CLI dist before compile/copy so la
 
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
     writeCliRuntimePackageFixture(repoRoot);
+    writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir });
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
@@ -419,6 +552,8 @@ test('buildCliBinaryArtifactPayload snapshots CLI dist before compile/copy so la
     writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
     writeFileSync(join(cliShimsDir, 'git'), '#!/bin/sh\nexit 0\n', 'utf8');
     writeFileSync(join(cliShimsDir, 'rg'), '#!/bin/sh\nexit 0\n', 'utf8');
+    writeSherpaRuntimePackageFixture(repoRoot);
+    writeFfmpegStaticPackageFixture(repoRoot);
     writeFileSync(
       join(transformersDir, 'package.json'),
       JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: { 'onnxruntime-node': '1.0.0' } }, null, 2),
@@ -449,11 +584,7 @@ test('buildCliBinaryArtifactPayload snapshots CLI dist before compile/copy so la
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: artifacts.resolveCurrentBinaryTarget({
-        availableTargets: artifacts.CLI_BINARY_TARGETS,
-        platform: 'linux',
-        arch: 'x64',
-      }),
+      target: resolveHostCliBinaryTarget(artifacts),
       commandProbe: () => true,
       runCommand: async () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -499,6 +630,7 @@ test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps
       '@happier-dev/release-runtime',
     ]);
     writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir });
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
@@ -508,6 +640,8 @@ test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps
     writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
     writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'shims', 'git'), '#!/bin/sh\nexit 0\n', 'utf8');
+    writeSherpaRuntimePackageFixture(repoRoot);
+    writeFfmpegStaticPackageFixture(repoRoot);
     writeFileSync(
       join(transformersDir, 'package.json'),
       JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: {} }, null, 2),
@@ -530,11 +664,7 @@ test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: artifacts.resolveCurrentBinaryTarget({
-        availableTargets: artifacts.CLI_BINARY_TARGETS,
-        platform: 'linux',
-        arch: 'x64',
-      }),
+      target: resolveHostCliBinaryTarget(artifacts),
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -575,6 +705,7 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
     writeCliRuntimePackageFixture(repoRoot);
     writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir });
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
@@ -584,6 +715,8 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
     writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
     writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'shims', 'git'), '#!/bin/sh\nexit 0\n', 'utf8');
+    writeSherpaRuntimePackageFixture(repoRoot);
+    writeFfmpegStaticPackageFixture(repoRoot);
     writeFileSync(
       join(transformersDir, 'package.json'),
       JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: { 'onnxruntime-node': '1.0.0' } }, null, 2),
@@ -609,11 +742,7 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: artifacts.resolveCurrentBinaryTarget({
-        availableTargets: artifacts.CLI_BINARY_TARGETS,
-        platform: 'linux',
-        arch: 'x64',
-      }),
+      target: resolveHostCliBinaryTarget(artifacts),
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -663,6 +792,7 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
     writeCliRuntimePackageFixture(repoRoot);
     writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir });
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
@@ -672,6 +802,8 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
     writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
     writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
     writeFileSync(join(cliShimsDir, 'git'), '#!/bin/sh\nexit 0\n', 'utf8');
+    writeSherpaRuntimePackageFixture(repoRoot);
+    writeFfmpegStaticPackageFixture(repoRoot);
     writeFileSync(
       join(transformersDir, 'package.json'),
       JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: { 'onnxruntime-node': '1.0.0' } }, null, 2),
@@ -700,14 +832,11 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const compileCalls = [];
+    const target = resolveHostCliBinaryTarget(artifacts);
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: artifacts.resolveCurrentBinaryTarget({
-        availableTargets: artifacts.CLI_BINARY_TARGETS,
-        platform: 'linux',
-        arch: 'x64',
-      }),
+      target,
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -719,35 +848,19 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
       },
     });
 
-    assert.deepEqual(compileCalls[0]?.externals, [
+    assert.deepEqual([...compileCalls[0]?.externals].sort(), [
+      '@homebridge/node-pty-prebuilt-multiarch',
+      'ffmpeg-static',
       '@huggingface/transformers',
       'node-pty',
-      '@homebridge/node-pty-prebuilt-multiarch',
-    ]);
+      'sherpa-onnx-node',
+    ].sort());
+    assert.equal(existsSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers')), false);
+    assert.equal(existsSync(join(payloadDir, 'node_modules', 'ffmpeg-static')), false);
+    assert.equal(existsSync(join(payloadDir, 'node_modules', 'sherpa-onnx-node')), false);
     assert.equal(
-      readFileSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers', 'package.json'), 'utf8'),
-      JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: { 'onnxruntime-node': '1.0.0' } }, null, 2),
-    );
-    assert.equal(
-      readFileSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers', 'node_modules', 'onnxruntime-node', 'package.json'), 'utf8'),
-      JSON.stringify({ name: 'onnxruntime-node', version: '1.0.0', dependencies: { 'onnxruntime-common': '1.0.0' } }, null, 2),
-    );
-    assert.equal(
-      readFileSync(
-        join(
-          payloadDir,
-          'node_modules',
-          '@huggingface',
-          'transformers',
-          'node_modules',
-          'onnxruntime-node',
-          'node_modules',
-          'onnxruntime-common',
-          'package.json',
-        ),
-        'utf8',
-      ),
-      JSON.stringify({ name: 'onnxruntime-common', version: '1.0.0', dependencies: {} }, null, 2),
+      existsSync(join(payloadDir, 'tools', 'archives', `voice-inference-runtime-${target.os}-${target.arch}.tar.gz`)),
+      true,
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -760,6 +873,7 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
     const repoRoot = join(tempRoot, 'repo');
     const payloadDir = join(tempRoot, 'payload');
     const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
     const sqliteClientDir = join(repoRoot, 'apps', 'server', 'generated', 'sqlite-client');
     const mysqlClientDir = join(repoRoot, 'apps', 'server', 'generated', 'mysql-client');
     const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
@@ -767,6 +881,7 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
     const prismaClientPackageDir = join(repoRoot, 'node_modules', '@prisma', 'client');
 
     mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(uiDistDir, { recursive: true });
     mkdirSync(sqliteClientDir, { recursive: true });
     mkdirSync(mysqlClientDir, { recursive: true });
     mkdirSync(sqliteMigrationsDir, { recursive: true });
@@ -774,10 +889,16 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
     mkdirSync(prismaClientPackageDir, { recursive: true });
 
     writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
     writeFileSync(join(mysqlClientDir, 'schema.prisma'), '// mysql\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
-    writeFileSync(join(postgresClientDir, 'query_engine.so'), 'binary\n', 'utf8');
+    writeServerPrismaEngineFixtures({
+      sqliteClientDir,
+      mysqlClientDir,
+      postgresClientDir,
+      providers: ['sqlite', 'mysql'],
+    });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
@@ -806,15 +927,171 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
     assert.equal(result.executableName, 'happier-server');
     assert.equal(result.entrypoint, 'happier-server');
     assert.equal(compileCalls.length, 1);
-    assert.deepEqual(runCalls, [{ cmd: 'yarn', args: ['--cwd', 'apps/server', '-s', 'generate:providers'] }]);
+    assert.deepEqual(runCalls, [
+      {
+        cmd: 'yarn',
+        args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
+      },
+    ]);
     assert.equal(readFileSync(join(payloadDir, 'happier-server'), 'utf8'), '#!/bin/sh\necho happier-server\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'sqlite-client', 'schema.prisma'), 'utf8'), '// sqlite\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'mysql-client', 'schema.prisma'), 'utf8'), '// mysql\n');
     assert.equal(readFileSync(join(payloadDir, 'prisma', 'sqlite', 'migrations', 'migration.sql'), 'utf8'), '-- sql\n');
-    assert.equal(readFileSync(join(payloadDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'utf8'), 'binary\n');
+    assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>ui</html>\n');
+    assert.equal(
+      readFileSync(join(payloadDir, 'node_modules', '.prisma', 'client', 'libquery_engine-debian-openssl-3.0.x.so.node'), 'utf8'),
+      'postgres-engine\n',
+    );
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '@prisma', 'client', 'index.js'), 'utf8'),
       'module.exports = { PrismaClient: class PrismaClient {} };\n'
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildServerBinaryArtifactPayload delegates provider freshness to generate:providers before staging server sidecars', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-provider-freshness-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
+    const sqliteClientDir = join(repoRoot, 'apps', 'server', 'generated', 'sqlite-client');
+    const mysqlClientDir = join(repoRoot, 'apps', 'server', 'generated', 'mysql-client');
+    const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
+    const sqliteSchemaPath = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'schema.prisma');
+    const postgresSchemaPath = join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma');
+    const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
+    const prismaClientPackageDir = join(repoRoot, 'node_modules', '@prisma', 'client');
+
+    mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(uiDistDir, { recursive: true });
+    mkdirSync(sqliteClientDir, { recursive: true });
+    mkdirSync(mysqlClientDir, { recursive: true });
+    mkdirSync(sqliteMigrationsDir, { recursive: true });
+    mkdirSync(join(repoRoot, 'apps', 'server', 'prisma'), { recursive: true });
+    mkdirSync(postgresClientDir, { recursive: true });
+    mkdirSync(prismaClientPackageDir, { recursive: true });
+
+    writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
+    writeFileSync(postgresSchemaPath, '// canonical postgres schema\n', 'utf8');
+    writeFileSync(sqliteSchemaPath, '// canonical sqlite schema\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// stale sqlite schema\n', 'utf8');
+    writeFileSync(join(mysqlClientDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
+    writeServerPrismaEngineFixtures({
+      sqliteClientDir,
+      mysqlClientDir,
+      postgresClientDir,
+      providers: ['sqlite', 'mysql'],
+    });
+    writeFileSync(join(sqliteClientDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(postgresClientDir, 'schema.prisma'), '// stale postgres schema\n', 'utf8');
+    writeFileSync(join(postgresClientDir, 'default.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    const runCalls = [];
+
+    await artifacts.buildServerBinaryArtifactPayload({
+      repoRoot,
+      payloadDir,
+      entrypoint: join(serverSourcesDir, 'main.light.ts'),
+      buildDbProviders: 'all',
+      target: artifacts.resolveCurrentBinaryTarget({
+        availableTargets: artifacts.SERVER_BINARY_TARGETS,
+        platform: 'linux',
+        arch: 'x64',
+      }),
+      commandProbe: () => true,
+      runCommand: (cmd, args) => {
+        runCalls.push({ cmd, args });
+        const rendered = `${cmd} ${args.join(' ')}`;
+        if (rendered.includes('--cwd apps/server -s generate:providers')) {
+          writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// canonical sqlite schema\n', 'utf8');
+          writeFileSync(join(postgresClientDir, 'schema.prisma'), '// canonical postgres schema\n', 'utf8');
+        }
+      },
+      compileBinary: async ({ outfile }) => {
+        writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
+      },
+    });
+
+    assert.deepEqual(runCalls, [
+      {
+        cmd: 'yarn',
+        args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
+      },
+    ]);
+    assert.equal(
+      readFileSync(join(payloadDir, 'generated', 'sqlite-client', 'schema.prisma'), 'utf8'),
+      '// canonical sqlite schema\n',
+    );
+    assert.equal(
+      readFileSync(join(payloadDir, 'node_modules', '.prisma', 'client', 'schema.prisma'), 'utf8'),
+      '// canonical postgres schema\n',
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildServerBinaryArtifactPayload fails darwin artifacts without the darwin Prisma engine', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-darwin-engine-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
+    const sqliteClientDir = join(repoRoot, 'apps', 'server', 'generated', 'sqlite-client');
+    const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
+    const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
+    const prismaClientPackageDir = join(repoRoot, 'node_modules', '@prisma', 'client');
+
+    mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(uiDistDir, { recursive: true });
+    mkdirSync(sqliteClientDir, { recursive: true });
+    mkdirSync(sqliteMigrationsDir, { recursive: true });
+    mkdirSync(postgresClientDir, { recursive: true });
+    mkdirSync(prismaClientPackageDir, { recursive: true });
+
+    writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'), 'wrong-platform\n', 'utf8');
+    writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
+    writeServerPrismaEngineFixtures({
+      sqliteClientDir: null,
+      mysqlClientDir: null,
+      postgresClientDir,
+      providers: [],
+      platform: 'darwin',
+      arch: 'arm64',
+    });
+    writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    await assert.rejects(
+      artifacts.buildServerBinaryArtifactPayload({
+        repoRoot,
+        payloadDir,
+        entrypoint: join(serverSourcesDir, 'main.light.ts'),
+        buildDbProviders: 'sqlite',
+        target: artifacts.resolveCurrentBinaryTarget({
+          availableTargets: artifacts.SERVER_BINARY_TARGETS,
+          platform: 'darwin',
+          arch: 'arm64',
+        }),
+        commandProbe: () => true,
+        runCommand: () => {},
+        compileBinary: async ({ outfile }) => {
+          writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
+        },
+      }),
+      /missing sqlite Prisma query engine for darwin-arm64/i,
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -827,21 +1104,25 @@ test('buildServerBinaryArtifactPayload retries transient ENOENT failures while c
     const repoRoot = join(tempRoot, 'repo');
     const payloadDir = join(tempRoot, 'payload');
     const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
     const sqliteClientDir = join(repoRoot, 'apps', 'server', 'generated', 'sqlite-client');
     const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
     const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
     const prismaClientPackageDir = join(repoRoot, 'node_modules', '@prisma', 'client');
 
     mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(uiDistDir, { recursive: true });
     mkdirSync(sqliteClientDir, { recursive: true });
     mkdirSync(sqliteMigrationsDir, { recursive: true });
     mkdirSync(postgresClientDir, { recursive: true });
     mkdirSync(prismaClientPackageDir, { recursive: true });
 
     writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
     writeFileSync(join(postgresClientDir, 'client.d.ts'), 'export {};\n', 'utf8');
+    writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = {};\n', 'utf8');
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
@@ -874,6 +1155,70 @@ test('buildServerBinaryArtifactPayload retries transient ENOENT failures while c
     assert.ok(copyAttempts >= 2);
     assert.equal(readFileSync(join(payloadDir, 'node_modules', '.prisma', 'client', 'client.d.ts'), 'utf8'), 'export {};\n');
     assert.equal(readFileSync(join(payloadDir, 'node_modules', '@prisma', 'client', 'index.js'), 'utf8'), 'module.exports = {};\n');
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildServerBinaryArtifactPayload builds ui-web dist when it is missing', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-ui-build-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    const sqliteClientDir = join(repoRoot, 'apps', 'server', 'generated', 'sqlite-client');
+    const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
+    const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
+    const prismaClientPackageDir = join(repoRoot, 'node_modules', '@prisma', 'client');
+
+    mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(sqliteClientDir, { recursive: true });
+    mkdirSync(sqliteMigrationsDir, { recursive: true });
+    mkdirSync(postgresClientDir, { recursive: true });
+    mkdirSync(prismaClientPackageDir, { recursive: true });
+
+    writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
+    writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
+    writeFileSync(join(postgresClientDir, 'client.d.ts'), 'export {};\n', 'utf8');
+    writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
+    writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    const runCalls = [];
+    await artifacts.buildServerBinaryArtifactPayload({
+      repoRoot,
+      payloadDir,
+      buildDbProviders: 'sqlite',
+      target: artifacts.resolveCurrentBinaryTarget({
+        availableTargets: artifacts.SERVER_BINARY_TARGETS,
+        platform: 'linux',
+        arch: 'x64',
+      }),
+      commandProbe: () => true,
+      runCommand: (cmd, args) => {
+        runCalls.push({ cmd, args });
+        const argsText = Array.isArray(args) ? args.join(' ') : '';
+        if (cmd === process.execPath && argsText.includes('apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs')) {
+          return;
+        }
+        if (argsText.includes('--cwd apps/ui') && argsText.includes('expo export --platform web --output-dir dist')) {
+          const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
+          mkdirSync(uiDistDir, { recursive: true });
+          writeFileSync(join(uiDistDir, 'index.html'), '<html>ui built</html>\n', 'utf8');
+        }
+      },
+      compileBinary: async ({ outfile }) => {
+        writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
+      },
+    });
+
+    assert.deepEqual(runCalls, [
+      { cmd: 'yarn', args: ['--cwd', 'apps/server', '-s', 'generate:providers'] },
+      { cmd: process.execPath, args: ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'] },
+      { cmd: 'yarn', args: ['--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'] },
+    ]);
+    assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>ui built</html>\n');
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

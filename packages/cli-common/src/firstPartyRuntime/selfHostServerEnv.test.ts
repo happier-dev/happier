@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     applyEnvOverridesToEnvText,
     mergeSelfHostServerEnvText,
+    renderSelfHostServerEnvText,
     resolveConfiguredSelfHostBaseUrl,
 } from './selfHostServerEnv.js';
 
@@ -64,5 +65,48 @@ describe('mergeSelfHostServerEnvText', () => {
         expect(merged).not.toContain('NODE_PATH=/old/node_modules');
         expect(merged).not.toContain('HAPPIER_SQLITE_MIGRATIONS_DIR=/old/migrations');
         expect(merged).not.toContain('HAPPIER_SERVER_UI_DIR=/old/ui');
+    });
+});
+
+describe('renderSelfHostServerEnvText', () => {
+    it('keeps sqlite auto-migrate enabled for darwin self-host runtimes even when the CLI runs under Bun', () => {
+        const previousBun = (globalThis as { Bun?: unknown }).Bun;
+        (globalThis as { Bun?: unknown }).Bun = {};
+
+        try {
+            const rendered = renderSelfHostServerEnvText({
+                port: 3005,
+                host: '127.0.0.1',
+                dataDir: '/tmp/happier-data',
+                filesDir: '/tmp/happier-data/files',
+                dbDir: '/tmp/happier-data/pglite',
+                serverBinDir: '/tmp/happier-server',
+                platform: 'darwin',
+                arch: 'arm64',
+            });
+
+            expect(rendered).toContain('HAPPIER_SQLITE_AUTO_MIGRATE=1');
+        } finally {
+            if (typeof previousBun === 'undefined') {
+                delete (globalThis as { Bun?: unknown }).Bun;
+            } else {
+                (globalThis as { Bun?: unknown }).Bun = previousBun;
+            }
+        }
+    });
+
+    it('renders Windows sqlite DATABASE_URL in the Prisma-compatible drive-letter form', () => {
+        const rendered = renderSelfHostServerEnvText({
+            port: 3005,
+            host: '127.0.0.1',
+            dataDir: 'C:\\Users\\me\\Happier QA\\self-host\\data',
+            filesDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\files',
+            dbDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\pglite',
+            platform: 'win32',
+        });
+
+        expect(rendered).toContain(
+            'DATABASE_URL=file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite',
+        );
     });
 });

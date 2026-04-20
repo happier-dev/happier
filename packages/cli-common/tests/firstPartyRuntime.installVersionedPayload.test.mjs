@@ -62,6 +62,7 @@ test('installVersionedPayload promotes payload, syncs shims, and prunes older ve
     });
     assert.equal(result.currentVersionId, '3.0.0');
     assert.equal(result.previousVersionId, '2.0.0');
+    assert.equal(result.hadLegacyCurrentInstallWithoutVersionMarkers, false);
     assert.equal(await readFile(paths.binaryPath, 'utf8'), 'third-version');
     assert.equal(await readFile(join(paths.previousPath, 'happier'), 'utf8'), 'second-version');
     assert.equal(existsSync(join(homeDir, 'cli', 'versions', '1.0.0')), false);
@@ -90,6 +91,7 @@ test('installVersionedPayload resolves Windows .exe payloads and shims', async (
       });
 
       assert.equal(result.currentVersionId, '1.0.0');
+      assert.equal(result.hadLegacyCurrentInstallWithoutVersionMarkers, false);
       assert.equal(paths.binaryPath, join(homeDir, 'cli', 'current', 'happier.exe'));
       assert.equal(paths.shimPaths[0], join(homeDir, 'bin', 'happier.exe'));
       assert.equal(await readFile(paths.binaryPath, 'utf8'), 'windows-version');

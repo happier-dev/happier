@@ -44,7 +44,12 @@ if ($Token) {
   $GitHubHeaders["Authorization"] = "Bearer $Token"
 }
 $InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } else { Join-Path $env:USERPROFILE ".happier" }
-$DaemonServiceStateHomeDir = if ($env:HAPPIER_HOME_DIR) { $env:HAPPIER_HOME_DIR } else { Join-Path $env:USERPROFILE ".happier" }
+$ReleaseAssetsDir = if ($env:HAPPIER_RELEASE_ASSETS_DIR) { $env:HAPPIER_RELEASE_ASSETS_DIR } else { "" }
+if (-not $env:HAPPIER_HOME_DIR) {
+  [Environment]::SetEnvironmentVariable("HAPPIER_HOME_DIR", $InstallDir, [EnvironmentVariableTarget]::User)
+  $env:HAPPIER_HOME_DIR = $InstallDir
+}
+$DaemonServiceStateHomeDir = $env:HAPPIER_HOME_DIR
 $LegacyBinDir = Join-Path $env:USERPROFILE ".local\bin"
 $BinDir = Join-Path $InstallDir "bin"
 if ($env:HAPPIER_BIN_DIR) {
@@ -109,6 +114,19 @@ function Resolve-InstalledCliInvoker {
   }
 
   return $null
+}
+
+function Show-PathReloadGuidance {
+  param (
+    [Parameter(Mandatory = $true)] [string] $ShimName,
+    [Parameter(Mandatory = $true)] [string] $BinDir
+  )
+
+  Write-Host ""
+  Write-Host "Next steps"
+  Write-Host "The current PowerShell session can use $ShimName immediately."
+  Write-Host "Other already-open terminals keep their old PATH until you restart them."
+  Write-Host "Managed bin directory: $BinDir"
 }
 
 function ConvertTo-InstallerBoolean {
@@ -223,7 +241,7 @@ function Read-InstallerYesNoChoice {
 
 function Resolve-WithDaemonPreference {
   param (
-    [Parameter(Mandatory = $false)] [object[]] $ExistingEntries = @()
+    [Parameter(Mandatory = $false)] [object[]] $Entries = @()
   )
 
   if ($WithDaemonExplicit) {
@@ -231,10 +249,14 @@ function Resolve-WithDaemonPreference {
   }
 
   $defaultChoice = Get-DefaultBackgroundServiceChoice
+  $hasExistingServices = $Entries.Count -gt 0
   if ($Noninteractive -eq "1") {
+    if ($hasExistingServices) {
+      return "1"
+    }
     return $defaultChoice
   }
-  return Read-BackgroundServicePromptChoice -DefaultChoice $defaultChoice -HasExistingServices ($ExistingEntries.Count -gt 0)
+  return Read-BackgroundServicePromptChoice -DefaultChoice $defaultChoice -HasExistingServices $hasExistingServices
 }
 
 function Invoke-InstallerCommandWithDaemonServiceContext {
@@ -428,13 +450,15 @@ function Invoke-PostInstallAction {
   $setupRelayDefaultArgs = @()
   if ($SetupRelay -and -not $Run) {
     $Run = "setup-relay"
-    $setupRelayDefaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }))
   }
   if (-not $Run) {
     return
   }
 
   $runValue = $Run.Trim().ToLowerInvariant()
+  if ($runValue -eq "setup-relay" -and $setupRelayDefaultArgs.Count -eq 0) {
+    $setupRelayDefaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }), "--preserve-active-server")
+  }
   $requiredSubcommand = $null
   $argsToPass = @()
   switch ($runValue) {
@@ -488,7 +512,7 @@ function Invoke-PostInstallAction {
   Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs $argsToPass -HomeDir $DaemonServiceStateHomeDir
 }
 
-if (($SetupRelay -or $Run) -and ($existing = Resolve-InstalledCliInvoker)) {
+if ($Run -and -not $SetupRelay -and ($existing = Resolve-InstalledCliInvoker)) {
   Invoke-PostInstallAction -CliPath $existing
   exit 0
 }
@@ -501,6 +525,54 @@ function Get-AssetByPattern {
   return $Release.assets | Where-Object { $_.name -match $Pattern } | Select-Object -First 1
 }
 
+function Get-LocalAssetByPattern {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Pattern
+  )
+  if (-not $ReleaseAssetsDir) {
+    return $null
+  }
+  if (-not (Test-Path $ReleaseAssetsDir)) {
+    throw "HAPPIER_RELEASE_ASSETS_DIR does not exist: $ReleaseAssetsDir"
+  }
+  return Get-ChildItem -Path $ReleaseAssetsDir -File | Where-Object { $_.Name -match $Pattern } | Select-Object -First 1
+}
+
+function Resolve-InstallerAsset {
+  param (
+    [Parameter(Mandatory = $false)] [object] $Release,
+    [Parameter(Mandatory = $true)] [string] $Pattern
+  )
+  $localAsset = Get-LocalAssetByPattern -Pattern $Pattern
+  if ($localAsset) {
+    return @{
+      Name = $localAsset.Name
+      Source = $localAsset.FullName
+    }
+  }
+
+  $asset = Get-AssetByPattern -Release $Release -Pattern $Pattern
+  if (-not $asset) {
+    return $null
+  }
+  return @{
+    Name = [string]$asset.name
+    Source = [string]$asset.browser_download_url
+  }
+}
+
+function Copy-OrDownloadInstallerAsset {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Source,
+    [Parameter(Mandatory = $true)] [string] $DestinationPath
+  )
+  if (Test-Path $Source) {
+    Copy-Item -Path $Source -Destination $DestinationPath -Force
+    return
+  }
+  Invoke-WebRequest -Uri $Source -Headers $GitHubHeaders -OutFile $DestinationPath
+}
+
 function Resolve-MinisignExecutablePath {
   param (
     [string[]] $AdditionalPathEntries = @()
@@ -511,7 +583,25 @@ function Resolve-MinisignExecutablePath {
     return $command.Source
   }
 
-  foreach ($pathEntry in $AdditionalPathEntries) {
+  $pathEntries = @()
+  if ($env:Path) {
+    $pathEntries += $env:Path -split ';'
+  }
+  $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+  if ($userPath) {
+    $pathEntries += $userPath -split ';'
+  }
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+  if ($machinePath) {
+    $pathEntries += $machinePath -split ';'
+  }
+  if ($env:LOCALAPPDATA) {
+    $pathEntries += Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links"
+    $pathEntries += Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
+  }
+  $pathEntries += $AdditionalPathEntries
+
+  foreach ($pathEntry in $pathEntries) {
     $trimmedEntry = [string]$pathEntry
     if (-not $trimmedEntry) {
       continue
@@ -520,6 +610,13 @@ function Resolve-MinisignExecutablePath {
     $candidate = Join-Path $trimmedEntry.Trim() "minisign.exe"
     if (Test-Path $candidate) {
       return $candidate
+    }
+
+    if ($trimmedEntry -match '[\\/]WinGet[\\/]Packages$' -and (Test-Path $trimmedEntry)) {
+      $nestedCandidate = Get-ChildItem -Path $trimmedEntry.Trim() -Filter "minisign.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($nestedCandidate) {
+        return $nestedCandidate.FullName
+      }
     }
   }
 
@@ -586,24 +683,15 @@ function Ensure-Minisign {
       $wingetInstallResult = Invoke-NativeCommandCapturingOutput {
         winget install --id jedisct1.minisign --accept-source-agreements --accept-package-agreements
       }
-      if ($wingetInstallResult.ExitCode -ne 0) {
-        if ($wingetInstallResult.Output) {
-          Write-Warning $wingetInstallResult.Output.Trim()
-        }
-        throw "winget install failed."
+      if ($wingetInstallResult.ExitCode -ne 0 -and $wingetInstallResult.Output) {
+        Write-Warning $wingetInstallResult.Output.Trim()
       }
-      $pathEntries = @()
-      $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
-      if ($userPath) {
-        $pathEntries += $userPath -split ';'
-      }
-      $machinePath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
-      if ($machinePath) {
-        $pathEntries += $machinePath -split ';'
-      }
-      $wingetMinisign = Resolve-MinisignExecutablePath -AdditionalPathEntries $pathEntries
+      $wingetMinisign = Resolve-MinisignExecutablePath
       if ($wingetMinisign) {
         return $wingetMinisign
+      }
+      if ($wingetInstallResult.ExitCode -ne 0) {
+        throw "winget install failed."
       }
     }
     catch {}
@@ -628,22 +716,27 @@ function Resolve-MinisignPublicKey {
 }
 
 $tag = if ($Channel -eq "preview") { "cli-preview" } elseif ($Channel -eq "publicdev") { "cli-dev" } else { "cli-stable" }
-Write-Host "Fetching $tag release metadata..."
-try {
-  $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
-}
-catch {
-  if ($Channel -eq "stable") {
-    throw "No stable releases found for Happier CLI."
+if (-not $ReleaseAssetsDir) {
+  Write-Host "Fetching $tag release metadata..."
+  try {
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
   }
-  if ($Channel -eq "publicdev") {
-    throw "No dev releases found for Happier CLI."
+  catch {
+    if ($Channel -eq "stable") {
+      throw "No stable releases found for Happier CLI."
+    }
+    if ($Channel -eq "publicdev") {
+      throw "No dev releases found for Happier CLI."
+    }
+    throw "No preview releases found for Happier CLI."
   }
-  throw "No preview releases found for Happier CLI."
 }
-$asset = Get-AssetByPattern -Release $release -Pattern '^happier-v.*-windows-x64\.tar\.gz$'
-$checksumsAsset = Get-AssetByPattern -Release $release -Pattern '^checksums-happier-v.*\.txt$'
-$signatureAsset = Get-AssetByPattern -Release $release -Pattern '^checksums-happier-v.*\.txt\.minisig$'
+else {
+  $release = $null
+}
+$asset = Resolve-InstallerAsset -Release $release -Pattern '^happier-v.*-windows-x64\.tar\.gz$'
+$checksumsAsset = Resolve-InstallerAsset -Release $release -Pattern '^checksums-happier-v.*\.txt$'
+$signatureAsset = Resolve-InstallerAsset -Release $release -Pattern '^checksums-happier-v.*\.txt\.minisig$'
 if (-not $asset) {
   throw "Unable to locate Windows x64 binary on release tag $tag."
 }
@@ -661,11 +754,11 @@ try {
   $signaturePath = Join-Path $tmpDir.FullName "checksums.txt.minisig"
   $pubKeyPath = Join-Path $tmpDir.FullName "minisign.pub"
 
-  Invoke-WebRequest -Uri $asset.browser_download_url -Headers $GitHubHeaders -OutFile $archivePath
-  Invoke-WebRequest -Uri $checksumsAsset.browser_download_url -Headers $GitHubHeaders -OutFile $checksumsPath
-  Invoke-WebRequest -Uri $signatureAsset.browser_download_url -Headers $GitHubHeaders -OutFile $signaturePath
+  Copy-OrDownloadInstallerAsset -Source $asset.Source -DestinationPath $archivePath
+  Copy-OrDownloadInstallerAsset -Source $checksumsAsset.Source -DestinationPath $checksumsPath
+  Copy-OrDownloadInstallerAsset -Source $signatureAsset.Source -DestinationPath $signaturePath
 
-  $assetName = [System.IO.Path]::GetFileName($asset.browser_download_url)
+  $assetName = [string]$asset.Name
   $expectedSha = $null
   foreach ($line in (Get-Content -Path $checksumsPath)) {
     if ($line -match '^([a-fA-F0-9]{64})\s{2}(.+)$' -and $matches[2] -eq $assetName) {
@@ -712,6 +805,7 @@ try {
   }
 
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+  $target = Join-Path $BinDir "$((Resolve-CliShimName)).exe"
 
   $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
   try {
@@ -729,7 +823,7 @@ try {
     }
   }
   if ($promotionResult.ExitCode -ne 0) {
-    if ($promotionResult.Output -match 'Unknown self subcommand:\s+__install-payload') {
+    if ($promotionResult.Output -match '(Unknown self subcommand:\s+__install-payload|ENOENT: no such file or directory, open)') {
       Write-Warning "Payload promotion failed, falling back to direct binary copy."
       if ($promotionResult.Output) {
         Write-Warning $promotionResult.Output.Trim()
@@ -758,12 +852,10 @@ try {
   }
   $updatedPathEntries = @($BinDir) + $pathEntries
   [Environment]::SetEnvironmentVariable("Path", ($updatedPathEntries -join ';'), [EnvironmentVariableTarget]::User)
+  $env:Path = ($updatedPathEntries -join ';')
   if ($pathEntries.Length -eq 0 -or $userPath -notmatch [Regex]::Escape($BinDir)) {
     Write-Host "Added $BinDir to user PATH."
-  }
-  if ($env:Path -notmatch [Regex]::Escape($BinDir)) {
-    Write-Host "To use Happier in this PowerShell session, open a new PowerShell window or run:"
-    Write-Host ('  $env:Path = "{0};$env:Path"' -f $BinDir)
+    Show-PathReloadGuidance -ShimName (Resolve-CliShimName) -BinDir $BinDir
   }
 
   $invoker = Resolve-InstalledCliInvoker
@@ -783,7 +875,7 @@ try {
     Show-InstalledBackgroundServiceSummary -CliPath $invoker -Entries $backgroundServiceInventory.Entries
   }
 
-  $resolvedWithDaemon = Resolve-WithDaemonPreference -ExistingEntries $backgroundServiceInventory.Entries
+  $resolvedWithDaemon = Resolve-WithDaemonPreference -Entries $backgroundServiceInventory.Entries
   if ($resolvedWithDaemon -ne "0") {
     if ($backgroundServiceInventory.Supported) {
       $installStrategy = Resolve-ExistingBackgroundServiceInstallStrategy -Entries $backgroundServiceInventory.Entries

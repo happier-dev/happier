@@ -1,8 +1,9 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
+import { resolveWorkspaceDependencyBuildOrder } from '../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,10 +24,18 @@ function findRepoRoot(startDir) {
 async function loadCliCommonWorkspacesModule(repoRoot) {
   const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
   if (!existsSync(modulePath)) {
-    execFileSync('yarn', ['-s', 'workspace', '@happier-dev/cli-common', 'build'], {
-      cwd: repoRoot,
-      stdio: 'inherit',
-    });
+    for (const workspaceName of resolveWorkspaceDependencyBuildOrder({
+      repoRoot,
+      seedPackageNames: ['@happier-dev/cli-common', '@happier-dev/release-runtime'],
+    })) {
+      execYarn(['-s', 'workspace', `@happier-dev/${workspaceName}`, 'build'], {
+        cwd: repoRoot,
+        stdio: 'inherit',
+      });
+      if (workspaceName === 'cli-common' && existsSync(modulePath)) {
+        break;
+      }
+    }
   }
 
   if (!existsSync(modulePath)) {
@@ -36,23 +45,12 @@ async function loadCliCommonWorkspacesModule(repoRoot) {
   return await import(pathToFileURL(modulePath).href);
 }
 
-async function ensureReleaseRuntimeBuilt(repoRoot) {
-  const distPath = resolve(repoRoot, 'packages', 'release-runtime', 'dist', 'index.js');
-  if (existsSync(distPath)) return;
-
-  execFileSync('yarn', ['-s', 'workspace', '@happier-dev/release-runtime', 'build'], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-  });
-}
-
 export async function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
   const relayDir = opts.relayDir ?? resolve(repoRoot, 'packages', 'relay-server');
   const lockPath = opts.lockPath ?? resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
 
   return withWorkspaceBundleLock(async () => {
-    await ensureReleaseRuntimeBuilt(repoRoot);
     const {
       bundleWorkspacePackages,
       resolveWorkspaceBundlesFromPackageJson,

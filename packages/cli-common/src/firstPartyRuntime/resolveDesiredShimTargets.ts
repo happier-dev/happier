@@ -15,6 +15,7 @@ export async function resolveDesiredShimTargets(params: Readonly<{
     componentId: FirstPartyComponentId;
     channel?: PublicReleaseRingId;
     releaseRing?: PublicReleaseRingId;
+    defaultReleaseChannelOverride?: PublicReleaseRingId;
     processEnv?: NodeJS.ProcessEnv;
 }>): Promise<readonly DesiredFirstPartyShimTarget[]> {
     const paths = resolveInstalledFirstPartyComponentPaths({
@@ -29,7 +30,9 @@ export async function resolveDesiredShimTargets(params: Readonly<{
     }
 
     const channel = params.channel ?? params.releaseRing ?? 'stable';
-    const defaultReleaseChannel = await readDefaultManagedReleaseChannel({ processEnv: params.processEnv });
+    const defaultReleaseChannel =
+        params.defaultReleaseChannelOverride
+        ?? await readDefaultManagedReleaseChannel({ processEnv: params.processEnv });
     const defaultShimPath = resolveInstalledFirstPartyComponentPaths({
         componentId: params.componentId,
         channel: 'stable',

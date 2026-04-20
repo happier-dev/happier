@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join, win32 as win32Path } from 'node:path';
 
 import {
     applyServicePlan,
@@ -20,39 +20,385 @@ import {
     renderSelfHostServerEnvText,
     resolveConfiguredSelfHostBaseUrl,
 } from './selfHostServerEnv.js';
+import { copyDirectoryTreePreservingSymlinks } from './copyDirectoryTreePreservingSymlinks.js';
+
+const RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES = new Set([
+    'config',
+    'data',
+    'logs',
+    'self-host-state.json',
+]);
+const DEFAULT_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS = 120_000;
+const MAX_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS = 600_000;
+
+type RelayRuntimeInstallRootMigration = Readonly<{
+    platform: NodeJS.Platform;
+    backend?: ServiceBackend;
+    homeDir?: string;
+    migratedInstallRoot: string;
+    originalInstallRoot: string;
+    runServiceCommands?: boolean;
+    serverBinaryName: string;
+    serviceName?: string;
+    shimPath: string;
+    stdoutPath?: string;
+    stderrPath?: string;
+}>;
+
+function tryParseJsonObject(text: string): Record<string, unknown> | null {
+    const raw = String(text ?? '').trim();
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+        return parsed as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+}
+
+function normalizeComparablePathKey(value: string | null | undefined): string | null {
+    const trimmed = String(value ?? '').trim().replace(/[\\/]+$/, '');
+    return trimmed || null;
+}
+
+function parseSystemdUnitWorkingDirectory(unitText: string): string | null {
+    const lines = String(unitText ?? '').split(/\r?\n/u);
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+        if (!trimmed.toLowerCase().startsWith('workingdirectory=')) continue;
+        const value = trimmed.slice('WorkingDirectory='.length).trim();
+        return value || null;
+    }
+    return null;
+}
+
+function xmlUnescape(value: string): string {
+    return String(value ?? '')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&apos;', "'")
+        .replaceAll('&gt;', '>')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&amp;', '&');
+}
+
+function parseLaunchdPlistWorkingDirectory(plistText: string): string | null {
+    const match = String(plistText ?? '').match(/<key>\s*WorkingDirectory\s*<\/key>\s*<string>([\s\S]*?)<\/string>/iu);
+    const value = match?.[1]?.trim();
+    return value ? xmlUnescape(value) : null;
+}
+
+function parseServiceDefinitionWorkingDirectory(params: Readonly<{
+    backend: 'systemd-user' | 'systemd-system' | 'launchd-user' | 'launchd-system';
+    definitionText: string;
+}>): string | null {
+    if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
+        return parseSystemdUnitWorkingDirectory(params.definitionText);
+    }
+    if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
+        return parseLaunchdPlistWorkingDirectory(params.definitionText);
+    }
+    return null;
+}
+
+function relayRuntimeStateMatchesRequestedLane(params: Readonly<{
+    state: Record<string, unknown>;
+    channel: 'preview' | 'publicdev';
+    mode: 'user' | 'system';
+}>): boolean {
+    const stateChannel = String(params.state.channel ?? '').trim();
+    const stateMode = String(params.state.mode ?? '').trim();
+    const channelMatches = stateChannel === params.channel
+        || (params.channel === 'publicdev' && stateChannel === 'dev');
+    const modeMatches = !stateMode || stateMode === params.mode;
+    return channelMatches && modeMatches;
+}
+
+export async function shouldMigrateLegacyUnsuffixedRelayRuntimeInstallRoot(params: Readonly<{
+    platform: NodeJS.Platform;
+    mode: 'user' | 'system';
+    channel: 'stable' | 'preview' | 'publicdev';
+    homeDir: string;
+}>): Promise<boolean> {
+    if (params.mode !== 'user') return false;
+    if (params.channel === 'stable') return false;
+
+    const defaults = resolveRelayRuntimeDefaults({
+        platform: params.platform,
+        mode: params.mode,
+        channel: params.channel,
+        homeDir: params.homeDir,
+    });
+    if (existsSync(defaults.installRoot)) return false;
+
+    const legacyDefaults = resolveRelayRuntimeDefaults({
+        platform: params.platform,
+        mode: params.mode,
+        channel: 'stable',
+        homeDir: params.homeDir,
+    });
+    if (!existsSync(legacyDefaults.installRoot)) return false;
+
+    const legacyStatePath = join(legacyDefaults.installRoot, 'self-host-state.json');
+    if (!existsSync(legacyStatePath)) return true;
+
+    const legacyStateText = await readFile(legacyStatePath, 'utf8').catch(() => '');
+    const legacyState = tryParseJsonObject(legacyStateText);
+    return Boolean(legacyState && relayRuntimeStateMatchesRequestedLane({
+        state: legacyState,
+        channel: params.channel,
+        mode: params.mode,
+    }));
+}
+
+async function migrateOwnedCurrentLaneRelayRuntimeInstallRootIfNeeded(params: Readonly<{
+    platform: NodeJS.Platform;
+    mode: 'user' | 'system';
+    channel: 'stable' | 'preview' | 'publicdev';
+    homeDir: string;
+    runServiceCommands: boolean;
+}>): Promise<RelayRuntimeInstallRootMigration | null> {
+    if (params.mode !== 'user') return null;
+    if (params.channel === 'stable') return null;
+
+    const defaults = resolveRelayRuntimeDefaults({
+        platform: params.platform,
+        mode: params.mode,
+        channel: params.channel,
+        homeDir: params.homeDir,
+    });
+    if (existsSync(defaults.installRoot)) return null;
+
+    const backend: ServiceBackend = resolveServiceBackend({
+        platform: params.platform,
+        mode: params.mode,
+    });
+    if (backend !== 'systemd-user' && backend !== 'launchd-user') return null;
+
+    const serverBinaryName = params.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+    const serviceDefinition = buildServiceDefinition({
+        backend,
+        homeDir: params.homeDir,
+        spec: buildRelayRuntimeServiceSpec({
+            serviceName: defaults.serviceName,
+            installRoot: defaults.installRoot,
+            serverBinaryPath: join(defaults.installRoot, 'bin', serverBinaryName),
+            env: {},
+            stdoutPath: join(defaults.logDir, 'server.out.log'),
+            stderrPath: join(defaults.logDir, 'server.err.log'),
+        }),
+    });
+    if (!existsSync(serviceDefinition.path)) return null;
+
+    const serviceDefinitionText = await readFile(serviceDefinition.path, 'utf8').catch(() => '');
+    if (!serviceDefinitionText.trim()) return null;
+
+    const ownedInstallRoot = parseServiceDefinitionWorkingDirectory({
+        backend,
+        definitionText: serviceDefinitionText,
+    });
+    const ownedInstallRootKey = normalizeComparablePathKey(ownedInstallRoot);
+    const canonicalInstallRootKey = normalizeComparablePathKey(defaults.installRoot);
+    if (!ownedInstallRootKey || !canonicalInstallRootKey || ownedInstallRootKey === canonicalInstallRootKey) return null;
+    if (!existsSync(ownedInstallRootKey)) return null;
+
+    await mkdir(dirname(defaults.installRoot), { recursive: true });
+    await rename(ownedInstallRootKey, defaults.installRoot);
+
+    return {
+        platform: params.platform,
+        migratedInstallRoot: defaults.installRoot,
+        originalInstallRoot: ownedInstallRootKey,
+        serverBinaryName,
+        shimPath: join(defaults.binDir, serverBinaryName),
+    };
+}
+
+async function migrateLegacyUnsuffixedRelayRuntimeInstallRootIfNeeded(params: Readonly<{
+    platform: NodeJS.Platform;
+    mode: 'user' | 'system';
+    channel: 'stable' | 'preview' | 'publicdev';
+    homeDir: string;
+    runServiceCommands: boolean;
+}>): Promise<RelayRuntimeInstallRootMigration | null> {
+    const shouldMigrate = await shouldMigrateLegacyUnsuffixedRelayRuntimeInstallRoot(params);
+    if (!shouldMigrate) return null;
+
+    const defaults = resolveRelayRuntimeDefaults({
+        platform: params.platform,
+        mode: params.mode,
+        channel: params.channel,
+        homeDir: params.homeDir,
+    });
+    if (existsSync(defaults.installRoot)) return null;
+
+    const legacyDefaults = resolveRelayRuntimeDefaults({
+        platform: params.platform,
+        mode: params.mode,
+        channel: 'stable',
+        homeDir: params.homeDir,
+    });
+
+    if (params.runServiceCommands) {
+        const backend: ServiceBackend = resolveServiceBackend({
+            platform: params.platform,
+            mode: params.mode,
+        });
+        const serverBinaryPath = join(
+            legacyDefaults.installRoot,
+            'bin',
+            params.platform === 'win32' ? 'happier-server.exe' : 'happier-server',
+        );
+        const stdoutPath = join(legacyDefaults.logDir, 'server.out.log');
+        const stderrPath = join(legacyDefaults.logDir, 'server.err.log');
+
+        const serviceNamesToStop = new Set([legacyDefaults.serviceName, defaults.serviceName]);
+        for (const serviceName of serviceNamesToStop) {
+            const spec = buildRelayRuntimeServiceSpec({
+                serviceName,
+                installRoot: legacyDefaults.installRoot,
+                serverBinaryPath,
+                env: {},
+                stdoutPath,
+                stderrPath,
+            });
+            const definition = buildServiceDefinition({
+                backend,
+                homeDir: params.homeDir,
+                spec,
+            });
+            const stopPlan = planServiceAction({
+                backend,
+                action: 'stop',
+                label: spec.label,
+                definitionPath: definition.path,
+                persistent: true,
+            });
+            await applyServicePlan(stopPlan, { runCommands: true }).catch(() => undefined);
+        }
+    }
+
+    await mkdir(dirname(defaults.installRoot), { recursive: true });
+    await rename(legacyDefaults.installRoot, defaults.installRoot);
+    if (params.runServiceCommands) {
+        const backend: ServiceBackend = resolveServiceBackend({
+            platform: params.platform,
+            mode: params.mode,
+        });
+        const serverBinaryPath = join(
+            legacyDefaults.installRoot,
+            'bin',
+            params.platform === 'win32' ? 'happier-server.exe' : 'happier-server',
+        );
+        const legacyServiceSpec = buildRelayRuntimeServiceSpec({
+            serviceName: legacyDefaults.serviceName,
+            installRoot: legacyDefaults.installRoot,
+            serverBinaryPath,
+            env: {},
+            stdoutPath: join(legacyDefaults.logDir, 'server.out.log'),
+            stderrPath: join(legacyDefaults.logDir, 'server.err.log'),
+        });
+        const legacyServiceDefinition = buildServiceDefinition({
+            backend,
+            homeDir: params.homeDir,
+            spec: legacyServiceSpec,
+        });
+        const uninstallLegacyPlan = planServiceAction({
+            backend,
+            action: 'uninstall',
+            label: legacyServiceSpec.label,
+            definitionPath: legacyServiceDefinition.path,
+            persistent: true,
+        });
+        await applyServicePlan(uninstallLegacyPlan, { runCommands: true }).catch(() => undefined);
+        await rm(legacyServiceDefinition.path, { force: true }).catch(() => undefined);
+    }
+    const serverBinaryName = params.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+    return {
+        platform: params.platform,
+        backend: resolveServiceBackend({
+            platform: params.platform,
+            mode: params.mode,
+        }),
+        homeDir: params.homeDir,
+        migratedInstallRoot: defaults.installRoot,
+        originalInstallRoot: legacyDefaults.installRoot,
+        runServiceCommands: params.runServiceCommands !== false,
+        serverBinaryName,
+        serviceName: legacyDefaults.serviceName,
+        shimPath: join(defaults.binDir, serverBinaryName),
+        stdoutPath: join(legacyDefaults.logDir, 'server.out.log'),
+        stderrPath: join(legacyDefaults.logDir, 'server.err.log'),
+    };
+}
+
+async function rollbackRelayRuntimeInstallRootMigration(
+    migration: RelayRuntimeInstallRootMigration,
+): Promise<void> {
+    if (!existsSync(migration.migratedInstallRoot)) return;
+    if (existsSync(migration.originalInstallRoot)) return;
+
+    await mkdir(dirname(migration.originalInstallRoot), { recursive: true });
+    await rename(migration.migratedInstallRoot, migration.originalInstallRoot);
+
+    const restoredServerBinaryPath = join(migration.originalInstallRoot, 'bin', migration.serverBinaryName);
+    const hasRestoredServerBinary = existsSync(restoredServerBinaryPath);
+    if (hasRestoredServerBinary) {
+        await installBinaryShim({
+            platform: migration.platform,
+            sourcePath: restoredServerBinaryPath,
+            destPath: migration.shimPath,
+        });
+    }
+
+    if (
+        migration.runServiceCommands
+        && hasRestoredServerBinary
+        && migration.backend
+        && migration.homeDir
+        && migration.serviceName
+        && migration.stdoutPath
+        && migration.stderrPath
+    ) {
+        const restoreServiceSpec = buildRelayRuntimeServiceSpec({
+            serviceName: migration.serviceName,
+            installRoot: migration.originalInstallRoot,
+            serverBinaryPath: restoredServerBinaryPath,
+            env: {},
+            stdoutPath: migration.stdoutPath,
+            stderrPath: migration.stderrPath,
+        });
+        const restoreServiceDefinition = buildServiceDefinition({
+            backend: migration.backend,
+            homeDir: migration.homeDir,
+            spec: restoreServiceSpec,
+        });
+        const restoreServicePlan = planServiceAction({
+            backend: migration.backend,
+            action: 'install',
+            label: restoreServiceSpec.label,
+            definitionPath: restoreServiceDefinition.path,
+            definitionContents: restoreServiceDefinition.contents,
+            persistent: true,
+        });
+        await applyServicePlan(restoreServicePlan, { runCommands: true }).catch(() => undefined);
+    }
+}
 
 async function copyDirectoryContents(params: Readonly<{
     sourceDir: string;
     destDir: string;
 }>): Promise<void> {
-    await mkdir(params.destDir, { recursive: true });
-    const entries = await readdir(params.sourceDir, { withFileTypes: true });
-    for (const entry of entries) {
-        if (!entry.name || entry.name === '.' || entry.name === '..') continue;
-        if (entry.name.startsWith('._')) continue;
-        const sourcePath = join(params.sourceDir, entry.name);
-        const destPath = join(params.destDir, entry.name);
-        if (entry.isDirectory()) {
-            await copyDirectoryContents({ sourceDir: sourcePath, destDir: destPath });
-            continue;
-        }
-        if (entry.isFile()) {
-            await mkdir(dirname(destPath), { recursive: true });
-            await copyFile(sourcePath, destPath);
-            continue;
-        }
-        try {
-            const info = await stat(sourcePath);
-            if (info.isDirectory()) {
-                await copyDirectoryContents({ sourceDir: sourcePath, destDir: destPath });
-            } else if (info.isFile()) {
-                await mkdir(dirname(destPath), { recursive: true });
-                await copyFile(sourcePath, destPath);
-            }
-        } catch {
-            continue;
-        }
-    }
+    // Some payload roots are symlinked (for example `current -> versions/x.y.z`).
+    // The staging destination directory is created via `mkdtemp(...)` and already exists, so we must
+    // dereference the root symlink and copy the resolved directory contents into the existing folder.
+    const resolvedSourceDir = await realpath(params.sourceDir).catch(() => params.sourceDir);
+    await copyDirectoryTreePreservingSymlinks({
+        sourceDir: resolvedSourceDir,
+        destinationDir: params.destDir,
+        shouldSkipRelativePath: (relativePath) => relativePath.split(/[\\/]/u).some((segment) => segment.startsWith('._')),
+    });
 }
 
 function assertRootIfRequired(params: Readonly<{ platform: NodeJS.Platform; mode: 'user' | 'system' }>): void {
@@ -111,6 +457,21 @@ async function fetchJson(params: Readonly<{ url: string; timeoutMs: number }>): 
     }
 }
 
+function resolveRelayRuntimeInstallHealthcheckTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+    const raw = String(
+        env.HAPPIER_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS
+        ?? env.HAPPIER_RELAY_HOST_LOCAL_HEALTHCHECK_TIMEOUT_MS
+        ?? '',
+    ).trim();
+    if (!raw) return DEFAULT_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS;
+
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return DEFAULT_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS;
+    }
+    return Math.min(MAX_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS, Math.floor(parsed));
+}
+
 async function installBinaryShim(params: Readonly<{
     platform: NodeJS.Platform;
     sourcePath: string;
@@ -128,18 +489,246 @@ async function installBinaryShim(params: Readonly<{
     await copyFile(params.sourcePath, params.destPath);
 }
 
+async function listRelayRuntimeManagedRootEntries(rootDir: string): Promise<string[]> {
+    const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => []);
+    return entries
+        .map((entry) => entry.name)
+        .filter((name) => name && name !== '.' && name !== '..')
+        .filter((name) => !name.startsWith('.relay-runtime-backup-'))
+        .filter((name) => !RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES.has(name));
+}
+
+async function copyNamedRootEntries(params: Readonly<{
+    sourceDir: string;
+    destDir: string;
+    entryNames: readonly string[];
+}>): Promise<void> {
+    await mkdir(params.destDir, { recursive: true });
+    for (const entryName of params.entryNames) {
+        const sourcePath = join(params.sourceDir, entryName);
+        const destPath = join(params.destDir, entryName);
+        await rm(destPath, { recursive: true, force: true });
+
+        const info = await lstat(sourcePath).catch(() => null);
+        if (!info) continue;
+
+        if (info.isDirectory()) {
+            await copyDirectoryContents({
+                sourceDir: sourcePath,
+                destDir: destPath,
+            });
+            continue;
+        }
+
+        if (info.isSymbolicLink()) {
+            const linkTarget = await readlink(sourcePath).catch(() => null);
+            if (!linkTarget) continue;
+            await mkdir(dirname(destPath), { recursive: true });
+            const targetInfo = await stat(join(dirname(sourcePath), linkTarget)).catch(() => null);
+            await symlink(linkTarget, destPath, process.platform === 'win32' && targetInfo?.isDirectory() ? 'junction' : 'file');
+            continue;
+        }
+
+        if (info.isFile()) {
+            await mkdir(dirname(destPath), { recursive: true });
+            await copyFile(sourcePath, destPath);
+        }
+    }
+}
+
+async function clearNamedRootEntries(params: Readonly<{
+    rootDir: string;
+    entryNames: readonly string[];
+}>): Promise<void> {
+    for (const entryName of params.entryNames) {
+        await rm(join(params.rootDir, entryName), { recursive: true, force: true });
+    }
+}
+
 async function installPersistentPayload(params: Readonly<{
     sourceDir: string;
     destDir: string;
     executablePath: string;
 }>): Promise<void> {
     await mkdir(params.destDir, { recursive: true });
-    await rm(params.destDir, { recursive: true, force: true });
-    await copyDirectoryContents({
+    const existingEntryNames = await listRelayRuntimeManagedRootEntries(params.destDir);
+    await clearNamedRootEntries({
+        rootDir: params.destDir,
+        entryNames: existingEntryNames,
+    });
+    const entryNames = await listRelayRuntimeManagedRootEntries(params.sourceDir);
+    await copyNamedRootEntries({
         sourceDir: params.sourceDir,
         destDir: params.destDir,
+        entryNames,
     });
+    if (!existsSync(params.executablePath)) {
+        throw new Error(`[relay-runtime] failed to install server binary (${params.executablePath})`);
+    }
     await chmod(params.executablePath, 0o755).catch(() => undefined);
+}
+
+function resolveRelayRuntimePayloadRootFromServerBinaryPath(serverBinaryPath: string): string {
+    const binaryPath = String(serverBinaryPath ?? '').trim();
+    const binaryDir = dirname(binaryPath);
+    return basename(binaryDir) === 'bin'
+        ? dirname(binaryDir)
+        : binaryDir;
+}
+
+async function prepareRelayRuntimePayloadForInstall(params: Readonly<{
+    serverBinaryPath: string;
+    serverBinaryName: string;
+}>): Promise<Readonly<{
+    payloadRoot: string;
+    cleanupPath: string | null;
+}>> {
+    const payloadRoot = resolveRelayRuntimePayloadRootFromServerBinaryPath(params.serverBinaryPath);
+    const serverBinaryIsNestedUnderBin = basename(dirname(params.serverBinaryPath)) === 'bin';
+    if (serverBinaryIsNestedUnderBin) {
+        return {
+            payloadRoot,
+            cleanupPath: null,
+        };
+    }
+
+    const stagingRoot = await mkdtemp(join(tmpdir(), '.relay-runtime-payload-'));
+    try {
+        await copyDirectoryContents({
+            sourceDir: payloadRoot,
+            destDir: stagingRoot,
+        });
+
+        const stagedServerBinaryPath = join(stagingRoot, params.serverBinaryName);
+        if (!existsSync(stagedServerBinaryPath)) {
+            throw new Error(`[relay-runtime] staged server binary missing (${stagedServerBinaryPath})`);
+        }
+
+        const stagedBinDir = join(stagingRoot, 'bin');
+        await mkdir(stagedBinDir, { recursive: true });
+        await rename(stagedServerBinaryPath, join(stagedBinDir, params.serverBinaryName));
+
+        for (const runtimeSidecarName of ['generated', 'node_modules']) {
+            const stagedSidecarPath = join(stagingRoot, runtimeSidecarName);
+            if (!existsSync(stagedSidecarPath)) continue;
+            await rename(stagedSidecarPath, join(stagedBinDir, runtimeSidecarName));
+        }
+    } catch (error) {
+        await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+        throw error;
+    }
+
+    return {
+        payloadRoot: stagingRoot,
+        cleanupPath: stagingRoot,
+    };
+}
+
+async function backupRelayRuntimeInstallState(params: Readonly<{
+    installRoot: string;
+    payloadDir: string;
+    serverBinaryName: string;
+    migrationsDir: string;
+    envPath: string;
+    statePath: string;
+}>): Promise<Readonly<{
+    backupRoot: string;
+    payloadBackupDir: string | null;
+    hasRestorableServerBinary: boolean;
+    migrationsBackupDir: string | null;
+    previousEnvText: string | null;
+    previousStateText: string | null;
+}>> {
+    const backupRoot = await mkdtemp(join(dirname(params.installRoot), '.relay-runtime-backup-'));
+    const payloadBackupDir = join(backupRoot, 'payload');
+    const migrationsBackupDir = join(backupRoot, 'migrations');
+    const existingEntryNames = await listRelayRuntimeManagedRootEntries(params.payloadDir);
+    const hasPayloadEntries = existingEntryNames.length > 0;
+    const hasRestorableServerBinary = existsSync(join(params.payloadDir, 'bin', params.serverBinaryName));
+    const hasMigrations = existsSync(params.migrationsDir);
+    if (hasPayloadEntries) {
+        await copyNamedRootEntries({
+            sourceDir: params.payloadDir,
+            destDir: payloadBackupDir,
+            entryNames: existingEntryNames,
+        });
+    }
+    if (hasMigrations) {
+        await copyDirectoryContents({
+            sourceDir: params.migrationsDir,
+            destDir: migrationsBackupDir,
+        });
+    }
+    return {
+        backupRoot,
+        payloadBackupDir: hasPayloadEntries ? payloadBackupDir : null,
+        hasRestorableServerBinary,
+        migrationsBackupDir: hasMigrations ? migrationsBackupDir : null,
+        previousEnvText: existsSync(params.envPath)
+            ? await readFile(params.envPath, 'utf8').catch(() => null)
+            : null,
+        previousStateText: existsSync(params.statePath)
+            ? await readFile(params.statePath, 'utf8').catch(() => null)
+            : null,
+    };
+}
+
+async function restoreRelayRuntimeInstallState(params: Readonly<{
+    platform: NodeJS.Platform;
+    payloadDir: string;
+    shimPath: string;
+    migrationsDir: string;
+    envPath: string;
+    statePath: string;
+    payloadBackupDir: string | null;
+    migrationsBackupDir: string | null;
+    previousEnvText: string | null;
+    previousStateText: string | null;
+}>): Promise<void> {
+    const currentEntryNames = await listRelayRuntimeManagedRootEntries(params.payloadDir);
+    await clearNamedRootEntries({
+        rootDir: params.payloadDir,
+        entryNames: currentEntryNames,
+    });
+    if (params.payloadBackupDir) {
+        const backupEntryNames = await listRelayRuntimeManagedRootEntries(params.payloadBackupDir);
+        await copyNamedRootEntries({
+            sourceDir: params.payloadBackupDir,
+            destDir: params.payloadDir,
+            entryNames: backupEntryNames,
+        });
+    }
+    await rm(params.shimPath, { force: true });
+    if (params.payloadBackupDir) {
+        const serverBinaryName = params.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+        const sourcePath = join(params.payloadDir, 'bin', serverBinaryName);
+        if (existsSync(sourcePath)) {
+            await installBinaryShim({
+                platform: params.platform,
+                sourcePath,
+                destPath: params.shimPath,
+            });
+        }
+    }
+    await rm(params.migrationsDir, { recursive: true, force: true });
+    if (params.migrationsBackupDir) {
+        await copyDirectoryContents({
+            sourceDir: params.migrationsBackupDir,
+            destDir: params.migrationsDir,
+        });
+    }
+    if (typeof params.previousEnvText === 'string') {
+        await mkdir(dirname(params.envPath), { recursive: true });
+        await writeFile(params.envPath, params.previousEnvText, 'utf8');
+    } else {
+        await rm(params.envPath, { force: true });
+    }
+    if (typeof params.previousStateText === 'string') {
+        await mkdir(dirname(params.statePath), { recursive: true });
+        await writeFile(params.statePath, params.previousStateText, 'utf8');
+        return;
+    }
+    await rm(params.statePath, { force: true });
 }
 
 function buildRelayRuntimeServiceSpec(params: Readonly<{
@@ -170,6 +759,7 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
     homeDir?: string;
     arch?: string;
     version?: string | null;
+    serviceNameOverride?: string;
     runServiceCommands?: boolean;
     skipHealthCheck?: boolean;
 }>): Promise<Readonly<{ baseUrl: string; version: string | null }>> {
@@ -177,6 +767,7 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
     const homeDir = String(params.homeDir ?? '').trim() || homedir();
     const arch = String(params.arch ?? '').trim() || process.arch;
     const mode = params.mode === 'system' ? 'system' : 'user';
+    const serverBinaryName = platform === 'win32' ? 'happier-server.exe' : 'happier-server';
 
     assertRootIfRequired({ platform, mode });
 
@@ -186,124 +777,300 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         channel: params.channel,
         homeDir,
     });
-    const serverBinaryName = platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+    const serviceName = String(params.serviceNameOverride ?? '').trim() || defaults.serviceName;
     const installServerBinaryPath = join(defaults.installRoot, 'bin', serverBinaryName);
     const statePath = join(defaults.installRoot, 'self-host-state.json');
     const configEnvPath = join(defaults.configDir, 'server.env');
     const filesDir = join(defaults.dataDir, 'files');
     const dbDir = join(defaults.dataDir, 'pglite');
+    const migrationsDir = join(defaults.dataDir, 'migrations', 'sqlite');
     const stdoutPath = join(defaults.logDir, 'server.out.log');
     const stderrPath = join(defaults.logDir, 'server.err.log');
+    const backend: ServiceBackend = resolveServiceBackend({
+        platform,
+        mode,
+    });
+    const previousServiceSpec = buildRelayRuntimeServiceSpec({
+        serviceName,
+        installRoot: defaults.installRoot,
+        serverBinaryPath: installServerBinaryPath,
+        env: {},
+        stdoutPath,
+        stderrPath,
+    });
+    const previousServiceDefinition = buildServiceDefinition({
+        backend,
+        homeDir,
+        spec: previousServiceSpec,
+    });
+    const previousServiceDefinitionExisted = existsSync(previousServiceDefinition.path);
 
     if (!existsSync(params.serverBinaryPath)) {
         throw new Error('[relay-runtime] server binary not found');
     }
 
-    await mkdir(defaults.installRoot, { recursive: true });
-    await mkdir(defaults.configDir, { recursive: true });
-    await mkdir(defaults.dataDir, { recursive: true });
-    await mkdir(filesDir, { recursive: true });
-    await mkdir(dbDir, { recursive: true });
-    await mkdir(defaults.logDir, { recursive: true });
+    const preparedPayload = await prepareRelayRuntimePayloadForInstall({
+        serverBinaryPath: params.serverBinaryPath,
+        serverBinaryName,
+    });
+    let previousInstallState: Awaited<ReturnType<typeof backupRelayRuntimeInstallState>> | null = null;
+    let ownedRootMigration: RelayRuntimeInstallRootMigration | null = null;
+    let legacyRootMigration: RelayRuntimeInstallRootMigration | null = null;
+    let restoreInstallRoot = defaults.installRoot;
 
-    const migrationsSourceDir = join(dirname(params.serverBinaryPath), 'prisma', 'sqlite', 'migrations');
-    const migrationsDestDir = join(defaults.dataDir, 'migrations', 'sqlite');
-    await mkdir(migrationsDestDir, { recursive: true });
-    if (existsSync(migrationsSourceDir)) {
-        await copyDirectoryContents({
-            sourceDir: migrationsSourceDir,
-            destDir: migrationsDestDir,
+    try {
+        ownedRootMigration = await migrateOwnedCurrentLaneRelayRuntimeInstallRootIfNeeded({
+            platform,
+            mode,
+            channel: params.channel,
+            homeDir,
+            runServiceCommands: params.runServiceCommands !== false,
         });
-    }
 
-    await installPersistentPayload({
-        sourceDir: dirname(params.serverBinaryPath),
-        destDir: dirname(installServerBinaryPath),
-        executablePath: installServerBinaryPath,
-    });
-    await installBinaryShim({
-        platform,
-        sourcePath: installServerBinaryPath,
-        destPath: join(defaults.binDir, serverBinaryName),
-    });
+        legacyRootMigration = ownedRootMigration
+            ? null
+            : await migrateLegacyUnsuffixedRelayRuntimeInstallRootIfNeeded({
+                platform,
+                mode,
+                channel: params.channel,
+                homeDir,
+                runServiceCommands: params.runServiceCommands !== false,
+            });
 
-    const baseEnvText = renderSelfHostServerEnvText({
-        port: defaults.serverPort,
-        host: defaults.serverHost,
-        dataDir: defaults.dataDir,
-        filesDir,
-        dbDir,
-        uiDir: '',
-        serverBinDir: dirname(installServerBinaryPath),
-        arch,
-        platform,
-    });
-    const existingEnvText = existsSync(configEnvPath) ? await readFile(configEnvPath, 'utf8').catch(() => '') : '';
-    const envText = mergeSelfHostServerEnvText({
-        baseEnvText,
-        existingEnvText,
-        overrides: params.env,
-    });
-    await writeFile(configEnvPath, envText, 'utf8');
-    const env = parseEnvText(envText);
+        restoreInstallRoot = ownedRootMigration?.originalInstallRoot
+            ?? legacyRootMigration?.originalInstallRoot
+            ?? defaults.installRoot;
 
-    const serviceSpec = buildRelayRuntimeServiceSpec({
-        serviceName: defaults.serviceName,
-        installRoot: defaults.installRoot,
-        serverBinaryPath: installServerBinaryPath,
-        env,
-        stdoutPath,
-        stderrPath,
-    });
-    const backend: ServiceBackend = resolveServiceBackend({
-        platform,
-        mode,
-    });
-    const definition = buildServiceDefinition({
-        backend,
-        homeDir,
-        spec: serviceSpec,
-    });
-    const plan = planServiceAction({
-        backend,
-        action: 'install',
-        label: serviceSpec.label,
-        definitionPath: definition.path,
-        definitionContents: definition.contents,
-        persistent: true,
-    });
-    await applyServicePlan(plan, {
-        runCommands: params.runServiceCommands !== false,
-    });
+        await mkdir(defaults.installRoot, { recursive: true });
+        await mkdir(defaults.configDir, { recursive: true });
+        await mkdir(defaults.dataDir, { recursive: true });
+        await mkdir(filesDir, { recursive: true });
+        await mkdir(dbDir, { recursive: true });
+        await mkdir(defaults.logDir, { recursive: true });
 
-    const state = {
-        channel: params.channel,
-        mode,
-        version: typeof params.version === 'string' && params.version.trim() ? params.version.trim() : null,
-        updatedAt: new Date().toISOString(),
-    };
-    await writeJsonFile(statePath, state);
-
-    const baseUrl = resolveConfiguredSelfHostBaseUrl({
-        fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
-        envText,
-    });
-    if (params.skipHealthCheck !== true && params.runServiceCommands !== false) {
-        const baseUrlObject = new URL(baseUrl);
-        const result = await checkRelayRuntimeHealth({
-            host: baseUrlObject.hostname,
-            port: Number.parseInt(baseUrlObject.port, 10),
-            timeoutMs: 30_000,
-            probePortOpen: async ({ host, port, timeoutMs }) => await probePortOpen({ host, port, timeoutMs }),
-            fetchJson: async ({ url, timeoutMs }) => await fetchJson({ url, timeoutMs }),
+        previousInstallState = await backupRelayRuntimeInstallState({
+            installRoot: defaults.installRoot,
+            payloadDir: defaults.installRoot,
+            serverBinaryName,
+            migrationsDir,
+            envPath: configEnvPath,
+            statePath,
         });
-        if (!result.reachable) {
-            throw new Error(`[relay-runtime] relay runtime did not become healthy (${result.url})`);
+
+        if (params.runServiceCommands !== false) {
+            const stopServiceSpec = buildRelayRuntimeServiceSpec({
+                serviceName,
+                installRoot: defaults.installRoot,
+                serverBinaryPath: installServerBinaryPath,
+                env: {},
+                stdoutPath,
+                stderrPath,
+            });
+            const stopDefinition = buildServiceDefinition({
+                backend,
+                homeDir,
+                spec: stopServiceSpec,
+            });
+            const stopPlan = planServiceAction({
+                backend,
+                action: 'stop',
+                label: stopServiceSpec.label,
+                definitionPath: stopDefinition.path,
+                persistent: true,
+            });
+            await applyServicePlan(stopPlan, {
+                runCommands: true,
+            });
+        }
+
+        const payloadRoot = preparedPayload.payloadRoot;
+        const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations');
+        await mkdir(migrationsDir, { recursive: true });
+        if (existsSync(migrationsSourceDir)) {
+            await copyDirectoryContents({
+                sourceDir: migrationsSourceDir,
+                destDir: migrationsDir,
+            });
+        }
+
+        await installPersistentPayload({
+            sourceDir: payloadRoot,
+            destDir: defaults.installRoot,
+            executablePath: installServerBinaryPath,
+        });
+        await installBinaryShim({
+            platform,
+            sourcePath: installServerBinaryPath,
+            destPath: join(defaults.binDir, serverBinaryName),
+        });
+
+        const uiDir = platform === 'win32'
+            ? win32Path.join(defaults.installRoot, 'ui-web', 'current')
+            : join(defaults.installRoot, 'ui-web', 'current');
+        const baseEnvText = renderSelfHostServerEnvText({
+            port: defaults.serverPort,
+            host: defaults.serverHost,
+            dataDir: defaults.dataDir,
+            filesDir,
+            dbDir,
+            uiDir,
+            serverBinDir: dirname(installServerBinaryPath),
+            arch,
+            platform,
+        });
+        const existingEnvText = existsSync(configEnvPath) ? await readFile(configEnvPath, 'utf8').catch(() => '') : '';
+        const envText = mergeSelfHostServerEnvText({
+            baseEnvText,
+            existingEnvText,
+            overrides: params.env,
+        });
+        await writeFile(configEnvPath, envText, 'utf8');
+        const env = parseEnvText(envText);
+
+        const serviceSpec = buildRelayRuntimeServiceSpec({
+            serviceName,
+            installRoot: defaults.installRoot,
+            serverBinaryPath: installServerBinaryPath,
+            env,
+            stdoutPath,
+            stderrPath,
+        });
+        const definition = buildServiceDefinition({
+            backend,
+            homeDir,
+            spec: serviceSpec,
+        });
+        const plan = planServiceAction({
+            backend,
+            action: 'install',
+            label: serviceSpec.label,
+            definitionPath: definition.path,
+            definitionContents: definition.contents,
+            persistent: true,
+        });
+        await applyServicePlan(plan, {
+            runCommands: params.runServiceCommands !== false,
+        });
+
+        const state = {
+            channel: params.channel,
+            mode,
+            version: typeof params.version === 'string' && params.version.trim() ? params.version.trim() : null,
+            updatedAt: new Date().toISOString(),
+        };
+        await writeJsonFile(statePath, state);
+
+        const baseUrl = resolveConfiguredSelfHostBaseUrl({
+            fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+            envText,
+        });
+        if (params.skipHealthCheck !== true && params.runServiceCommands !== false) {
+            const baseUrlObject = new URL(baseUrl);
+            const result = await checkRelayRuntimeHealth({
+                host: baseUrlObject.hostname,
+                port: Number.parseInt(baseUrlObject.port, 10),
+                timeoutMs: resolveRelayRuntimeInstallHealthcheckTimeoutMs(),
+                probePortOpen: async ({ host, port, timeoutMs }) => await probePortOpen({ host, port, timeoutMs }),
+                fetchJson: async ({ url, timeoutMs }) => await fetchJson({ url, timeoutMs }),
+            });
+            if (!result.reachable) {
+                throw new Error(`[relay-runtime] relay runtime did not become healthy (${result.url})`);
+            }
+        }
+
+        return {
+            baseUrl,
+            version: state.version,
+        };
+    } catch (error) {
+        if (previousInstallState) {
+            await restoreRelayRuntimeInstallState({
+                platform,
+                payloadDir: defaults.installRoot,
+                shimPath: join(defaults.binDir, serverBinaryName),
+                migrationsDir,
+                envPath: configEnvPath,
+                statePath,
+                payloadBackupDir: previousInstallState.payloadBackupDir,
+                migrationsBackupDir: previousInstallState.migrationsBackupDir,
+                previousEnvText: previousInstallState.previousEnvText,
+                previousStateText: previousInstallState.previousStateText,
+            });
+
+            if (previousServiceDefinitionExisted && previousInstallState.hasRestorableServerBinary) {
+                const restoreEnv = parseEnvText(previousInstallState.previousEnvText ?? '');
+                const restoreSpec = buildRelayRuntimeServiceSpec({
+                    serviceName,
+                    installRoot: restoreInstallRoot,
+                    serverBinaryPath: join(restoreInstallRoot, 'bin', serverBinaryName),
+                    env: restoreEnv,
+                    stdoutPath,
+                    stderrPath,
+                });
+                const restoreDefinition = buildServiceDefinition({
+                    backend,
+                    homeDir,
+                    spec: restoreSpec,
+                });
+                const restorePlan = planServiceAction({
+                    backend,
+                    action: 'install',
+                    label: restoreSpec.label,
+                    definitionPath: restoreDefinition.path,
+                    definitionContents: restoreDefinition.contents,
+                    persistent: true,
+                });
+                await applyServicePlan(restorePlan, {
+                    runCommands: params.runServiceCommands !== false,
+                });
+            } else if (params.runServiceCommands !== false) {
+                const rollbackSpec = buildRelayRuntimeServiceSpec({
+                    serviceName,
+                    installRoot: restoreInstallRoot,
+                    serverBinaryPath: join(restoreInstallRoot, 'bin', serverBinaryName),
+                    env: {},
+                    stdoutPath,
+                    stderrPath,
+                });
+                const rollbackDefinition = buildServiceDefinition({
+                    backend,
+                    homeDir,
+                    spec: rollbackSpec,
+                });
+                const rollbackPlan = planServiceAction({
+                    backend,
+                    action: 'uninstall',
+                    label: rollbackSpec.label,
+                    definitionPath: rollbackDefinition.path,
+                    persistent: true,
+                });
+                await applyServicePlan(rollbackPlan, {
+                    runCommands: true,
+                });
+                if (!previousServiceDefinitionExisted) {
+                    await rm(rollbackDefinition.path, { force: true }).catch(() => undefined);
+                }
+            }
+        }
+        if (ownedRootMigration) {
+            if (previousInstallState) {
+                await rm(previousInstallState.backupRoot, { recursive: true, force: true }).catch(() => undefined);
+            }
+            await rollbackRelayRuntimeInstallRootMigration(ownedRootMigration);
+        }
+        if (legacyRootMigration) {
+            if (previousInstallState) {
+                await rm(previousInstallState.backupRoot, { recursive: true, force: true }).catch(() => undefined);
+            }
+            await rollbackRelayRuntimeInstallRootMigration(legacyRootMigration);
+        }
+        throw error;
+    } finally {
+        if (preparedPayload.cleanupPath) {
+            await rm(preparedPayload.cleanupPath, { recursive: true, force: true }).catch(() => undefined);
+        }
+        if (previousInstallState) {
+            await rm(previousInstallState.backupRoot, { recursive: true, force: true }).catch(() => undefined);
         }
     }
-
-    return {
-        baseUrl,
-        version: state.version,
-    };
 }

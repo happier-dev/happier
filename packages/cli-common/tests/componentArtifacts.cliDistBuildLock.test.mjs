@@ -41,6 +41,9 @@ function writeCliArtifactFixtures(repoRoot) {
   const transformersDir = join(repoRoot, 'node_modules', '@huggingface', 'transformers');
   const ortDir = join(repoRoot, 'node_modules', 'onnxruntime-node');
   const ortCommonDir = join(repoRoot, 'node_modules', 'onnxruntime-common');
+  const ffmpegStaticDir = join(repoRoot, 'node_modules', 'ffmpeg-static');
+  const sherpaOnnxNodeDir = join(repoRoot, 'node_modules', 'sherpa-onnx-node');
+  const sherpaOnnxLinuxX64Dir = join(repoRoot, 'node_modules', 'sherpa-onnx-linux-x64');
   const nodePtyDir = join(repoRoot, 'node_modules', 'node-pty');
   const homebridgePtyDir = join(repoRoot, 'node_modules', '@homebridge', 'node-pty-prebuilt-multiarch');
 
@@ -50,6 +53,9 @@ function writeCliArtifactFixtures(repoRoot) {
   mkdirSync(transformersDir, { recursive: true });
   mkdirSync(ortDir, { recursive: true });
   mkdirSync(ortCommonDir, { recursive: true });
+  mkdirSync(ffmpegStaticDir, { recursive: true });
+  mkdirSync(sherpaOnnxNodeDir, { recursive: true });
+  mkdirSync(sherpaOnnxLinuxX64Dir, { recursive: true });
   mkdirSync(nodePtyDir, { recursive: true });
   mkdirSync(homebridgePtyDir, { recursive: true });
 
@@ -62,6 +68,8 @@ function writeCliArtifactFixtures(repoRoot) {
         version: '0.0.0',
         dependencies: {
           '@huggingface/transformers': '1.0.0',
+          'ffmpeg-static': '1.0.0',
+          'sherpa-onnx-node': '1.0.0',
           'node-pty': '1.0.0',
           '@homebridge/node-pty-prebuilt-multiarch': '1.0.0',
         },
@@ -83,6 +91,12 @@ function writeCliArtifactFixtures(repoRoot) {
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/connection-supervisor', relativeDir: ['packages', 'connection-supervisor'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/protocol', relativeDir: ['packages', 'protocol'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/release-runtime', relativeDir: ['packages', 'release-runtime'] });
+  mkdirSync(join(cliDir, 'dist', 'daemon', 'voiceInference', 'runtime'), { recursive: true });
+  writeFileSync(
+    join(cliDir, 'dist', 'daemon', 'voiceInference', 'runtime', 'packagedVoiceInferenceRuntime.mjs'),
+    'export const voiceInferenceRuntimeEngine = { warmModel: async () => {}, synthesizeTts: async () => ({ bytes: Buffer.from("wav"), output: { codec: "wav", mimeType: "audio/wav" }, name: "runtime.wav" }), transcribeAudio: async () => ({ text: "runtime", language: "en" }) };\n',
+    'utf8',
+  );
   writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
@@ -91,6 +105,26 @@ function writeCliArtifactFixtures(repoRoot) {
   writeFileSync(join(cliScriptsDir, 'permission_hook_forwarder.cjs'), 'console.log("permission");\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
   writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
+  writeFileSync(
+    join(cliRuntimeDir, 'loadVoiceInferenceRuntime.mjs'),
+    [
+      "try {",
+      "  await import('sherpa-onnx-node');",
+      "} catch (error) {",
+      "  const runtimeError = new Error(",
+      "    error instanceof Error && error.message.trim().length > 0",
+      "      ? `voice_inference_runtime_unavailable:${error.message}`",
+      "      : 'voice_inference_runtime_unavailable',",
+      '  );',
+      "  runtimeError.code = 'runtime_unavailable';",
+      '  throw runtimeError;',
+      '}',
+      '',
+      'export { voiceInferenceRuntimeEngine } from "../../package-dist/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.mjs";',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
   writeFileSync(join(cliShimsDir, 'git'), '#!/bin/sh\nexit 0\n', 'utf8');
   writeFileSync(join(cliShimsDir, 'rg'), '#!/bin/sh\nexit 0\n', 'utf8');
   writeFileSync(
@@ -109,6 +143,22 @@ function writeCliArtifactFixtures(repoRoot) {
   );
   writeFileSync(join(ortCommonDir, 'index.js'), 'module.exports = {};\n', 'utf8');
   writeFileSync(
+    join(ffmpegStaticDir, 'package.json'),
+    JSON.stringify({ name: 'ffmpeg-static', version: '1.0.0', main: './index.js', dependencies: {} }, null, 2),
+  );
+  writeFileSync(join(ffmpegStaticDir, 'index.js'), 'module.exports = "/runtime/ffmpeg";\n', 'utf8');
+  writeFileSync(join(ffmpegStaticDir, 'ffmpeg'), '#!/bin/sh\nexit 0\n', 'utf8');
+  writeFileSync(
+    join(sherpaOnnxNodeDir, 'package.json'),
+    JSON.stringify({ name: 'sherpa-onnx-node', version: '1.0.0', optionalDependencies: { 'sherpa-onnx-linux-x64': '1.0.0' } }, null, 2),
+  );
+  writeFileSync(join(sherpaOnnxNodeDir, 'sherpa-onnx.js'), 'module.exports = { version: "1.0.0" };\n', 'utf8');
+  writeFileSync(
+    join(sherpaOnnxLinuxX64Dir, 'package.json'),
+    JSON.stringify({ name: 'sherpa-onnx-linux-x64', version: '1.0.0', dependencies: {} }, null, 2),
+  );
+  writeFileSync(join(sherpaOnnxLinuxX64Dir, 'index.js'), 'module.exports = { platformBinary: true };\n', 'utf8');
+  writeFileSync(
     join(nodePtyDir, 'package.json'),
     JSON.stringify({ name: 'node-pty', version: '1.0.0', dependencies: {} }, null, 2),
   );
@@ -118,6 +168,12 @@ function writeCliArtifactFixtures(repoRoot) {
     JSON.stringify({ name: '@homebridge/node-pty-prebuilt-multiarch', version: '1.0.0', dependencies: {} }, null, 2),
   );
   writeFileSync(join(homebridgePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
+}
+
+function resolveHostCliBinaryTarget(artifacts) {
+  return artifacts.resolveCurrentBinaryTarget({
+    availableTargets: artifacts.CLI_BINARY_TARGETS,
+  });
 }
 
 test('buildCliBinaryArtifactPayload reuses the first completed dist build across concurrent artifact requests', async () => {
@@ -131,11 +187,8 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
     writeCliArtifactFixtures(repoRoot);
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
-    const target = artifacts.resolveCurrentBinaryTarget({
-      availableTargets: artifacts.CLI_BINARY_TARGETS,
-      platform: 'linux',
-      arch: 'x64',
-    });
+    const target = resolveHostCliBinaryTarget(artifacts);
+    const executableName = artifacts.resolveExecutableName({ baseName: 'happier', target });
 
     let releaseFirstBuild = null;
     const firstBuildRelease = new Promise((resolve) => {
@@ -181,8 +234,12 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
     await Promise.all([first, second]);
 
     assert.equal(runCalls.length, 1);
-    assert.equal(existsSync(join(payloadDirA, 'happier')), true);
-    assert.equal(existsSync(join(payloadDirB, 'happier')), true);
+    assert.equal(existsSync(join(payloadDirA, executableName)), true);
+    assert.equal(existsSync(join(payloadDirB, executableName)), true);
+    assert.equal(existsSync(join(payloadDirA, 'scripts', 'runtime', 'loadVoiceInferenceRuntime.mjs')), true);
+    assert.equal(existsSync(join(payloadDirB, 'node_modules', 'ffmpeg-static')), false);
+    assert.equal(existsSync(join(payloadDirB, 'node_modules', 'sherpa-onnx-node')), false);
+    assert.equal(existsSync(join(payloadDirB, 'tools', 'archives', `voice-inference-runtime-${target.os}-${target.arch}.tar.gz`)), true);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 
 import {
     cleanupPackageDistBuildArtifacts,
+    resolveTypeScriptBuildInvocation,
     restorePackageDistFromBackup,
     stagePackageDistBuild,
     swapStagedPackageDistIntoPlace,
@@ -125,6 +126,7 @@ async function runBuildScript(argv = process.argv.slice(2)) {
 export {
     cleanupPackageDistBuildArtifacts,
     createPackageDistBuildPlan,
+    resolveTypeScriptBuildInvocation,
     restorePackageDistFromBackup,
     stagePackageDistBuild,
     swapStagedPackageDistIntoPlace,

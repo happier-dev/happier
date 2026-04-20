@@ -4,6 +4,7 @@ import { delimiter, dirname, join } from 'node:path';
 import {
   AGENT_IDS,
   getProviderCliRuntimeSpec,
+  legacyCustomAcpCompat,
   type AgentId,
   type ProviderCliRuntimeSpec,
   type ProviderCliManagedInstallSpec,
@@ -38,6 +39,7 @@ type RuntimeResolutionOptions = Readonly<{
 }>;
 
 export type ProviderCliJavaScriptRuntimeKind = 'none' | 'node' | 'bun';
+type ProviderCliLookupId = AgentId | (typeof legacyCustomAcpCompat.LEGACY_COMPAT_AGENT_IDS)[number];
 
 const PROVIDER_CLI_SOURCE_OVERRIDE_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/i;
 const PROVIDER_CLI_SHEBANG_RUNTIME_FILE_EXTENSIONS = /\.(?:[cm]?tsx?|jsx)$/i;
@@ -62,26 +64,41 @@ function isBuiltInAgentId(value: string): value is AgentId {
   return (AGENT_IDS as readonly string[]).includes(value);
 }
 
+function getProviderCliRuntimeSpecForLookupId(agentId: ProviderCliLookupId): ProviderCliRuntimeDescriptor {
+  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
+    return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+  }
+  return getProviderCliRuntimeSpec(agentId);
+}
+
 export function readBackendCliSourcePreferenceForProvider(
   providerId: string,
   sourcePreferenceDefault: ProviderCliSourcePreference,
   processEnv: NodeJS.ProcessEnv = process.env,
 ): ProviderCliSourcePreference {
   const preferences = readBackendCliSourcePreferenceMap(processEnv);
-  const targetKeyV2 = buildBackendTargetKeyV2({ kind: 'backend', backendId: providerId });
+  let targetKeyV2: string | null = null;
+  try {
+    targetKeyV2 = buildBackendTargetKeyV2({ kind: 'backend', backendId: providerId });
+  } catch {
+    targetKeyV2 = null;
+  }
   const targetKey = isBuiltInAgentId(providerId)
     ? buildBackendTargetKey({ kind: 'builtInAgent', agentId: providerId })
     : null;
-  return preferences[targetKeyV2] ?? (targetKey ? preferences[targetKey] : undefined) ?? preferences[providerId] ?? sourcePreferenceDefault;
+  return (targetKeyV2 ? preferences[targetKeyV2] : undefined)
+    ?? (targetKey ? preferences[targetKey] : undefined)
+    ?? preferences[providerId]
+    ?? sourcePreferenceDefault;
 }
 
 export function readBackendCliSourcePreference(
-  agentId: AgentId,
+  agentId: ProviderCliLookupId,
   processEnv: NodeJS.ProcessEnv = process.env,
 ): ProviderCliSourcePreference {
   return readBackendCliSourcePreferenceForProvider(
     agentId,
-    getProviderCliRuntimeSpec(agentId).sourcePreferenceDefault,
+    getProviderCliRuntimeSpecForLookupId(agentId).sourcePreferenceDefault,
     processEnv,
   );
 }
@@ -108,8 +125,8 @@ export function readProviderCliOverrideForRuntime(
   return override || null;
 }
 
-export function readProviderCliOverride(agentId: AgentId, processEnv: NodeJS.ProcessEnv = process.env): string | null {
-  return readProviderCliOverrideForRuntime(getProviderCliRuntimeSpec(agentId), processEnv);
+export function readProviderCliOverride(agentId: ProviderCliLookupId, processEnv: NodeJS.ProcessEnv = process.env): string | null {
+  return readProviderCliOverrideForRuntime(getProviderCliRuntimeSpecForLookupId(agentId), processEnv);
 }
 
 function providerCliCandidatePathExists(runtimeSpec: ProviderCliRuntimeDescriptor, candidatePath: string): boolean {
@@ -158,10 +175,10 @@ export function resolveProviderCliManagedCommandPathForRuntime(
 }
 
 export function resolveProviderCliManagedCommandPath(
-  agentId: AgentId,
+  agentId: ProviderCliLookupId,
   opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
-  return resolveProviderCliManagedCommandPathForRuntime(getProviderCliRuntimeSpec(agentId), opts);
+  return resolveProviderCliManagedCommandPathForRuntime(getProviderCliRuntimeSpecForLookupId(agentId), opts);
 }
 
 function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): string | null {
@@ -327,13 +344,17 @@ function resolveCommandInKnownUserDirs(
   command: string,
   processEnv: NodeJS.ProcessEnv,
 ): string | null {
-  if (process.platform === 'win32') return null;
   const homeDir = typeof processEnv.HOME === 'string' ? processEnv.HOME.trim() : '';
   if (!homeDir) return null;
 
   const suffixes = runtimeSpec.knownUserBinDirSuffixes ?? [];
   for (const suffix of suffixes) {
     const candidate = join(homeDir, suffix, command);
+    if (process.platform === 'win32') {
+      const resolved = resolveWindowsCommandPath(candidate, processEnv);
+      if (resolved) return resolved;
+      continue;
+    }
     if (!existsSync(candidate)) continue;
     try {
       accessSync(candidate, fsConstants.X_OK);
@@ -375,10 +396,10 @@ export function isProviderCliPathRunnable(
 }
 
 export function resolveProviderCliCommand(
-  agentId: AgentId,
+  agentId: ProviderCliLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv } & RuntimeResolutionOptions> = {},
 ): ProviderCliCommandResolution | null {
-  return resolveProviderCliCommandForRuntime(getProviderCliRuntimeSpec(agentId), opts);
+  return resolveProviderCliCommandForRuntime(getProviderCliRuntimeSpecForLookupId(agentId), opts);
 }
 
 export function resolveProviderCliCommandForRuntime(

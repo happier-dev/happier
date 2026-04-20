@@ -1,9 +1,12 @@
 import {
   atomicReplaceDirSync,
   bundleWorkspacePackage,
+  copyDirSafeSync,
   hasBundledWorkspacePackagesHealthy,
+  resolveWorkspaceBundlesFromPackageJson,
 } from './index';
 import {
+  cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -79,6 +82,106 @@ describe('bundleWorkspacePackage', () => {
     const siblingNames = readdirSync(destParent);
     expect(siblingNames.some((name) => name.startsWith('.protocol.__sync_tmp__.'))).toBe(false);
     expect(siblingNames.some((name) => name.startsWith('.protocol.__sync_backup__.'))).toBe(false);
+  });
+
+  it('copies non-dist export targets referenced by the workspace package manifest', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-nondist-export-'));
+
+    const srcPackageDir = resolve(rootDir, 'packages/release-runtime');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    mkdirSync(srcDistDir, { recursive: true });
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/release-runtime',
+          version: '0.0.0',
+          type: 'module',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './releaseRings': {
+              import: './dist/releaseRings.js',
+              require: './releaseRings.cjs',
+              default: './dist/releaseRings.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export {};\n', 'utf8');
+    writeFileSync(resolve(srcDistDir, 'releaseRings.js'), 'export const releaseRings = true;\n', 'utf8');
+    writeFileSync(resolve(srcPackageDir, 'releaseRings.cjs'), 'module.exports = { releaseRings: true };\n', 'utf8');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/release-runtime');
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/release-runtime',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+    });
+
+    expect(readFileSync(resolve(destPackageDir, 'releaseRings.cjs'), 'utf8')).toContain('releaseRings');
+  });
+});
+
+describe('resolveWorkspaceBundlesFromPackageJson', () => {
+  it('resolves extension workspaces from packages/extensions/<extensionId>', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-resolve-extensions-'));
+    try {
+      writeFileSync(resolve(rootDir, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2), 'utf8');
+      writeFileSync(resolve(rootDir, 'yarn.lock'), '', 'utf8');
+
+      const extensionDir = resolve(rootDir, 'packages', 'extensions', 'acme');
+      mkdirSync(resolve(extensionDir, 'dist'), { recursive: true });
+      writeFileSync(
+        resolve(extensionDir, 'package.json'),
+        JSON.stringify(
+          {
+            name: '@happier-dev/extensions-acme',
+            version: '0.0.0',
+            type: 'module',
+            exports: { '.': { default: './dist/index.js' } },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+      writeFileSync(resolve(extensionDir, 'dist/index.js'), 'export const acme = true;\n', 'utf8');
+
+      const hostPackageDir = resolve(rootDir, 'apps', 'cli');
+      mkdirSync(hostPackageDir, { recursive: true });
+      writeFileSync(
+        resolve(hostPackageDir, 'package.json'),
+        JSON.stringify(
+          {
+            name: '@happier-dev/cli',
+            version: '0.0.0',
+            bundledDependencies: ['@happier-dev/extensions-acme'],
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const bundles = resolveWorkspaceBundlesFromPackageJson({
+        repoRoot: rootDir,
+        hostPackageDir,
+      });
+
+      expect(bundles).toEqual([
+        expect.objectContaining({
+          packageName: '@happier-dev/extensions-acme',
+          srcDir: resolve(rootDir, 'packages', 'extensions', 'acme'),
+          destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', 'extensions-acme'),
+        }),
+      ]);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -308,6 +411,46 @@ describe('hasBundledWorkspacePackagesHealthy', () => {
         hostPackageDir,
       }),
     ).toBe(true);
+  });
+});
+
+describe('copyDirSafeSync', () => {
+  let rootDir: string | undefined;
+
+  afterEach(() => {
+    if (rootDir) {
+      rmSync(rootDir, { recursive: true, force: true });
+      rootDir = undefined;
+    }
+  });
+
+  it('retries a transient ENOENT while copying a directory tree', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-copy-dir-'));
+
+    const srcDir = resolve(rootDir, 'packages/protocol/dist');
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol/dist');
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(resolve(srcDir, 'index.js'), 'export const ok = true;\n');
+
+    let attempts = 0;
+
+    copyDirSafeSync(srcDir, destDir, {
+      retries: 1,
+      delayMs: 0,
+      cpSyncImpl(source, target, options) {
+        attempts += 1;
+        if (attempts === 1) {
+          const error = new Error('ENOENT');
+          Reflect.set(error, 'code', 'ENOENT');
+          throw error;
+        }
+
+        return cpSync(source, target, options);
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(readFileSync(resolve(destDir, 'index.js'), 'utf8')).toBe('export const ok = true;\n');
   });
 });
 

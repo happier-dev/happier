@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { accessSync, constants as fsConstants } from 'node:fs';
 
-import { commandExistsOnPath } from '../process/index.js';
+import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
+import { commandExistsOnPath, resolveWindowsCommandInvocation } from '../process/index.js';
 
 export type RunCommand = (
   cmd: string,
@@ -26,12 +27,18 @@ export function execOrThrow(
     input?: string;
   } = {},
 ): void {
-  const result = spawnSync(cmd, args, {
+  const invocation = resolveWindowsCommandInvocation({
+    command: cmd,
+    args,
+    env,
+  });
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd,
     env,
     stdio,
     encoding: 'utf-8',
     input,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
   if (result.error) {
     throw new Error(`[component-artifacts] failed to run ${cmd}: ${String(result.error.message || result.error)}`);
@@ -70,7 +77,7 @@ export function resolveBunCommand({
   commandProbe?: (cmd: string) => boolean;
   platform?: NodeJS.Platform;
 } = {}): string | null {
-  const explicit = String(processEnv.HAPPIER_BUN_PATH ?? '').trim();
+  const explicit = expandHomeDirPath(String(processEnv.HAPPIER_BUN_PATH ?? '').trim(), processEnv);
   if (isRunnableExecutablePath(explicit, platform)) {
     return explicit;
   }
@@ -139,7 +146,7 @@ export async function compileBunBinary({
     if (fallback) return fallback;
     throw new Error('[component-artifacts] bun is required to compile binary artifacts');
   })();
-  const args = ['build', '--compile', `--target=${bunTarget}`, entrypoint, '--outfile', outfile];
+  const args = ['build', '--compile', '--no-cache', `--target=${bunTarget}`, entrypoint, '--outfile', outfile];
   for (const external of externals) {
     const value = String(external ?? '').trim();
     if (!value) continue;

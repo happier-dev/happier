@@ -28,7 +28,7 @@ COPY packages/release-runtime/package.json packages/release-runtime/
 COPY packages/transfers/package.json packages/transfers/
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
-COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
+COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
 
 RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \

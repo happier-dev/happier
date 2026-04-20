@@ -1,10 +1,59 @@
-import { cp, mkdir, rm } from 'node:fs/promises';
+import { cp, mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { SERVER_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, type RunCommand } from './commands.js';
-import { resolveServerBinarySidecarEntries } from './serverSidecars.js';
+import { resolveRequestedServerDbProviders, resolveServerBinarySidecarEntries } from './serverSidecars.js';
+
+function resolvePrismaEngineFileNameForTarget(target: BinaryTarget): string {
+  const key = `${target.os}-${target.arch}`;
+  switch (key) {
+    case 'linux-x64':
+      return 'libquery_engine-debian-openssl-3.0.x.so.node';
+    case 'linux-arm64':
+      return 'libquery_engine-linux-arm64-openssl-3.0.x.so.node';
+    case 'darwin-x64':
+      return 'libquery_engine-darwin.dylib.node';
+    case 'darwin-arm64':
+      return 'libquery_engine-darwin-arm64.dylib.node';
+    case 'windows-x64':
+      return 'query_engine-windows.dll.node';
+    default:
+      throw new Error(`[component-artifacts] unsupported Prisma binary target: ${key}`);
+  }
+}
+
+async function ensureFile(path: string, message: string): Promise<void> {
+  const info = await stat(path).catch(() => null);
+  if (!info?.isFile()) {
+    throw new Error(message);
+  }
+}
+
+async function validateServerPrismaEnginesForTarget({
+  payloadDir,
+  target,
+  buildDbProviders,
+}: {
+  payloadDir: string;
+  target: BinaryTarget;
+  buildDbProviders: string;
+}): Promise<void> {
+  const targetKey = `${target.os}-${target.arch}`;
+  const engineFileName = resolvePrismaEngineFileNameForTarget(target);
+  await ensureFile(
+    join(payloadDir, 'node_modules', '.prisma', 'client', engineFileName),
+    `[component-artifacts] missing postgres Prisma query engine for ${targetKey}: node_modules/.prisma/client/${engineFileName}`,
+  );
+
+  for (const provider of resolveRequestedServerDbProviders(buildDbProviders)) {
+    await ensureFile(
+      join(payloadDir, 'generated', `${provider}-client`, engineFileName),
+      `[component-artifacts] missing ${provider} Prisma query engine for ${targetKey}: generated/${provider}-client/${engineFileName}`,
+    );
+  }
+}
 
 export async function buildServerBinaryArtifactPayload({
   repoRoot,
@@ -68,6 +117,12 @@ export async function buildServerBinaryArtifactPayload({
       copyPath,
     });
   }
+
+  await validateServerPrismaEnginesForTarget({
+    payloadDir,
+    target,
+    buildDbProviders: String(buildDbProviders ?? 'all').trim() || 'all',
+  });
 
   return {
     executableName,
