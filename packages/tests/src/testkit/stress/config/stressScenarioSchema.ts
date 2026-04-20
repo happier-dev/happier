@@ -31,6 +31,7 @@ export type StressLoadConfig = Readonly<{
   mixedPresencePulseConcurrency?: number;
   mixedMessageBatchConcurrency?: number;
   mixedMessageEmitterCount?: number;
+  mixedRunnerShards?: number;
   rpcCallsPerSecond: number;
   messagesPerSecond: number;
   reconnectRate: number;

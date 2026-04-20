@@ -34,6 +34,7 @@ export const defaultStressConfig: StressConfig = {
     mixedPresencePulseConcurrency: 32,
     mixedMessageBatchConcurrency: 32,
     mixedMessageEmitterCount: 1,
+    mixedRunnerShards: 1,
     rpcCallsPerSecond: 2,
     messagesPerSecond: 5,
     reconnectRate: 0,
