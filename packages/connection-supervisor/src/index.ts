@@ -8,6 +8,7 @@ export type {
   ManagedConnectionContext,
   ManagedConnectionDisconnectContext,
   ManagedConnectionPhase,
+  ManagedProbeReportScope,
   ManagedConnectionReason,
   ManagedConnectionReconnectContext,
   ManagedConnectionState,

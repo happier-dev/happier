@@ -72,6 +72,13 @@ function createTransportHarness(options?: Readonly<{ autoConnectOnCall?: boolean
   };
 }
 
+async function flushAsyncCleanup(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('createManagedConnectionSupervisor', () => {
   it('dedupes concurrent start() calls while the initial readiness probe is in flight', async () => {
     const harness = createTransportHarness();
@@ -174,6 +181,312 @@ describe('createManagedConnectionSupervisor', () => {
     );
 
     vi.useRealTimers();
+  });
+
+  it('cleans up the live transport before transitioning to auth_failed from an externally reported probe result', async () => {
+    vi.useFakeTimers();
+    const harness = createTransportHarness();
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+    const onAuthFailed = vi.fn();
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      onAuthFailed,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+    const probeReportScope = supervisor.captureProbeReportScope();
+    supervisor.reportProbeResult?.({ status: 'auth_failed', statusCode: 401, errorMessage: 'expired token' }, probeReportScope);
+    await flushAsyncCleanup();
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(supervisor.getState()).toEqual(
+      expect.objectContaining({
+        phase: 'auth_failed',
+        reason: 'auth_invalid',
+        lastErrorMessage: 'expired token',
+      }),
+    );
+    expect(onAuthFailed).toHaveBeenCalledTimes(1);
+    expect(probeReadiness).toHaveBeenCalledTimes(0);
+    expect(harness.transport.disconnect).toHaveBeenCalledWith({ intentional: true });
+    expect(harness.transport.destroy).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('cleans up the live transport before scheduling reconnect for externally reported retryable probe results', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const firstTransport = createTransportHarness();
+    const secondTransport = createTransportHarness();
+    const transports = [firstTransport, secondTransport];
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => {
+        const next = transports.shift();
+        if (!next) throw new Error('missing transport');
+        return next.transport;
+      },
+      probeReadiness,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+    const probeReportScope = supervisor.captureProbeReportScope();
+    supervisor.reportProbeResult?.({ status: 'retry_later', retryAfterMs: 50, errorMessage: 'busy' }, probeReportScope);
+    await flushAsyncCleanup();
+
+    expect(supervisor.getState()).toEqual(
+      expect.objectContaining({
+        phase: 'offline',
+        reason: 'probe_failed',
+        nextRetryAt: 50,
+        lastErrorMessage: 'busy',
+      }),
+    );
+    expect(firstTransport.transport.disconnect).toHaveBeenCalledWith({ intentional: true });
+    expect(firstTransport.transport.destroy).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+    expect(secondTransport.transport.connect).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('transitions from offline to auth_failed when auth is externally reported', async () => {
+    vi.useFakeTimers();
+    const harness = createTransportHarness();
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+    const onAuthFailed = vi.fn();
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      onAuthFailed,
+      initialFastRetryDelayMs: 10,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+    harness.emitDisconnect({ reason: 'transport closed' });
+    expect(supervisor.getState()).toEqual(expect.objectContaining({ phase: 'offline', attempt: 1 }));
+
+    const probeReportScope = supervisor.captureProbeReportScope();
+    supervisor.reportProbeResult?.({ status: 'auth_failed', statusCode: 401, errorMessage: 'expired token' }, probeReportScope);
+    await flushAsyncCleanup();
+
+    expect(supervisor.getState()).toEqual(
+      expect.objectContaining({
+        phase: 'auth_failed',
+        reason: 'auth_invalid',
+        nextRetryAt: null,
+        lastErrorMessage: 'expired token',
+      }),
+    );
+    expect(onAuthFailed).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(25);
+    expect(probeReadiness).toHaveBeenCalledTimes(0);
+
+    vi.useRealTimers();
+  });
+
+  it('refreshes offline retry scheduling from externally reported retry_later results', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const firstTransport = createTransportHarness();
+    const secondTransport = createTransportHarness();
+    const transports = [firstTransport, secondTransport];
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => {
+        const next = transports.shift();
+        if (!next) throw new Error('missing transport');
+        return next.transport;
+      },
+      probeReadiness,
+      initialFastRetryDelayMs: 10,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+    firstTransport.emitDisconnect({ reason: 'transport closed' });
+
+    vi.setSystemTime(5);
+    const probeReportScope = supervisor.captureProbeReportScope();
+    supervisor.reportProbeResult?.({ status: 'retry_later', retryAfterMs: 50, errorMessage: 'busy' }, probeReportScope);
+    await flushAsyncCleanup();
+
+    expect(supervisor.getState()).toEqual(
+      expect.objectContaining({
+        phase: 'offline',
+        reason: 'probe_failed',
+        attempt: 2,
+        nextRetryAt: 55,
+        lastErrorMessage: 'busy',
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(49);
+    expect(probeReadiness).toHaveBeenCalledTimes(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+    expect(secondTransport.transport.connect).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('refreshes offline retry scheduling from externally reported server_unreachable results', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const firstTransport = createTransportHarness();
+    const secondTransport = createTransportHarness();
+    const transports = [firstTransport, secondTransport];
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => {
+        const next = transports.shift();
+        if (!next) throw new Error('missing transport');
+        return next.transport;
+      },
+      probeReadiness,
+      initialFastRetryDelayMs: 10,
+      maxFastRetries: 0,
+      backoffMinMs: 25,
+      backoffMaxMs: 25,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+    firstTransport.emitDisconnect({ reason: 'transport closed' });
+
+    vi.setSystemTime(5);
+    const probeReportScope = supervisor.captureProbeReportScope();
+    supervisor.reportProbeResult?.({ status: 'server_unreachable', errorMessage: 'network down' }, probeReportScope);
+    await flushAsyncCleanup();
+
+    expect(supervisor.getState()).toEqual(
+      expect.objectContaining({
+        phase: 'offline',
+        reason: 'server_unreachable',
+        attempt: 2,
+        nextRetryAt: 30,
+        lastErrorMessage: 'network down',
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(24);
+    expect(probeReadiness).toHaveBeenCalledTimes(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+    expect(secondTransport.transport.connect).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('ignores stale externally reported retryable probe results after auth_failed', async () => {
+    vi.useFakeTimers();
+    const harness = createTransportHarness();
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+    const onAuthFailed = vi.fn();
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      onAuthFailed,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+    const probeReportScope = supervisor.captureProbeReportScope();
+    supervisor.reportProbeResult?.({ status: 'auth_failed', statusCode: 401, errorMessage: 'expired token' }, probeReportScope);
+    await flushAsyncCleanup();
+    supervisor.reportProbeResult?.({ status: 'retry_later', retryAfterMs: 50, errorMessage: 'busy' }, probeReportScope);
+    await flushAsyncCleanup();
+
+    expect(supervisor.getState()).toEqual(
+      expect.objectContaining({
+        phase: 'auth_failed',
+        reason: 'auth_invalid',
+        nextRetryAt: null,
+        lastErrorMessage: 'expired token',
+      }),
+    );
+    expect(onAuthFailed).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(probeReadiness).toHaveBeenCalledTimes(0);
+
+    vi.useRealTimers();
+  });
+
+  it('classifies transport connect failures when a caller provides a probe-result classifier', async () => {
+    const harness = createTransportHarness({ autoConnectOnCall: false });
+    (harness.transport.connect as unknown as { mockImplementation: (fn: () => Promise<void>) => void }).mockImplementation(async () => {
+      throw new Error('unauthorized');
+    });
+    const onAuthFailed = vi.fn();
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness: async () => ({ status: 'ready' }),
+      classifyTransportErrorToProbeResult: (error) =>
+        error instanceof Error && error.message === 'unauthorized'
+          ? { status: 'auth_failed', statusCode: 401, errorMessage: error.message }
+          : null,
+      onAuthFailed,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    expect(supervisor.getState()).toEqual(
+      expect.objectContaining({
+        phase: 'auth_failed',
+        reason: 'auth_invalid',
+        lastErrorMessage: 'unauthorized',
+      }),
+    );
+    expect(onAuthFailed).toHaveBeenCalledWith({
+      state: expect.objectContaining({ phase: 'auth_failed' }),
+      probe: { status: 'auth_failed', statusCode: 401, errorMessage: 'unauthorized' },
+    });
   });
 
   it('does not use fast retry delays when maxFastRetries is 0 for connect failures', async () => {
@@ -590,6 +903,45 @@ describe('createManagedConnectionSupervisor', () => {
     await Promise.resolve();
 
     expect(createTransport).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it('ignores externally reported probe results from an older connection scope', async () => {
+    vi.useFakeTimers();
+
+    const firstTransport = createTransportHarness();
+    const secondTransport = createTransportHarness();
+    const transports = [firstTransport, secondTransport];
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => {
+        const next = transports.shift();
+        if (!next) throw new Error('missing transport');
+        return next.transport;
+      },
+      probeReadiness,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 5,
+      backoffMaxMs: 5,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+    const firstScope = supervisor.captureProbeReportScope();
+
+    firstTransport.emitDisconnect({ reason: 'transport closed' });
+    await vi.advanceTimersByTimeAsync(1);
+    secondTransport.emitConnected();
+
+    expect(supervisor.getState()).toEqual(expect.objectContaining({ phase: 'online', attempt: 1 }));
+
+    supervisor.reportProbeResult?.({ status: 'auth_failed', statusCode: 401, errorMessage: 'expired token' }, firstScope);
+    await flushAsyncCleanup();
+
+    expect(supervisor.getState()).toEqual(expect.objectContaining({ phase: 'online', attempt: 1, lastErrorMessage: null }));
 
     vi.useRealTimers();
   });

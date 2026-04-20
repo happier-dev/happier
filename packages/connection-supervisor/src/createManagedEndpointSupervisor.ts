@@ -1,6 +1,6 @@
 import { deriveManagedConnectionReason } from './managedConnectionEvents.js';
 import { computeManagedConnectionBackoffMs } from './reconnectBackoff.js';
-import type { ManagedConnectionState, ReadinessProbeResult } from './managedConnectionTypes.js';
+import type { ManagedConnectionState, ManagedProbeReportScope, ReadinessProbeResult } from './managedConnectionTypes.js';
 import type {
   ManagedEndpointFailureReport,
   ManagedEndpointSupervisor,
@@ -172,6 +172,50 @@ export function createManagedEndpointSupervisor(config: ManagedEndpointSuperviso
     });
   }
 
+  function captureProbeReportScope(): ManagedProbeReportScope {
+    return { generation };
+  }
+
+  function reportProbeResult(
+    probe: Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>>,
+    scope?: ManagedProbeReportScope,
+  ): void {
+    if (isStopped) return;
+    if (!scope) return;
+    if (scope.generation !== generation) return;
+    if (state.phase !== 'online' && state.phase !== 'connecting' && state.phase !== 'offline') return;
+    generation += 1;
+    clearRetryTimer();
+    pendingInvalidate = false;
+
+    if (probe.status === 'auth_failed') {
+      publish({
+        ...state,
+        phase: 'auth_failed',
+        reason: deriveManagedConnectionReason({ probe }),
+        nextRetryAt: null,
+        lastErrorMessage: readProbeErrorMessage(probe, state.lastErrorMessage),
+        lastProbe: probe,
+      });
+      return;
+    }
+
+    const nextAttempt = Math.max(1, state.attempt + 1);
+    const delayMs =
+      probe.status === 'retry_later' && typeof probe.retryAfterMs === 'number' && Number.isFinite(probe.retryAfterMs)
+        ? Math.max(1, probe.retryAfterMs)
+        : nextAttempt <= Math.max(0, config.maxFastRetries)
+          ? Math.max(0, config.initialFastRetryDelayMs)
+          : computeManagedConnectionBackoffMs({
+              attempt: nextAttempt,
+              minMs: config.backoffMinMs,
+              maxMs: config.backoffMaxMs,
+              jitterRatio: config.jitterRatio,
+            });
+
+    scheduleProbe(nextAttempt, delayMs, probe);
+  }
+
   async function waitUntilOnline(params?: Readonly<{ timeoutMs?: number }>): Promise<void> {
     if (state.phase === 'online') return;
     if (state.phase === 'auth_failed') {
@@ -259,6 +303,8 @@ export function createManagedEndpointSupervisor(config: ManagedEndpointSuperviso
     },
     invalidate,
     reportFailure,
+    reportProbeResult,
+    captureProbeReportScope,
     waitUntilOnline,
     getState(): ManagedEndpointSupervisorState {
       return state;

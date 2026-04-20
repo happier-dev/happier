@@ -50,6 +50,10 @@ export type ReadinessProbeResult =
   | Readonly<{ status: 'auth_failed'; statusCode?: number; errorMessage?: string }>
   | Readonly<{ status: 'retry_later'; retryAfterMs?: number; errorMessage?: string }>;
 
+export type ManagedProbeReportScope = Readonly<{
+  generation: number;
+}>;
+
 export type ManagedConnectionContext = Readonly<{
   state: ManagedConnectionState;
 }>;
@@ -88,6 +92,7 @@ export interface ManagedConnectionSupervisorConfig extends ManagedConnectionTimi
   probeBeforeInitialConnect?: boolean;
   createTransport: () => ManagedConnectionTransport;
   probeReadiness: () => Promise<ReadinessProbeResult>;
+  classifyTransportErrorToProbeResult?: (error: unknown) => Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>> | null;
   onStateChange?: (state: ManagedConnectionState) => void;
   onConnected?: (ctx: ManagedConnectionContext) => Promise<void> | void;
   onDisconnected?: (ctx: ManagedConnectionDisconnectContext) => Promise<void> | void;
@@ -98,5 +103,10 @@ export interface ManagedConnectionSupervisorConfig extends ManagedConnectionTimi
 export interface ManagedConnectionSupervisor {
   start(): Promise<void>;
   stop(): Promise<void>;
+  captureProbeReportScope?(): ManagedProbeReportScope;
+  reportProbeResult?(
+    probe: Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>>,
+    scope?: ManagedProbeReportScope,
+  ): void;
   getState(): ManagedConnectionState;
 }
