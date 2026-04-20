@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
@@ -111,11 +111,15 @@ describe('buildAccountSettingsSnapshot', () => {
     });
 
     it('tracks transcript storage overrides for configured backend targets using canonical target keys', () => {
-        const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+        const configuredTargetKey = buildBackendTargetKeyV2({
+            kind: 'backend',
+            backendId: 'review-bot',
+            configuredBackendId: 'review-bot',
+        });
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
             newSessionDefaultPersistenceModeByTargetKeyV1: {
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'persisted',
+                [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'persisted',
                 [configuredTargetKey]: 'direct',
             },
         });

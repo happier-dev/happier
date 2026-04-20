@@ -197,6 +197,9 @@ describe('useUpdates (OTA runtime)', () => {
             downloadProgress: 0.5,
             lastCheckForUpdateTimeSinceRestart: new Date('2026-04-10T09:00:00.000Z'),
         };
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        await getServerFeaturesSnapshot({ force: true });
 
         const { useUpdates } = await import('./useUpdates');
         const harness = await renderHook(() => useUpdates());

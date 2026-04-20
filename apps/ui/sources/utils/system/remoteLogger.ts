@@ -19,6 +19,31 @@ type RemoteLogEntry = Readonly<{
 
 let logBuffer: RemoteLogEntry[] = [];
 const MAX_BUFFER_SIZE = 1000
+const LEGACY_VOICE_DEBUG_PREFIX = '🎤 Voice:';
+const REDACTED_VOICE_PAYLOAD = '[voice_payload_redacted]';
+
+function sanitizeRemoteLogArgs(args: unknown[]): unknown[] {
+  if (args.length < 2) return args;
+
+  const [first, ...rest] = args;
+  if (typeof first === 'string' && first.startsWith(LEGACY_VOICE_DEBUG_PREFIX)) {
+    return [first, ...rest.map(() => REDACTED_VOICE_PAYLOAD)];
+  }
+
+  return args;
+}
+
+function serializeRemoteLogArg(arg: unknown): string {
+  if (typeof arg === 'object') {
+    try {
+      return JSON.stringify(arg, null, 2);
+    } catch {
+      return String(arg);
+    }
+  }
+
+  return String(arg);
+}
 
 export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds() {
   // NEVER ENABLE REMOTE LOGGING IN PRODUCTION
@@ -43,7 +68,7 @@ export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyIn
     return
   }
 
-  const sendLog = async (level: RemoteLogEntry['level'], args: unknown[]) => {
+  const sendLog = async (level: RemoteLogEntry['level'], sanitizedArgs: unknown[]) => {
     try {
       await runtimeFetch(url + '/logs-combined-from-cli-and-mobile-for-simple-ai-debugging', {
         method: 'POST',
@@ -51,10 +76,7 @@ export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyIn
         body: JSON.stringify({
           timestamp: new Date().toISOString(),
           level,
-          message: args.map(a =>
-            typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
-          ).join('\n'),
-          messageRawObject: args,
+          message: sanitizedArgs.map(serializeRemoteLogArg).join('\n'),
           source: 'mobile',
           platform: 'ios', // or android
         })
@@ -70,12 +92,13 @@ export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyIn
     console[level] = (...args: unknown[]) => {
       // Always call original
       originalConsole[level](...args as never[])
-      
+      const sanitizedArgs = sanitizeRemoteLogArgs(args);
+
       // Buffer for developer settings
       const entry = {
         timestamp: new Date().toISOString(),
         level,
-        message: args,
+        message: sanitizedArgs,
       } satisfies RemoteLogEntry;
       logBuffer.push(entry)
       if (logBuffer.length > MAX_BUFFER_SIZE) {
@@ -83,7 +106,7 @@ export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyIn
       }
 
       // Send to remote
-      sendLog(level, args)
+      sendLog(level, sanitizedArgs)
     }
   })
 

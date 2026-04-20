@@ -3,11 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import type { IModal } from '@/modal';
 
 const isTauriDesktopState = vi.hoisted(() => ({ value: false }));
 const listenTauriEvent = vi.hoisted(() => vi.fn());
 const startMock = vi.hoisted(() => vi.fn(async () => 'task_1'));
-const alertMock = vi.hoisted(() => vi.fn(async () => {}));
+const alertMock = vi.hoisted(() => vi.fn());
 const snapshotState = vi.hoisted(() => ({
     result: null as null | { ok: boolean; error?: { message?: string } },
 }));
@@ -41,11 +43,15 @@ vi.mock('@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSyst
     buildLocalDaemonServiceSystemTaskSpec: (kind: string) => ({ kind }),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: alertMock,
+const modalMock = createModalModuleMock({
+    spies: {
+        alert: (...args: Parameters<IModal['alert']>) => {
+            alertMock(...args);
+        },
     },
-}));
+});
+
+vi.mock('@/modal', () => modalMock.module);
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');

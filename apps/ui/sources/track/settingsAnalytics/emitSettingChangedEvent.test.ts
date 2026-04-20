@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { buildProviderUniverseBackendTargetKey } from '@/agents/providers/registry/providerUniverse';
 
 const mocks = vi.hoisted(() => ({
     tracking: {
@@ -113,10 +114,11 @@ describe('emitAccountSettingChangedEvents', () => {
     });
 
     it('captures structured account settings through canonical analytics property serializers', () => {
+        const claudeTargetKey = buildProviderUniverseBackendTargetKey('claude');
         const nextSettings = {
             ...settingsDefaults,
             backendEnabledByTargetKey: {
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: false,
+                [claudeTargetKey]: false,
             },
         };
 
@@ -129,7 +131,7 @@ describe('emitAccountSettingChangedEvents', () => {
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
-                setting_key: 'backendEnabledByTargetKey__agent:claude',
+                setting_key: `backendEnabledByTargetKey__${claudeTargetKey}`,
                 scope: 'account_setting',
                 identity_scope: 'person',
                 source: 'ui',
@@ -143,7 +145,7 @@ describe('emitAccountSettingChangedEvents', () => {
     });
 
     it('captures configured backend transcript-storage overrides through canonical target-key analytics', () => {
-        const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+        const configuredTargetKey = resolveBackendTargetKeyV2({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
         emitAccountSettingChangedEvents({
             previousSettings: settingsDefaults,
             nextSettings: {

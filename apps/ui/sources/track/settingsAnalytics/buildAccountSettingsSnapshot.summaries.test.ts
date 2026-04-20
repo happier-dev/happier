@@ -239,7 +239,7 @@ describe('buildAccountSettingsSnapshot', () => {
                     id: 'guide-1',
                     description: 'Prefer Claude for UI work',
                     enabled: true,
-                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'claude' },
                     suggestedModelId: 'claude-sonnet-4-5',
                     suggestedIntent: 'delegate',
                 },
@@ -247,7 +247,7 @@ describe('buildAccountSettingsSnapshot', () => {
                     id: 'guide-2',
                     description: 'Use Codex for review-only runs',
                     enabled: false,
-                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'codex' },
                     suggestedIntent: 'review',
                 },
                 {

@@ -12,6 +12,7 @@ const modalAlert = vi.fn();
 const appendRealtimeVoiceTranscriptEvent = vi.fn();
 const getBindingByControlSessionId = vi.fn((_controlSessionId: string) => null as any);
 const ensureVoiceBinding = vi.fn(async (_params: any) => null);
+const captureExceptionIfEnabledMock = vi.fn();
 
 vi.mock('@/utils/platform/microphonePermissions', () => ({
   requestMicrophonePermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
@@ -41,6 +42,8 @@ const useConversationMock = vi.fn((_opts: any) => ({
 }));
 
 vi.mock('@elevenlabs/react-native', () => ({
+  ElevenLabsProvider: (props: { children?: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, props.children),
   useConversation: (opts: any) => {
     lastConversationOptions = opts;
     return useConversationMock(opts);
@@ -89,18 +92,24 @@ installRealtimeCommonModuleMocks({
     },
 });
 
-vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
-  resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
-    getBindingByControlSessionId(params.controlSessionId),
+vi.mock('@/voice/binding/VoiceConversationBindingResolver', () => ({
+  voiceConversationBindingResolver: {
+    resolveByControlSessionId: (params: { controlSessionId: string }) =>
+      getBindingByControlSessionId(params.controlSessionId),
+  },
 }));
-vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+vi.mock('@/voice/binding/voiceConversationBindingRuntime', () => ({
   voiceSessionBindingManager: {
     ensureBound: (params: any) => ensureVoiceBinding(params),
     syncTargetSession: vi.fn(),
   },
 }));
-vi.mock('./realtimeVoiceTranscriptBridge', () => ({
-  appendRealtimeVoiceTranscriptEvent: (params: any) => appendRealtimeVoiceTranscriptEvent(params),
+vi.mock('@/voice/transcript/voiceConversationTranscript', () => ({
+  appendVoiceConversationNoteText: vi.fn(),
+  projectRealtimeVoiceTranscriptEvent: (params: any) => appendRealtimeVoiceTranscriptEvent(params),
+}));
+vi.mock('@/utils/system/sentry', () => ({
+  captureExceptionIfEnabled: (...args: unknown[]) => captureExceptionIfEnabledMock(...args),
 }));
 
 const sendMessage = vi.fn(async (..._args: any[]) => {});
@@ -133,6 +142,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     getBindingByControlSessionId.mockReturnValue(null);
     ensureVoiceBinding.mockReset();
     sendMessage.mockReset();
+    captureExceptionIfEnabledMock.mockReset();
     (globalThis as any).fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -161,7 +171,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
 
   it('starts even when invoked with an empty session id and routes tool calls via voice target store', async () => {
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
-    const { startRealtimeSession } = await import('./RealtimeSession');
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
     const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     useVoiceTargetStore.getState().setScope('global');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
@@ -169,7 +179,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
-    await startRealtimeSessionWithTimeout(startRealtimeSession, '', 'ctx');
+    await startRealtimeSessionWithTimeout(realtimeTransport.startRealtimeSession.bind(realtimeTransport), '', 'ctx');
 
     const { realtimeClientTools } = await import('./realtimeClientTools');
     await realtimeClientTools.sendSessionMessage({ message: 'hello' });
@@ -182,18 +192,39 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     });
   });
 
+  it('logs a sanitized registration failure when the voice session cannot be registered', async () => {
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
+    const registerVoiceSessionSpy = vi.spyOn(realtimeTransport, 'registerVoiceSession').mockImplementation(() => {
+      throw new Error('register_failed');
+    });
+
+    const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
+    await renderScreen(<RealtimeVoiceSession />);
+    await act(async () => {});
+
+    expect(captureExceptionIfEnabledMock).toHaveBeenCalledTimes(1);
+    expect(captureExceptionIfEnabledMock.mock.calls[0]?.[0]).toMatchObject({ message: 'register_failed' });
+    expect(captureExceptionIfEnabledMock.mock.calls[0]?.[1]).toMatchObject({
+      tags: {
+        area: 'realtime_voice_session',
+        platform: 'native',
+      },
+    });
+    registerVoiceSessionSpy.mockRestore();
+  });
+
   it('routes tool calls to the primary action session when voice scope is global', async () => {
     const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     useVoiceTargetStore.getState().setScope('global');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s2');
 
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
-    const { startRealtimeSession } = await import('./RealtimeSession');
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
-    await startRealtimeSessionWithTimeout(startRealtimeSession, '', 'ctx');
+    await startRealtimeSessionWithTimeout(realtimeTransport.startRealtimeSession.bind(realtimeTransport), '', 'ctx');
 
     const { realtimeClientTools } = await import('./realtimeClientTools');
     await realtimeClientTools.sendSessionMessage({ message: 'hello' });
@@ -213,12 +244,12 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     useVoiceTargetStore.getState().setLastFocusedSessionId(null);
 
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
-    const { startRealtimeSession } = await import('./RealtimeSession');
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
-    await startRealtimeSessionWithTimeout(startRealtimeSession, 's3', 'ctx');
+    await startRealtimeSessionWithTimeout(realtimeTransport.startRealtimeSession.bind(realtimeTransport), 's3', 'ctx');
 
     expect(useVoiceTargetStore.getState().primaryActionSessionId).toBe('s3');
 
@@ -261,12 +292,12 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     });
 
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
-    const { startRealtimeSession } = await import('./RealtimeSession');
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
-    await startRealtimeSessionWithTimeout(startRealtimeSession, 's3', 'ctx');
+    await startRealtimeSessionWithTimeout(realtimeTransport.startRealtimeSession.bind(realtimeTransport), 's3', 'ctx');
 
     await act(async () => {
       lastConversationOptions.onMessage?.({

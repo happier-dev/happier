@@ -28,10 +28,9 @@ const getElevenLabsCodeFromPreference = vi.fn((_preference?: string | null) => '
 const appendRealtimeVoiceTranscriptEvent = vi.fn();
 const getBindingByControlSessionId = vi.fn((_controlSessionId: string) => null as any);
 const ensureVoiceBinding = vi.fn(async (_params: any) => null);
+const captureExceptionIfEnabledMock = vi.fn();
 let lastConversationOptions: any = null;
 let conversationOptionsCalls: any[] = [];
-let registeredVoiceSession: any = null;
-let currentRealtimeControlSessionId: string | null = null;
 
 const languagePreferences = {
   global: 'en' as string | null,
@@ -83,28 +82,24 @@ vi.mock('@/constants/Languages', () => ({
 vi.mock('./realtimeClientTools', () => ({
   realtimeClientTools: {},
 }));
-vi.mock('./RealtimeSession', () => ({
-  registerVoiceSession: (session: any) => {
-    registeredVoiceSession = session;
+vi.mock('@/voice/binding/VoiceConversationBindingResolver', () => ({
+  voiceConversationBindingResolver: {
+    resolveByControlSessionId: (params: { controlSessionId: string }) =>
+      getBindingByControlSessionId(params.controlSessionId),
   },
-  getVoiceSession: () => registeredVoiceSession,
-  setCurrentRealtimeControlSessionId: (sessionId: string | null) => {
-    currentRealtimeControlSessionId = sessionId;
-  },
-  getCurrentRealtimeControlSessionId: () => currentRealtimeControlSessionId,
 }));
-vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
-  resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
-    getBindingByControlSessionId(params.controlSessionId),
+vi.mock('@/voice/transcript/voiceConversationTranscript', () => ({
+  appendVoiceConversationNoteText: vi.fn(),
+  projectRealtimeVoiceTranscriptEvent: (params: any) => appendRealtimeVoiceTranscriptEvent(params),
 }));
-vi.mock('./realtimeVoiceTranscriptBridge', () => ({
-  appendRealtimeVoiceTranscriptEvent: (params: any) => appendRealtimeVoiceTranscriptEvent(params),
-}));
-vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+vi.mock('@/voice/binding/voiceConversationBindingRuntime', () => ({
   voiceSessionBindingManager: {
     ensureBound: (params: any) => ensureVoiceBinding(params),
     syncTargetSession: vi.fn(),
   },
+}));
+vi.mock('@/utils/system/sentry', () => ({
+  captureExceptionIfEnabled: (...args: unknown[]) => captureExceptionIfEnabledMock(...args),
 }));
 
 function configureModules(options?: ConfigureModulesOptions) {
@@ -156,6 +151,7 @@ describe('RealtimeVoiceSession.web', () => {
   let previousNavigator: Navigator | undefined;
   let previousMediaDevicesDescriptor: PropertyDescriptor | undefined;
   let consoleWarnSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 
   function installNavigatorGetUserMedia(getUserMedia: () => Promise<unknown>) {
     previousNavigator = globalThis.navigator;
@@ -173,8 +169,8 @@ describe('RealtimeVoiceSession.web', () => {
   async function mountSessionComponent() {
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession.web');
     root = (await renderScreen(React.createElement(RealtimeVoiceSession))).tree;
-    const { getVoiceSession } = await import('./RealtimeSession');
-    return getVoiceSession();
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
+    return realtimeTransport.getVoiceSession();
   }
 
   beforeEach(() => {
@@ -194,9 +190,8 @@ describe('RealtimeVoiceSession.web', () => {
     ensureVoiceBinding.mockReset();
     lastConversationOptions = null;
     conversationOptionsCalls = [];
-    registeredVoiceSession = null;
-    currentRealtimeControlSessionId = null;
     configureModules();
+    captureExceptionIfEnabledMock.mockReset();
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
@@ -238,6 +233,8 @@ describe('RealtimeVoiceSession.web', () => {
     previousMediaDevicesDescriptor = undefined;
     consoleWarnSpy?.mockRestore();
     consoleWarnSpy = null;
+    consoleErrorSpy?.mockRestore();
+    consoleErrorSpy = null;
     vi.resetModules();
   });
 
@@ -259,6 +256,51 @@ describe('RealtimeVoiceSession.web', () => {
 
     expect(conversationId).toBe('conv_1');
     expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('logs a sanitized registration failure when the voice session cannot be registered', async () => {
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
+    const registerVoiceSessionSpy = vi.spyOn(realtimeTransport, 'registerVoiceSession').mockImplementation(() => {
+      throw new Error('register_failed');
+    });
+
+    await mountSessionComponent();
+    await act(async () => {});
+
+    expect(captureExceptionIfEnabledMock).toHaveBeenCalledTimes(1);
+    expect(captureExceptionIfEnabledMock.mock.calls[0]?.[0]).toMatchObject({ message: 'register_failed' });
+    expect(captureExceptionIfEnabledMock.mock.calls[0]?.[1]).toMatchObject({
+      tags: {
+        area: 'realtime_voice_session',
+        platform: 'web',
+      },
+    });
+    registerVoiceSessionSpy.mockRestore();
+  });
+
+  it('drops raw provider debug payloads before they can reach console logging', async () => {
+    const previousDev = (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__;
+    (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = true;
+    const consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    try {
+      await mountSessionComponent();
+      const debugCallCountBefore = consoleDebugSpy.mock.calls.length;
+
+      await act(async () => {
+        lastConversationOptions.onDebug?.(new Error('TOP_SECRET_CONTEXT'));
+      });
+
+      const newDebugCalls = consoleDebugSpy.mock.calls.slice(debugCallCountBefore);
+      const debugOutput = newDebugCalls
+        .flatMap((call) => call.map((arg) => String(arg)))
+        .join('\n');
+
+      expect(debugOutput).not.toContain('TOP_SECRET_CONTEXT');
+    } finally {
+      consoleDebugSpy.mockRestore();
+      (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = previousDev;
+    }
   });
 
   it('passes mapped language and initial context into conversation start config', async () => {
@@ -353,7 +395,7 @@ describe('RealtimeVoiceSession.web', () => {
   });
 
   it('mirrors provider messages into the hidden voice conversation transcript binding', async () => {
-    getBindingByControlSessionId.mockReturnValueOnce({
+    getBindingByControlSessionId.mockReturnValue({
       conversationSessionId: 'carrier-s1',
     });
 
@@ -380,6 +422,65 @@ describe('RealtimeVoiceSession.web', () => {
         type: 'agent_response',
       }),
     });
+  });
+
+  it('records disconnect recovery through storage and the QA log', async () => {
+    const session = await mountSessionComponent();
+    await startSessionWithTimeout(session!, {
+      sessionId: 's-disconnect',
+      token: 'token_disconnect',
+      initialContext: 'CTX',
+    });
+
+    await act(async () => {
+      lastConversationOptions.onDisconnect?.();
+    });
+
+    expect(setRealtimeStatus).toHaveBeenCalledWith('disconnected');
+    expect(setRealtimeMode).toHaveBeenCalledWith('idle', true);
+    expect(clearRealtimeModeDebounce).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans up transport-owned connecting state when the provider session component unmounts', async () => {
+    const session = await mountSessionComponent();
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
+
+    await startSessionWithTimeout(session!, {
+      sessionId: 's-connecting',
+      token: 'token_connecting',
+      initialContext: 'CTX',
+    });
+
+    expect(realtimeTransport.getSessionSnapshot().status).toBe('connecting');
+
+    await act(async () => {
+      root?.unmount();
+      root = null;
+    });
+
+    expect(realtimeTransport.getSessionSnapshot().status).toBe('disconnected');
+    expect(setRealtimeStatus).toHaveBeenLastCalledWith('disconnected');
+    expect(setRealtimeMode).toHaveBeenLastCalledWith('idle', true);
+  });
+
+  it('surfaces provider errors as recoverable QA entries without leaving realtime in error mode', async () => {
+    await mountSessionComponent();
+
+    const previousDev = (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__;
+    (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = true;
+    try {
+      await act(async () => {
+        lastConversationOptions.onError?.(new Error('daemon unreachable'));
+      });
+    } finally {
+      (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = previousDev;
+    }
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith('Realtime voice not available:', 'provider_error');
+    const warnOutput = consoleWarnSpy?.mock.calls.flat().map((arg) => String(arg)).join('\n') ?? '';
+    expect(warnOutput).not.toContain('daemon unreachable');
+    expect(setRealtimeStatus).toHaveBeenCalledWith('disconnected');
+    expect(setRealtimeMode).toHaveBeenCalledWith('idle', true);
   });
 
   it('waits briefly for the conversation instance to remount before failing startSession', async () => {

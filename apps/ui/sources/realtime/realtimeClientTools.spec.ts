@@ -46,13 +46,6 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('./RealtimeSession', () => ({
-  // Realtime voice is account-scoped; tool routing must not depend on a "current realtime session id".
-  getCurrentRealtimeSessionId: () => {
-    throw new Error('getCurrentRealtimeSessionId should not be called');
-  },
-}));
-
 describe('realtimeClientTools permission handling', () => {
   beforeEach(() => {
     trackPermissionResponse.mockReset();

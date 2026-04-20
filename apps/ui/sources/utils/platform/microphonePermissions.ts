@@ -9,6 +9,34 @@ export interface MicrophonePermissionResult {
   canAskAgain?: boolean;
 }
 
+export function isPermissionDeniedMicrophoneError(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
+
+  const candidate = error as {
+    code?: unknown;
+    message?: unknown;
+    name?: unknown;
+  };
+  const name = typeof candidate.name === 'string' ? candidate.name : '';
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return true;
+  }
+
+  const code = typeof candidate.code === 'string' ? candidate.code : '';
+  if (code === 'NotAllowedError' || code === 'PermissionDeniedError') {
+    return true;
+  }
+
+  const message = typeof candidate.message === 'string'
+    ? candidate.message.toLowerCase()
+    : typeof error === 'string'
+      ? error.toLowerCase()
+      : '';
+  return message.includes('permission_denied') || message.includes('permission denied');
+}
+
 /**
  * CRITICAL: Request microphone permissions BEFORE starting any audio session
  * Without this, first voice session WILL fail on iOS/Android
@@ -27,7 +55,7 @@ export async function requestMicrophonePermission(): Promise<MicrophonePermissio
       } catch (error: any) {
         // User denied permission or browser doesn't support getUserMedia
         console.error('Web microphone permission denied:', error);
-        return { granted: false, canAskAgain: error.name !== 'NotAllowedError' };
+        return { granted: false, canAskAgain: !isPermissionDeniedMicrophoneError(error) };
       }
     } else {
       // iOS and Android: Use expo-audio (SDK 52+)
