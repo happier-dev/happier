@@ -60,10 +60,6 @@ vi.mock('@/sync/engine/overrides/acpSessionModeOverridePublish', () => ({
   publishAcpSessionModeOverrideToMetadata: vi.fn(),
 }));
 
-vi.mock('@/voice/activity/voiceActivityController', () => ({
-  voiceActivityController: { clearSession: vi.fn() },
-}));
-
 vi.mock('@/voice/session/voiceSession', () => ({
   voiceSessionManager: { stop: vi.fn() },
 }));

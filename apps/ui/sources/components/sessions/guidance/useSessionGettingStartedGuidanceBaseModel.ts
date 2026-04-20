@@ -4,6 +4,7 @@ import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGen
 import { useVisibleSessionListSummaryState } from '@/hooks/session/useVisibleSessionListSummaryState';
 import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
 import { buildSessionGettingStartedViewModel, resolveActiveServerProfile } from './gettingStartedModel';
@@ -14,6 +15,7 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
     const serverSelectionGroups = useSetting('serverSelectionGroups');
     const activeMachines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
+    const localDaemonControl = useLocalDaemonControl();
     const selectionSnapshot = React.useMemo(() => ({
         activeTarget: summarySelection.activeTarget,
         activeServerId: summarySelection.activeServerId,
@@ -35,6 +37,7 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
             sessionsReady: sessionSummary.sessionsReady,
             sessionCount: sessionSummary.sessionCount,
             activeMachines,
+            localDaemonStatus: localDaemonControl.status,
             selection: selectionSnapshot,
             serverSelectionGroups,
             activeServerProfile,
@@ -43,6 +46,7 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
     }, [
         activeServerProfile,
         activeMachines,
+        localDaemonControl.status,
         machineListByServerId,
         selectionSnapshot,
         serverSelectionGroups,

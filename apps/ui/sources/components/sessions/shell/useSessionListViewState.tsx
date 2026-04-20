@@ -6,7 +6,6 @@ import { useSessionListSelectionState } from '@/hooks/session/useSessionListSele
 import { getAllKnownTags } from './sessionTagUtils';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { resolveSessionListShellFlags } from './resolveSessionListShellFlags';
-import { resolveSelectedSessionIdForList } from './resolveSelectedSessionIdForList';
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';
 import { resolveSessionListOrderingPersistenceState } from './resolveSessionListOrderingPersistenceState';
 import { SessionListHeaderItem } from './sessionListHeaderItem';
@@ -19,6 +18,7 @@ import { useSessionListWorkspaceLabelMigration } from './useSessionListWorkspace
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { normalizeSessionListShellState } from './normalizeSessionListShellState';
+import { useSessionCanvasSelection } from './view/useSessionCanvasSelection';
 
 export function useSessionListViewState(storageKind: SessionListStorageFilter) {
     const sessionListPaneState = useVisibleSessionListPaneState(storageKind);
@@ -56,7 +56,7 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
         workspaceRefs: workspaceRefsV1,
     });
     const allKnownTags = getAllKnownTags(normalizedShellState.sessionTags);
-    const selectedSessionId = resolveSelectedSessionIdForList({
+    const selectedSessionId = useSessionCanvasSelection({
         selectable: shellFlags.selectable,
         pathname,
     });
@@ -88,6 +88,7 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
 
     const {
         handleOpenProject,
+        handleCreateSessionFromWorkspaceScope,
         handleOpenArchivedSessions,
     } = useSessionListNavigationActions();
     const {
@@ -122,6 +123,7 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
             projectHeaderViewModelByGroupKey={projectHeaderViewModelByGroupKey}
             hasMultipleMachines={renderModels.hasMultipleMachines}
             onOpenProject={handleOpenProject}
+            onCreateSessionFromWorkspaceScope={handleCreateSessionFromWorkspaceScope}
             onRenameWorkspace={handleRenameWorkspace}
             onResetWorkspaceName={handleResetWorkspaceName}
             onToggleCollapse={handleToggleCollapse}
@@ -129,6 +131,7 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
     ), [
         collapsedKeys,
         handleOpenProject,
+        handleCreateSessionFromWorkspaceScope,
         handleRenameWorkspace,
         handleResetWorkspaceName,
         handleToggleCollapse,

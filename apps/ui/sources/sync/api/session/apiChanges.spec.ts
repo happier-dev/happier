@@ -80,6 +80,18 @@ describe('apiChanges', () => {
         expect(res).toEqual({ status: 'error' });
     });
 
+    it.each([401, 403] as const)('throws not_authenticated for auth status %s', async (status) => {
+        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(errorJson(status, { error: 'auth' }));
+
+        await expect(fetchChanges({ credentials, afterCursor: '0', limit: 200 })).rejects.toMatchObject({
+            name: 'HappyError',
+            canTryAgain: false,
+            kind: 'auth',
+            code: 'not_authenticated',
+            status,
+        });
+    });
+
     it('returns cursor-gone with fallback cursor when 410 body is invalid', async () => {
         (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
             ok: false,

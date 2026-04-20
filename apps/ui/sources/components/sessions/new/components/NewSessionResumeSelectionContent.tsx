@@ -3,11 +3,11 @@ import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { InputBrowseButton } from '@/components/ui/buttons/InputBrowseButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
+import { t, tLoose } from '@/text';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -126,8 +126,9 @@ export type NewSessionResumeSelectionContentProps = Readonly<{
 export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectionContentProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const agentType = isAgentId(props.agentType) ? props.agentType : DEFAULT_AGENT_ID;
-    const agentLabel = props.agentLabel?.trim() || t(getAgentCore(agentType).displayNameKey);
+    const agentType = isAgentId(props.agentType) ? props.agentType : null;
+    const agentLabel = props.agentLabel?.trim()
+        || (agentType ? t(getAgentCore(agentType).displayNameKey) : tLoose('common.unknown'));
 
     const handlePaste = React.useCallback(async () => {
         const text = await getClipboardStringTrimmedSafe();

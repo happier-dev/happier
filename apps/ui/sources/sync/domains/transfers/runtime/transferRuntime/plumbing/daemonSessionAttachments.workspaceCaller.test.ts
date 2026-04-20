@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 const state = vi.hoisted(() => ({
     directImportUploadCalls: [] as any[],
@@ -17,11 +18,13 @@ vi.mock('@/sync/domains/session/listing/sessionListLookupState', () => ({
         state.preferredServerId ?? fallbackServerId ?? null,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     storage: {
         getState: () => ({}),
-    },
-}));
+    } as any,
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({

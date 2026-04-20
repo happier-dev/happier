@@ -1,13 +1,12 @@
-import { MMKV } from 'react-native-mmkv';
 import { z } from 'zod';
-import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/settings';
 import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
-import { Profile, profileDefaults, profileParse } from '../profiles/profile';
+import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/account/accountSettingArtifacts';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/registry/registryCore';
+import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
 import {
     readPersistedNewSessionCheckoutDraft,
@@ -26,16 +25,49 @@ import {
 } from '@/utils/sessions/backendNewSessionOptionState';
 import {
     AcpConfigOptionOverridesV1Schema,
-    buildBackendTargetKey,
-    BackendTargetRefSchema,
     SessionMcpSelectionV1Schema,
+    readBackendTargetRefV2,
     normalizeCodexBackendMode,
     type CodexBackendMode,
     type AcpConfigOptionOverridesV1,
-    type BackendTargetRefV1,
+    type BackendTargetRefV2,
     type SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
-var persistedStorage: MMKV | null = null;
+import { getPersistenceStorage } from './persistenceStorage';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+export { loadProfile, saveProfile } from './profilePersistence';
+export { clearPersistence } from './persistenceLifecycle';
+export {
+    loadSessionActionDrafts,
+    loadSessionDrafts,
+    loadSessionLastViewed,
+    loadSessionModelModeUpdatedAts,
+    loadSessionModelModes,
+    loadSessionPermissionModeUpdatedAts,
+    loadSessionPermissionModes,
+    loadSessionReviewCommentsDrafts,
+    loadWorkspaceReviewCommentsDrafts,
+    saveSessionActionDrafts,
+    saveSessionDrafts,
+    saveSessionLastViewed,
+    saveSessionModelModeUpdatedAts,
+    saveSessionModelModes,
+    saveSessionPermissionModeUpdatedAts,
+    saveSessionPermissionModes,
+    saveSessionReviewCommentsDrafts,
+    saveWorkspaceReviewCommentsDrafts,
+    type SessionActionDraftsBySessionId,
+    type SessionReviewCommentDraftsBySessionId,
+    type WorkspaceReviewCommentDraftsByWorkspaceCacheKey,
+} from './sessionPersistence';
+export {
+    loadLocalSettings,
+    loadPurchases,
+    loadSettings,
+    saveLocalSettings,
+    savePurchases,
+    saveSettings,
+} from './settingsPersistence';
 
 const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Object.freeze({
     ...ACCOUNT_SETTING_ARTIFACTS.shape,
@@ -70,47 +102,6 @@ function sessionModelModeUpdatedAtsKey(): string {
     return 'session-model-mode-updated-ats-v1';
 }
 
-function sessionReviewCommentsDraftsKey(): string {
-    return 'session-review-comments-draft-v1';
-}
-
-function sessionActionDraftsKey(): string {
-    return 'session-action-drafts-v1';
-}
-
-function isWebRuntime(): boolean {
-    return typeof window !== 'undefined' && typeof document !== 'undefined';
-}
-
-function normalizeStorageScope(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-
-    const sanitized = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const collapsed = sanitized.replace(/_+/g, '_');
-    const clamped = collapsed.slice(0, 64);
-    return clamped || null;
-}
-
-function readScopedStorageScopeFromEnv(): string | null {
-    return normalizeStorageScope(process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE);
-}
-
-function buildScopedStorageId(baseId: string, scope: string | null): string {
-    return scope ? `${baseId}__${scope}` : baseId;
-}
-
-function getPersistenceStorage(): MMKV {
-    if (persistedStorage) return persistedStorage;
-    // Keep storage-scope bootstrap local here to avoid import-cycle TDZ hazards during Sync initialization.
-    const storageScope = isWebRuntime() ? null : readScopedStorageScopeFromEnv();
-    persistedStorage = storageScope ? new MMKV({ id: buildScopedStorageId('default', storageScope) }) : new MMKV();
-    return persistedStorage;
-}
-
-export type NewSessionAgentType = AgentId;
-
 export interface NewSessionDraft {
     input: string;
     selectedMachineId: string | null;
@@ -129,8 +120,8 @@ export interface NewSessionDraft {
      * (These are decrypted only when needed by the wizard.)
      */
     sessionOnlySecretValueEncByProfileIdByEnvVarName?: Record<string, Record<string, SecretString | null | undefined>> | null;
-    agentType: NewSessionAgentType;
-    backendTarget?: BackendTargetRefV1 | null;
+    agentType: AgentId;
+    backendTarget?: BackendTargetRefV2 | null;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode: PermissionMode;
     modelMode: ModelMode;
@@ -242,22 +233,6 @@ function parseDraftEntryIntent(value: unknown): NewSessionDraft['entryIntent'] {
     return value === 'automation' || value === 'session' ? value : null;
 }
 
-export function loadSettings(): { settings: unknown; version: number | null } {
-    const mmkv = getPersistenceStorage();
-    const settings = mmkv.getString('settings');
-    if (settings) {
-        try {
-            const parsed = JSON.parse(settings);
-            const version = typeof parsed.version === 'number' ? parsed.version : null;
-            return { settings: parsed.settings, version };
-        } catch (e) {
-            console.error('Failed to parse settings', e);
-            return { settings: {}, version: null };
-        }
-    }
-    return { settings: {}, version: null };
-}
-
 export function loadDeviceAnalyticsId(): string | null {
     const mmkv = getPersistenceStorage();
     const raw = mmkv.getString(deviceAnalyticsIdKey());
@@ -271,11 +246,6 @@ export function saveDeviceAnalyticsId(value: string): void {
     const trimmed = value.trim();
     if (!trimmed) return;
     mmkv.set(deviceAnalyticsIdKey(), trimmed);
-}
-
-export function saveSettings(settings: Settings, version: number) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('settings', JSON.stringify({ settings, version }));
 }
 
 function parsePendingSettings(raw: unknown): Partial<Settings> {
@@ -299,7 +269,7 @@ function parsePendingSettings(raw: unknown): Partial<Settings> {
         // lose unsynced voice deltas (e.g. BYO API keys) on restart.
         if (key === 'voice') {
             const parsedVoice = voiceSettingsParse(rawValue);
-            if (parsedVoice) (out as any).voice = parsedVoice;
+            if (parsedVoice) (out as any).voice = stripSynthesizedVoiceExecutionDefaults(rawValue, parsedVoice);
             continue;
         }
 
@@ -313,6 +283,73 @@ function parsePendingSettings(raw: unknown): Partial<Settings> {
     }
 
     return out;
+}
+
+function stripSynthesizedVoiceExecutionDefaults(rawValue: unknown, parsedVoice: Settings['voice']): Settings['voice'] {
+    if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) {
+        return parsedVoice;
+    }
+
+    const sanitized = JSON.parse(JSON.stringify(parsedVoice)) as Settings['voice'];
+    const rawVoice = rawValue as Record<string, unknown>;
+    const rawAdapters =
+        rawVoice.adapters && typeof rawVoice.adapters === 'object' && !Array.isArray(rawVoice.adapters)
+            ? (rawVoice.adapters as Record<string, unknown>)
+            : null;
+    const parsedAdapters =
+        sanitized.adapters && typeof sanitized.adapters === 'object' && !Array.isArray(sanitized.adapters)
+            ? (sanitized.adapters as Record<string, unknown>)
+            : null;
+
+    if (!rawAdapters || !parsedAdapters) {
+        return sanitized;
+    }
+
+    for (const adapterId of ['local_direct', 'local_conversation']) {
+        const rawAdapter =
+            rawAdapters[adapterId] && typeof rawAdapters[adapterId] === 'object' && !Array.isArray(rawAdapters[adapterId])
+                ? (rawAdapters[adapterId] as Record<string, unknown>)
+                : null;
+        const parsedAdapter =
+            parsedAdapters[adapterId] && typeof parsedAdapters[adapterId] === 'object' && !Array.isArray(parsedAdapters[adapterId])
+                ? (parsedAdapters[adapterId] as Record<string, unknown>)
+                : null;
+        if (!rawAdapter || !parsedAdapter) continue;
+        stripSynthesizedLocalNeuralExecutionFromSection(rawAdapter, parsedAdapter, 'tts');
+        stripSynthesizedLocalNeuralExecutionFromSection(rawAdapter, parsedAdapter, 'stt');
+    }
+
+    return sanitized;
+}
+
+function stripSynthesizedLocalNeuralExecutionFromSection(
+    rawAdapter: Record<string, unknown>,
+    parsedAdapter: Record<string, unknown>,
+    sectionKey: 'tts' | 'stt',
+): void {
+    const rawSection =
+        rawAdapter[sectionKey] && typeof rawAdapter[sectionKey] === 'object' && !Array.isArray(rawAdapter[sectionKey])
+            ? (rawAdapter[sectionKey] as Record<string, unknown>)
+            : null;
+    const parsedSection =
+        parsedAdapter[sectionKey] && typeof parsedAdapter[sectionKey] === 'object' && !Array.isArray(parsedAdapter[sectionKey])
+            ? (parsedAdapter[sectionKey] as Record<string, unknown>)
+            : null;
+    if (!rawSection || !parsedSection) return;
+
+    const rawLocalNeural =
+        rawSection.localNeural && typeof rawSection.localNeural === 'object' && !Array.isArray(rawSection.localNeural)
+            ? (rawSection.localNeural as Record<string, unknown>)
+            : null;
+    const parsedLocalNeural =
+        parsedSection.localNeural && typeof parsedSection.localNeural === 'object' && !Array.isArray(parsedSection.localNeural)
+            ? (parsedSection.localNeural as Record<string, unknown>)
+            : null;
+    if (!rawLocalNeural || !parsedLocalNeural) return;
+
+    if (!Object.prototype.hasOwnProperty.call(rawLocalNeural, 'execution')) {
+        delete parsedLocalNeural.execution;
+    }
 }
 
 export function loadPendingSettings(): Partial<Settings> {
@@ -341,26 +378,6 @@ export function savePendingSettings(settings: Partial<Settings>) {
     }
 }
 
-export function loadLocalSettings(): LocalSettings {
-    const mmkv = getPersistenceStorage();
-    const localSettings = mmkv.getString('local-settings');
-    if (localSettings) {
-        try {
-            const parsed = JSON.parse(localSettings);
-            return localSettingsParse(parsed);
-        } catch (e) {
-            console.error('Failed to parse local settings', e);
-            return { ...localSettingsDefaults };
-        }
-    }
-    return { ...localSettingsDefaults };
-}
-
-export function saveLocalSettings(settings: LocalSettings) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('local-settings', JSON.stringify(settings));
-}
-
 export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
     const mmkv = getPersistenceStorage();
     const localSettings = mmkv.getString('local-settings');
@@ -375,164 +392,6 @@ export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
         }
     }
     return localSettingsDefaults.themePreference;
-}
-
-export function loadPurchases(): Purchases {
-    const mmkv = getPersistenceStorage();
-    const purchases = mmkv.getString('purchases');
-    if (purchases) {
-        try {
-            const parsed = JSON.parse(purchases);
-            return purchasesParse(parsed);
-        } catch (e) {
-            console.error('Failed to parse purchases', e);
-            return { ...purchasesDefaults };
-        }
-    }
-    return { ...purchasesDefaults };
-}
-
-export function savePurchases(purchases: Purchases) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('purchases', JSON.stringify(purchases));
-}
-
-export function loadSessionDrafts(): Record<string, string> {
-    const mmkv = getPersistenceStorage();
-    const drafts = mmkv.getString('session-drafts');
-    if (drafts) {
-        try {
-            return JSON.parse(drafts);
-        } catch (e) {
-            console.error('Failed to parse session drafts', e);
-            return {};
-        }
-    }
-    return {};
-}
-
-export function saveSessionDrafts(drafts: Record<string, string>) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('session-drafts', JSON.stringify(drafts));
-}
-
-export type SessionReviewCommentDraftsBySessionId = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
-
-export type WorkspaceReviewCommentDraftsByWorkspaceCacheKey = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
-
-function workspaceReviewCommentsDraftsKey(): string {
-    return 'workspace-review-comments-draft-v1';
-}
-
-export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsBySessionId {
-    const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionReviewCommentsDraftsKey());
-    if (!raw) return {};
-    try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-
-        const out: SessionReviewCommentDraftsBySessionId = {};
-        for (const [rawSessionId, rawDrafts] of Object.entries(parsed as Record<string, unknown>)) {
-            if (typeof rawSessionId !== 'string' || !rawSessionId.trim()) continue;
-            if (!Array.isArray(rawDrafts)) continue;
-
-            const drafts: z.infer<typeof ReviewCommentDraftSchema>[] = [];
-            for (const entry of rawDrafts) {
-                const entryParsed = ReviewCommentDraftSchema.safeParse(entry);
-                if (entryParsed.success) drafts.push(entryParsed.data);
-            }
-            if (drafts.length > 0) out[rawSessionId] = drafts;
-        }
-        return out;
-    } catch (e) {
-        console.error('Failed to parse session review comment drafts', e);
-        return {};
-    }
-}
-
-export function saveSessionReviewCommentsDrafts(drafts: SessionReviewCommentDraftsBySessionId): void {
-    const mmkv = getPersistenceStorage();
-    if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(sessionReviewCommentsDraftsKey());
-        return;
-    }
-    mmkv.set(sessionReviewCommentsDraftsKey(), JSON.stringify(drafts));
-}
-
-export function loadWorkspaceReviewCommentsDrafts(): WorkspaceReviewCommentDraftsByWorkspaceCacheKey {
-    const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(workspaceReviewCommentsDraftsKey());
-    if (!raw) return {};
-    try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-
-        const out: WorkspaceReviewCommentDraftsByWorkspaceCacheKey = {};
-        for (const [rawWorkspaceCacheKey, rawDrafts] of Object.entries(parsed as Record<string, unknown>)) {
-            const workspaceCacheKey = typeof rawWorkspaceCacheKey === 'string' ? rawWorkspaceCacheKey.trim() : '';
-            if (!workspaceCacheKey) continue;
-            if (!Array.isArray(rawDrafts)) continue;
-
-            const drafts: z.infer<typeof ReviewCommentDraftSchema>[] = [];
-            for (const entry of rawDrafts) {
-                const entryParsed = ReviewCommentDraftSchema.safeParse(entry);
-                if (entryParsed.success) drafts.push(entryParsed.data);
-            }
-            if (drafts.length > 0) out[workspaceCacheKey] = drafts;
-        }
-        return out;
-    } catch (e) {
-        console.error('Failed to parse workspace review comment drafts', e);
-        return {};
-    }
-}
-
-export function saveWorkspaceReviewCommentsDrafts(drafts: WorkspaceReviewCommentDraftsByWorkspaceCacheKey): void {
-    const mmkv = getPersistenceStorage();
-    if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(workspaceReviewCommentsDraftsKey());
-        return;
-    }
-    mmkv.set(workspaceReviewCommentsDraftsKey(), JSON.stringify(drafts));
-}
-
-export type SessionActionDraftsBySessionId = Record<string, z.infer<typeof SessionActionDraftSchema>[]>;
-
-export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
-    const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionActionDraftsKey());
-    if (!raw) return {};
-    try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-
-        const out: SessionActionDraftsBySessionId = {};
-        for (const [rawSessionId, rawDrafts] of Object.entries(parsed as Record<string, unknown>)) {
-            if (typeof rawSessionId !== 'string' || !rawSessionId.trim()) continue;
-            if (!Array.isArray(rawDrafts)) continue;
-
-            const drafts: z.infer<typeof SessionActionDraftSchema>[] = [];
-            for (const entry of rawDrafts) {
-                const entryParsed = SessionActionDraftSchema.safeParse(entry);
-                if (entryParsed.success) drafts.push(entryParsed.data);
-            }
-            if (drafts.length > 0) out[rawSessionId] = drafts;
-        }
-        return out;
-    } catch (e) {
-        console.error('Failed to parse session action drafts', e);
-        return {};
-    }
-}
-
-export function saveSessionActionDrafts(drafts: SessionActionDraftsBySessionId): void {
-    const mmkv = getPersistenceStorage();
-    if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(sessionActionDraftsKey());
-        return;
-    }
-    mmkv.set(sessionActionDraftsKey(), JSON.stringify(drafts));
 }
 
 export function loadNewSessionDraft(): NewSessionDraft | null {
@@ -562,9 +421,16 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             parsed.sessionOnlySecretValueEncByProfileIdByEnvVarName,
             parseDraftSecretStringOrNull,
         );
-        const agentType: NewSessionAgentType = isAgentId(parsed.agentType) ? parsed.agentType : DEFAULT_AGENT_ID;
-        const parsedBackendTarget = BackendTargetRefSchema.safeParse((parsed as any).backendTarget);
-        const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
+        const agentType: AgentId = isAgentId(parsed.agentType) && !isLegacyCompatAgentType(parsed.agentType)
+            ? parsed.agentType
+            : DEFAULT_AGENT_ID;
+        const backendTarget = (() => {
+            try {
+                return readBackendTargetRefV2((parsed as any).backendTarget);
+            } catch {
+                return undefined;
+            }
+        })();
         const permissionMode: PermissionMode = isPermissionMode(parsed.permissionMode)
             ? parsed.permissionMode
             : 'default';
@@ -602,7 +468,7 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
         // Legacy migration: older drafts stored `auggieAllowIndexing` at top-level.
         // Keep reading it so users don't lose their local draft state.
         if (typeof legacyAuggieAllowIndexing === 'boolean') {
-            const auggieTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'auggie' });
+            const auggieTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'auggie' });
             migratedAgentOptions[auggieTargetKey] = {
                 ...(migratedAgentOptions[auggieTargetKey] ?? {}),
                 allowIndexing: legacyAuggieAllowIndexing,
@@ -647,157 +513,6 @@ export function saveNewSessionDraft(draft: NewSessionDraft) {
 export function clearNewSessionDraft() {
     const mmkv = getPersistenceStorage();
     mmkv.delete(newSessionDraftKey());
-}
-
-export function loadSessionPermissionModes(): Record<string, PermissionMode> {
-    const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString('session-permission-modes');
-    if (raw) {
-        try {
-            const parsed = JSON.parse(raw);
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                return {};
-            }
-
-            const result: Record<string, PermissionMode> = {};
-            for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
-                if (isPermissionMode(value)) {
-                    result[sessionId] = value;
-                }
-            }
-            return result;
-        } catch (e) {
-            console.error('Failed to parse session permission modes', e);
-            return {};
-        }
-    }
-    return {};
-}
-
-export function saveSessionPermissionModes(modes: Record<string, PermissionMode>) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('session-permission-modes', JSON.stringify(modes));
-}
-
-export function loadSessionPermissionModeUpdatedAts(): Record<string, number> {
-    const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString('session-permission-mode-updated-ats');
-    if (raw) {
-        try {
-            const parsed = JSON.parse(raw);
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                return {};
-            }
-
-            const result: Record<string, number> = {};
-            for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
-                if (typeof value === 'number' && Number.isFinite(value)) {
-                    result[sessionId] = value;
-                }
-            }
-            return result;
-        } catch (e) {
-            console.error('Failed to parse session permission mode updated timestamps', e);
-            return {};
-        }
-    }
-    return {};
-}
-
-export function saveSessionPermissionModeUpdatedAts(updatedAts: Record<string, number>) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('session-permission-mode-updated-ats', JSON.stringify(updatedAts));
-}
-
-export function loadSessionLastViewed(): Record<string, number> {
-    const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString('session-last-viewed');
-    if (raw) {
-        try {
-            const parsed: unknown = JSON.parse(raw);
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                return {};
-            }
-
-            const result: Record<string, number> = {};
-            for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
-                if (typeof value === 'number' && Number.isFinite(value)) {
-                    result[sessionId] = value;
-                }
-            }
-            return result;
-        } catch (e) {
-            console.error('Failed to parse session last viewed timestamps', e);
-            return {};
-        }
-    }
-    return {};
-}
-
-export function saveSessionLastViewed(data: Record<string, number>) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('session-last-viewed', JSON.stringify(data));
-}
-
-export function loadSessionModelModes(): Record<string, ModelMode> {
-    const mmkv = getPersistenceStorage();
-    const modes = mmkv.getString('session-model-modes');
-    if (modes) {
-        try {
-            const parsed: unknown = JSON.parse(modes);
-            if (!parsed || typeof parsed !== 'object') {
-                return {};
-            }
-
-            const result: Record<string, ModelMode> = {};
-            Object.entries(parsed as Record<string, unknown>).forEach(([sessionId, mode]) => {
-                if (!isModelMode(mode)) return;
-                const normalized = String(mode).trim();
-                if (!normalized) return;
-                result[sessionId] = normalized;
-            });
-            return result;
-        } catch (e) {
-            console.error('Failed to parse session model modes', e);
-            return {};
-        }
-    }
-    return {};
-}
-
-export function saveSessionModelModes(modes: Record<string, ModelMode>) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('session-model-modes', JSON.stringify(modes));
-}
-
-export function loadSessionModelModeUpdatedAts(): Record<string, number> {
-    const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionModelModeUpdatedAtsKey());
-    if (raw) {
-        try {
-            const parsed: unknown = JSON.parse(raw);
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                return {};
-            }
-
-            const result: Record<string, number> = {};
-            for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
-                if (typeof value === 'number' && Number.isFinite(value)) {
-                    result[sessionId] = value;
-                }
-            }
-            return result;
-        } catch (e) {
-            console.error('Failed to parse session model mode updatedAts', e);
-            return {};
-        }
-    }
-    return {};
-}
-
-export function saveSessionModelModeUpdatedAts(data: Record<string, number>) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set(sessionModelModeUpdatedAtsKey(), JSON.stringify(data));
 }
 
 export function loadSessionMaterializedMaxSeqById(): Record<string, number> {
@@ -938,7 +653,11 @@ export function saveLastChangesCursorByAccountId(data: Record<string, number>) {
     mmkv.set(lastChangesCursorByAccountIdKey(), JSON.stringify(data));
 }
 
-function readPersistedProfileId(mmkv: MMKV): string | null {
+type PersistenceStringReader = Readonly<{
+    getString: (key: string) => string | undefined | null;
+}>;
+
+function readPersistedProfileId(mmkv: PersistenceStringReader): string | null {
     const rawProfile = mmkv.getString('profile');
     if (!rawProfile) return null;
 
@@ -948,29 +667,4 @@ function readPersistedProfileId(mmkv: MMKV): string | null {
     } catch {
         return null;
     }
-}
-
-export function loadProfile(): Profile {
-    const mmkv = getPersistenceStorage();
-    const profile = mmkv.getString('profile');
-    if (profile) {
-        try {
-            const parsed = JSON.parse(profile);
-            return profileParse(parsed);
-        } catch (e) {
-            console.error('Failed to parse profile', e);
-            return { ...profileDefaults };
-        }
-    }
-    return { ...profileDefaults };
-}
-
-export function saveProfile(profile: Profile) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('profile', JSON.stringify(profile));
-}
-
-export function clearPersistence() {
-    const mmkv = getPersistenceStorage();
-    mmkv.clearAll();
 }

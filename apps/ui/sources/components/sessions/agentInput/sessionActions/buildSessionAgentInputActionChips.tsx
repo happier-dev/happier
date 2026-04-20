@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { getActionSpec, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { getActionSpec, type BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -11,7 +11,7 @@ import { createAgentInputActionShortcutChip } from '@/components/sessions/agentI
 
 export function buildSessionAgentInputActionChips(params: Readonly<{
     sessionId: string;
-    defaultBackendTarget?: BackendTargetRefV1 | null;
+    defaultBackendTarget?: BackendTargetRefV2Input | null;
     defaultBackendId: string | null;
     instructionsText: string;
 }>): ReadonlyArray<AgentInputExtraActionChip> {

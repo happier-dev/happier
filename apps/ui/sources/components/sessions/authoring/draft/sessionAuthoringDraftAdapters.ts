@@ -1,12 +1,13 @@
 import {
     AcpConfigOptionOverridesV1Schema,
-    buildBackendTargetKey,
-    isBuiltInAgentTarget,
-    type BackendTargetRefV1,
+    readBackendTargetRefV2,
+    type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
+import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import {
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
@@ -66,7 +67,7 @@ function buildExistingSessionAuthoringDraftFromSnapshotData(params: Readonly<{
         prompt: params.message,
         displayText: params.message,
         agentId: params.snapshot.agentId,
-        backendTarget: params.snapshot.backendTarget,
+        backendTarget: params.snapshot.backendTarget ? stripBackendTargetSourceKind(params.snapshot.backendTarget) : null,
         transcriptStorage: params.snapshot.transcriptStorage,
         profileId: params.snapshot.profileId,
         environmentVariables: null,
@@ -185,36 +186,57 @@ export function mergeExistingSessionAutomationTemplateDraft(params: Readonly<{
     });
 }
 
-function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'backendTarget' | 'agentId'>): BackendTargetRefV1 | null {
+function stripBackendTargetSourceKind(target: BackendTargetRefV2): BackendTargetRefV2 {
+    // `sourceKind` is legacy split-brain vocabulary (built-in vs plugin vs configured) and should
+    // not leak into session authoring or automation templates. `configuredBackendId` is the only
+    // carrier we need for configured targets.
+    if (!('sourceKind' in target)) {
+        return target;
+    }
+
+    const { sourceKind: _ignored, ...rest } = target as BackendTargetRefV2 & {
+        sourceKind?: unknown;
+    };
+    return rest;
+}
+
+function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'backendTarget' | 'agentId'>): BackendTargetRefV2 | null {
     if (draft.backendTarget) {
-        return draft.backendTarget;
+        return stripBackendTargetSourceKind(draft.backendTarget);
     }
     return normalizeOptionalString(draft.agentId)
-        ? { kind: 'builtInAgent', agentId: draft.agentId!.trim() } satisfies BackendTargetRefV1
+        ? { kind: 'backend', backendId: draft.agentId!.trim() } satisfies BackendTargetRefV2
         : null;
+}
+
+function resolveDraftSpawnBackendTarget(draft: Pick<SessionAuthoringDraft, 'backendTarget' | 'agentId'>): SpawnSessionOptions['backendTarget'] | null {
+    const backendTarget = resolveDraftBackendTarget(draft);
+    return backendTarget ? readBackendTargetRefV2(backendTarget) : null;
 }
 
 function resolveNewSessionDraftAgentId(params: Readonly<{
     agentId?: unknown;
-    backendTarget?: BackendTargetRefV1 | null;
+    backendTarget?: BackendTargetRefV2 | null;
 }>): string | null {
+    if (params.backendTarget) {
+        const candidateAgentId = params.backendTarget.configuredBackendId ? null : params.backendTarget.backendId;
+        if (candidateAgentId && isAgentId(candidateAgentId)) return candidateAgentId;
+        return resolveProviderAgentIdForBackendTarget(readBackendTargetRefV2(params.backendTarget));
+    }
     if (typeof params.agentId === 'string' && isAgentId(params.agentId)) {
         return params.agentId;
-    }
-    if (params.backendTarget && isBuiltInAgentTarget(params.backendTarget) && isAgentId(params.backendTarget.agentId)) {
-        return params.backendTarget.agentId;
     }
     return null;
 }
 
 function resolveConnectedServicesFromAgentOptionState(params: Readonly<{
-    backendTarget: BackendTargetRefV1 | null;
+    backendTarget: BackendTargetRefV2 | null;
     backendNewSessionOptionStateByTargetKey?: Record<string, Record<string, unknown>> | null;
 }>): unknown {
     if (!params.backendTarget || !params.backendNewSessionOptionStateByTargetKey) {
         return null;
     }
-    const targetKey = buildBackendTargetKey(params.backendTarget);
+    const targetKey = resolveBackendTargetKeyV2(params.backendTarget);
     const targetOptions = params.backendNewSessionOptionStateByTargetKey[targetKey];
     if (!targetOptions || typeof targetOptions !== 'object' || Array.isArray(targetOptions)) {
         return null;
@@ -483,8 +505,9 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
     });
     const backendTarget = params.template.backendTarget
         ?? (normalizeOptionalString(params.template.agent)
-            ? { kind: 'builtInAgent', agentId: normalizeOptionalString(params.template.agent)! } satisfies BackendTargetRefV1
+            ? { kind: 'backend', backendId: normalizeOptionalString(params.template.agent)! } satisfies BackendTargetRefV2
             : null);
+    const sanitizedBackendTarget = backendTarget ? stripBackendTargetSourceKind(backendTarget) : null;
 
     return {
         targetType: params.targetType,
@@ -492,10 +515,10 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
         checkoutCreationDraft: parseCheckoutCreationDraft(params.template.checkoutCreationDraft),
         prompt: params.template.prompt ?? '',
         displayText: params.template.displayText ?? '',
-        agentId: backendTarget && isBuiltInAgentTarget(backendTarget)
-            ? normalizeOptionalString(backendTarget.agentId)
+        agentId: sanitizedBackendTarget && !sanitizedBackendTarget.configuredBackendId && isAgentId(sanitizedBackendTarget.backendId)
+            ? normalizeOptionalString(sanitizedBackendTarget.backendId)
             : normalizeOptionalString(params.template.agent),
-        backendTarget,
+        backendTarget: sanitizedBackendTarget,
         transcriptStorage: params.template.transcriptStorage ?? null,
         profileId: normalizeOptionalString(params.template.profileId),
         environmentVariables: params.template.environmentVariables ?? null,
@@ -602,8 +625,8 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
         ...(normalizeOptionalString(draft.prompt) ? { prompt: draft.prompt.trim() } : {}),
         ...(normalizeOptionalString(draft.displayText) ? { displayText: draft.displayText.trim() } : {}),
         ...(normalizedBackendTarget ? { backendTarget: normalizedBackendTarget } : {}),
-        ...(normalizedBackendTarget && isBuiltInAgentTarget(normalizedBackendTarget)
-            ? { agent: normalizedBackendTarget.agentId.trim() }
+        ...(normalizedBackendTarget && !normalizedBackendTarget.configuredBackendId && isAgentId(normalizedBackendTarget.backendId)
+            ? { agent: normalizedBackendTarget.backendId.trim() }
             : normalizeOptionalString(draft.agentId)
                 ? { agent: draft.agentId!.trim() }
                 : {}),
@@ -644,8 +667,9 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
     serverId?: string | null;
     approvedNewDirectoryCreation?: boolean;
     agentModeUpdatedAt?: number | null;
+    spawnBackendTarget?: SpawnSessionOptions['backendTarget'];
 }>): SpawnSessionOptions {
-    const backendTarget = resolveDraftBackendTarget(params.draft);
+    const backendTarget = params.spawnBackendTarget ?? resolveDraftSpawnBackendTarget(params.draft);
     const codexBackendMode = resolveCanonicalCodexBackendMode({
         codexBackendMode: params.draft.codexBackendMode,
         experimentalCodexAcp: params.draft.experimentalCodexAcp,
@@ -711,9 +735,14 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
     const normalizedAgentId = isAgentId(params.draft.agentId) ? params.draft.agentId : null;
     const backendTarget = params.draft.backendTarget
         ?? (normalizedAgentId
-            ? { kind: 'builtInAgent', agentId: normalizedAgentId } satisfies BackendTargetRefV1
+        ? { kind: 'backend', backendId: normalizedAgentId } satisfies BackendTargetRefV2
             : null);
-    const targetKey = backendTarget ? buildBackendTargetKey(backendTarget) : null;
+    const canonicalAgentId = backendTarget
+        ? backendTarget.configuredBackendId
+            ? normalizedAgentId
+            : (isAgentId(backendTarget.backendId) ? backendTarget.backendId : normalizedAgentId)
+        : normalizedAgentId;
+    const targetKey = backendTarget ? resolveBackendTargetKeyV2(backendTarget) : null;
     const backendOptionStateByTargetKey = targetKey && (
         params.draft.connectedServices != null
     )
@@ -729,10 +758,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         machineId: params.machineId ?? undefined,
         directory: params.draft.directory,
         checkoutCreationDraft: params.draft.checkoutCreationDraft,
-        agentType: normalizedAgentId
-            ?? (backendTarget && isBuiltInAgentTarget(backendTarget) && isAgentId(backendTarget.agentId)
-                ? backendTarget.agentId
-                : undefined),
+        agentType: canonicalAgentId ?? undefined,
         backendTarget: backendTarget ?? undefined,
         selectedProfileId: params.draft.profileId,
         transcriptStorage: params.draft.transcriptStorage ?? undefined,
@@ -760,13 +786,18 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
     updatedAt: number;
 }>): NewSessionDraft {
     const normalizedAgentId = isAgentId(params.draft.agentId) ? params.draft.agentId : null;
-    const builtInBackendAgentId = params.draft.backendTarget && isBuiltInAgentTarget(params.draft.backendTarget) && isAgentId(params.draft.backendTarget.agentId)
-        ? params.draft.backendTarget.agentId
+    const builtInBackendAgentId = params.draft.backendTarget && !params.draft.backendTarget.configuredBackendId && isAgentId(params.draft.backendTarget.backendId)
+        ? params.draft.backendTarget.backendId
         : null;
+    const canonicalSelectedBuiltInAgentId = params.draft.backendTarget
+        ? (!params.draft.backendTarget.configuredBackendId && isAgentId(params.draft.backendTarget.backendId)
+            ? params.draft.backendTarget.backendId
+            : (normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID))
+        : normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID;
     const agentType = resolvePersistedAgentIdForBackendTarget({
         backendTarget: params.draft.backendTarget ?? null,
         persistedAgentId: params.preferredPersistedAgentId,
-        selectedBuiltInAgentId: normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID,
+        selectedBuiltInAgentId: canonicalSelectedBuiltInAgentId,
     });
     const codexBackendMode = resolveCanonicalCodexBackendMode({
         codexBackendMode: params.draft.codexBackendMode,

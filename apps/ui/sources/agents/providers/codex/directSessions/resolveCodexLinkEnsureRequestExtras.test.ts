@@ -10,7 +10,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
             candidate: {
                 details: {
                     codexBackendMode: 'mcp',
-                    agentRuntimeDescriptorV1: {
+                    runtimeDescriptorV1: {
                         v: 1,
                         providerId: 'codex',
                         provider: {
@@ -26,7 +26,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
             extras,
         ).toMatchObject({
             codexBackendMode: 'appServer',
-            runtimeDescriptor: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -36,7 +36,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
                         owner: 'codex',
                         schemaId: 'codex.agentRuntimeDescriptorExtra',
                         v: 1,
-                        runtimeAffinity: {
+                        runtimeHandle: {
                             backendMode: 'appServer',
                             home: 'user',
                         },
@@ -45,7 +45,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
             },
         });
         expect(readSessionMetadataRuntimeDescriptor({
-            agentRuntimeDescriptorV1: extras.runtimeDescriptor,
+            runtimeDescriptorV1: extras.runtimeDescriptorV1,
         }, 'codex')).toMatchObject({
             vendorSessionId: 'thread_app_server',
             backendMode: 'appServer',
@@ -72,7 +72,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
 
         expect(extras).toMatchObject({
             codexBackendMode: 'appServer',
-            runtimeDescriptor: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -82,7 +82,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
                         owner: 'codex',
                         schemaId: 'codex.agentRuntimeDescriptorExtra',
                         v: 1,
-                        runtimeAffinity: {
+                        runtimeHandle: {
                             backendMode: 'appServer',
                             home: 'user',
                         },
@@ -91,7 +91,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
             },
         });
         expect(readSessionMetadataRuntimeDescriptor({
-            agentRuntimeDescriptorV1: extras.runtimeDescriptor,
+            runtimeDescriptorV1: extras.runtimeDescriptorV1,
         }, 'codex')).toMatchObject({
             vendorSessionId: 'thread_legacy_app_server',
             backendMode: 'appServer',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
 
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import {
     buildAutomationTemplateFromSessionAuthoringDraft,
@@ -106,7 +106,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             prompt: 'Open the repository and run checks',
             displayText: 'Open the repository and run checks',
             agentId: 'codex',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             transcriptStorage: 'persisted',
             profileId: 'profile-1',
             environmentVariables: { FOO: 'bar' },
@@ -172,7 +172,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             prompt: 'Run the nightly maintenance checklist',
             displayText: 'Run the nightly maintenance checklist',
             agentId: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { FOO: 'bar' },
@@ -206,7 +206,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(draft).toEqual(expect.objectContaining({
             targetType: 'new_session',
             directory: '/tmp/project',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             profileId: 'profile-1',
             permissionMode: 'acceptEdits',
             modelId: 'gpt-5',
@@ -235,7 +235,11 @@ describe('sessionAuthoringDraftAdapters', () => {
             serverId: 'server-a',
             directory: '/tmp/project',
             approvedNewDirectoryCreation: true,
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'review-bot',
+                configuredBackendId: 'review-bot',
+            },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { FOO: 'bar' },
@@ -279,7 +283,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 prompt: 'Prompt',
                 displayText: 'Prompt',
                 agentId: 'claude',
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                backendTarget: { kind: 'backend', backendId: 'claude' },
                 transcriptStorage: 'persisted',
                 profileId: null,
                 environmentVariables: null,
@@ -397,7 +401,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             directory: '/tmp/project',
             prompt: 'Send the daily summary',
             displayText: 'Send the daily summary',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
@@ -438,7 +442,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 prompt: 'Keep this message',
                 displayText: 'Keep this message',
                 agentId: 'codex',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 transcriptStorage: null,
                 profileId: 'profile-1',
                 environmentVariables: null,
@@ -534,7 +538,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             directory: '/tmp/project-live',
             prompt: 'Keep the latest review summary',
             displayText: 'Keep the latest review summary',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             profileId: 'profile-live',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
@@ -555,7 +559,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 prompt: 'Template prompt',
                 displayText: '',
                 agentId: 'codex',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 transcriptStorage: 'persisted',
                 profileId: 'template-profile',
                 environmentVariables: null,
@@ -608,7 +612,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 prompt: 'Keep my edited message',
                 displayText: 'Keep my edited message',
                 agentId: 'codex',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 transcriptStorage: 'persisted',
                 profileId: 'old-profile',
                 environmentVariables: null,
@@ -654,7 +658,7 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(merged).toEqual(expect.objectContaining({
             directory: '/live/project',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             profileId: 'live-profile',
             prompt: 'Keep my edited message',
             displayText: 'Keep my edited message',
@@ -679,7 +683,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 prompt: 'Template prompt',
                 displayText: 'Template prompt',
                 agentId: 'claude',
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                backendTarget: { kind: 'backend', backendId: 'claude' },
                 transcriptStorage: 'persisted',
                 profileId: 'template-profile',
                 environmentVariables: null,
@@ -810,7 +814,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             prompt: 'Open the feature branch worktree',
             displayText: 'Open the feature branch worktree',
             agentId: 'codex',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             transcriptStorage: 'persisted',
             profileId: 'profile-1',
             environmentVariables: null,
@@ -887,7 +891,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 prompt: 'Run the review',
                 displayText: 'Run the review',
                 agentId: 'codex',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 transcriptStorage: 'persisted',
                 profileId: null,
                 environmentVariables: null,
@@ -942,7 +946,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Review the queued invoices',
             agentId: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { OPENAI_API_KEY: 'secret' },
@@ -991,7 +995,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { OPENAI_API_KEY: 'secret' },
@@ -1040,7 +1044,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
             agentId: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: null,
@@ -1117,7 +1121,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 },
             },
             agentType: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
             modelMode: 'gpt-5',
@@ -1131,7 +1135,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             resumeSessionId: 'resume-1',
             backendNewSessionOptionStateByTargetKey: {
-                'agent:codex': {
+                'backend:codex': {
                     experimentalCodexAcp: true,
                 },
             },
@@ -1159,7 +1163,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
             agentId: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: null,
@@ -1203,7 +1207,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(tempData.path).toBeUndefined();
         expect(buildNewSessionAuthoringDraftFromTempData(tempData)).toEqual(expect.objectContaining({
             directory: '/tmp/project',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             resumeSessionId: 'resume-1',
@@ -1242,7 +1246,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
             agentId: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: null,
@@ -1284,7 +1288,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             selectedSecretIdByProfileIdByEnvVarName: null,
             sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
             backendNewSessionOptionStateByTargetKey: {
-                [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' })]: {
+                ['backend:review-bot:configured:review-bot']: {
                     connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
                 },
             },
@@ -1293,7 +1297,7 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)).toEqual(expect.objectContaining({
             directory: '/tmp/project',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             resumeSessionId: 'resume-1',
@@ -1321,14 +1325,14 @@ describe('sessionAuthoringDraftAdapters', () => {
         }));
     });
 
-    it('persists the draft agent id as the built-in fallback for configured ACP backend drafts', () => {
+    it('persists a canonical built-in fallback instead of the legacy customAcp sentinel for configured ACP backend drafts', () => {
         const draft = buildNewSessionAuthoringDraft({
             directory: '/tmp/project',
             checkoutCreationDraft: null,
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
             agentId: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: null,
@@ -1361,12 +1365,228 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(persistedDraft).toEqual(expect.objectContaining({
             agentType: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
         }));
         expect(buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)).toEqual(expect.objectContaining({
-            agentId: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            agentId: null,
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
         }));
+    });
+
+    it('ignores a legacy customAcp preferred persisted agent when autosaving configured ACP backend drafts', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Review the queued invoices',
+            displayText: 'Review the queued invoices',
+            agentId: null,
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            transcriptStorage: 'direct',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'safe-yolo',
+            permissionModeUpdatedAt: 123,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            backendNewSessionOptionStateByTargetKey: null,
+            preferredPersistedAgentId: 'customAcp',
+            updatedAt: 987,
+        });
+
+        expect(persistedDraft).toEqual(expect.objectContaining({
+            agentType: DEFAULT_AGENT_ID,
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+        }));
+    });
+
+    it('does not manufacture the legacy customAcp sentinel in temp data for configured ACP backend drafts', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Review the queued invoices',
+            displayText: 'Review the queued invoices',
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            transcriptStorage: 'direct',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'safe-yolo',
+            permissionModeUpdatedAt: 123,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const tempData = buildNewSessionTempDataFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+        });
+
+        expect(tempData).toEqual(expect.objectContaining({
+            agentType: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+        }));
+        expect(tempData.agentType).not.toBe('customAcp');
+    });
+
+    it('does not collapse plugin backend targets into the custom ACP sentinel when persisting drafts', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Run the plugin backend',
+            displayText: 'Run the plugin backend',
+            agentId: null,
+            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            transcriptStorage: 'direct',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'acceptEdits',
+            permissionModeUpdatedAt: 123,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            backendNewSessionOptionStateByTargetKey: null,
+            preferredPersistedAgentId: 'claude',
+            updatedAt: 987,
+        });
+
+        expect(persistedDraft).toEqual(expect.objectContaining({
+            agentType: 'claude',
+            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+        }));
+
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)).toEqual(expect.objectContaining({
+            agentId: null,
+            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+        }));
+    });
+
+    it('defaults plugin backend drafts to the global default agent type when no preferred agent id is available', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Run the plugin backend',
+            displayText: 'Run the plugin backend',
+            agentId: null,
+            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            transcriptStorage: 'direct',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'acceptEdits',
+            permissionModeUpdatedAt: 123,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            backendNewSessionOptionStateByTargetKey: null,
+            preferredPersistedAgentId: null,
+            updatedAt: 987,
+        });
+
+        expect(persistedDraft.agentType).toBe(DEFAULT_AGENT_ID);
+        expect(persistedDraft.agentType).not.toBe('customAcp');
+        expect(persistedDraft.backendTarget).toEqual({ kind: 'backend', backendId: 'acme.review.backend' });
+    });
+
+    it('builds plugin backend spawn options with the canonical V2 backend target', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Run the plugin backend',
+            displayText: 'Run the plugin backend',
+            agentId: null,
+            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            transcriptStorage: 'direct',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'acceptEdits',
+            permissionModeUpdatedAt: 123,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        expect(buildSpawnSessionOptionsFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+        }).backendTarget).toEqual({
+            kind: 'backend',
+            backendId: 'acme.review.backend',
+        });
     });
 
     it('round-trips configured ACP backend targets and session config overrides through the shared new-session authoring draft', () => {
@@ -1377,7 +1597,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             prompt: 'Review the repo state',
             displayText: 'Review the repo state',
             agentId: null,
-            backendTarget: { kind: 'configuredAcpBackend' as const, backendId: 'review-bot' },
+            backendTarget: { kind: 'backend' as const, backendId: 'review-bot', configuredBackendId: 'review-bot' },
             transcriptStorage: 'persisted' as const,
             profileId: null,
             environmentVariables: null,
@@ -1426,7 +1646,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         });
 
         expect(template).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -1436,7 +1656,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
         }));
         expect(hydrated).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -1447,7 +1667,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             automation: null,
         }));
         expect(tempData).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,

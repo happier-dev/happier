@@ -14,6 +14,9 @@ const controlSwitchTimeoutMs = 25;
 const sessionSwitchSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
+const cliDetectionState = vi.hoisted(() => ({
+  authStatus: {} as Record<string, { state: 'logged_in' | 'logged_out' | 'unknown'; checkedAt: number } | null>,
+}));
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
@@ -194,6 +197,19 @@ vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => false,
 }));
+vi.mock('@/hooks/auth/useCLIDetection', () => ({
+  useCLIDetection: () => ({
+    available: {},
+    login: {},
+    authStatus: cliDetectionState.authStatus,
+    resolvedPath: {},
+    resolutionSource: {},
+    tmux: null,
+    isDetecting: false,
+    timestamp: 1,
+    refresh: vi.fn(),
+  }),
+}));
 vi.mock('@/utils/platform/responsive', () => ({
   getDeviceType: () => 'tablet',
   useDeviceType: () => 'tablet',
@@ -298,6 +314,20 @@ describe('SessionView (control switch timeout)', () => {
     }
     return chatListProps;
   }
+
+  it('hides switch-to-remote when the local CLI is logged out', async () => {
+    cliDetectionState.authStatus = {
+      agent: { state: 'logged_out', checkedAt: 1 },
+    };
+    Object.assign(sessionState.session, {
+      metadata: { machineId: 'machine-1' },
+      agentState: { controlledByUser: true },
+    });
+
+    await renderSessionView();
+
+    expect(getChatListProps().onRequestSwitchToRemote).toBeUndefined();
+  });
 
   async function waitForControlSwitchTimeout() {
     await act(async () => {

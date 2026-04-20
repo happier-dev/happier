@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
@@ -11,11 +12,8 @@ export const COPILOT_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.copilotSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
-    connectedService: {
-        id: null,
-        name: 'Copilot',
-        connectRoute: null,
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'copilot' }),
+    uiConnectedService: { serviceId: null, label: 'Copilot', connectRoute: null },
     flavorAliases: ['copilot', 'github-copilot', 'copilot-cli'],
     cli: buildCatalogProviderCliUiConfig('copilot'),
     permissions: {

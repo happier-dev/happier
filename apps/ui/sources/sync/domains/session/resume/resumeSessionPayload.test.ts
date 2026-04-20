@@ -14,7 +14,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             modelId: 'claude-sonnet-4-5',
             modelUpdatedAt: 123,
         });
@@ -30,7 +30,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         });
 
         expect(buildResumeHappySessionRpcParams({
@@ -42,7 +42,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         });
     });
 
@@ -57,7 +57,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         });
     });
 
@@ -74,7 +74,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+            backendTarget: { kind: 'backend', backendId: 'opencode', sourceKind: 'built_in' },
             environmentVariables: {
                 HAPPIER_OPENCODE_BACKEND_MODE: 'server',
                 HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
@@ -92,7 +92,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             transcriptStorage: 'direct',
         });
     });
@@ -116,7 +116,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             connectedServices,
         });
     });
@@ -131,7 +131,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
         });
     });
@@ -145,11 +145,11 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro' },
+            backendTarget: { kind: 'backend', backendId: 'custom-kiro', configuredBackendId: 'custom-kiro', sourceKind: 'configured' },
         });
     });
 
-    test('normalizes V2 backend target input onto the legacy V1 payload shape', () => {
+    test('preserves canonical V2 backend target inputs through the resume payload', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',
             directory: '/tmp',
@@ -163,7 +163,7 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
         });
     });
 
@@ -178,9 +178,9 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'appServer',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: expect.objectContaining({
@@ -200,9 +200,9 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'acp',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: expect.objectContaining({
@@ -212,13 +212,13 @@ describe('buildResumeHappySessionRpcParams', () => {
         });
     });
 
-    test('prefers agentRuntimeDescriptorV1 over legacy experimentalCodexAcp when codexBackendMode is absent', () => {
+    test('prefers runtimeDescriptorV1 over legacy experimentalCodexAcp when codexBackendMode is absent', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             experimentalCodexAcp: true,
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -230,9 +230,9 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'appServer',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -243,12 +243,12 @@ describe('buildResumeHappySessionRpcParams', () => {
         });
     });
 
-    test('carries agentRuntimeDescriptorV1 through the resume RPC payload', () => {
+    test('carries runtimeDescriptorV1 through the resume RPC payload', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -260,9 +260,9 @@ describe('buildResumeHappySessionRpcParams', () => {
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'appServer',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -270,6 +270,76 @@ describe('buildResumeHappySessionRpcParams', () => {
                     vendorSessionId: 'codex-session-1',
                 },
             },
+        });
+    });
+
+    test('ignores legacy agentRuntimeDescriptorV1 input when building the canonical resume payload', () => {
+        const params = buildResumeHappySessionRpcParams({
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentRuntimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+                provider: {
+                    backendMode: 'appServer',
+                    vendorSessionId: 'legacy-thread',
+                },
+            },
+        } as any);
+
+        expect(params).toEqual({
+            type: 'resume-session',
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        });
+    });
+
+    test('does not emit codex transport fields when the target backend is not codex', () => {
+        const params = buildResumeHappySessionRpcParams({
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            codexBackendMode: 'acp',
+            experimentalCodexAcp: true,
+        } as any);
+
+        expect(params).not.toHaveProperty('codexBackendMode');
+        expect(params).not.toHaveProperty('runtimeDescriptorV1');
+    });
+
+    test('derives codex runtime descriptor for canonical codex backend targets', () => {
+        const params = buildResumeHappySessionRpcParams({
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'codex',
+                sourceKind: 'built_in',
+            },
+            resume: 'codex-session-canonical',
+            codexBackendMode: 'appServer',
+        } as any);
+
+        expect(params).toMatchObject({
+            type: 'resume-session',
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'codex',
+                sourceKind: 'built_in',
+            },
+            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: expect.objectContaining({
+                v: 1,
+                providerId: 'codex',
+                provider: expect.objectContaining({
+                    backendMode: 'appServer',
+                    vendorSessionId: 'codex-session-canonical',
+                }),
+            }),
         });
     });
 });

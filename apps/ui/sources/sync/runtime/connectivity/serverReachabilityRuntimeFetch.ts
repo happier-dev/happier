@@ -1,9 +1,12 @@
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 import {
+    peekServerReachabilityScope,
+    reportServerAuthFailed,
     reportServerUnreachable,
     waitForServerReachable,
 } from './serverReachabilitySupervisorPool';
+import { isAuthenticationResponseStatus } from './authErrors';
 import { readServerReachabilityWaitTimeoutMs } from './serverReachabilityTuning';
 
 function tryParseUrl(raw: string, base?: string): URL | null {
@@ -84,9 +87,16 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
         timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : readServerReachabilityWaitTimeoutMs(),
         acceptAuthFailed: true,
     });
+    const probeReportScope = peekServerReachabilityScope(params.serverUrl);
 
     try {
-        return await runtimeFetch(params.url, params.init);
+        const response = await runtimeFetch(params.url, params.init);
+        if (hasAuth && isAuthenticationResponseStatus(response.status)) {
+            if (probeReportScope) {
+                reportServerAuthFailed(params.serverUrl, response.status, probeReportScope);
+            }
+        }
+        return response;
     } catch (error) {
         reportServerUnreachable(params.serverUrl, error);
         throw error;

@@ -1,4 +1,4 @@
-import { AGENTS_CORE, resolveAgentIdFromFlavor, resolveVendorHandoffIdFromSessionMetadata } from '@happier-dev/agents';
+import { getAgentCore, isAgentId, resolveAgentIdFromFlavor, resolveVendorHandoffIdFromSessionMetadata } from '@happier-dev/agents';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSourceMachineId';
 
@@ -20,9 +20,9 @@ export function canHandoffConversation(params: Readonly<{ sessionId?: string | n
 
     const agentId = resolveAgentIdFromFlavor(metadata.flavor);
     if (!agentId) return false;
+    if (!isAgentId(agentId)) return false;
 
-    const agent = AGENTS_CORE[agentId];
-    if (!agent) return false;
+    const agent = getAgentCore(agentId);
     const sessionStorageMode = metadata.directSessionV1 ? 'direct' : 'persisted';
     if (!agent.sessionStorage[sessionStorageMode]) return false;
     if (agent.handoff.vendorStateTransfer === 'unsupported') return false;

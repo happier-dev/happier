@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { Ionicons } from '@expo/vector-icons';
+
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
@@ -37,17 +39,18 @@ export function buildNewSessionAgentPickerResolvedOptions(
             compatibleBackendTargetKeys: params.compatibleBackendTargetKeys,
             selectable,
         });
+        const displayAgentId = entry.iconAgentId ?? entry.providerAgentId ?? entry.builtInAgentId;
 
         return {
-            id: entry.targetKey,
+            id: entry.backendTargetKey,
             label: entry.title,
-            icon: (
+            icon: displayAgentId ? (
                 <AgentIcon
-                    agentId={entry.iconAgentId}
+                    agentId={displayAgentId}
                     size={12}
-                    style={{ transform: [{ scale: getAgentPickerIconScale(entry.iconAgentId) }] }}
+                    style={{ transform: [{ scale: getAgentPickerIconScale(displayAgentId) }] }}
                 />
-            ),
+            ) : <Ionicons name="layers-outline" size={14} />,
             subtitle,
             disabled,
             muted,

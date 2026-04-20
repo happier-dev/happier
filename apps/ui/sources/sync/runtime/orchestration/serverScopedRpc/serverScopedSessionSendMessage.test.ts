@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
+
 const state = {
   sessions: {
     s1: { id: 's1', permissionMode: 'default', metadata: { flavor: 'claude' }, modelMode: 'default' },
@@ -222,5 +224,118 @@ describe('sendSessionMessageWithServerScope', () => {
     const ackPayload = emitWithAck.mock.calls[0]?.[1] as { localId?: string } | undefined;
     expect(emit).toHaveBeenCalledWith('message', ackPayload);
     expect(typeof ackPayload?.localId).toBe('string');
+  });
+
+  it('checks scoped auth before fallback and preserves terminal auth', async () => {
+    state.sessions.s1 = { id: 's1', permissionMode: 'default', metadata: { flavor: 'claude' }, modelMode: 'default' };
+
+    const { createServerScopedSessionSendMessage } = await import('./serverScopedSessionSendMessage');
+
+    const emitWithAck = vi.fn(async () => {
+      throw new Error('ack timeout');
+    });
+    const emit = vi.fn();
+    const socket = {
+      timeout: (_ms: number) => ({ emitWithAck }),
+      emit,
+      disconnect: vi.fn(),
+    };
+    const assertScopedEndpointAuthenticated = vi.fn(() => {
+      throw createNotAuthenticatedError();
+    });
+
+    const { sendSessionMessageWithServerScope } = createServerScopedSessionSendMessage({
+      resolveContext: vi.fn(async () => ({
+        scope: 'scoped' as const,
+        timeoutMs: 1000,
+        targetServerId: 'server-b',
+        targetServerUrl: 'https://server-b.example',
+        token: 't1',
+        encryption: {
+          decryptEncryptionKey: async () => null,
+          initializeSessions: async () => {},
+          getSessionEncryption: () => null,
+        },
+      })),
+      createSocket: vi.fn(async () => socket),
+      getScopedSessionEncryption: vi.fn(async () => ({
+        encryptRawRecord: async () => 'encrypted_record',
+      })),
+      assertScopedEndpointAuthenticated,
+    });
+
+    await expect(sendSessionMessageWithServerScope({
+      sessionId: 's1',
+      message: 'hello',
+      serverId: 'server-b',
+      timeoutMs: 1000,
+    })).rejects.toMatchObject({
+      name: 'HappyError',
+      kind: 'auth',
+      code: 'not_authenticated',
+    });
+
+    expect(assertScopedEndpointAuthenticated).toHaveBeenCalledTimes(1);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('forces scoped auth convergence before treating a timeout as ack_unknown', async () => {
+    state.sessions.s1 = { id: 's1', permissionMode: 'default', metadata: { flavor: 'claude' }, modelMode: 'default' } as any;
+
+    const { createServerScopedSessionSendMessage } = await import('./serverScopedSessionSendMessage');
+
+    const emitWithAck = vi.fn(async () => {
+      throw new Error('ack timeout');
+    });
+    const emit = vi.fn();
+    const socket = {
+      timeout: (_ms: number) => ({ emitWithAck }),
+      emit,
+      disconnect: vi.fn(),
+    };
+    const assertScopedEndpointAuthenticated = vi.fn((_context, options?: { forceProbe?: boolean }) => {
+      if (options?.forceProbe === true) {
+        throw createNotAuthenticatedError();
+      }
+    });
+
+    const { sendSessionMessageWithServerScope } = createServerScopedSessionSendMessage({
+      resolveContext: vi.fn(async () => ({
+        scope: 'scoped' as const,
+        timeoutMs: 1000,
+        targetServerId: 'server-b',
+        targetServerUrl: 'https://server-b.example',
+        token: 't1',
+        encryption: {} as any,
+      })) as any,
+      createSocket: vi.fn(async () => socket as any),
+      getScopedSessionEncryption: vi.fn(async () => ({
+        encryptRawRecord: async () => 'encrypted_record',
+      })),
+      assertScopedEndpointAuthenticated: assertScopedEndpointAuthenticated as any,
+    });
+
+    await expect(sendSessionMessageWithServerScope({
+      sessionId: 's1',
+      message: 'hello',
+      serverId: 'server-b',
+      timeoutMs: 1000,
+    })).rejects.toMatchObject({
+      name: 'HappyError',
+      kind: 'auth',
+      code: 'not_authenticated',
+    });
+
+    expect(assertScopedEndpointAuthenticated).toHaveBeenCalledTimes(2);
+    expect(assertScopedEndpointAuthenticated).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ targetServerId: 'server-b' }),
+    );
+    expect(assertScopedEndpointAuthenticated).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ targetServerId: 'server-b' }),
+      { forceProbe: true },
+    );
+    expect(emit).not.toHaveBeenCalled();
   });
 });

@@ -84,11 +84,15 @@ describe('SessionHeaderTerminalButton', () => {
         openDetailsTabSpy.mockClear();
         closeDetailsTabSpy.mockClear();
         dockLocationMock = 'bottom';
-        pane.scopeState.bottom.isOpen = false;
-        pane.scopeState.bottom.activeTabId = null;
-        pane.scopeState.details.isOpen = false;
-        pane.scopeState.details.activeTabKey = null;
-        pane.scopeState.details.tabs = [];
+        const scopeState = pane.scopeState;
+        if (!scopeState) {
+            throw new Error('Expected pane scope state');
+        }
+        scopeState.bottom.isOpen = false;
+        scopeState.bottom.activeTabId = null;
+        scopeState.details.isOpen = false;
+        scopeState.details.activeTabKey = null;
+        scopeState.details.tabs = [];
     });
 
     it('opens terminal in the bottom pane when docked to bottom', async () => {
@@ -105,8 +109,12 @@ describe('SessionHeaderTerminalButton', () => {
     });
 
     it('closes the bottom pane when terminal is already open there', async () => {
-        pane.scopeState.bottom.isOpen = true;
-        pane.scopeState.bottom.activeTabId = 'terminal';
+        const scopeState = pane.scopeState;
+        if (!scopeState) {
+            throw new Error('Expected pane scope state');
+        }
+        scopeState.bottom.isOpen = true;
+        scopeState.bottom.activeTabId = 'terminal';
 
         const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
 
@@ -144,9 +152,13 @@ describe('SessionHeaderTerminalButton', () => {
 
     it('closes the active details terminal tab when docked to details and the terminal is already active', async () => {
         dockLocationMock = 'details';
-        pane.scopeState.details.isOpen = true;
-        pane.scopeState.details.activeTabKey = SESSION_DETAILS_TERMINAL_TAB_KEY;
-        pane.scopeState.details.tabs = [{
+        const scopeState = pane.scopeState;
+        if (!scopeState) {
+            throw new Error('Expected pane scope state');
+        }
+        scopeState.details.isOpen = true;
+        scopeState.details.activeTabKey = SESSION_DETAILS_TERMINAL_TAB_KEY;
+        scopeState.details.tabs = [{
             key: SESSION_DETAILS_TERMINAL_TAB_KEY,
             kind: 'terminal',
             title: 'Terminal',

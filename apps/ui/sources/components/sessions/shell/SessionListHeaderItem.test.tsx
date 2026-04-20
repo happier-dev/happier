@@ -26,6 +26,7 @@ describe('SessionListHeaderItem', () => {
             },
         } as const;
         const onOpenProject = vi.fn();
+        const onCreateSessionFromWorkspaceScope = vi.fn();
         const onRenameWorkspace = vi.fn();
         const onResetWorkspaceName = vi.fn();
         const onToggleCollapse = vi.fn();
@@ -50,6 +51,7 @@ describe('SessionListHeaderItem', () => {
                 projectHeaderViewModelByGroupKey={new Map([[projectHeaderViewModel.collapseKey, projectHeaderViewModel]])}
                 hasMultipleMachines={true}
                 onOpenProject={onOpenProject}
+                onCreateSessionFromWorkspaceScope={onCreateSessionFromWorkspaceScope}
                 onRenameWorkspace={onRenameWorkspace}
                 onResetWorkspaceName={onResetWorkspaceName}
                 onToggleCollapse={onToggleCollapse}
@@ -67,6 +69,7 @@ describe('SessionListHeaderItem', () => {
                     projectHeaderViewModelByGroupKey={new Map([[projectHeaderViewModel.collapseKey, projectHeaderViewModel]])}
                     hasMultipleMachines={true}
                     onOpenProject={onOpenProject}
+                    onCreateSessionFromWorkspaceScope={onCreateSessionFromWorkspaceScope}
                     onRenameWorkspace={onRenameWorkspace}
                     onResetWorkspaceName={onResetWorkspaceName}
                     onToggleCollapse={onToggleCollapse}
@@ -78,6 +81,7 @@ describe('SessionListHeaderItem', () => {
         const secondProps = secondProjectHeader.props;
 
         expect(secondProps.onOpenProject).toBe(firstProps.onOpenProject);
+        expect(secondProps.onCreateSession).toBe(firstProps.onCreateSession);
         expect(secondProps.onRename).toBe(firstProps.onRename);
         expect(secondProps.onReset).toBe(firstProps.onReset);
         expect(secondProps.onToggleCollapse).toBe(firstProps.onToggleCollapse);
@@ -93,6 +97,7 @@ describe('SessionListHeaderItem', () => {
                 projectHeaderViewModelByGroupKey={new Map()}
                 hasMultipleMachines={false}
                 onOpenProject={vi.fn()}
+                onCreateSessionFromWorkspaceScope={vi.fn()}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onToggleCollapse={onToggleCollapse}
@@ -109,6 +114,7 @@ describe('SessionListHeaderItem', () => {
                     projectHeaderViewModelByGroupKey={new Map()}
                     hasMultipleMachines={false}
                     onOpenProject={vi.fn()}
+                    onCreateSessionFromWorkspaceScope={vi.fn()}
                     onRenameWorkspace={vi.fn()}
                     onResetWorkspaceName={vi.fn()}
                     onToggleCollapse={onToggleCollapse}
@@ -126,6 +132,7 @@ describe('SessionListHeaderItem', () => {
                     projectHeaderViewModelByGroupKey={new Map()}
                     hasMultipleMachines={false}
                     onOpenProject={vi.fn()}
+                    onCreateSessionFromWorkspaceScope={vi.fn()}
                     onRenameWorkspace={vi.fn()}
                     onResetWorkspaceName={vi.fn()}
                     onToggleCollapse={onToggleCollapse}

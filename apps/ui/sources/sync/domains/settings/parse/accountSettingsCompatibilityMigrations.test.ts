@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
@@ -78,10 +78,10 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         });
 
         expect(migrated.sessionDefaultPermissionModeByTargetKey).toEqual({
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'yolo',
+            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'yolo',
         });
         expect(migrated.sessionDefaultPermissionModeByTargetKey).not.toHaveProperty(
-            buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' }),
+            resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }),
         );
     });
 
@@ -103,8 +103,8 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         });
 
         expect(migrated.backendCliSourcePreferenceByTargetKey).toEqual({
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'managed-first',
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: 'system-first',
+            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'managed-first',
+            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: 'system-first',
         });
     });
 

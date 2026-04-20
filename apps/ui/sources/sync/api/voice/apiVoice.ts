@@ -106,15 +106,9 @@ export async function completeHappierVoiceSession(
         }, { includeAuth: false });
 
         if (!response.ok) {
-            let bodyText: string | null = null;
-            try {
-                bodyText = await response.text();
-            } catch {
-                bodyText = null;
-            }
-
-            const suffix = bodyText ? `: ${bodyText.slice(0, 300)}` : '';
-            throw new Error(`Voice session complete failed (${response.status})${suffix}`);
+            // Avoid including raw response bodies in error messages: these errors are often shipped to
+            // telemetry/log sinks, and response bodies can contain PII or internal details.
+            throw new Error(`Voice session complete failed (${response.status})`);
         }
     } finally {
         clearTimeout(timer);

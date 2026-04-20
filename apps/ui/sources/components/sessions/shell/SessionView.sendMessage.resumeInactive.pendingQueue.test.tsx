@@ -33,6 +33,11 @@ const canResumeSessionWithOptionsSpy = vi.hoisted(() =>
     vi.fn((_metadata: unknown, options: { machineId?: string | null } | null | undefined) => options?.machineId === 'm-target'),
 );
 const resumeCapabilityMachineIds = vi.hoisted(() => [] as string[]);
+const resumeCapabilityServerIds = vi.hoisted(() => [] as string[]);
+const cliDetectionServerIds = vi.hoisted(() => [] as string[]);
+const ensureAgentInstallablesBackgroundSpy = vi.hoisted(
+    () => vi.fn<(params: unknown) => Promise<void>>(async () => {}),
+);
 const modalMockState = vi.hoisted(() => ({
     current: null as ReturnType<typeof createModalModuleMock> | null,
 }));
@@ -177,6 +182,7 @@ installSessionShellCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         const session: any = {
             id: 's1',
+            serverId: 'server-cache',
             seq: 0,
             presence: Date.now() - 60_000,
             active: false,
@@ -294,6 +300,22 @@ vi.mock('@/components/sessions/agentInput', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
+vi.mock('@/hooks/auth/useCLIDetection', () => ({
+    useCLIDetection: (_machineId: string | null, options?: { serverId?: string | null }) => {
+        cliDetectionServerIds.push(typeof options?.serverId === 'string' ? options.serverId : '');
+        return {
+            available: {},
+            login: {},
+            authStatus: {},
+            resolvedPath: {},
+            resolutionSource: {},
+            tmux: null,
+            isDetecting: false,
+            timestamp: 1,
+            refresh: vi.fn(),
+        };
+    },
+}));
 vi.mock('@/utils/platform/responsive', () => ({
     getDeviceType: () => 'phone',
     useDeviceType: () => 'phone',
@@ -369,8 +391,9 @@ vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
     };
 });
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
-    useResumeCapabilityOptions: (input: { machineId?: string | null }) => {
+    useResumeCapabilityOptions: (input: { machineId?: string | null; serverId?: string | null }) => {
         resumeCapabilityMachineIds.push(typeof input?.machineId === 'string' ? input.machineId : '');
+        resumeCapabilityServerIds.push(typeof input?.serverId === 'string' ? input.serverId : '');
         return {
             resumeCapabilityOptions: {
                 machineId: typeof input?.machineId === 'string' ? input.machineId : null,
@@ -394,13 +417,14 @@ vi.mock('@/sync/acp/sessionModeControl', () => ({
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
     shouldRenderChatTimelineForSession: () => true,
+    shouldRequestRemoteControl: () => false,
     shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 vi.mock('@/sync/runtime/time', () => ({
     nowServerMs: () => 0,
 }));
 vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
-    ensureAgentInstallablesBackground: async () => {},
+    ensureAgentInstallablesBackground: (params: unknown) => ensureAgentInstallablesBackgroundSpy(params),
 }));
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => {
@@ -435,6 +459,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         authCredentials = { token: 't', secret: 's' };
         enqueuePendingMessageSpy.mockClear();
         resumeCapabilityMachineIds.length = 0;
+        resumeCapabilityServerIds.length = 0;
+        cliDetectionServerIds.length = 0;
         settingsState.current = { experiments: true, featureToggles: {}, codexBackendMode: 'acp' };
         canResumeSessionWithOptionsSpy.mockReset();
         canResumeSessionWithOptionsSpy.mockImplementation(
@@ -451,6 +477,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             type: 'success',
             sessionId: 's2',
         });
+        ensureAgentInstallablesBackgroundSpy.mockClear();
         modalMockState.current?.spies.alert.mockReset();
         modalMockState.current?.spies.confirm.mockReset();
         modalMockState.current?.spies.confirm.mockResolvedValue(true);
@@ -606,10 +633,29 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect.objectContaining({
                 machineId: 'm-target',
                 directory: '/tmp/target',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
             }),
         );
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('uses the cached owning server scope for auth, resume capabilities, installables, and resume when the route serverId is missing', async () => {
+        const screen = await renderSessionView();
+
+        await act(async () => {
+            emitSessionResumeRequest('s1');
+        });
+
+        expect(cliDetectionServerIds).toContain('server-cache');
+        expect(resumeCapabilityServerIds).toContain('server-cache');
+        expect(ensureAgentInstallablesBackgroundSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ serverId: 'server-cache' }),
+        );
+        expect(resumeSessionSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ serverId: 'server-cache' }),
+        );
 
         await screen.unmount();
     });

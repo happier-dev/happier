@@ -52,6 +52,7 @@ export const SessionListCacheEntryV1Schema = z.object({
         providerId: z.string().optional(),
     }).nullable().optional(),
     hiddenSystemSession: z.boolean().optional(),
+    keepVisibleWhenInactive: z.boolean().optional(),
     hasPendingPermissionRequests: z.boolean().optional(),
     hasPendingUserActionRequests: z.boolean().optional(),
 });

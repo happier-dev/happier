@@ -21,7 +21,7 @@ export function isNewSessionAgentPickerOptionCompatibleWithSelectedProfile(param
     compatibleBackendTargetKeys: ReadonlySet<string>;
 }>): boolean {
     return params.profileForAgentSelection === null
-        || params.compatibleBackendTargetKeys.has(params.entry.targetKey);
+        || params.compatibleBackendTargetKeys.has(params.entry.backendTargetKey);
 }
 
 export function resolveNewSessionAgentPickerOptionPresentation(

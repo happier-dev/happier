@@ -13,7 +13,7 @@ import { t } from '@/text';
 import {
     resolveMachineTargetForSessionFromState,
     type SessionMachineTargetState,
-} from '@/sync/ops/sessionMachineTarget';
+} from '@/sync/ops/sessionMachineTargetFromState';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 
 export type SessionListViewItem =

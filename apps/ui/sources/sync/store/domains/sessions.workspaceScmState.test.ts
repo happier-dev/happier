@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mmkvStore = vi.hoisted(() => new Map<string, string>());
-const readMachineTargetForSessionMock = vi.fn();
-const resolvePreferredServerIdForSessionIdMock = vi.fn();
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -22,20 +20,15 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: (...args: unknown[]) => resolvePreferredServerIdForSessionIdMock(...args),
-}));
-
 import { createSessionsDomain } from './sessions';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 function createHarness() {
     let state: any = {
         sessions: {},
+        sessionListRenderables: {},
+        sessionListIndexByServerId: {},
         concurrentSessionListCacheByServerId: {},
         sessionScmStatus: {},
         sessionLastViewed: {},
@@ -62,11 +55,48 @@ function createHarness() {
     return { get, domain };
 }
 
+function seedWorkspaceSessions(state: any, sessionIds: string[]) {
+    state.machines = {
+        m1: {
+            id: 'm1',
+            active: true,
+            metadata: {},
+        },
+    };
+    state.sessionListIndexByServerId = {
+        s: sessionIds.map((sessionId) => ({
+            type: 'session',
+            sessionId,
+            serverId: 's',
+            serverName: 'Server',
+        })),
+    };
+    state.sessions = Object.fromEntries(sessionIds.map((sessionId) => [
+        sessionId,
+        {
+            id: sessionId,
+            serverId: 's',
+            metadata: {
+                machineId: 'm1',
+                path: '/repo',
+            },
+        },
+    ]));
+    state.sessionListRenderables = Object.fromEntries(sessionIds.map((sessionId) => [
+        sessionId,
+        {
+            id: sessionId,
+            metadata: {
+                machineId: 'm1',
+                path: '/repo',
+            },
+        } satisfies Partial<SessionListRenderableSession>,
+    ]));
+}
+
 describe('sessions domain: workspace-scoped SCM state', () => {
     beforeEach(() => {
         projectManager.clear();
-        readMachineTargetForSessionMock.mockReset();
-        resolvePreferredServerIdForSessionIdMock.mockReset();
     });
 
     it('exposes workspace-scoped touched paths without a sessionId', () => {
@@ -91,37 +121,17 @@ describe('sessions domain: workspace-scoped SCM state', () => {
     });
 
     it('shares repository tree expansion across sessions in the same workspace', () => {
-        readMachineTargetForSessionMock.mockImplementation((sessionId: string) => (
-            sessionId === 's1' || sessionId === 's2'
-                ? { machineId: 'm1', basePath: '/repo' }
-                : null
-        ));
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('s');
-
-        const { domain } = createHarness();
+        const { domain, get } = createHarness();
+        seedWorkspaceSessions(get(), ['s1', 's2']);
 
         domain.setSessionRepositoryTreeExpandedPaths('s1', ['src']);
         expect(domain.getSessionRepositoryTreeExpandedPaths('s2')).toEqual(['src']);
     });
 
     it('preserves workspace repository tree expansion when deleting one session from that workspace', () => {
-        readMachineTargetForSessionMock.mockImplementation((sessionId: string) => (
-            sessionId === 's1' || sessionId === 's2'
-                ? { machineId: 'm1', basePath: '/repo' }
-                : null
-        ));
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('s');
-
         const { domain, get } = createHarness();
         const state = get();
-        state.sessions = {
-            s1: { id: 's1' } as any,
-            s2: { id: 's2' } as any,
-        };
-        state.sessionListRenderables = {
-            s1: { id: 's1' } as any,
-            s2: { id: 's2' } as any,
-        };
+        seedWorkspaceSessions(state, ['s1', 's2']);
 
         domain.setSessionRepositoryTreeExpandedPaths('s1', ['src']);
         domain.deleteSession('s1');

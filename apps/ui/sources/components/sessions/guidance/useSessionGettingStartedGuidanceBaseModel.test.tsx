@@ -31,6 +31,12 @@ const guidanceState = vi.hoisted(() => ({
         'srv-a': [{ active: true }],
     } as Record<string, Array<{ active: boolean }> | null | undefined>,
     activeMachines: [{ active: true }] as Array<{ active: boolean }>,
+    localDaemonStatus: {
+        serviceInstalled: false,
+        daemonRunning: false,
+        needsAuth: true,
+        machineId: null as string | null,
+    },
     machineListStatusByServerId: {
         'srv-a': 'idle',
     } as Record<string, string | undefined>,
@@ -77,6 +83,12 @@ vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({
     useServerProfilesGeneration: () => guidanceState.serverProfilesGeneration,
 }));
 
+vi.mock('@/components/settings/machines/localControl/useLocalDaemonControl', () => ({
+    useLocalDaemonControl: () => ({
+        status: guidanceState.localDaemonStatus,
+    }),
+}));
+
 describe('useSessionGettingStartedGuidanceBaseModel', () => {
     afterEach(() => {
         standardCleanup();
@@ -98,6 +110,12 @@ describe('useSessionGettingStartedGuidanceBaseModel', () => {
             'srv-a': [{ active: true }],
         };
         guidanceState.activeMachines = [{ active: true }];
+        guidanceState.localDaemonStatus = {
+            serviceInstalled: false,
+            daemonRunning: false,
+            needsAuth: true,
+            machineId: null,
+        };
         guidanceState.machineListStatusByServerId = {
             'srv-a': 'idle',
         };
@@ -144,6 +162,29 @@ describe('useSessionGettingStartedGuidanceBaseModel', () => {
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
             serverName: 'Renamed',
             serverUrl: 'https://api.renamed.example',
+        }));
+    });
+
+    it('rebuilds the model when local daemon health changes', async () => {
+        const { useSessionGettingStartedGuidanceBaseModel } = await import('./useSessionGettingStartedGuidanceBaseModel');
+        const hook = await renderHook(({ tick }: { tick: number }) => {
+            void tick;
+            return useSessionGettingStartedGuidanceBaseModel();
+        }, { initialProps: { tick: 0 } });
+        await flushHookEffects();
+
+        guidanceState.localDaemonStatus = {
+            serviceInstalled: true,
+            daemonRunning: true,
+            needsAuth: false,
+            machineId: 'machine-1',
+        };
+
+        await hook.rerender({ tick: 1 });
+
+        expect(buildSessionGettingStartedViewModel).toHaveBeenCalledTimes(2);
+        expect(buildSessionGettingStartedViewModel.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+            localDaemonStatus: guidanceState.localDaemonStatus,
         }));
     });
 });

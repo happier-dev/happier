@@ -13,6 +13,7 @@ import { createSessionsDomain } from '../../store/domains/sessions';
 import { createSettingsDomain } from '../../store/domains/settings';
 import { createTodosDomain } from '../../store/domains/todos';
 import type { StorageState } from '../../store/types';
+import { registerStorageStateReader, registerStorageStateSubscribe } from './storageStateReaderBridge';
 
 export type { KnownEntitlements } from '../../store/types';
 export type { SessionListViewItem } from '../session/listing/sessionListViewData';
@@ -46,6 +47,9 @@ export const storage = create<StorageState>()((set, get) => {
         ...realtimeDomain,
     };
 });
+
+registerStorageStateReader(() => storage.getState());
+registerStorageStateSubscribe((listener) => storage.subscribe((state) => listener(state)));
 
 export function getStorage() {
     return storage;

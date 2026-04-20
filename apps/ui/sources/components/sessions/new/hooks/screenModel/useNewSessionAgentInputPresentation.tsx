@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import type { ActionId, BackendTargetRefV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { ActionId, BackendTargetRefV2, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { Router } from 'expo-router';
 
 import type { AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
@@ -52,7 +52,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     sessionPrompt: string;
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
     handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (context: Readonly<{ sessionId: string }>) => void | Promise<void> }>) => void;
-    backendTarget: BackendTargetRefV1;
+    backendTarget: BackendTargetRefV2;
     agentType: AgentId;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionStateForCurrentAgent: (key: string, next: unknown) => void;

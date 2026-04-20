@@ -11,11 +11,19 @@ describe('resolvePersistedAgentIdForBackendTarget', () => {
         })).toBe('claude');
     });
 
-    it('preserves an existing real built-in fallback for configured ACP backends', () => {
+    it('does not persist the legacy customAcp sentinel when the selected backend target is still the legacy built-in carrier', () => {
+        expect(resolvePersistedAgentIdForBackendTarget({
+            backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+            persistedAgentId: 'codex',
+            selectedBuiltInAgentId: 'claude',
+        })).toBe('codex');
+    });
+
+    it('reuses a canonical built-in persisted agent instead of returning the legacy customAcp sentinel for configured ACP backends', () => {
         expect(resolvePersistedAgentIdForBackendTarget({
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
             persistedAgentId: 'codex',
-            selectedBuiltInAgentId: 'customAcp',
+            selectedBuiltInAgentId: 'claude',
         })).toBe('codex');
     });
 
@@ -25,5 +33,13 @@ describe('resolvePersistedAgentIdForBackendTarget', () => {
             persistedAgentId: 'customAcp',
             selectedBuiltInAgentId: 'codex',
         })).toBe('codex');
+    });
+
+    it('falls back to the selected built-in agent when a configured ACP backend has no canonical persisted built-in identity', () => {
+        expect(resolvePersistedAgentIdForBackendTarget({
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            persistedAgentId: 'customAcp',
+            selectedBuiltInAgentId: 'claude',
+        })).toBe('claude');
     });
 });

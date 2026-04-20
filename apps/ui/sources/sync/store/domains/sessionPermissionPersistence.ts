@@ -3,7 +3,7 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import {
     saveSessionPermissionModeUpdatedAts,
     saveSessionPermissionModes,
-} from '../../domains/state/persistence';
+} from '../../domains/state/sessionPersistence';
 
 function extractSessionPermissionData(sessions: Record<string, Session>): {
     modes: Record<string, PermissionMode>;

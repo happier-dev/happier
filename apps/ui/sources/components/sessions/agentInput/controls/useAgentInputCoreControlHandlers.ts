@@ -1,9 +1,7 @@
 import * as React from 'react';
 
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { t } from '@/text';
 
 import type { ChipOptionInteraction } from '../chipOptionInteraction';
 import type { AgentInputContentPopoverConfig } from '../components/AgentInputContentPopover';
@@ -34,7 +32,6 @@ function buildContentPopoverHandler(params: Readonly<{
 }
 
 export function useAgentInputCoreControlHandlers(params: Readonly<{
-    agentType?: AgentId;
     agentLabel?: string | null;
     hasAgentPickerOptions: boolean;
     onAgentClick?: () => void;
@@ -71,13 +68,11 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
     handlePathPress?: () => void;
     handleResumePress?: () => void;
 }> {
-    const hasAgentSelection = Boolean(params.agentType && (params.onAgentClick || params.hasAgentPickerOptions));
+    const hasAgentSelection = Boolean(params.agentLabel && (params.onAgentClick || params.hasAgentPickerOptions));
 
     const resolvedAgentLabel = React.useMemo(() => {
-        return params.agentType
-            ? (params.agentLabel ?? t(getAgentCore(params.agentType).displayNameKey))
-            : '';
-    }, [params.agentLabel, params.agentType]);
+        return params.agentLabel ?? '';
+    }, [params.agentLabel]);
 
     const handlePermissionPress = React.useCallback(() => {
         hapticsLight();

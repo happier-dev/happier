@@ -1,19 +1,25 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const platformState = vi.hoisted(() => ({
+    os: 'ios' as 'ios' | 'android',
+}));
 
 installMessageViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'ios',
-                select: (values: Record<string, unknown>) => values?.ios ?? values?.default,
+                get OS() {
+                    return platformState.os;
+                },
+                select: (values: Record<string, unknown>) =>
+                    values?.[platformState.os] ?? values?.default,
             },
         });
     },
@@ -80,35 +86,36 @@ describe('MessageView (copy button hitSlop)', () => {
         standardCleanup();
     });
 
-    it('shows copy in the native context menu instead of rendering icon-only buttons', async () => {
-        const { MessageView } = await import('./MessageView');
+    it.each(['ios', 'android'] as const)(
+        'renders inline message actions on %s instead of relying on long-press dropdowns',
+        async (platformOS) => {
+            platformState.os = platformOS;
+            vi.resetModules();
+            const { MessageView } = await import('./MessageView');
 
-        const message: any = {
-            kind: 'user-text',
-            localId: 'local-1',
-            text: 'hello',
-        };
+            const message: any = {
+                kind: 'user-text',
+                localId: 'local-1',
+                id: 'm1',
+                text: 'hello',
+            };
 
-        const screen = await renderScreen(
-            <MessageView message={message} metadata={null} sessionId="s1" />,
-        );
+            const screen = await renderScreen(
+                <MessageView message={message} metadata={null} sessionId="s1" />,
+            );
 
-        const copyButtons = screen.findAll((node: any) => node.props?.testID === 'transcript-message-copy:local-1');
-        expect(copyButtons).toHaveLength(0);
+            const copyButtons = screen.findAll(
+                (node: any) => node.type === 'Pressable' && node.props?.testID === 'transcript-message-copy:m1',
+            );
+            expect(copyButtons).toHaveLength(1);
 
-        const longPressables = screen.findAll(
-            (node: any) => node.type === 'Pressable' && typeof node.props?.onLongPress === 'function',
-        );
-        expect(longPressables.length).toBeGreaterThan(0);
+            const longPressables = screen.findAll(
+                (node: any) => node.type === 'Pressable' && typeof node.props?.onLongPress === 'function',
+            );
+            expect(longPressables).toHaveLength(0);
 
-        await act(async () => {
-            invokeTestInstanceHandler(longPressables[0], 'onLongPress');
-        });
-
-        const dropdowns = screen.findAllByType('DropdownMenu');
-        expect(dropdowns).toHaveLength(1);
-        expect(dropdowns[0].props.open).toBe(true);
-        expect(dropdowns[0].props.trigger).toBe(null);
-        expect(dropdowns[0].props.items).toEqual([{ id: 'copy', title: 'common.copy' }]);
-    });
+            const dropdowns = screen.findAllByType('DropdownMenu');
+            expect(dropdowns).toHaveLength(0);
+        },
+    );
 });

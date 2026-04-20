@@ -3,6 +3,7 @@ import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 import type { createEphemeralServerSocketClient as createEphemeralServerSocketClientFn } from './createEphemeralServerSocketClient';
 import type { resolveServerScopedContext as resolveServerScopedContextFn } from './resolveServerScopedContext';
 import type { ScopedRpcEncryptionContext } from './serverScopedRpcTypes';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 const state = vi.hoisted(() => ({
     profileId: 'user-1',
@@ -18,13 +19,15 @@ const scopedRpcEncryptionStub: ScopedRpcEncryptionContext = {
     getMachineEncryption: () => null,
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     storage: {
         getState: () => ({
             profile: state.profileId ? { id: state.profileId } : null,
         }),
-    },
-}));
+    } as any,
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {

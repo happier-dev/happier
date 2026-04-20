@@ -1,10 +1,9 @@
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { ProviderSettingsDescriptor, ProviderSubagentSettingsSectionDef } from '@/agents/providers/shared/providerSettingsPlugin';
 
-import { PROVIDER_SETTINGS_DESCRIPTORS } from './providerSettingsRegistry';
+import { PROVIDER_SETTINGS_DESCRIPTORS } from '@/agents/providers/catalog/providerSettingsCatalog';
 
 export type ProviderSubagentSettingsSectionDescriptor = Readonly<{
-    providerId: AgentId;
+    providerId: string;
     provider: ProviderSettingsDescriptor;
     section: ProviderSubagentSettingsSectionDef;
 }>;

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+
 const resolvePreferredServerIdForSessionIdSpy = vi.hoisted(() => vi.fn<(sessionId: string) => string | undefined>());
 const resolveSessionTargetServerIdSpy = vi.hoisted(() => vi.fn<(_sessionId: string, fallbackServerId?: string | null) => string | null>());
 const machineExecutionRunsListSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     storage: {
         getState: () => ({
             sessions: {
@@ -14,8 +16,10 @@ vi.mock('@/sync/domains/state/storage', () => ({
                 },
             },
         }),
-    },
-}));
+    } as any,
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdSpy(sessionId),
@@ -35,15 +39,15 @@ beforeEach(() => {
     resolveSessionTargetServerIdSpy.mockReset();
     resolveSessionTargetServerIdSpy.mockImplementation((_sessionId, fallbackServerId) => fallbackServerId ?? null);
     machineExecutionRunsListSpy.mockReset();
-    machineExecutionRunsListSpy.mockResolvedValue({
-        ok: true,
-        runs: [{
-            callId: 'toolu_1',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            ioMode: 'streaming',
-            intent: 'review',
-            runClass: 'bounded',
-            runId: 'run_1',
+        machineExecutionRunsListSpy.mockResolvedValue({
+            ok: true,
+            runs: [{
+                callId: 'toolu_1',
+                backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+                ioMode: 'streaming',
+                intent: 'review',
+                runClass: 'bounded',
+                runId: 'run_1',
             retentionPolicy: 'ephemeral',
             startedAtMs: 1,
             status: 'running',
@@ -62,6 +66,7 @@ describe('resolveDaemonExecutionRunFallback', () => {
         })).resolves.toEqual(expect.objectContaining({
             run: expect.objectContaining({
                 runId: 'run_1',
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
                 status: 'running',
             }),
             daemonProcessLine: null,
@@ -82,6 +87,7 @@ describe('resolveDaemonExecutionRunFallback', () => {
         })).resolves.toEqual(expect.objectContaining({
             run: expect.objectContaining({
                 runId: 'run_1',
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
                 status: 'running',
             }),
             daemonProcessLine: null,

@@ -108,6 +108,7 @@ function shouldFallbackToScopedMachineRpc(error: unknown): boolean {
     if (isMachineRpcTimeoutError(error)) return true;
     if (!(error instanceof Error)) return false;
     return error.message.includes('Machine encryption not found')
+        || error.message.includes("reading 'getMachineEncryption'")
         || error.message.includes('Socket not connected');
 }
 

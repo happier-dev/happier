@@ -3,14 +3,22 @@ import { normalizeCodexBackendMode } from '@happier-dev/protocol';
 
 import type { DirectBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
 
+function normalizeCandidateRuntimeDescriptorMetadata(details: Record<string, unknown> | undefined) {
+    if (!details) return undefined;
+    return {
+        ...details,
+        runtimeDescriptorV1: details.runtimeDescriptorV1 ?? details.runtimeDescriptor,
+        // Ingress-only compat: some candidate sources still return the legacy carrier key.
+        agentRuntimeDescriptorV1: details.agentRuntimeDescriptorV1,
+    };
+}
+
 function readCandidateCodexRuntimeDescriptor(details: Record<string, unknown> | undefined) {
-    return readSessionMetadataRuntimeDescriptor({ agentRuntimeDescriptorV1: details?.agentRuntimeDescriptorV1 }, 'codex')
-        ?? readSessionMetadataRuntimeDescriptor({ agentRuntimeDescriptorV1: details?.runtimeDescriptor }, 'codex');
+    return readSessionMetadataRuntimeDescriptor(normalizeCandidateRuntimeDescriptorMetadata(details) ?? null, 'codex');
 }
 
 function readCodexBackendMode(details: Record<string, unknown> | undefined): 'mcp' | 'acp' | 'appServer' | null {
-    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor({ agentRuntimeDescriptorV1: details?.agentRuntimeDescriptorV1 }, 'codex')
-        ?? readSessionMetadataRuntimeDescriptor({ agentRuntimeDescriptorV1: details?.runtimeDescriptor }, 'codex');
+    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(normalizeCandidateRuntimeDescriptorMetadata(details) ?? null, 'codex');
     const runtimeMode = normalizeCodexBackendMode(runtimeDescriptor?.backendMode);
     if (runtimeMode) return runtimeMode;
     return normalizeCodexBackendMode(details?.codexBackendMode);
@@ -107,6 +115,6 @@ export function resolveCodexLinkEnsureRequestExtras(params: Readonly<{
     return {
         ...(codexBackendMode ? { codexBackendMode } : {}),
         ...(compatibleCandidateSource ? { source: compatibleCandidateSource } : {}),
-        ...(runtimeDescriptor ? { runtimeDescriptor } : {}),
+        ...(runtimeDescriptor ? { runtimeDescriptorV1: runtimeDescriptor } : {}),
     };
 }

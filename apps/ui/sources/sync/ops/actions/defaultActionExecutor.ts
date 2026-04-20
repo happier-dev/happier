@@ -27,7 +27,6 @@ import { completeSessionHandoff as completeSessionHandoffOp } from '@/sync/ops/s
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
@@ -62,13 +61,14 @@ import {
   serializeSessionModeActionOptions,
 } from './sessionModeActionSupport';
 
-export function createDefaultActionExecutor(opts?: Readonly<{
+  export function createDefaultActionExecutor(opts?: Readonly<{
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
   openSession?: (sessionId: string) => void | Promise<void>;
-}>): ReturnType<typeof createActionExecutor> {
-  type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number }>;
-  type AgentsModelsListArgs = Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
+  }>): ReturnType<typeof createActionExecutor> {
+    type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
+    type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
+
   const resolveSessionMachineId = (sessionId: string, metadata: { machineId?: unknown } | null | undefined): string => {
     const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? '';
     if (reachableMachineId) {
@@ -215,19 +215,21 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       });
     },
 
-    sessionSpawnNew: async ({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage }) =>
-      await spawnSessionForVoiceTool({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage }),
+    sessionSpawnNew: async ({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage }) => {
+      return await spawnSessionForVoiceTool({ tag, agentId, modelId, backendTargetKey, path, host, initialMessage });
+    },
 
-    sessionSpawnPicker: async ({ tag, agentId, modelId, backendTargetKey, initialMessage }) =>
-      await spawnSessionWithPickerForVoiceTool({ tag, agentId, modelId, backendTargetKey, initialMessage }),
+    sessionSpawnPicker: async ({ tag, agentId, modelId, backendTargetKey, initialMessage }) => {
+      return await spawnSessionWithPickerForVoiceTool({ tag, agentId, modelId, backendTargetKey, initialMessage });
+    },
 
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
     reviewEnginesList: async ({ sessionId, includeDisabled }) => await listReviewEnginesForVoiceTool({ sessionId, includeDisabled }),
     agentsBackendsList: async (args) => {
-      const { includeDisabled, limit } = args as AgentsBackendsListArgs;
-      return await listAgentBackendsForVoiceTool({ includeDisabled, limit });
+      const { includeDisabled, limit, machineId } = args as AgentsBackendsListArgs;
+      return await listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId });
     },
     agentsModelsList: async (args) => {
       const { agentId, machineId, limit, backendTargetKey } = args as AgentsModelsListArgs;

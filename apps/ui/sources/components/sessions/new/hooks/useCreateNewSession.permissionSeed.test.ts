@@ -164,19 +164,16 @@ async function setupUseCreateNewSessionHarness() {
             createTextModuleMock({
                 translate: (key: string) => key,
             }),
-        router: async () => {
-            const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-            return createExpoRouterMock({
-                router: {
-                    push: vi.fn(),
-                    replace: vi.fn(),
-                    back: vi.fn(),
-                    setParams: vi.fn(),
-                },
-                params: () => routerSearchParamsState.value,
-                navigation: {},
-                pathname: '/new',
-            }).module;
+        routerConfig: {
+            router: {
+                push: vi.fn(),
+                replace: vi.fn(),
+                back: vi.fn(),
+                setParams: vi.fn(),
+            },
+            params: () => routerSearchParamsState.value,
+            navigation: {},
+            pathname: '/new',
         },
     });
     vi.doMock('@/modal', () => ({
@@ -313,6 +310,8 @@ async function setupUseCreateNewSessionHarness() {
     }));
     vi.doMock('@/agents/catalog/catalog', () => ({
         AGENT_IDS: ['codex', 'claude', 'opencode'],
+        isAgentId: (value: unknown) => value === 'codex' || value === 'claude' || value === 'opencode',
+        DEFAULT_AGENT_ID: 'codex',
         getAgentCore: vi.fn((agentType: string) => {
             if (agentType === 'opencode') {
                 return { model: { supportsSelection: true, nonAcpApplyScope: 'next_prompt' } };
@@ -372,6 +371,7 @@ async function setupUseCreateNewSessionHarness() {
         updateAutomationSpy,
         updateSessionDraftSpy,
         saveSessionDraftsSpy,
+        applySettingsSpy,
         materializeNewSessionCheckoutSpy,
         getMachineCapabilitiesSnapshotSpy,
         prefetchMachineCapabilitiesSpy,
@@ -449,6 +449,70 @@ describe('useCreateNewSession permission seeding', () => {
         expect(typeof captured.value?.permissionModeUpdatedAt).toBe('number');
         expect(Number.isFinite(captured.value?.permissionModeUpdatedAt)).toBe(true);
         expect((captured.value?.permissionModeUpdatedAt ?? 0)).toBeGreaterThan(0);
+    });
+
+    it('preserves persisted last-used agent settings when the draft has no canonical backendTarget', async () => {
+        const { useCreateNewSession, applySettingsSpy } = await setupUseCreateNewSessionHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'codex',
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'customAcp' as any,
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(applySettingsSpy).toHaveBeenCalled();
+        const settingsUpdate = applySettingsSpy.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
+        expect(settingsUpdate).toEqual(expect.objectContaining({
+            recentMachinePaths: [{ machineId: 'm1', path: '/tmp' }],
+        }));
+        expect(settingsUpdate).not.toHaveProperty('lastUsedAgent');
+        expect(settingsUpdate).not.toHaveProperty('lastUsedBackendTarget');
     });
 
     it('passes resumeSessionId through without pre-spawn capability probing', async () => {
@@ -1038,12 +1102,17 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_target',
+            targetServerId: 'server-b',
+            initialMessageText: 'Ship the scoped follow-up fix',
+        }));
         expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
         expect(updateSessionDraftSpy).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
         expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
-        expect(routerReplace).not.toHaveBeenCalled();
+        expect(routerReplace).toHaveBeenCalledWith('/session/sess_target?serverId=server-b', expect.anything());
     });
 
     it('clears and disables the /new draft before opening a hydrated created session when post-spawn follow-up fails', async () => {
@@ -1120,6 +1189,11 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_target',
+            targetServerId: 'server-b',
+            initialMessageText: 'Ship the scoped follow-up fix',
+        }));
         expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('sess_target', 'Ship the scoped follow-up fix');
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
@@ -1745,6 +1819,93 @@ describe('useCreateNewSession permission seeding', () => {
             undefined,
             { profileId: 'profile-test' },
         );
+    });
+
+    it('blocks creation when the selected profile is incompatible with the current backend target', async () => {
+        const {
+            useCreateNewSession,
+            modalAlertSpy,
+            machineSpawnNewSessionSpy,
+            syncSendMessageSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = {
+            experiments: false,
+            sessionReplayEnabled: false,
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: true,
+                selectedProfileId: 'profile-test',
+                profileMap: new Map([[
+                    'profile-test',
+                    AIBackendProfileSchema.parse({
+                        id: 'profile-test',
+                        name: 'Profile Test',
+                        description: undefined,
+                        environmentVariables: [],
+                        envVarRequirements: [],
+                        compatibility: {},
+                        defaultPermissionModeByAgent: {},
+                        defaultPermissionModeByTargetKey: {},
+                        defaultPersistenceModeByAgent: {},
+                        defaultPersistenceModeByTargetKey: {},
+                        compatibilityByTargetKey: {
+                            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: true,
+                            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: false,
+                        },
+                        isBuiltIn: false,
+                        createdAt: Date.now(),
+                        updatedAt: Date.now(),
+                        version: '1.0.0',
+                    }),
+                ]]),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: 'PROMPT',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.aiBackendNotCompatibleWithSelectedProfile');
+        expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+        expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
     it('can skip sending the initial message when requested', async () => {

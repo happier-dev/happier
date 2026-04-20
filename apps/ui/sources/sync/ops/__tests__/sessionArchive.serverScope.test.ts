@@ -148,6 +148,30 @@ describe('sessionArchiveWithServerScope', () => {
     expect(res).toEqual({ success: true, archivedAt: 12 });
     expect(mockResolveContext).toHaveBeenCalledWith({ serverId: 'server-owned' });
   });
+
+  it('surfaces a stable session_active code for archive conflicts', async () => {
+    mockResolveContext.mockResolvedValue({
+      scope: 'active',
+      targetServerUrl: 'https://active.example',
+      targetServerId: 'server-a',
+      token: 'tok',
+      timeoutMs: 1000,
+      encryption: null,
+    });
+    mockRequest.mockResolvedValue(makeResponse({
+      ok: false,
+      status: 409,
+      text: 'Cannot archive an active session',
+    }));
+
+    const res = await sessionArchiveWithServerScope('sid-conflict', { serverId: 'server-a' });
+
+    expect(res).toEqual({
+      success: false,
+      message: 'Cannot archive an active session',
+      code: 'session_active',
+    });
+  });
 });
 
 describe('sessionUnarchiveWithServerScope', () => {

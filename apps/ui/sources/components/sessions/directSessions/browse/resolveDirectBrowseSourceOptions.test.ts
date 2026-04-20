@@ -110,7 +110,7 @@ describe('resolveDirectBrowseSourceOptions', () => {
         expect(extras.codexBackendMode).toBe('appServer');
         expect(extras.source).toEqual({ kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' });
         expect(readSessionMetadataRuntimeDescriptor({
-            agentRuntimeDescriptorV1: extras.runtimeDescriptor,
+            runtimeDescriptorV1: extras.runtimeDescriptorV1,
         }, 'codex')).toEqual({
             providerId: 'codex',
             backendMode: 'appServer',

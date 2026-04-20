@@ -5,6 +5,7 @@ import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCa
 
 export type SessionListHeaderActionHandlers = Readonly<{
     onOpenProject: () => void;
+    onCreateSession: () => void;
     onRename: () => void;
     onReset: () => void;
     onToggleCollapse: () => void;
@@ -34,6 +35,7 @@ function getFunctionIdentity(fn: Function): number {
 function buildProjectHeaderActionCacheKey(input: Readonly<{
     headerViewState: Extract<SessionListHeaderViewState, { kind: 'project' }>;
     onOpenProject: (workspaceRefId: string) => void;
+    onCreateSessionFromWorkspaceScope: (scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }>) => void;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
@@ -58,6 +60,7 @@ function buildProjectHeaderActionCacheKey(input: Readonly<{
         scopeHint?.machineId ?? '',
         scopeHint?.rootPath ?? '',
         getFunctionIdentity(input.onOpenProject),
+        getFunctionIdentity(input.onCreateSessionFromWorkspaceScope),
         getFunctionIdentity(input.onRenameWorkspace),
         getFunctionIdentity(input.onResetWorkspaceName),
         getFunctionIdentity(input.onToggleCollapse),
@@ -80,6 +83,7 @@ function buildSectionHeaderActionCacheKey(input: Readonly<{
 export function resolveSessionListHeaderActionHandlers(input: Readonly<{
     headerViewState: SessionListHeaderViewState | null;
     onOpenProject: (workspaceRefId: string) => void;
+    onCreateSessionFromWorkspaceScope: (scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }>) => void;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
@@ -100,6 +104,7 @@ export function resolveSessionListHeaderActionHandlers(input: Readonly<{
         ? buildProjectHeaderActionCacheKey({
             headerViewState,
             onOpenProject: input.onOpenProject,
+            onCreateSessionFromWorkspaceScope: input.onCreateSessionFromWorkspaceScope,
             onRenameWorkspace: input.onRenameWorkspace,
             onResetWorkspaceName: input.onResetWorkspaceName,
             onToggleCollapse: input.onToggleCollapse,
@@ -126,6 +131,12 @@ export function resolveSessionListHeaderActionHandlers(input: Readonly<{
                 }
                 input.onOpenProject(headerViewState.workspaceRefId);
             },
+            onCreateSession: () => {
+                if (!headerViewState.scopeHint) {
+                    return;
+                }
+                input.onCreateSessionFromWorkspaceScope(headerViewState.scopeHint);
+            },
             onRename: () => {
                 input.onRenameWorkspace({
                     legacyWorkspaceKey: headerViewState.legacyWorkspaceKey,
@@ -143,6 +154,7 @@ export function resolveSessionListHeaderActionHandlers(input: Readonly<{
         }
         : {
             onOpenProject: noop,
+            onCreateSession: noop,
             onRename: noop,
             onReset: noop,
             onToggleCollapse,

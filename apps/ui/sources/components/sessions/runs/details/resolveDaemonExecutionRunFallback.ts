@@ -1,4 +1,5 @@
 import type { DaemonExecutionRunEntry, ExecutionRunPublicState } from '@happier-dev/protocol';
+import { convertBackendTargetRefV2ToV1 } from '@happier-dev/protocol';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
@@ -52,7 +53,7 @@ function buildExecutionRunPublicStateFromDaemonEntry(params: Readonly<{
         callId: params.entry.callId,
         sidechainId: params.entry.sidechainId,
         intent: params.entry.intent,
-        backendTarget: params.entry.backendTarget,
+        backendTarget: convertBackendTargetRefV2ToV1(params.entry.backendTarget),
         permissionMode: readNonEmptyString((params.entry as { permissionMode?: unknown }).permissionMode)
             ?? fallbackRun?.permissionMode
             ?? 'unknown',

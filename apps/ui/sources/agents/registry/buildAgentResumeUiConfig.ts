@@ -1,6 +1,6 @@
 import type { TranslationKey } from '@/text';
 
-import { AGENTS_CORE, type AgentId } from '@happier-dev/agents';
+import { getAgentResumeConfig, type AgentId } from '@happier-dev/agents';
 
 import type { AgentCoreConfig } from './registryCore';
 
@@ -9,8 +9,15 @@ export function buildAgentResumeUiConfig(params: Readonly<{
     uiVendorResumeIdLabelKey: TranslationKey | null;
     uiVendorResumeIdCopiedKey: TranslationKey | null;
 }>): AgentCoreConfig['resume'] {
-    const resume = AGENTS_CORE[params.agentId]?.resume;
-    const vendorResumeIdField = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
+    let resume: ReturnType<typeof getAgentResumeConfig> | null = null;
+    try {
+        resume = getAgentResumeConfig(params.agentId);
+    } catch {
+        resume = null;
+    }
+    const vendorResumeIdField = resume && 'vendorResumeIdField' in resume
+        ? (resume.vendorResumeIdField ?? null)
+        : null;
 
     return {
         vendorResumeIdField,

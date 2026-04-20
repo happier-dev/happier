@@ -1203,9 +1203,32 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(sessionDataKeys.has('s1')).toBe(false);
     });
 
-    it('throws HappyError for non-retryable 4xx responses', async () => {
+    it.each([401, 403] as const)('throws canonical auth for compat session list status %s', async (status) => {
         onAgentRequest.mockReset();
-        const requestSpy = vi.fn(async () => new Response('forbidden', { status: 403 }));
+        const requestSpy = vi.fn(async () => new Response('auth failed', { status }));
+        const { encryption } = createEncryptionHarness();
+
+        await expect(
+            fetchAndApplySessions({
+                credentials: { token: 't', secret: 's' },
+                encryption,
+                sessionDataKeys: new Map<string, Uint8Array>(),
+                request: requestSpy,
+                applySessions: () => {},
+                repairInvalidReadStateV1: async () => {},
+                log: { log: () => {} },
+            }),
+        ).rejects.toMatchObject({
+            name: 'HappyError',
+            kind: 'auth',
+            code: 'not_authenticated',
+            canTryAgain: false,
+        });
+    });
+
+    it('throws HappyError for other non-retryable 4xx responses', async () => {
+        onAgentRequest.mockReset();
+        const requestSpy = vi.fn(async () => new Response('unprocessable', { status: 422 }));
         const { encryption } = createEncryptionHarness();
 
         await expect(

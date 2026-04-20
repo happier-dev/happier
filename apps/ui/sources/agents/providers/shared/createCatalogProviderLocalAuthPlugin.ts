@@ -26,7 +26,7 @@ export function createCatalogProviderLocalAuthPlugin(providerId: AgentId): Provi
     const config = getAgentLocalCliConfig(providerId);
     return createStaticProviderLocalAuthPlugin({
         providerId,
-        support: config.authSupport,
+        support: config.supportKind,
         docsUrl: getProviderCliInstallGuideUrl(providerId) ?? undefined,
         ...(config.loginLaunch
             ? {

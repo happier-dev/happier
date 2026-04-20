@@ -1,14 +1,14 @@
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromSettings';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 
 export function resolveResumePickerBackendTarget(params: Readonly<{
-    tempBackendTarget?: BackendTargetRefV1 | null;
-    routeBackendTarget?: BackendTargetRefV1 | null;
-    availableBackendTargets?: ReadonlyArray<BackendTargetRefV1>;
+    tempBackendTarget?: BackendTargetRefV2 | null;
+    routeBackendTarget?: BackendTargetRefV2 | null;
+    availableBackendTargets?: ReadonlyArray<BackendTargetRefV2>;
     lastUsedAgent: unknown;
     lastUsedBackendTarget?: unknown;
-}>): BackendTargetRefV1 {
+}>): BackendTargetRefV2 {
     return resolvePreferredBackendTarget({
         candidateBackendTargets: [params.tempBackendTarget, params.routeBackendTarget],
         availableBackendTargets: params.availableBackendTargets,

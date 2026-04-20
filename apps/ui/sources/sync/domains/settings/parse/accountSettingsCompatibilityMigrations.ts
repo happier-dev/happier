@@ -1,8 +1,12 @@
-import { buildBackendTargetKey, normalizeCodexBackendMode } from '@happier-dev/protocol';
+import { normalizeCodexBackendMode } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
 
-import { AGENT_IDS, getAgentCore } from '@/agents/registry/registryCore';
+import { getAgentCore } from '@/agents/registry/registryCore';
+import {
+    buildProviderUniverseBackendTargetKey,
+    listProviderUniverseIds,
+} from '@/agents/providers/registry/providerUniverse';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 import { SessionTmuxMachineOverrideSchema } from '../registry/account/accountRuntimeSettingDefinitions';
@@ -90,10 +94,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.backendEnabledById;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of AGENT_IDS) {
+            for (const agentId of listProviderUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (typeof raw === 'boolean') {
-                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] = raw;
+                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }
@@ -106,10 +110,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.backendCliSourcePreferenceById;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of AGENT_IDS) {
+            for (const agentId of listProviderUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (raw === 'system-first' || raw === 'managed-first') {
-                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] = raw;
+                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }
@@ -122,13 +126,13 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.sessionDefaultPermissionModeByAgent;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of AGENT_IDS) {
+            for (const agentId of listProviderUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (isPermissionMode(raw)) {
                     const group = getAgentCore(agentId).permissions.modeGroup;
                     const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
                     if (!(allowed as readonly string[]).includes(raw)) continue;
-                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] = raw;
+                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }
@@ -136,10 +140,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             const parsed = parsePermissionIntentAlias(input.lastUsedPermissionMode);
             if (parsed) {
                 const seededMode: PermissionMode = parsed === 'plan' ? 'read-only' : parsed;
-                for (const to of AGENT_IDS) {
+                for (const to of listProviderUniverseIds()) {
                     const group = getAgentCore(to).permissions.modeGroup;
                     const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
-                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId: to })] =
+                    byTargetKey[buildProviderUniverseBackendTargetKey(to)] =
                         (allowed as readonly string[]).includes(seededMode) ? seededMode : 'default';
                 }
             }
@@ -153,10 +157,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             : {};
         const legacyByAgent = input.newSessionDefaultPersistenceModeByAgentV1;
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of AGENT_IDS) {
+            for (const agentId of listProviderUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (raw === 'direct' || raw === 'persisted') {
-                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] = raw;
+                    byTargetKey[buildProviderUniverseBackendTargetKey(agentId)] = raw;
                 }
             }
         }

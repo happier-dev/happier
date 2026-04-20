@@ -227,6 +227,40 @@ describe('OptionPickerOverlay', () => {
         expect(onSelect).not.toHaveBeenCalled();
     });
 
+    it('keeps the custom editor open across parent rerenders while the selected listed value has not changed yet', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const onSelect = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const renderOverlay = () => (
+            <OptionPickerOverlay
+                title="Model"
+                effectiveLabel="Default"
+                notes={[]}
+                options={[
+                    { value: 'default', label: 'Default', description: '' },
+                ]}
+                selectedValue="default"
+                emptyText="empty"
+                canEnterCustomValue
+                customLabel="Custom model"
+                onSubmitCustomValue={onSubmitCustomValue}
+                onSelect={onSelect}
+            />
+        );
+
+        const screen = await renderScreen(renderOverlay());
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
+
+        await act(async () => {
+            screen.tree.update(renderOverlay());
+        });
+
+        expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
+    });
+
     it('shows a loading indicator when models are being probed', async () => {
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 

@@ -9,11 +9,11 @@ import {
     supportsDirectTranscriptStorageForNewSession,
     type NewSessionTranscriptStorage,
 } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 type PersistedAuthoringDraftLike = Readonly<{
     transcriptStorage?: NewSessionTranscriptStorage | null;
-    profileId?: string | null;
+    selectedProfileId?: string | null;
 }> | null | undefined;
 
 type TempAuthoringDraftLike = Readonly<{
@@ -31,9 +31,9 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
     selectedProfileId: string | null;
     newSessionDefaultPersistenceModeV1: Settings['newSessionDefaultPersistenceModeV1'];
     newSessionDefaultPersistenceModeByTargetKeyV1: Settings['newSessionDefaultPersistenceModeByTargetKeyV1'];
-    resolvedBackendTargets: ReadonlyArray<BackendTargetRefV1>;
+    resolvedBackendTargets: ReadonlyArray<BackendTargetRefV2>;
     agentType: AgentId;
-    backendTarget: BackendTargetRefV1;
+    backendTarget: BackendTargetRefV2;
     settings: Settings;
     directSessionsFeatureEnabled: boolean;
 }>): Readonly<{
@@ -48,8 +48,9 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
             return tempTranscriptStorage;
         }
 
-        const profile = params.hydratedPersistedAuthoringDraft?.profileId
-            ? (params.profileMap.get(params.hydratedPersistedAuthoringDraft.profileId) || getBuiltInProfile(params.hydratedPersistedAuthoringDraft.profileId))
+        const persistedSelectedProfileId = params.hydratedPersistedAuthoringDraft?.selectedProfileId ?? null;
+        const profile = persistedSelectedProfileId
+            ? (params.profileMap.get(persistedSelectedProfileId) || getBuiltInProfile(persistedSelectedProfileId))
             : null;
         const accountDefaults = readAccountTranscriptStorageDefaults({
             globalDefault: params.newSessionDefaultPersistenceModeV1,

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS as SHARED_AGENT_IDS } from '@happier-dev/agents';
+import { CANONICAL_AGENT_IDS as SHARED_CANONICAL_AGENT_IDS } from '@happier-dev/agents';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 
-import { AGENTS_UI } from './registryUi';
-import { getAgentIconSvgXml } from './registryUi';
+import { AGENTS_UI, CANONICAL_AGENTS_UI } from './registryUi';
+import { getAgentCliGlyph, getAgentIconSvgXml, getAgentPickerIconScale } from './registryUi';
 
 function sortedKeys(value: Record<string, unknown>): string[] {
     return Object.keys(value).sort();
@@ -12,19 +12,9 @@ function sortedKeys(value: Record<string, unknown>): string[] {
 
 describe('agents/registryUi', () => {
     it('covers the full canonical provider universe (no UI-only drift)', () => {
-        expect(sortedKeys(AGENTS_UI)).toEqual([...SHARED_AGENT_IDS].sort());
-    });
-
-    it('uses the Agent Client Protocol logo for custom ACP providers', () => {
-        const theme = createThemeFixture({
-            colors: {
-                text: '#123456',
-            },
-        }) as Parameters<typeof getAgentIconSvgXml>[1];
-        const svgXml = getAgentIconSvgXml('customAcp', theme) ?? '';
-        expect(svgXml).toContain('agent-client-protocol-logo');
-        expect(svgXml).toContain('fill="#123456"');
-        expect(svgXml).not.toContain('fill="#000000"');
+        expect(sortedKeys(CANONICAL_AGENTS_UI)).toEqual([...SHARED_CANONICAL_AGENT_IDS].sort());
+        expect(CANONICAL_AGENTS_UI).not.toHaveProperty('customAcp');
+        expect(AGENTS_UI).not.toHaveProperty('customAcp');
     });
 
     it('uses a dedicated oh-my-pi logo instead of reusing the plain pi mark', () => {
@@ -39,5 +29,10 @@ describe('agents/registryUi', () => {
         const svgXml = getAgentIconSvgXml('ohMyPi', theme) ?? '';
         expect(svgXml).toContain('oh-my-pi-logo');
         expect(svgXml).toContain(`fill="${theme.colors.accent.orange}"`);
+    });
+
+    it('uses a neutral fallback for unknown backend/provider ids instead of the custom ACP UI treatment', () => {
+        expect(getAgentCliGlyph('acme.review.backend')).toBe('?');
+        expect(getAgentPickerIconScale('acme.review.backend')).toBe(1);
     });
 });

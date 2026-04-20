@@ -127,7 +127,7 @@ describe('apiVoice', () => {
             });
         });
 
-        it('throws when the server response is not ok and includes response body text', async () => {
+        it('throws when the server response is not ok without including response body text', async () => {
             vi.stubGlobal(
                 'fetch',
                 vi.fn(async () => ({
@@ -137,12 +137,17 @@ describe('apiVoice', () => {
                 })) as unknown as typeof fetch,
             );
 
-            await expect(
-                completeHappierVoiceSession(credentials, {
+            try {
+                await completeHappierVoiceSession(credentials, {
                     leaseId: 'lease-1',
                     providerConversationId: 'conv-1',
-                }),
-            ).rejects.toThrow(/Voice session complete failed \(503\): upstream down/);
+                });
+                throw new Error('expected rejection');
+            } catch (error) {
+                expect(error).toBeInstanceOf(Error);
+                expect((error as Error).message).toContain('Voice session complete failed (503)');
+                expect((error as Error).message).not.toContain('upstream down');
+            }
         });
 
         it('throws without suffix when response.text() itself fails', async () => {

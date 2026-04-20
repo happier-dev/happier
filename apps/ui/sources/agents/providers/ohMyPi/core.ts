@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
@@ -11,11 +12,8 @@ export const OH_MY_PI_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.ohMyPiSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
-    connectedService: {
-        id: null,
-        name: 'oh-my-pi',
-        connectRoute: null,
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'ohMyPi' }),
+    uiConnectedService: { serviceId: null, label: 'oh-my-pi', connectRoute: null },
     flavorAliases: ['ohMyPi', 'oh-my-pi', 'omp'],
     cli: buildCatalogProviderCliUiConfig('ohMyPi'),
     permissions: {

@@ -75,11 +75,15 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
     const { machineId } = options;
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
     const daemonCliVersion = readMachineDaemonCliVersion(machineId);
+    const legacyBuiltInAgentTarget =
+        typeof options.backendTarget === 'string'
+            ? options.backendTarget.startsWith('agent:')
+            : options.backendTarget.kind === 'builtInAgent';
 
     try {
         if (
             shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
-            && options.backendTarget.kind !== 'builtInAgent'
+            && !legacyBuiltInAgentTarget
         ) {
             const versionLabel = daemonCliVersion ?? 'unknown';
             return {

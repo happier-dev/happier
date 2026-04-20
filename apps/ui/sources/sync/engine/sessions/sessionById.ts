@@ -3,6 +3,11 @@ import type { V2SessionByIdResponse } from '@happier-dev/protocol';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
+import {
+  createNotAuthenticatedError,
+  isAuthenticationResponseStatus,
+  isTerminalAuthError,
+} from '@/sync/runtime/connectivity/authErrors';
 
 import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
 import {
@@ -59,6 +64,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
       ...(controller ? { signal: controller.signal } : null),
     });
   } catch (err) {
+    if (isTerminalAuthError(err)) {
+      throw err;
+    }
     params.log.log(`[sessionById] Failed to fetch session ${sessionId}: ${err instanceof Error ? err.message : 'unknown error'}`);
     return { ok: false, session: null, errorCode: 'network_error' };
   } finally {
@@ -66,6 +74,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
   }
 
   if (!response.ok) {
+    if (isAuthenticationResponseStatus(response.status)) {
+      throw createNotAuthenticatedError(response.status);
+    }
     if (response.status === 404) {
       body = await response.json().catch(() => null);
       if (looksLikeCurrentV2SessionNotFound404(body)) {

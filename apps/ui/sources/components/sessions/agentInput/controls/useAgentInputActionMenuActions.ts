@@ -15,7 +15,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
     profileLabel: string | null;
     profileIcon: string;
     envVarsCount?: number;
-    agentType?: AgentId;
+    agentLabel?: string | null;
     machineName?: string | null;
     currentPath?: string | null;
     resumeSessionId?: string | null;
@@ -55,7 +55,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
             profileLabel: params.profileLabel,
             profileIcon: params.profileIcon,
             envVarsCount: params.envVarsCount,
-            agentType: params.agentType,
+            agentLabel: params.agentLabel,
             machineName: params.machineName,
             currentPath: params.currentPath,
             resumeSessionId: params.resumeSessionId,
@@ -78,7 +78,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
     }, [
         params.actionBarIsCollapsed,
         params.agentId,
-        params.agentType,
+        params.agentLabel,
         params.blurInput,
         params.canStop,
         params.currentPath,

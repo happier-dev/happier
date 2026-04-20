@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2 } from '@happier-dev/protocol';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
@@ -23,7 +23,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     isBackendEntrySelectable: (entry: ResolvedBackendCatalogEntry) => boolean;
     selectedBackendEntry: ResolvedBackendCatalogEntry | null;
     selectedBackendTargetKey: string;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV1>>;
+    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
     modelMode: ModelMode;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     acpSessionModeId: string | null;
@@ -98,19 +98,19 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             selectedId,
         });
         if (nextEntry) {
-            const nextSelection = getEngineSelectionForTargetKey(nextEntry.targetKey);
+            const nextSelection = getEngineSelectionForTargetKey(nextEntry.backendTargetKey);
             selectEngineSelection(nextEntry, nextSelection);
         }
     }, [getEngineSelectionForTargetKey, params.resolvedBackendEntries, selectEngineSelection]);
 
-    const selectedBackendTargetKey = params.selectedBackendEntry?.targetKey ?? params.selectedBackendTargetKey;
+    const selectedBackendTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
     const handleAgentClick = React.useCallback(() => {
         const nextEntry = resolveNewSessionAgentPickerSingleSelectFallbackEntry({
             selectableBackendEntries,
             selectedBackendTargetKey,
         });
         if (nextEntry) {
-            params.setBackendTarget(nextEntry.target);
+            params.setBackendTarget(nextEntry.backendTarget);
         }
     }, [
         params.setBackendTarget,

@@ -236,6 +236,42 @@ describe('setNewSessionPickerReturnParams', () => {
         });
     });
 
+    it('preserves previewMachineId when replace fallback returns to /new', () => {
+        const dispatch = vi.fn();
+        const replace = vi.fn();
+
+        const mode = setNewSessionPickerReturnParams({
+            navigation: {
+                dispatch,
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1', params: { id: 's1' } },
+                        { key: 'picker-route', name: '(app)/new/pick/preview-machine', path: '/new/pick/preview-machine' },
+                    ],
+                }),
+            },
+            router: { replace },
+            routeParams: { previewMachineId: 'machine-picked' },
+            replaceParams: {
+                dataId: 'draft-1',
+                machineId: 'm1',
+                previewMachineId: 'machine-picked',
+            },
+        });
+
+        expect(mode).toBe('replace');
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                dataId: 'draft-1',
+                machineId: 'm1',
+                previewMachineId: 'machine-picked',
+            },
+        });
+    });
+
     it('preserves canonical backend target params from the current picker route during replace fallback', () => {
         const dispatch = vi.fn();
         const replace = vi.fn();
@@ -243,7 +279,6 @@ describe('setNewSessionPickerReturnParams', () => {
             kind: 'backend',
             backendId: 'review-bot',
             configuredBackendId: 'review-bot',
-            sourceKind: 'configured',
         });
 
         const mode = setNewSessionPickerReturnParams({
@@ -258,9 +293,8 @@ describe('setNewSessionPickerReturnParams', () => {
                             name: '(app)/new/pick/path',
                             path: '/new/pick/path',
                             params: {
-                                agentType: 'customAcp',
                                 backendTarget: serializedBackendTarget,
-                                backendTargetKey: 'acpBackend:review-bot',
+                                backendTargetKey: 'backend:review-bot:configured:review-bot',
                                 dataId: 'draft-1',
                             },
                         },
@@ -285,6 +319,60 @@ describe('setNewSessionPickerReturnParams', () => {
                 dataId: 'draft-1',
                 machineId: 'm1',
                 path: '/repo/selected',
+            },
+        });
+    });
+
+    it('demotes legacy customAcp route params to the discovered built-in backend id during replace fallback', () => {
+        const dispatch = vi.fn();
+        const replace = vi.fn();
+        const serializedBackendTarget = JSON.stringify({
+            kind: 'backend',
+            backendId: 'acme.review.backend',
+        });
+
+        const mode = setNewSessionPickerReturnParams({
+            navigation: {
+                dispatch,
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1', params: { id: 's1' } },
+                        {
+                            key: 'picker-route',
+                            name: '(app)/new/pick/path',
+                            path: '/new/pick/path',
+                            params: {
+                                backendTarget: serializedBackendTarget,
+                                backendTargetKey: 'backend:acme.review.backend',
+                                dataId: 'draft-1',
+                            },
+                        },
+                    ],
+                }),
+            },
+            router: { replace },
+            routeParams: {
+                backendTarget: serializedBackendTarget,
+                backendTargetKey: 'backend:acme.review.backend',
+            },
+            replaceParams: {
+                backendTarget: serializedBackendTarget,
+                backendTargetKey: 'backend:acme.review.backend',
+                dataId: 'draft-1',
+                machineId: 'm1',
+            },
+        });
+
+        expect(mode).toBe('replace');
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                backendTarget: serializedBackendTarget,
+                backendTargetKey: 'backend:acme.review.backend',
+                dataId: 'draft-1',
+                machineId: 'm1',
             },
         });
     });

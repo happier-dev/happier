@@ -56,7 +56,7 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                 </Pressable>
             )}
 
-            <View style={{ flexBasis: 0, flexGrow: 1, paddingBottom: safeArea.bottom + ((isRunningOnMac() || Platform.OS === 'web') ? 32 : 0) }}>
+            <View style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, paddingBottom: safeArea.bottom + ((isRunningOnMac() || Platform.OS === 'web') ? 32 : 0) }}>
                 <AgentContentView
                     content={props.content}
                     input={props.input}

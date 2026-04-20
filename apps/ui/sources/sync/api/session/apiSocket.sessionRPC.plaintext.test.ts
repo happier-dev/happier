@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 
 const storageMock = vi.hoisted(() => ({
     getState: vi.fn(),
 }));
+
+type ApiSocketPrivateTestSurface = {
+    socket: {
+        timeout: (timeoutMs: number) => { emitWithAck: ReturnType<typeof vi.fn> };
+        emitWithAck: ReturnType<typeof vi.fn>;
+    };
+    encryption: { getSessionEncryption: () => null };
+    currentConnectionState: ManagedConnectionState;
+};
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -114,5 +124,42 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             }),
         );
         expect(response).toEqual({ ok: true, value: 789 });
+    });
+
+    it('surfaces reachability auth_failed as a non-retryable auth HappyError instead of waiting for socket ack timeout', async () => {
+        storageMock.getState.mockReturnValue({
+            sessions: {
+                s1: { id: 's1', encryptionMode: 'plain' },
+            },
+        });
+
+        const emitWithAck = vi.fn(async () => {
+            throw new Error('operation has timed out');
+        });
+        const timeout = vi.fn(() => ({ emitWithAck }));
+
+        const { apiSocket } = await import('./apiSocket');
+        const apiSocketTestSurface = apiSocket as unknown as ApiSocketPrivateTestSurface;
+        apiSocketTestSurface.socket = { timeout, emitWithAck: vi.fn() };
+        apiSocketTestSurface.encryption = { getSessionEncryption: () => null };
+        apiSocketTestSurface.currentConnectionState = {
+            phase: 'auth_failed',
+            reason: 'auth_invalid',
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: null,
+            lastDisconnectedAt: Date.now(),
+            lastErrorMessage: 'HTTP 401',
+        };
+
+        await expect(
+            apiSocket.sessionRPC('s1', 'ping', { hello: 'world' }, { timeoutMs: 7500 }),
+        ).rejects.toMatchObject({
+            name: 'HappyError',
+            kind: 'auth',
+            code: 'not_authenticated',
+            canTryAgain: false,
+        });
+        expect(timeout).not.toHaveBeenCalled();
     });
 });

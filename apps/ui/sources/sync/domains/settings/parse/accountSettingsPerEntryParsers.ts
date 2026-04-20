@@ -4,7 +4,7 @@ import {
 import { z } from 'zod';
 
 import { dbgSettings } from '../debugSettings';
-import { AIBackendProfileSchema } from '../../profiles/profileCompatibility';
+import { AIBackendProfileSchema } from '../../profiles/aiBackendProfileSchema';
 import { SavedSecretSchema } from '../savedSecretTypes';
 import { voiceSettingsParse } from '../voiceSettings';
 import {

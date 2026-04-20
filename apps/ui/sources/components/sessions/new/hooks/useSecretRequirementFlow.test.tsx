@@ -57,8 +57,8 @@ describe('useSecretRequirementFlow', () => {
             navigation,
             routeBackendParams: {
                 agentType: 'customAcp',
-                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
-                backendTargetKey: 'acpBackend:review-bot',
+                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
             },
             routeContextParams: {
                 dataId: 'draft-1',
@@ -101,8 +101,8 @@ describe('useSecretRequirementFlow', () => {
             pathname: '/new/pick/secret-requirement',
             params: {
                 agentType: 'customAcp',
-                backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
-                backendTargetKey: 'acpBackend:review-bot',
+                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
                 dataId: 'draft-1',
                 machineId: 'machine-1',
                 profileId: 'deepseek',

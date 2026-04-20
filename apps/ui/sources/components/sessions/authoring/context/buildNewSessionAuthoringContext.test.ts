@@ -11,7 +11,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     prompt: 'Review changes',
     displayText: 'Review changes',
     agentId: 'claude',
-    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    backendTarget: { kind: 'backend', backendId: 'claude' },
     transcriptStorage: 'direct',
     profileId: null,
     environmentVariables: null,

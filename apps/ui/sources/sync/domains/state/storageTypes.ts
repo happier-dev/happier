@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import { 
-    createAgentRuntimeDescriptorV1Schema,
+    createAgentRuntimeFacetsV1Schema,
     createAcpConfigOptionOverridesV1Schema,
     createAcpSessionModeOverrideV1Schema,
     createModelOverrideV1Schema,
@@ -9,6 +9,9 @@ import {
     createSessionRollbackRangesV1Schema,
     createSessionTerminalMetadataSchema,
     createSessionSystemSessionV1Schema,
+    readRuntimeDescriptorV1FromMetadata,
+    RuntimeDescriptorV1Schema,
+    writeRuntimeDescriptorV1ToMetadata,
     WindowsRemoteSessionLaunchModeSchema,
 } from "@happier-dev/protocol";
 
@@ -44,7 +47,9 @@ const MetadataObjectSchema = z.object({
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexSessionId: z.string().optional(), // Codex session/conversation ID (uuid)
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
-    agentRuntimeDescriptorV1: createAgentRuntimeDescriptorV1Schema(z).optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+    agentRuntimeCapabilitiesV1: z.unknown().optional(),
+    agentRuntimeFacetsV1: createAgentRuntimeFacetsV1Schema(z).optional(),
     geminiSessionId: z.string().optional(), // Gemini ACP session ID (opaque)
     opencodeSessionId: z.string().optional(), // OpenCode ACP session ID (opaque)
     opencodeBackendMode: z.enum(['server', 'acp']).optional(),
@@ -282,14 +287,26 @@ const MetadataObjectSchema = z.object({
 }).passthrough();
 
 export const MetadataSchema = z.preprocess((value) => {
-    if (typeof value !== 'string') return value;
-    const trimmed = value.trim();
-    if (!trimmed) return value;
-    try {
-        return JSON.parse(trimmed);
-    } catch {
-        return value;
+    const parsedValue = (() => {
+        if (typeof value !== 'string') return value;
+        const trimmed = value.trim();
+        if (!trimmed) return value;
+        try {
+            return JSON.parse(trimmed);
+        } catch {
+            return value;
+        }
+    })();
+    if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
+        return parsedValue;
     }
+    const metadata = parsedValue as Record<string, unknown>;
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
+    if (runtimeDescriptorV1 === null && Object.prototype.hasOwnProperty.call(metadata, 'runtimeDescriptorV1')) {
+        const { agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1, ...rest } = metadata;
+        return rest;
+    }
+    return writeRuntimeDescriptorV1ToMetadata(metadata, runtimeDescriptorV1);
 }, MetadataObjectSchema);
 
 export type Metadata = z.infer<typeof MetadataSchema>;

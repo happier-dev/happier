@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -64,6 +65,39 @@ vi.mock('@/track', () => ({
     trackPaywallError: vi.fn(),
 }));
 
+const connectionStateListeners = vi.hoisted(() => new Set<(state: ManagedConnectionState) => void>());
+const socketStatusListeners = vi.hoisted(() => new Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void>());
+
+vi.mock('@/sync/api/session/apiSocket', () => ({
+    apiSocket: {
+        onMessage: vi.fn(),
+        onError: vi.fn(),
+        onReconnected: vi.fn(),
+        onStatusChange: vi.fn((listener: (status: 'disconnected' | 'connecting' | 'connected' | 'error') => void) => {
+            socketStatusListeners.add(listener);
+            listener('disconnected');
+            return () => socketStatusListeners.delete(listener);
+        }),
+        onConnectionStateChange: vi.fn((listener: (state: ManagedConnectionState) => void) => {
+            connectionStateListeners.add(listener);
+            listener({
+                phase: 'idle',
+                reason: null,
+                attempt: 0,
+                nextRetryAt: null,
+                lastConnectedAt: null,
+                lastDisconnectedAt: null,
+                lastErrorMessage: null,
+            });
+            return () => connectionStateListeners.delete(listener);
+        }),
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        initialize: vi.fn(),
+        request: vi.fn(async () => new Response('ok', { status: 200 })),
+    },
+}));
+
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { flushHookEffects } from '@/dev/testkit';
@@ -71,6 +105,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { Encryption } from '@/sync/encryption/encryption';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { storage } from '@/sync/domains/state/storage';
 
 function buildTokenWithSub(sub: string): string {
     const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
@@ -104,12 +139,21 @@ function installLocalStorage(): void {
     };
 }
 
+function publishConnectionState(state: ManagedConnectionState): void {
+    for (const listener of Array.from(connectionStateListeners)) {
+        listener(state);
+    }
+}
+
 describe('sync.create initial awaits', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         kvStore.clear();
         appStateAddListener.mockClear();
         trackMocks.initializeTracking.mockReset();
+        connectionStateListeners.clear();
+        socketStatusListeners.clear();
+        storage.getState().resetEndpointConnectivity();
         installLocalStorage();
     });
 
@@ -176,5 +220,45 @@ describe('sync.create initial awaits', () => {
 
         expect(trackMocks.initializeTracking).toHaveBeenNthCalledWith(1, encryptionA.anonID);
         expect(trackMocks.initializeTracking).toHaveBeenNthCalledWith(2, encryptionB.anonID);
+    });
+
+    it('mirrors auth-failed connection state into endpoint connectivity storage', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        const { syncCreate, syncSwitchServer } = await import('./sync');
+
+        const credentials: AuthCredentials = {
+            token: buildTokenWithSub('server-auth-failed'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+        };
+
+        await TokenStorage.setCredentials(credentials);
+
+        await syncSwitchServer(null);
+        const createPromise = syncCreate(credentials);
+        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
+        await createPromise;
+
+        publishConnectionState({
+            phase: 'auth_failed',
+            reason: 'auth_invalid',
+            attempt: 3,
+            nextRetryAt: null,
+            lastConnectedAt: 123,
+            lastDisconnectedAt: 456,
+            lastErrorMessage: 'HTTP 401',
+        });
+
+        expect(storage.getState()).toMatchObject({
+            endpointStatus: 'auth_failed',
+            endpointReason: 'auth_invalid',
+            endpointAttempt: 3,
+            endpointNextRetryAt: null,
+            endpointLastConnectedAt: 123,
+            endpointLastDisconnectedAt: 456,
+            endpointLastErrorMessage: 'HTTP 401',
+        });
     });
 });

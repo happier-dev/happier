@@ -14,6 +14,7 @@ type SessionListHeaderItemProps = Readonly<{
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
     hasMultipleMachines: boolean;
     onOpenProject: (workspaceRefId: string) => void;
+    onCreateSessionFromWorkspaceScope: (scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }>) => void;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
@@ -36,6 +37,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
     const headerActionHandlers = resolveSessionListHeaderActionHandlers({
         headerViewState,
         onOpenProject: props.onOpenProject,
+        onCreateSessionFromWorkspaceScope: props.onCreateSessionFromWorkspaceScope,
         onRenameWorkspace: props.onRenameWorkspace,
         onResetWorkspaceName: props.onResetWorkspaceName,
         onToggleCollapse: props.onToggleCollapse,
@@ -54,6 +56,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 hasCustomLabel={headerViewState.hasCustomLabel}
                 canOpenProject={Boolean(headerViewState.workspaceRefId)}
                 onOpenProject={headerActionHandlers.onOpenProject}
+                onCreateSession={headerActionHandlers.onCreateSession}
                 onRename={headerActionHandlers.onRename}
                 onReset={headerActionHandlers.onReset}
                 collapsed={headerViewState.collapsed}

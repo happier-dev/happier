@@ -136,19 +136,16 @@ const machineBashMock = vi.hoisted(() => vi.fn(async () => ({
 })));
 
 installNewSessionScreenModelCommonModuleMocks({
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({
-            router: {
-                push: vi.fn(),
-                replace: vi.fn(),
-                back: vi.fn(),
-                setParams: vi.fn(),
-            },
-            params: {},
-            navigation: {},
-            pathname: '/new',
-        }).module;
+    routerConfig: {
+        router: {
+            push: vi.fn(),
+            replace: vi.fn(),
+            back: vi.fn(),
+            setParams: vi.fn(),
+        },
+        params: {},
+        navigation: {},
+        pathname: '/new',
     },
     storage: async (importOriginal) => {
         const [

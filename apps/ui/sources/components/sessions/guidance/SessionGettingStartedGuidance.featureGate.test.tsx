@@ -68,9 +68,10 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 's1', generation: 1 }),
+    getActiveServerSnapshot: () => ({ serverId: 's1', serverUrl: 'https://api.happier.dev', generation: 1 }),
     getServerProfilesGeneration: () => 1,
     listServerProfiles: () => [{ id: 's1', name: 'cloud', serverUrl: 'https://api.happier.dev' }],
+    subscribeActiveServer: () => () => {},
     subscribeServerProfiles: () => () => {},
 }));
 

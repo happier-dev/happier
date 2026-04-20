@@ -1,17 +1,45 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey, type AcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    convertBackendTargetRefV2ToV1,
+    readBackendTargetRefV2,
+    type AcpCatalogSettingsV1,
+} from '@happier-dev/protocol';
 import {
     flushHookEffects,
     renderHook,
     renderScreen,
 } from '@/dev/testkit';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+function buildBuiltInBackendTargetKey(backendId: string): string {
+    return resolveBackendTargetKeyV2({ kind: 'backend', backendId });
+}
+
+function buildConfiguredAcpBackendTargetKey(configuredBackendId: string): string {
+    return resolveBackendTargetKeyV2({
+        kind: 'backend',
+        backendId: configuredBackendId,
+        configuredBackendId,
+    });
+}
+
+function buildProfileCompatibilityTargetKey(target: unknown): string {
+    // Real profile compatibility maps are still keyed by V1 backend target keys.
+    // Normalize whatever we get into a V1 carrier and then serialize.
+    try {
+        return buildBackendTargetKey(convertBackendTargetRefV2ToV1(readBackendTargetRefV2(target as any)));
+    } catch {
+        return buildBackendTargetKey(target as any);
+    }
+}
 
 const pendingFireAndForget = vi.hoisted((): Array<Promise<unknown>> => []);
 const applySettingsMock = vi.hoisted(() => vi.fn());
@@ -94,6 +122,7 @@ const profileCompatibilityState = vi.hoisted(() => ({
 const testSettingsDefaults = vi.hoisted(() => ({
     recentMachinePaths: [] as Array<{ machineId: string; path: string }>,
     lastUsedAgent: 'codex',
+    lastUsedBackendTarget: null as unknown,
     lastUsedPermissionMode: 'default',
     newSessionDefaultPersistenceModeV1: 'persisted' as 'persisted' | 'direct',
     newSessionDefaultPersistenceModeByTargetKeyV1: {} as Record<string, 'persisted' | 'direct'>,
@@ -266,15 +295,11 @@ installNewSessionScreenModelCommonModuleMocks({
             },
         }).module;
     },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const expoRouterMock = createExpoRouterMock({
-            router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() },
-            params: {},
-            navigation: {},
-            pathname: '/new',
-        });
-        return expoRouterMock.module;
+    routerConfig: {
+        router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() },
+        params: {},
+        navigation: {},
+        pathname: '/new',
     },
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/createPartialStorageModuleMock');
@@ -510,7 +535,7 @@ vi.mock('@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetS
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
     useNewSessionPreflightModelsState: (params: { backendTarget: any }) => {
-        const targetKey = buildBackendTargetKey(params.backendTarget);
+        const targetKey = resolveBackendTargetKeyV2(params.backendTarget);
         return {
             preflightModels: null,
             modelOptions: preflightModelOptionsByTargetKeyState.value[targetKey] ?? [],
@@ -521,7 +546,7 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState', () => ({
     useNewSessionPreflightSessionModesState: (params: { backendTarget: any }) => {
-        const targetKey = buildBackendTargetKey(params.backendTarget);
+        const targetKey = resolveBackendTargetKeyV2(params.backendTarget);
         return {
             preflightModes: null,
             modeOptions: preflightSessionModeOptionsByTargetKeyState.value[targetKey] ?? [],
@@ -532,7 +557,7 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessi
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState', () => ({
     useNewSessionPreflightConfigOptionsState: (params: { backendTarget: any }) => {
-        const targetKey = buildBackendTargetKey(params.backendTarget);
+        const targetKey = resolveBackendTargetKeyV2(params.backendTarget);
         return {
             configOptions: preflightConfigOptionsByTargetKeyState.value[targetKey] ?? null,
             probe: { phase: 'idle', refresh: vi.fn() },
@@ -710,12 +735,12 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentPickerOptions?.map((option: { id: string }) => option.id)).toEqual([
-            'agent:claude',
-            'agent:opencode',
-            'agent:codex',
+            buildBuiltInBackendTargetKey('claude'),
+            buildBuiltInBackendTargetKey('opencode'),
+            buildBuiltInBackendTargetKey('codex'),
         ]);
 
-        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.('agent:opencode'));
+        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.(buildBuiltInBackendTargetKey('opencode')));
 
         model = hook.getCurrent();
 
@@ -732,11 +757,11 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: true, codex: false, opencode: true },
         };
         preflightModelOptionsByTargetKeyState.value = {
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: [
+            [buildBuiltInBackendTargetKey('claude')]: [
                 { value: 'default', label: 'Claude default', description: 'Uses the backend default.' },
                 { value: 'claude-3.7-sonnet', label: 'Claude 3.7 Sonnet', description: 'Balanced coding model.' },
             ],
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'opencode' })]: [
+            [buildBuiltInBackendTargetKey('opencode')]: [
                 { value: 'default', label: 'OpenCode default', description: 'Uses the backend default.' },
                 { value: 'opencode-fast', label: 'OpenCode Fast', description: 'Lower latency coding model.' },
             ],
@@ -746,7 +771,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         let model = hook.getCurrent();
 
         const opencodeOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
-            option.id === buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'opencode' }));
+            option.id === buildBuiltInBackendTargetKey('opencode'));
 
         const opencodeDetailContent = opencodeOption?.renderDetailContent?.() ?? opencodeOption?.detailContent ?? null;
         expect(opencodeDetailContent).toBeTruthy();
@@ -763,6 +788,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
     it('threads ACP session mode options into the session-mode control when the backend exposes them', async () => {
         settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'claude' };
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [
@@ -786,13 +812,13 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        enabledAgentIdsState.value = ['claude', 'customAcp'];
+        enabledAgentIdsState.value = ['claude', 'codex'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { claude: true, customAcp: false, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
         preflightSessionModeOptionsByTargetKeyState.value = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: [
+            [buildConfiguredAcpBackendTargetKey('custom-preset')]: [
                 { id: 'plan', name: 'Plan', description: 'Structured planning mode.' },
                 { id: 'review', name: 'Review', description: 'Review and critique mode.' },
             ],
@@ -802,7 +828,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         let model = hook.getCurrent();
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; onApply?: () => void; renderDetailContent?: () => React.ReactNode; detailContent?: React.ReactNode }) =>
-            option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
+            option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
 
         expect(customPresetOption).toBeTruthy();
 
@@ -827,6 +853,8 @@ describe('useNewSessionScreenModel (installables)', () => {
 
     it('applies backend-specific model and ACP mode selections from the engine picker detail pane', async () => {
         settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'claude' };
+        persistedDraft.agentType = 'claude';
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [
@@ -850,19 +878,19 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        enabledAgentIdsState.value = ['claude', 'customAcp'];
+        enabledAgentIdsState.value = ['claude', 'codex'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { claude: true, customAcp: false, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
         preflightModelOptionsByTargetKeyState.value = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: [
+            [buildConfiguredAcpBackendTargetKey('custom-preset')]: [
                 { value: 'default', label: 'Preset default', description: 'Uses the backend default.' },
                 { value: 'preset-fast', label: 'Preset Fast', description: 'Fast preset model.' },
             ],
         };
         preflightSessionModeOptionsByTargetKeyState.value = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: [
+            [buildConfiguredAcpBackendTargetKey('custom-preset')]: [
                 { id: 'plan', name: 'Plan', description: 'Structured planning mode.' },
                 { id: 'review', name: 'Review', description: 'Review and critique mode.' },
             ],
@@ -875,7 +903,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(model?.simpleProps?.acpSessionModeId).toBe('plan');
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; onApply?: () => void; renderDetailContent?: () => React.ReactNode; detailContent?: React.ReactNode }) =>
-            option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
+            option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
         const detailElement = (customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent) as React.ReactElement<{
             onSelectionChange?: (selection: { modelId: string; sessionModeId: string }) => void;
         }> | undefined;
@@ -891,8 +919,9 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         model = hook.getCurrent();
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset');
+        expect(model?.simpleProps?.agentPickerSelectedOptionId).toBe(buildConfiguredAcpBackendTargetKey('custom-preset'));
         expect(model?.simpleProps?.modelMode).toBe('preset-fast');
         expect(model?.simpleProps?.acpSessionModeId).toBe('review');
     });
@@ -922,17 +951,17 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        enabledAgentIdsState.value = ['claude', 'customAcp'];
+        enabledAgentIdsState.value = ['claude', 'codex'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { claude: true, customAcp: false, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
 
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; renderDetailContent?: () => React.ReactNode }) =>
-            option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
+            option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
 
         expect(typeof customPresetOption?.renderDetailContent).toBe('function');
 
@@ -958,6 +987,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
     it('renders backend picker options with ACP config previews when the backend exposes them', async () => {
         settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'claude' };
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [
@@ -981,13 +1011,13 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        enabledAgentIdsState.value = ['claude', 'customAcp'];
+        enabledAgentIdsState.value = ['claude', 'codex'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { claude: true, customAcp: false, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
         preflightConfigOptionsByTargetKeyState.value = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: [
+            [buildConfiguredAcpBackendTargetKey('custom-preset')]: [
                 {
                     id: 'speed',
                     name: 'Speed',
@@ -1005,7 +1035,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         let model = hook.getCurrent();
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
-            option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
+            option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
 
         const customPresetDetailContent = customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent ?? null;
         expect(customPresetDetailContent).toBeTruthy();
@@ -1017,6 +1047,8 @@ describe('useNewSessionScreenModel (installables)', () => {
 
     it('applies backend-specific ACP config selections from the engine picker detail pane', async () => {
         settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'claude' };
+        persistedDraft.agentType = 'claude';
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [
@@ -1040,13 +1072,13 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        enabledAgentIdsState.value = ['claude', 'customAcp'];
+        enabledAgentIdsState.value = ['claude', 'codex'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { claude: true, customAcp: false, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
         preflightConfigOptionsByTargetKeyState.value = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: [
+            [buildConfiguredAcpBackendTargetKey('custom-preset')]: [
                 {
                     id: 'speed',
                     name: 'Speed',
@@ -1065,7 +1097,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(model?.simpleProps?.acpConfigOptionOverrides).toBeNull();
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; onApply?: () => void; renderDetailContent?: () => React.ReactNode; detailContent?: React.ReactNode }) =>
-            option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
+            option.id === buildConfiguredAcpBackendTargetKey('custom-preset'));
         const detailElement = (customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent) as React.ReactElement<{
             onSelectionChange?: (selection: { modelId: string; sessionModeId: string; configOverrides?: Record<string, string> }) => void;
         }> | undefined;
@@ -1082,7 +1114,8 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         model = hook.getCurrent();
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('claude');
+        expect(model?.simpleProps?.agentPickerSelectedOptionId).toBe(buildConfiguredAcpBackendTargetKey('custom-preset'));
         expect(model?.simpleProps?.acpConfigOptionOverrides).toEqual({
             v: 1,
             updatedAt: expect.any(Number),
@@ -1122,6 +1155,7 @@ describe('useNewSessionScreenModel (installables)', () => {
     it('keeps the current agent when none are selectable and no valid fallback exists', async () => {
         settingsState.codexBackendMode = 'mcp';
         settingsState.lastUsedAgent = 'codex';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'codex' };
         persistedDraft.agentType = 'codex';
         enabledAgentIdsState.value = ['claude', 'codex'];
         cliAvailabilityState.value = {
@@ -1136,9 +1170,10 @@ describe('useNewSessionScreenModel (installables)', () => {
     });
 
     it('uses per-agent permission defaults instead of the legacy last-used permission setting', async () => {
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'codex' };
         settingsState.lastUsedPermissionMode = 'yolo';
         settingsState.sessionDefaultPermissionModeByTargetKey = {
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'read-only',
+            [buildBuiltInBackendTargetKey('codex')]: 'read-only',
         };
         delete (persistedDraft as { permissionMode?: string }).permissionMode;
 
@@ -1149,7 +1184,12 @@ describe('useNewSessionScreenModel (installables)', () => {
     });
 
     it('keeps Custom ACP selected when a valid configured ACP backend is chosen even if the custom ACP CLI is unavailable', async () => {
-        settingsState.lastUsedAgent = 'customAcp';
+        settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = {
+            kind: 'backend',
+            backendId: 'custom-preset',
+            configuredBackendId: 'custom-preset',
+        };
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [
@@ -1174,31 +1214,36 @@ describe('useNewSessionScreenModel (installables)', () => {
             ],
         };
         settingsState.sessionDefaultPermissionModeByTargetKey = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: 'safe-yolo',
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' })]: 'read-only',
+            [buildConfiguredAcpBackendTargetKey('custom-preset')]: 'safe-yolo',
         };
-        persistedDraft.agentType = 'customAcp';
+        persistedDraft.agentType = 'claude';
         delete (persistedDraft as { permissionMode?: string }).permissionMode;
-        (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'custom-preset' };
+        (persistedDraft as any).backendTarget = {
+            kind: 'backend',
+            backendId: 'custom-preset',
+            configuredBackendId: 'custom-preset',
+        };
         persistedDraft.backendNewSessionOptionStateByTargetKey = {};
-        enabledAgentIdsState.value = ['customAcp', 'claude'];
+        enabledAgentIdsState.value = ['claude'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { customAcp: false, claude: true, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
 
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset');
+        expect(model?.simpleProps?.agentPickerSelectedOptionId).toBe(buildConfiguredAcpBackendTargetKey('custom-preset'));
         expect(model?.simpleProps?.permissionMode).toBe('safe-yolo');
     });
 
     it('falls back to an enabled built-in backend when a persisted configured ACP backend is disabled by target key', async () => {
         settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'claude' };
         settingsState.backendEnabledByTargetKey = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: false,
+            [buildConfiguredAcpBackendTargetKey('custom-preset')]: false,
         };
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
@@ -1223,12 +1268,16 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        persistedDraft.agentType = 'customAcp';
-        (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'custom-preset' };
-        enabledAgentIdsState.value = ['claude', 'customAcp'];
+        persistedDraft.agentType = 'claude';
+        (persistedDraft as any).backendTarget = {
+            kind: 'backend',
+            backendId: 'custom-preset',
+            configuredBackendId: 'custom-preset',
+        };
+        enabledAgentIdsState.value = ['claude'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { claude: true, customAcp: false, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
 
         const hook = await renderNewSessionScreenModel();
@@ -1241,6 +1290,7 @@ describe('useNewSessionScreenModel (installables)', () => {
     it('switches to a configured ACP backend when the selected profile is only compatible with that backend target', async () => {
         settingsState.useProfiles = true;
         settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'claude' };
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [
@@ -1274,8 +1324,12 @@ describe('useNewSessionScreenModel (installables)', () => {
             defaultPersistenceModeByTargetKey: {},
             compatibility: {},
             compatibilityByTargetKey: {
-                [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: false,
+                [buildProfileCompatibilityTargetKey({
+                    kind: 'backend',
+                    backendId: 'custom-preset',
+                    configuredBackendId: 'custom-preset',
+                })]: true,
+                [buildProfileCompatibilityTargetKey({ kind: 'backend', backendId: 'claude' })]: false,
             },
             envVarRequirements: [],
             isBuiltIn: false,
@@ -1285,21 +1339,22 @@ describe('useNewSessionScreenModel (installables)', () => {
         }] as any;
         profileCompatibilityState.isProfileCompatibleWithAnyAgent = () => false;
         profileCompatibilityState.isProfileCompatibleWithBackendTarget = (profile: any, target: any) =>
-            profile?.compatibilityByTargetKey?.[buildBackendTargetKey(target)] ?? false;
+            profile?.compatibilityByTargetKey?.[buildProfileCompatibilityTargetKey(target)] ?? false;
         persistedDraft.agentType = 'claude';
         persistedDraft.selectedProfileId = 'profile-1';
-        (persistedDraft as any).backendTarget = { kind: 'builtInAgent', agentId: 'claude' };
-        enabledAgentIdsState.value = ['claude', 'customAcp'];
+        (persistedDraft as any).backendTarget = { kind: 'backend', backendId: 'claude' };
+        enabledAgentIdsState.value = ['claude'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { claude: true, customAcp: false, codex: false, opencode: null },
+            available: { claude: true, codex: false, opencode: null },
         } as any;
 
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset');
+        expect(model?.simpleProps?.agentPickerSelectedOptionId).toBe(buildConfiguredAcpBackendTargetKey('custom-preset'));
         expect(model?.simpleProps?.selectedProfileId).toBe('profile-1');
     });
 
@@ -1321,7 +1376,7 @@ describe('useNewSessionScreenModel (installables)', () => {
             option?.label === 'agentInput.agent.gemini');
         expect(geminiOption).toBeTruthy();
 
-        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.(geminiOption?.id ?? 'agent:gemini'));
+        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.(geminiOption?.id ?? buildBuiltInBackendTargetKey('gemini')));
 
         model = hook.getCurrent();
 
@@ -1423,8 +1478,11 @@ describe('useNewSessionScreenModel (installables)', () => {
     it('prefers selected profile storage defaults over account defaults', async () => {
         featureEnabledState.sessionsDirect = true;
         settingsState.lastUsedAgent = 'codex';
+        settingsState.lastUsedBackendTarget = { kind: 'backend', backendId: 'codex' };
         settingsState.newSessionDefaultPersistenceModeV1 = 'persisted';
-        settingsState.newSessionDefaultPersistenceModeByTargetKeyV1 = { 'agent:codex': 'persisted' };
+        settingsState.newSessionDefaultPersistenceModeByTargetKeyV1 = {
+            [buildBuiltInBackendTargetKey('codex')]: 'persisted',
+        };
         settingsState.useProfiles = true;
         settingsState.profiles = [{
             id: 'profile-1',
@@ -1433,7 +1491,9 @@ describe('useNewSessionScreenModel (installables)', () => {
             defaultPermissionModeByAgent: {},
             defaultPermissionModeByTargetKey: {},
             defaultPersistenceModeByAgent: {},
-            defaultPersistenceModeByTargetKey: { 'agent:codex': 'direct' },
+            defaultPersistenceModeByTargetKey: {
+                [buildBuiltInBackendTargetKey('codex')]: 'direct',
+            },
             compatibility: { codex: true, claude: true, gemini: true },
             compatibilityByTargetKey: {},
             envVarRequirements: [],
@@ -1468,11 +1528,16 @@ describe('useNewSessionScreenModel (installables)', () => {
 
     it('recomputes transcript storage when switching configured ACP backend targets through the backend picker', async () => {
         featureEnabledState.sessionsDirect = true;
-        settingsState.lastUsedAgent = 'customAcp';
+        settingsState.lastUsedAgent = 'claude';
+        settingsState.lastUsedBackendTarget = {
+            kind: 'backend',
+            backendId: 'custom-preset-a',
+            configuredBackendId: 'custom-preset-a',
+        };
         settingsState.newSessionDefaultPersistenceModeV1 = 'persisted';
         settingsState.newSessionDefaultPersistenceModeByTargetKeyV1 = {
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset-a' })]: 'persisted',
-            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset-b' })]: 'direct',
+            [buildConfiguredAcpBackendTargetKey('custom-preset-a')]: 'persisted',
+            [buildConfiguredAcpBackendTargetKey('custom-preset-b')]: 'direct',
         };
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
@@ -1515,12 +1580,16 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        persistedDraft.agentType = 'customAcp';
-        (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'custom-preset-a' };
-        enabledAgentIdsState.value = ['customAcp'];
+        persistedDraft.agentType = 'claude';
+        (persistedDraft as any).backendTarget = {
+            kind: 'backend',
+            backendId: 'custom-preset-a',
+            configuredBackendId: 'custom-preset-a',
+        };
+        enabledAgentIdsState.value = ['claude'];
         cliAvailabilityState.value = {
             timestamp: 1,
-            available: { customAcp: false, codex: false, claude: false, opencode: null },
+            available: { codex: false, claude: false, opencode: null },
         } as any;
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
@@ -1540,15 +1609,13 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         expect(await renderStorageChipText()).toContain('sessionsList.storagePersistedTab');
 
-        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.(buildBackendTargetKey({
-            kind: 'configuredAcpBackend',
-            backendId: 'custom-preset-b',
-        })));
+        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.(buildConfiguredAcpBackendTargetKey('custom-preset-b')));
 
         model = hook.getCurrent();
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset B');
+        expect(model?.simpleProps?.agentPickerSelectedOptionId).toBe(buildConfiguredAcpBackendTargetKey('custom-preset-b'));
         expect(await renderStorageChipText()).toContain('sessionsList.storageDirectTab');
         await hook.unmount();
     });

@@ -1,4 +1,4 @@
-import type { AgentRuntimeDescriptorV1, DirectSessionsSource } from '@happier-dev/protocol';
+import { writeRuntimeDescriptorV1ToMetadata, type DirectSessionsSource, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import { getAgentBehavior, writeAgentVendorResumeIdToMetadata, type AgentId } from '@/agents/catalog/catalog';
 
@@ -31,14 +31,14 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
     completedAtMs: number;
     targetRemoteSessionId: string;
     targetDirectSource: DirectSessionsSource | Record<string, unknown>;
-    targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
+    targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): MetadataRecord {
     const sourceWorkspaceRootPath = normalizeWorkspaceRootPath(
         (input.sourceMetadataForHandoff ?? input.metadata).path,
     );
     const targetWorkspaceRootPath = normalizeWorkspaceRootPath(input.targetPath);
 
-    const next: MetadataRecord = writeAgentVendorResumeIdToMetadata({
+    let next: MetadataRecord = writeAgentVendorResumeIdToMetadata({
         ...input.metadata,
         machineId: input.targetMachineId,
         path: input.targetPath,
@@ -62,11 +62,7 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         Object.assign(next, providerPatch.metadataPatch);
     }
 
-    if (providerPatch?.runtimeDescriptor) {
-        next.agentRuntimeDescriptorV1 = providerPatch.runtimeDescriptor;
-    } else {
-        delete next.agentRuntimeDescriptorV1;
-    }
+    next = writeRuntimeDescriptorV1ToMetadata(next, providerPatch?.runtimeDescriptor ?? null) as MetadataRecord;
 
     if (input.sessionStorageAfter === 'direct') {
         delete next.externalHistoryImportV1;
@@ -78,7 +74,7 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
             source: input.targetDirectSource,
             linkedAtMs: input.completedAtMs,
             ...(providerPatch?.directSessionRuntimeDescriptor
-                ? { agentRuntimeDescriptorV1: providerPatch.directSessionRuntimeDescriptor }
+                ? { runtimeDescriptorV1: providerPatch.directSessionRuntimeDescriptor }
                 : {}),
         };
     } else {

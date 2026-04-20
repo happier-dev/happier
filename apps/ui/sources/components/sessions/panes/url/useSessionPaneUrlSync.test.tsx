@@ -407,7 +407,7 @@ describe('useSessionPaneUrlSync', () => {
             id: 'session-entry',
             happierSessionPane: {
                 scopeKey: 'session:restore-me',
-                urlSig: '||||',
+                urlSig: '|||||',
             },
         };
 
@@ -691,7 +691,7 @@ describe('useSessionPaneUrlSync', () => {
             id: 'history-entry',
             happierSessionPane: {
                 scopeKey: 'session:history',
-                urlSig: 'files|terminal|file|src/app.ts|',
+                urlSig: 'files|terminal|file|src/app.ts||',
             },
         });
 
@@ -735,6 +735,67 @@ describe('useSessionPaneUrlSync', () => {
         expect(pane.closeDetails).toHaveBeenCalledTimes(1);
         expect(pane.closeRight).toHaveBeenCalledTimes(1);
         expect(pane.closeBottom).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves terminalInstanceId when syncing terminal details state into route params and history', async () => {
+        const setParams = vi.fn();
+        const pane = {
+            openRight: vi.fn(),
+            closeRight: vi.fn(),
+            setRightTab: vi.fn(),
+            openBottom: vi.fn(),
+            closeBottom: vi.fn(),
+            setBottomTab: vi.fn(),
+            openDetailsTab: vi.fn(),
+            closeDetails: vi.fn(),
+        };
+        const windowStub = ensurePaneUrlSyncWindow();
+        windowStub.history.state = { id: 'history-entry' };
+
+        const openScopeState = {
+            right: { isOpen: false, activeTabId: null, tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, tabState: {} },
+            details: {
+                isOpen: true,
+                tabs: [
+                    {
+                        key: 'terminal:terminal-instance-7',
+                        kind: 'terminal',
+                        title: 'Terminal',
+                        resource: { kind: 'terminal', terminalInstanceId: 'terminal-instance-7' },
+                        isPinned: true,
+                        isPreview: false,
+                    },
+                ],
+                activeTabKey: 'terminal:terminal-instance-7',
+            },
+        };
+
+        await renderScreen(<Harness
+                    enabled={true}
+                    scopeKey="session:terminal-history"
+                    scopeState={openScopeState}
+                    urlState={null}
+                    pane={pane}
+                    setParams={setParams}
+                />);
+        await flushDeferredSessionPaneHistoryStateWrite();
+
+        expect(setParams).toHaveBeenCalledWith({
+            right: undefined,
+            bottom: undefined,
+            details: 'terminal',
+            path: undefined,
+            sha: undefined,
+            terminalInstanceId: 'terminal-instance-7',
+        });
+        expect(windowStub.history.state).toEqual({
+            id: 'history-entry',
+            happierSessionPane: {
+                scopeKey: 'session:terminal-history',
+                urlSig: '||terminal|||terminal-instance-7',
+            },
+        });
     });
 
     it('does not reconcile (close panes) when switching to a different scope key', async () => {
@@ -809,6 +870,90 @@ describe('useSessionPaneUrlSync', () => {
         expect(pane2.closeDetails).toHaveBeenCalledTimes(0);
         expect(pane2.closeRight).toHaveBeenCalledTimes(0);
         expect(pane2.closeBottom).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not apply route params into pane state when route param sync ownership is disabled', async () => {
+        const setParams = vi.fn();
+        const pane = {
+            openRight: vi.fn(),
+            closeRight: vi.fn(),
+            setRightTab: vi.fn(),
+            openBottom: vi.fn(),
+            closeBottom: vi.fn(),
+            setBottomTab: vi.fn(),
+            openDetailsTab: vi.fn(),
+            closeDetails: vi.fn(),
+        };
+
+        const closedScopeState = {
+            right: { isOpen: false, activeTabId: null, tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null },
+        };
+
+        await renderScreen(<Harness
+                    enabled={true}
+                    routeParamSyncEnabled={false}
+                    scopeKey="session:non-owner"
+                    scopeState={closedScopeState}
+                    urlState={{ rightTabId: 'files', bottomTabId: 'terminal', details: { kind: 'file', path: 'src/app.ts' } }}
+                    pane={pane}
+                    setParams={setParams}
+                />);
+
+        expect(pane.openRight).toHaveBeenCalledTimes(0);
+        expect(pane.openBottom).toHaveBeenCalledTimes(0);
+        expect(pane.openDetailsTab).toHaveBeenCalledTimes(0);
+        expect(setParams).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not write pane state back into the URL when route param sync ownership is disabled', async () => {
+        const setParams = vi.fn();
+        const pane = {
+            openRight: vi.fn(),
+            closeRight: vi.fn(),
+            setRightTab: vi.fn(),
+            openBottom: vi.fn(),
+            closeBottom: vi.fn(),
+            setBottomTab: vi.fn(),
+            openDetailsTab: vi.fn(),
+            closeDetails: vi.fn(),
+        };
+        const windowStub = ensurePaneUrlSyncWindow();
+        const pushStateMock = vi.spyOn(windowStub.history, 'pushState');
+        windowStub.location.href = 'http://localhost:19364/session/non-owner?server=http%3A%2F%2Flocalhost%3A53288';
+
+        const openScopeState = {
+            right: { isOpen: true, activeTabId: 'files', tabState: {} },
+            bottom: { isOpen: true, activeTabId: 'terminal', tabState: {} },
+            details: {
+                isOpen: true,
+                tabs: [
+                    {
+                        key: 'file:src/app.ts',
+                        kind: 'file',
+                        title: 'app.ts',
+                        resource: { kind: 'file', path: 'src/app.ts' },
+                        isPinned: true,
+                        isPreview: false,
+                    },
+                ],
+                activeTabKey: 'file:src/app.ts',
+            },
+        };
+
+        await renderScreen(<Harness
+                    enabled={true}
+                    routeParamSyncEnabled={false}
+                    scopeKey="session:non-owner"
+                    scopeState={openScopeState}
+                    urlState={null}
+                    pane={pane}
+                    setParams={setParams}
+                />);
+
+        expect(pushStateMock).toHaveBeenCalledTimes(0);
+        expect(setParams).toHaveBeenCalledTimes(0);
     });
 
     it('does not write params when url already matches the derived scope state', async () => {

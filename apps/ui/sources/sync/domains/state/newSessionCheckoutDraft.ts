@@ -1,9 +1,6 @@
-export interface NewSessionCheckoutCreationDraft {
-    kind: 'git_worktree';
-    displayName: string;
-    baseRef: string | null;
-    branchMode?: 'new' | 'existing';
-}
+import type { SessionAuthoringCheckoutCreationDraftV1 } from '@happier-dev/protocol';
+
+export type NewSessionCheckoutCreationDraft = SessionAuthoringCheckoutCreationDraftV1;
 
 export interface NewSessionCheckoutDraft {
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;

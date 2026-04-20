@@ -1,6 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-afterEach(() => {
+afterEach(async () => {
+    vi.useRealTimers();
+    try {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+    } catch {
+        // ignore
+    }
+    try {
+        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        await stopAllEndpointSupervisorsForTests();
+    } catch {
+        // ignore
+    }
+    const { resetRuntimeFetch } = await import('./client');
+    resetRuntimeFetch();
     vi.unstubAllGlobals();
     vi.resetModules();
     vi.clearAllMocks();

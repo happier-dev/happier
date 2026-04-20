@@ -141,6 +141,54 @@ describe('buildSessionGettingStartedViewModel', () => {
         expect(model.kind).toBe('create_session');
     });
 
+    it('treats a healthy local daemon as an online machine when the active server cache is empty', () => {
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true,
+            sessionCount: 0,
+            activeMachines: [],
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-a' },
+                activeServerId: 'srv-a',
+                allowedServerIds: ['srv-a'],
+            },
+            serverSelectionGroups: [],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            machineListByServerId: { 'srv-a': [] },
+            localDaemonStatus: {
+                serviceInstalled: true,
+                daemonRunning: true,
+                needsAuth: false,
+                machineId: 'machine-1',
+            },
+        });
+
+        expect(model.kind).toBe('create_session');
+    });
+
+    it('treats a healthy local daemon as an online machine when the active server cache only reports offline machines', () => {
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true,
+            sessionCount: 0,
+            activeMachines: [],
+            selection: {
+                activeTarget: { kind: 'server', id: 'srv-a' },
+                activeServerId: 'srv-a',
+                allowedServerIds: ['srv-a'],
+            },
+            serverSelectionGroups: [],
+            activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
+            machineListByServerId: { 'srv-a': [{ active: false }] },
+            localDaemonStatus: {
+                serviceInstalled: true,
+                daemonRunning: true,
+                needsAuth: false,
+                machineId: 'machine-1',
+            },
+        });
+
+        expect(model.kind).toBe('create_session');
+    });
+
     it('falls back to the active machine list when no visible server ids are selected', () => {
         const model = buildSessionGettingStartedViewModel({
             sessionsReady: true,

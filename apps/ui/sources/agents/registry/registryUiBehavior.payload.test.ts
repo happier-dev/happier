@@ -170,22 +170,6 @@ describe('buildResumeSessionExtrasFromUiState', () => {
         });
     });
 
-    it('does not add legacy configured ACP extras when resuming custom ACP sessions', () => {
-        expect(buildResumeSessionExtrasFromUiState({
-            agentId: 'customAcp',
-            settings: makeSettings(),
-            session: {
-                metadata: {
-                    acpConfiguredBackendV1: {
-                        v: 1,
-                        updatedAt: 123,
-                        backendId: 'custom-backend',
-                        title: 'Custom Kiro',
-                    },
-                },
-            } as any,
-        })).toEqual({});
-    });
 });
 
 describe('buildWakeResumeExtras', () => {
@@ -365,22 +349,6 @@ describe('buildWakeResumeExtras', () => {
         });
     });
 
-    it('does not add legacy configured ACP extras for custom ACP wake resumes', () => {
-        expect(buildWakeResumeExtras({
-            agentId: 'customAcp',
-            resumeCapabilityOptions: { accountSettings: makeSettings() },
-            session: {
-                metadata: {
-                    acpConfiguredBackendV1: {
-                        v: 1,
-                        updatedAt: 123,
-                        backendId: 'custom-backend',
-                        title: 'Custom Kiro',
-                    },
-                },
-            } as any,
-        })).toEqual({});
-    });
 });
 
 describe('buildSpawnEnvironmentVariablesFromUiState', () => {

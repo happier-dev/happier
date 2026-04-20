@@ -47,8 +47,8 @@ export function buildNewSessionAgentPickerOptions(
         isBackendEntrySelectable: params.isBackendEntrySelectable,
     });
 
-    const hasConfiguredAcpBackend = params.resolvedBackendEntries.some((entry) => entry.family === 'configuredAcpBackend');
-    if (params.resolvedBackendEntries.length <= 1 && !hasConfiguredAcpBackend) {
+    const hasNonBuiltInBackend = params.resolvedBackendEntries.some((entry) => entry.kind !== 'builtInAgent');
+    if (params.resolvedBackendEntries.length <= 1 && !hasNonBuiltInBackend) {
         return {
             selectableBackendEntries,
         };

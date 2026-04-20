@@ -2,8 +2,8 @@ import {
     buildCodexAgentRuntimeDescriptor,
     normalizeCodexBackendMode,
 } from '@happier-dev/agents';
-import type { AgentRuntimeDescriptorV1, DirectSessionsSource } from '@happier-dev/protocol';
-import { readCanonicalAgentRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
+import type { DirectSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { readCanonicalRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
 
 import type { AgentSessionHandoffProviderPatch } from '@/agents/registry/registryUiBehavior';
 
@@ -48,9 +48,9 @@ function buildCodexRuntimeDescriptor(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
     targetDirectSource: DirectSessionsSource | Record<string, unknown>;
-    targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
-}>): AgentRuntimeDescriptorV1 | null {
-    const importedRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'codex');
+    targetRuntimeDescriptor?: RuntimeDescriptorV1;
+}>): RuntimeDescriptorV1 | null {
+    const importedRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'codex');
     if (importedRuntimeDescriptor) {
         return buildCodexAgentRuntimeDescriptor({
             backendMode: importedRuntimeDescriptor.backendMode ?? 'appServer',
@@ -75,10 +75,10 @@ export function buildCodexSessionHandoffProviderPatch(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
     targetDirectSource: DirectSessionsSource | Record<string, unknown>;
-    targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
+    targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): AgentSessionHandoffProviderPatch {
     const runtimeDescriptor = buildCodexRuntimeDescriptor(input);
-    const canonicalRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(runtimeDescriptor, 'codex');
+    const canonicalRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(runtimeDescriptor, 'codex');
     const backendMode = canonicalRuntimeDescriptor?.backendMode ?? normalizeCodexBackendMode(input.metadata.codexBackendMode);
 
     return {

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_IDS } from '@/agents/catalog/catalog';
+import { PROVIDER_SETTINGS_DESCRIPTORS } from '@/agents/providers/catalog/providerSettingsCatalog';
 import { getProviderCliInstallGuideUrl } from '@happier-dev/agents';
 
-import { getProviderLocalAuthPlugin } from './providerLocalAuthRegistry';
+import { getProviderLocalAuthPlugin } from '@/agents/providers/catalog/providerLocalAuthCatalog';
 
 describe('provider local auth registry', () => {
-    it('covers every agent id with an explicit local auth plugin', () => {
-        expect(new Set(AGENT_IDS.map((agentId) => getProviderLocalAuthPlugin(agentId)?.providerId ?? null))).toEqual(new Set(AGENT_IDS));
+    it('covers every provider settings descriptor with an explicit local auth plugin', () => {
+        const providerIds = PROVIDER_SETTINGS_DESCRIPTORS.map((descriptor) => descriptor.providerId);
+        expect(new Set(providerIds.map((providerId) => getProviderLocalAuthPlugin(providerId as Parameters<typeof getProviderLocalAuthPlugin>[0])?.providerId ?? null))).toEqual(new Set(providerIds));
     });
 
     it('returns a Claude launch strategy that starts the CLI and submits /login as terminal input', () => {

@@ -22,6 +22,12 @@ const routerBackSpy = vi.hoisted(() => vi.fn(() => {
     (globalThis as any).location.pathname = '/session/s1/previous';
 }));
 const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
+const capturedOpenSessionSpy = vi.hoisted(() => vi.fn<(sid: string) => void>());
+const resolveServerIdForSessionIdFromLocalCacheSpy = vi.hoisted(() =>
+    vi.fn<(sessionId: string) => string | null>((sessionId: string) =>
+        sessionId === 's1' ? 'server-cache' : null
+    ),
+);
 
 const themeColors = {
     text: '#000',
@@ -89,6 +95,7 @@ installSessionShellCommonModuleMocks({
             },
         }).module,
     storage: async () => {
+        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
         const session: any = {
             id: 's1',
             seq: 1,
@@ -99,14 +106,11 @@ installSessionShellCommonModuleMocks({
             agentState: {},
         };
 
-        return {
-            storage: {
-                getState: () => ({
-                    sessions: { s1: session },
-                    settings: {},
-	                    concurrentSessionListCacheByServerId: {},
-                }),
-            } as any,
+        return createStorageModuleStub({
+            storage: createStorageStoreMock({
+                sessions: { s1: session },
+                settings: settingsDefaults,
+            }),
             useSession: () => session,
             useIsDataReady: () => true,
             useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
@@ -126,9 +130,13 @@ installSessionShellCommonModuleMocks({
             useAutomations: () => [],
             useMachine: () => null,
             useServerScopedMachine: () => null,
-        };
+        });
     },
 });
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
+    resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
+}));
 
 vi.mock('react-native-reanimated', () => ({ __esModule: true, default: {} }));
 vi.mock('react-native-reanimated/lib/module', () => ({ __esModule: true, default: {} }));
@@ -234,10 +242,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
-vi.mock('@/sync/domains/session/activeViewingSession', () => ({
-    setActiveViewingSessionId: () => {},
-    clearActiveViewingSessionId: () => {},
-}));
 vi.mock('@/sync/sync', () => ({
     sync: {
         markSessionViewed: async () => {},
@@ -260,8 +264,18 @@ vi.mock('@/sync/ops', () => ({
     sessionSwitch: vi.fn(),
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-    createDefaultActionExecutor: () => ({ execute: vi.fn() }),
+    createDefaultActionExecutor: (params: any) => {
+        capturedOpenSessionSpy.mockImplementation((sid: string) => params.openSession(sid));
+        return { execute: vi.fn() };
+    },
 }));
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
+    return {
+        ...actual,
+        getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+    };
+});
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',
@@ -311,6 +325,11 @@ describe('SessionView info navigation', () => {
         routerNavigateSpy.mockReset();
         routerBackSpy.mockClear();
         chatHeaderPropsSpy.mockReset();
+        capturedOpenSessionSpy.mockReset();
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation((sessionId: string) =>
+            sessionId === 's1' ? 'server-cache' : null
+        );
         const activeElementBlurSpy = vi.fn();
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/session/s1', pathname: '/session/s1' },
@@ -332,7 +351,32 @@ describe('SessionView info navigation', () => {
         standardCleanup();
     });
 
-    it('opens session info via singular navigate instead of stacking pushes', async () => {
+    it('opens session info via singular navigate using the route-scoped server id instead of stacking pushes', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" routeServerId="server-2" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
+        expect(typeof headerProps?.onAvatarPress).toBe('function');
+
+        headerProps?.onAvatarPress?.();
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2', expect.objectContaining({
+            dangerouslySingular: expect.any(Function),
+        }));
+        expect((globalThis as any).document.activeElement.blur).toHaveBeenCalledTimes(1);
+
+        const singular = routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular;
+        expect(typeof singular).toBe('function');
+        expect(singular()).toBe('session-info');
+    });
+
+    it('opens session info via singular navigate using the cached owning server id when the route is missing server scope', async () => {
         const { SessionView } = await import('./SessionView');
 
         await renderScreen(
@@ -345,16 +389,24 @@ describe('SessionView info navigation', () => {
 
         headerProps?.onAvatarPress?.();
 
-        expect(routerPushSpy).not.toHaveBeenCalled();
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info', expect.objectContaining({
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-cache', expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
-        expect((globalThis as any).document.activeElement.blur).toHaveBeenCalledTimes(1);
+    });
 
-        const singular = routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular;
-        expect(typeof singular).toBe('function');
-        expect(singular()).toBe('session-info');
+    it('opens child sessions with the route-scoped server id when cache resolution is unavailable', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" routeServerId="server-2" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        capturedOpenSessionSpy('child-session-1');
+
+        expect(routerPushSpy).toHaveBeenCalledTimes(1);
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-2');
     });
 
     it('uses back navigation for the session header back affordance', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { FetchChangesFn } from './socketReconnectViaChanges';
 import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges';
+import { HappyError } from '@/utils/errors/errors';
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
@@ -36,6 +37,30 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
 
         expect(res).toEqual({ status: 'fallback' });
         expect(fetchChanges).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates terminal auth errors without snapshot fallback', async () => {
+        const authError = new HappyError('Authentication required', false, {
+            kind: 'auth',
+            code: 'not_authenticated',
+            status: 401,
+        });
+        const fetchChanges = vi.fn<FetchChangesFn>(async () => {
+            throw authError;
+        });
+        const snapshotRefresh = vi.fn(async () => {});
+
+        await expect(runSocketReconnectCatchUpViaChanges({
+            credentials,
+            accountId: 'a',
+            afterCursor: '0',
+            changesPageLimit: 200,
+            forceSnapshotRefresh: false,
+            fetchChanges,
+            applyPlanned: async () => {},
+            snapshotRefresh,
+        })).rejects.toBe(authError);
+        expect(snapshotRefresh).not.toHaveBeenCalled();
     });
 
     it('triggers snapshot refresh on cursor-gone and flushes cursor immediately', async () => {

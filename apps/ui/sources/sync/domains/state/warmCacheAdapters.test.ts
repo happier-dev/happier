@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     buildMachineDisplayCacheEntryFromRenderable,
     buildMachineDisplayCacheEntriesFromRenderables,
+    buildSessionListRenderableFromCacheEntry,
     buildSessionListCacheEntryFromRenderable,
     buildSessionListCacheEntriesFromRenderables,
 } from './warmCacheAdapters';
@@ -204,6 +205,39 @@ describe('warmCacheAdapters', () => {
             host: 'mbp',
             homeDir: '/home/u',
         }));
+    });
+
+    it('roundtrips keepVisibleWhenInactive through cache entries', () => {
+        const entry = buildSessionListCacheEntryFromRenderable({
+            id: 's1',
+            seq: 1,
+            createdAt: 5,
+            updatedAt: 20,
+            active: false,
+            activeAt: 20,
+            archivedAt: null,
+            pendingCount: 0,
+            pendingVersion: 0,
+            metadataVersion: 2,
+            agentStateVersion: 4,
+            metadata: {
+                name: 'Cached title',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                host: 'mbp',
+                machineId: 'm1',
+                flavor: 'codex',
+                directSessionV1: null,
+                hiddenSystemSession: false,
+            },
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+            keepVisibleWhenInactive: true,
+        } as any);
+
+        expect(entry.keepVisibleWhenInactive).toBe(true);
+        expect(buildSessionListRenderableFromCacheEntry(entry).keepVisibleWhenInactive).toBe(true);
     });
 
     it('reuses the previous machine display cache map when renderables are semantically identical', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   shouldRenderChatTimelineForSession,
+  shouldRequestRemoteControl,
   shouldRequestRemoteControlAfterPendingEnqueue,
 } from './localControlSwitch';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -17,6 +18,21 @@ describe('localControlSwitch', () => {
         agentState: { controlledByUser: true },
       } as Session),
     ).toBe(true);
+  });
+
+  it('does not request remote control when the CLI auth state is logged out', () => {
+    expect(
+      shouldRequestRemoteControl({
+        presence: 'online',
+        agentState: { controlledByUser: true },
+      } as Session, 'logged_out'),
+    ).toBe(false);
+    expect(
+      shouldRequestRemoteControlAfterPendingEnqueue({
+        presence: 'online',
+        agentState: { controlledByUser: true },
+      } as Session, 'logged_out'),
+    ).toBe(false);
   });
 
   it('does not request remote control when session is not controlled by user', () => {

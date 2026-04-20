@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { voiceSettingsDefaults, voiceSettingsParse } from './voiceSettings';
+import {
+  VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS,
+  voiceSettingsDefaults,
+  voiceSettingsParse,
+} from './voiceSettings';
 
 describe('voiceSettings', () => {
   it('defaults include ui activity feed + scope settings', () => {
@@ -58,12 +62,12 @@ describe('voiceSettings', () => {
 
   it('defaults include hands-free endpointing settings for local voice', () => {
     const localConversation = (voiceSettingsDefaults as any).adapters?.local_conversation;
-    expect(localConversation?.handsFree?.endpointing?.silenceMs).toBe(5000);
-    expect(localConversation?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+    expect(localConversation?.handsFree?.endpointing?.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
+    expect(localConversation?.handsFree?.endpointing?.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
 
     const localDirect = (voiceSettingsDefaults as any).adapters?.local_direct;
-    expect(localDirect?.handsFree?.endpointing?.silenceMs).toBe(5000);
-    expect(localDirect?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+    expect(localDirect?.handsFree?.endpointing?.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
+    expect(localDirect?.handsFree?.endpointing?.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
   });
 
   it('migrates legacy hands-free endpointing defaults to the new voice defaults', () => {
@@ -84,10 +88,10 @@ describe('voiceSettings', () => {
       },
     });
 
-    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.silenceMs).toBe(5000);
-    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
-    expect((parsed as any).adapters?.local_direct?.handsFree?.endpointing?.silenceMs).toBe(5000);
-    expect((parsed as any).adapters?.local_direct?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
+    expect((parsed as any).adapters?.local_direct?.handsFree?.endpointing?.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
+    expect((parsed as any).adapters?.local_direct?.handsFree?.endpointing?.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
   });
 
   it('preserves custom hands-free endpointing values when they are not the legacy defaults', () => {
@@ -113,14 +117,14 @@ describe('voiceSettings', () => {
         local_conversation: {
           handsFree: {
             enabled: false,
-            endpointing: { silenceMs: 5000, minSpeechMs: 120 },
+            endpointing: { silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs, minSpeechMs: 120 },
           },
         },
       },
     });
 
-    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.silenceMs).toBe(5000);
-    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
   });
 
   it('defaults include a generous streamed-turn timeout for local voice agents', () => {
@@ -150,6 +154,7 @@ describe('voiceSettings', () => {
     expect(tts?.openaiCompat?.format).toBe('mp3');
     expect(tts?.localNeural?.model).toBe('kokoro');
     expect(tts?.localNeural?.assetId).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
+    expect(tts?.localNeural?.execution).toBe('auto');
   });
 
   it('defaults include local STT provider selection', () => {
@@ -157,6 +162,7 @@ describe('voiceSettings', () => {
     expect(stt?.provider).toBe('openai_compat');
     expect(stt?.openaiCompat?.model).toBe('whisper-1');
     expect(stt?.localNeural?.assetId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
+    expect(stt?.localNeural?.execution).toBe('auto');
   });
 
   it('accepts local_neural as a local TTS provider (Kokoro model)', () => {
@@ -167,7 +173,7 @@ describe('voiceSettings', () => {
           tts: {
             provider: 'local_neural',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-            localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1 },
+            localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'daemon' },
             googleCloud: { apiKey: null, voiceName: null, languageCode: null, format: 'mp3' },
             autoSpeakReplies: true,
             bargeInEnabled: true,
@@ -181,6 +187,7 @@ describe('voiceSettings', () => {
     expect(tts?.localNeural?.model).toBe('kokoro');
     expect(tts?.localNeural?.assetId).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
     expect(tts?.localNeural?.voiceId).toBe('af_heart');
+    expect(tts?.localNeural?.execution).toBe('daemon');
   });
 
   it('accepts local_neural as a local STT provider', () => {
@@ -192,7 +199,7 @@ describe('voiceSettings', () => {
             provider: 'local_neural',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
             googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
-            localNeural: { assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17', language: 'en' },
+            localNeural: { assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17', language: 'en', execution: 'device' },
           },
         },
       },
@@ -201,6 +208,7 @@ describe('voiceSettings', () => {
     const stt = (parsed as any).adapters?.local_direct?.stt;
     expect(stt?.provider).toBe('local_neural');
     expect(stt?.localNeural?.assetId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
+    expect(stt?.localNeural?.execution).toBe('device');
   });
 
   it('migrates legacy local TTS settings into provider format', () => {

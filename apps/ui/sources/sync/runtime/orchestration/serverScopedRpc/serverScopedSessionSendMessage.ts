@@ -10,6 +10,8 @@ import { resolveScopedSessionDataKey } from '@/sync/runtime/orchestration/server
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import { randomUUID } from '@/platform/randomUUID';
 import { socketEmitWithAckFallback } from '@/sync/engine/socket/socketEmitWithAckFallback';
+import { assertEndpointAuthenticatedWithProbe } from '@/sync/runtime/connectivity/assertEndpointAuthenticatedWithProbe';
+import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 
 import type { ResolvedServerSessionRpcContext } from './resolveServerScopedSessionContext';
 
@@ -31,6 +33,10 @@ type Deps = Readonly<{
   resolveContext: typeof resolveServerScopedSessionContext;
   resolveSessionDataKey: typeof resolveScopedSessionDataKey;
   createSocket: (params: Readonly<{ serverUrl: string; token: string; timeoutMs: number }>) => Promise<ScopedSocketClientLike>;
+  assertScopedEndpointAuthenticated: (
+    context: Extract<ResolvedServerSessionRpcContext, { scope: 'scoped' }>,
+    options?: Readonly<{ forceProbe?: boolean }>,
+  ) => Promise<void> | void;
   getScopedSessionEncryption: (params: Readonly<{
     context: Awaited<ReturnType<typeof resolveServerScopedSessionContext>>;
     sessionId: string;
@@ -88,6 +94,16 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     resolveContext: deps?.resolveContext ?? resolveServerScopedSessionContext,
     resolveSessionDataKey: deps?.resolveSessionDataKey ?? resolveScopedSessionDataKey,
     createSocket: deps?.createSocket ?? (async (params) => await createEphemeralServerSocketClient(params)),
+    assertScopedEndpointAuthenticated:
+      deps?.assertScopedEndpointAuthenticated ??
+      (async (context, options) => {
+        await assertEndpointAuthenticatedWithProbe({
+          serverId: context.targetServerId,
+          serverUrl: context.targetServerUrl,
+          forceProbe: options?.forceProbe === true,
+          timeoutMs: context.timeoutMs,
+        });
+      }),
     getScopedSessionEncryption: deps?.getScopedSessionEncryption ?? defaultGetScopedSessionEncryption,
     sendMessageActive:
       deps?.sendMessageActive ??
@@ -178,6 +194,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
 
     const socket = await d.createSocket({ serverUrl: context.targetServerUrl, token: context.token, timeoutMs: context.timeoutMs });
     try {
+      await d.assertScopedEndpointAuthenticated(context);
       const rawAck = await socketEmitWithAckFallback({
         emitWithAck: async (event, payload, opts) => {
           const timeoutMs = typeof opts?.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : context.timeoutMs;
@@ -190,6 +207,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
         payload,
         timeoutMs: context.timeoutMs,
         onNoAck: () => {},
+        beforeFallback: () => d.assertScopedEndpointAuthenticated(context, { forceProbe: true }),
       });
       if (!rawAck) {
         return { ok: true, ack: { ok: false, state: 'ack_unknown', localId } };
@@ -202,7 +220,10 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
         return { ok: false, errorCode: 'send_failed', error: parsed.data.error ?? 'send_failed' };
       }
       return { ok: true, ack: parsed.data };
-    } catch (e: any) {
+    } catch (e: unknown) {
+      if (isTerminalAuthError(e)) {
+        throw e;
+      }
       return { ok: false, errorCode: 'send_failed', error: e instanceof Error ? e.message : 'send_failed' };
     } finally {
       try {

@@ -3,8 +3,6 @@ import type { StyleProp, ImageStyle } from 'react-native';
 import * as ReactNativeSvg from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { AgentId } from './registryCore';
-
 import {
     getAgentIconSource,
     getAgentIconSvgXml,
@@ -13,7 +11,7 @@ import {
 import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 
 type AgentIconProps = Readonly<{
-    agentId: AgentId;
+    agentId: string;
     size: number;
     style?: StyleProp<ImageStyle>;
     testID?: string;

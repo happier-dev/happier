@@ -52,7 +52,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
 
     function Harness() {
       useNewSessionPreflightSessionModesState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -72,7 +72,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
 
     function Harness2() {
       useNewSessionPreflightSessionModesState2({
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -106,7 +106,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
 
     function Harness() {
       useNewSessionPreflightSessionModesState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -126,7 +126,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
 
     function Harness2() {
       useNewSessionPreflightSessionModesState2({
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',

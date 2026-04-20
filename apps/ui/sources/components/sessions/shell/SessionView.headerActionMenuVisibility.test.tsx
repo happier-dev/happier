@@ -47,6 +47,15 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+  return {
+    ...actual,
+    parsePermissionIntentAlias: () => null,
+    resolveAgentIdFromFlavor: () => 'codex',
+    resolveAgentIdFromSessionMetadata: () => 'codex',
+  };
+});
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
@@ -118,8 +127,72 @@ vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
   useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
 }));
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+  getResolvedBackendCatalogEntries: () => [],
+}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+  useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+}));
+vi.mock('@/agents/catalog/catalog', () => ({
+  AGENT_IDS: ['codex'],
+  buildResumeSessionExtrasFromUiState: () => null,
+  getAgentCore: () => ({
+    cli: { detectKey: 'codex' },
+    uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+    model: { defaultMode: 'default' },
+    resume: { vendorResumeIdField: null },
+    sessionModes: { kind: 'none' },
+  }),
+  isAgentId: (value: unknown) => value === 'codex',
+  resolveAgentIdFromFlavor: () => 'codex',
+}));
+vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
+  useEnabledAgentIds: () => ['codex'],
+}));
+vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
+  useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: {} }),
+}));
+vi.mock('@/agents/runtime/resumeCapabilities', () => ({
+  canResumeSessionWithOptions: () => true,
+}));
+vi.mock('@/agents/registry/registryCore', () => ({
+  AGENT_IDS: ['codex'],
+  CANONICAL_AGENT_IDS: ['codex'],
+  DEFAULT_AGENT_ID: 'codex',
+  getAgentCore: () => ({
+    cli: { detectKey: 'codex' },
+    connectedServices: null,
+    uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+    permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
+  }),
+  isAgentId: (value: unknown) => value === 'codex',
+  resolveAgentIdFromFlavor: () => 'codex',
+}));
+vi.mock('@/agents/providers/registry/providerUniverse', () => ({
+  buildProviderUniverseBackendTargetKey: (providerId: string) => `provider:${providerId}`,
+  listProviderUniverseIds: () => ['codex'],
+}));
+vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
+  PROVIDER_SETTINGS_BEHAVIORS: [],
+  PROVIDER_SETTINGS_DESCRIPTORS: [],
+  PROVIDER_SETTINGS_PLUGINS: [],
+  getCompatProviderSettingsPlugin: () => null,
+  getProviderSettingsBehavior: () => null,
+  getProviderSettingsDescriptor: () => null,
+  getProviderSettingsPlugin: () => null,
+  resolveProviderSettingsRegistryEntry: () => ({
+    providerId: '',
+    plugin: null,
+    descriptor: null,
+    behavior: null,
+    registered: false,
+  }),
+}));
 vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
   navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
+}));
+vi.mock('@/hooks/auth/useCLIDetection', () => ({
+  useCLIDetection: () => ({ authStatus: {} }),
 }));
 vi.mock('@/utils/platform/responsive', () => ({
   useDeviceType: () => responsiveState.deviceType,
@@ -286,6 +359,7 @@ installSessionShellCommonModuleMocks({
 
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
   shouldRenderChatTimelineForSession: () => true,
+  shouldRequestRemoteControl: () => false,
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 
@@ -382,7 +456,7 @@ describe('SessionView header action menu visibility', () => {
     pressTestInstance(openAutomationsButton, 'session.openAutomations');
 
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations');
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
   });
 
   it('folds runs and automations buttons into the header action menu when the header is narrow', async () => {
@@ -429,6 +503,41 @@ describe('SessionView header action menu visibility', () => {
     expect(rerenderedProps?.extraItems).toBe(extraItems);
     const rerenderedHeaderProps = chatHeaderSpy.mock.calls.at(-1)?.[0] as any;
     expect(rerenderedHeaderProps?.badges).toEqual(firstBadges);
+  });
+
+  it('routes folded runs menu action through the scoped session href', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
+    executionRunsFeatureState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = true;
+    executionRunsBackendsState.backends = null;
+
+    await renderSessionView();
+
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    const handled = props?.onSelectExtraItem?.('header.openRuns');
+
+    expect(handled).toBe(true);
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/runs?serverId=server-1');
+  });
+
+  it('routes folded automations menu action through the scoped session href', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
+    automationsSupportState.enabled = true;
+
+    await renderSessionView();
+
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    const handled = props?.onSelectExtraItem?.('header.openAutomations');
+
+    expect(handled).toBe(true);
+    expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
   });
 
   it('preserves the visible header props when rerendered with identical session values', async () => {

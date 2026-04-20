@@ -6,7 +6,7 @@ import type { SessionListIndexItem } from '../../domains/sessionList/sessionList
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
 import { customerInfoToPurchases, type Purchases } from '../../domains/purchases/purchases';
 import { applySettings, settingsParse, type Settings } from '../../domains/settings/settings';
-import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
+import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/settingsPersistence';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ConcurrentSessionListCacheByServerId } from '../../domains/session/listing/concurrentSessionListCache';
 import {

@@ -1,7 +1,7 @@
-import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { describe, expect, test } from 'vitest';
 
 import { canAgentResume, canResumeSession, canResumeSessionWithOptions, getAgentVendorResumeId } from './resumeCapabilities';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 describe('getAgentVendorResumeId', () => {
     test('returns null when metadata missing', () => {
@@ -166,7 +166,7 @@ describe('configured ACP resume capability', () => {
         const options = {
             accountSettings: {
                 backendEnabledByTargetKey: {
-                    [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: false,
+                    [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'custom-backend', configuredBackendId: 'custom-backend' })]: false,
                 },
             },
         };
@@ -187,7 +187,7 @@ describe('configured ACP resume capability', () => {
         const options = {
             accountSettings: {
                 backendEnabledByTargetKey: {
-                    [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
+                    [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'custom-backend', configuredBackendId: 'custom-backend' })]: true,
                 },
             },
         };

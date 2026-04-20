@@ -81,7 +81,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     let latestPreflightModels: any = null;
     function Harness() {
       latestPreflightModels = useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -103,7 +103,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     let latestPreflightModelsAfterReload: any = null;
     function Harness2() {
       latestPreflightModelsAfterReload = useNewSessionPreflightModelsState2({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -160,7 +160,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
 
     function Harness() {
       useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -181,7 +181,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
 
     function Harness2() {
       useNewSessionPreflightModelsState2({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -280,7 +280,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
       let latestPreflightModels: any = null;
       function Harness() {
         latestPreflightModels = useNewSessionPreflightModelsState({
-          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          backendTarget: { kind: 'backend', backendId: 'codex' },
           selectedMachineId: 'machine-1',
           capabilityServerId: 'server-1',
           cwd: '/repo',
@@ -403,7 +403,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
       let latestPreflightModels: any = null;
       function Harness() {
         latestPreflightModels = useNewSessionPreflightModelsState({
-          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          backendTarget: { kind: 'backend', backendId: 'codex' },
           selectedMachineId: 'machine-1',
           capabilityServerId: 'server-1',
           cwd: '/repo',

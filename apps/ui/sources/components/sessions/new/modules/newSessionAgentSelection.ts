@@ -1,5 +1,5 @@
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 type AgentAvailabilityById = Readonly<Partial<Record<AgentId, boolean | null>>>;
@@ -7,12 +7,10 @@ type AgentAuthStatusById = Readonly<Partial<Record<AgentId, CliAuthStatusData | 
 type InstallableDepKeyCountByAgentId = Readonly<Partial<Record<AgentId, number>>>;
 type SelectableWithoutCliByAgentId = Readonly<Partial<Record<AgentId, boolean>>>;
 
-export type NewSessionSelectableBackendEntry = Readonly<{
-    target: BackendTargetRefV1;
-    targetKey: string;
-    builtInAgentId: AgentId | null;
-    family: 'builtInAgent' | 'configuredAcpBackend';
-}>;
+export type NewSessionSelectableBackendEntry = Pick<
+    ResolvedBackendCatalogEntry,
+    'backendTarget' | 'backendTargetKey' | 'builtInAgentId' | 'kind'
+>;
 
 type BaseSelectionParams = Readonly<{
     detectionTimestamp: number;
@@ -57,7 +55,7 @@ function resolveBackendEntryUnavailabilityReasonForNewSession(params: Readonly<{
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
 }>): Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'logged-out:any'> | null {
-    if (params.entry.family === 'configuredAcpBackend') {
+    if (params.entry.kind !== 'builtInAgent') {
         return null;
     }
     if (!params.entry.builtInAgentId) {
@@ -197,7 +195,7 @@ export function resolveNextSelectableBackendEntryForNewSession(params: Readonly<
     });
     if (selectableEntries.length === 0) return null;
 
-    const currentIndex = selectableEntries.findIndex((entry) => entry.targetKey === params.currentTargetKey);
+    const currentIndex = selectableEntries.findIndex((entry) => entry.backendTargetKey === params.currentTargetKey);
     if (currentIndex < 0) {
         return selectableEntries[0] ?? null;
     }

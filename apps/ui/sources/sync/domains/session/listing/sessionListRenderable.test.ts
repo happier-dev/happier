@@ -10,6 +10,7 @@ import { buildSessionListRenderableMetadataComparison } from './sessionListRende
 const storageState = vi.hoisted(() => ({
     sessionMessages: {} as Record<string, unknown>,
 }));
+const readStorageState = () => storageState as any;
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -26,6 +27,11 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 beforeEach(() => {
     storageState.sessionMessages = {};
+});
+
+beforeEach(async () => {
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    registerStorageStateReader(readStorageState);
 });
 
 describe('derivePendingRequestFlagsFromAgentState', () => {

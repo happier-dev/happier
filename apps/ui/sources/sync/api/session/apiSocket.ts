@@ -23,6 +23,19 @@ import {
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
+import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+
+const STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS =
+    process.env.EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS;
+
+function readSocketAckAuthSettleTimeoutMs(): number {
+    const raw = String(STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS ?? '').trim();
+    if (!raw) return 250;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return 250;
+    return Math.max(0, Math.min(5_000, parsed));
+}
 
 function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | 'e2ee' | null {
     const sid = String(sessionId ?? '').trim();
@@ -381,7 +394,11 @@ class ApiSocket {
         params: A,
         options?: { timeoutMs?: number },
     ): Promise<R> {
-        const machineEncryption = this.encryption!.getMachineEncryption(machineId);
+        const encryption = this.encryption;
+        if (!encryption) {
+            throw new Error(`Machine encryption not found for ${machineId}`);
+        }
+        const machineEncryption = encryption.getMachineEncryption(machineId);
         if (!machineEncryption) {
             throw new Error(`Machine encryption not found for ${machineId}`);
         }
@@ -411,14 +428,21 @@ class ApiSocket {
     }
 
     async emitWithAck<T = any>(event: string, data: any, opts?: { timeoutMs?: number }): Promise<T> {
+        if (this.currentConnectionState.phase === 'auth_failed') {
+            throw createNotAuthenticatedError();
+        }
         if (!this.socket) {
             throw new Error('Socket not connected');
         }
         const timeoutMs = opts?.timeoutMs;
-        if (typeof timeoutMs === 'number' && timeoutMs > 0) {
-            return await this.socket.timeout(timeoutMs).emitWithAck(event, data) as T;
+        try {
+            if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+                return await this.socket.timeout(timeoutMs).emitWithAck(event, data) as T;
+            }
+            return await this.socket.emitWithAck(event, data) as T;
+        } catch (error) {
+            throw await this.coerceAckTimeoutAuthError(error);
         }
-        return await this.socket.emitWithAck(event, data) as T;
     }
 
     //
@@ -677,6 +701,54 @@ class ApiSocket {
 
     private setError(error: Error) {
         this.errorListeners.forEach(listener => listener(error));
+    }
+
+    private async coerceAckTimeoutAuthError(error: unknown): Promise<unknown> {
+        if (!isSocketIoAckTimeoutError(error)) {
+            return error;
+        }
+        if (this.currentConnectionState.phase === 'auth_failed') {
+            return createNotAuthenticatedError();
+        }
+
+        const timeoutMs = readSocketAckAuthSettleTimeoutMs();
+        if (timeoutMs <= 0) {
+            return error;
+        }
+
+        const authFailed = await this.waitForConnectionAuthFailure(timeoutMs);
+        return authFailed ? createNotAuthenticatedError() : error;
+    }
+
+    private async waitForConnectionAuthFailure(timeoutMs: number): Promise<boolean> {
+        if (this.currentConnectionState.phase === 'auth_failed') {
+            return true;
+        }
+
+        return await new Promise<boolean>((resolve) => {
+            let timeout: ReturnType<typeof setTimeout> | null = null;
+            let listener: ((state: ManagedConnectionState) => void) | null = null;
+
+            const finish = (value: boolean): void => {
+                if (timeout) {
+                    clearTimeout(timeout);
+                    timeout = null;
+                }
+                if (listener) {
+                    this.connectionStateListeners.delete(listener);
+                }
+                resolve(value);
+            };
+
+            listener = (state: ManagedConnectionState): void => {
+                if (state.phase === 'auth_failed') {
+                    finish(true);
+                }
+            };
+
+            this.connectionStateListeners.add(listener);
+            timeout = setTimeout(() => finish(false), Math.max(0, timeoutMs));
+        });
     }
 }
 

@@ -3,6 +3,8 @@ import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } fro
 import type { ServerProfileSource } from './serverProfiles';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
 
+export { upsertAndActivateServer } from './serverRuntime';
+
 export function normalizeServerUrl(raw: string): string {
     return canonicalizeServerUrl(raw);
 }

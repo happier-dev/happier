@@ -6,7 +6,7 @@ describe('settingsDefaults provider plugin default guards', () => {
     it('rejects provider settings that try to shadow core-owned settings', async () => {
         vi.resetModules();
 
-        vi.doMock('@/agents/providers/registry/providerSettingsRegistry', () => ({
+        vi.doMock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
             PROVIDER_SETTINGS_DESCRIPTORS: [
                 {
                     providerId: 'mock-provider',
@@ -37,7 +37,6 @@ describe('settingsDefaults provider plugin default guards', () => {
                         },
                     }),
                     uiSections: [],
-                    buildOutgoingMessageMetaExtras: () => ({}),
                 },
             ],
         }));
@@ -45,7 +44,7 @@ describe('settingsDefaults provider plugin default guards', () => {
         try {
             await expect(import('./settings')).rejects.toThrow(/attachmentsUploadsUploadLocation/);
         } finally {
-            vi.unmock('@/agents/providers/registry/providerSettingsRegistry');
+            vi.unmock('@/agents/providers/catalog/providerSettingsCatalog');
             vi.resetModules();
         }
     });

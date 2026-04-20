@@ -93,7 +93,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: (agentId: string) => ({
         displayNameKey: `agents.${agentId}.displayName`,
     }),
-    isAgentId: () => true,
+    isAgentId: (value: unknown): value is string => typeof value === 'string' && value !== 'not-a-real-agent',
 }));
 
 vi.mock('@/utils/ui/clipboard', () => ({
@@ -306,5 +306,23 @@ describe('NewSessionResumeSelectionContent', () => {
 
         const input = screen.findByTestId('resume-id-input');
         expect(input?.props?.placeholder).toBe('newSession.resume.placeholder:Review Bot');
+    });
+
+    it('falls back to an unknown label when no canonical agent label is available', async () => {
+        const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
+
+        const screen = await renderScreen(
+            <NewSessionResumeSelectionContent
+                value=""
+                onChangeValue={() => {}}
+                onSave={() => {}}
+                onClear={() => {}}
+                onClose={() => {}}
+                agentType="not-a-real-agent"
+            />,
+        );
+
+        const input = screen.findByTestId('resume-id-input');
+        expect(input?.props?.placeholder).toBe('newSession.resume.placeholder:common.unknown');
     });
 });

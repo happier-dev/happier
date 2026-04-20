@@ -2,9 +2,14 @@ import * as React from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { buildBackendTargetKey, getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    convertBackendTargetRefV2ToV1,
+    getActionSpec,
+    resolveEffectiveActionInputFields,
+} from '@happier-dev/protocol';
 
-import { buildResumeSessionExtrasFromUiState, DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { buildResumeSessionExtrasFromUiState, getAgentCore, isAgentId, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
@@ -32,6 +37,7 @@ import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/a
 import { resolveExecutionRunActionAllowedPermissionModes } from '@/sync/domains/actions/resolveExecutionRunActionAllowedPermissionModes';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { ActionInputFields, getValueAtPath, setValueAtTopLevelPatch, type ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 
 import {
     EXECUTION_RUN_LAUNCH_INTENTS,
@@ -119,7 +125,7 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
         [session],
     );
     const { resumeCapabilityOptions } = useResumeCapabilityOptions({
-        agentId: agentId ?? DEFAULT_AGENT_ID,
+        agentId,
         machineId,
         settings,
         enabled: session?.active === false,
@@ -142,12 +148,19 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     );
     const [intent, setIntent] = React.useState<ExecutionRunIntent>(initialIntent);
     const initialBackendTarget = React.useMemo(
-        () => sessionActionDefaultBackend?.backendTarget ?? (agentId ? { kind: 'builtInAgent', agentId } as const : null),
-        [agentId, sessionActionDefaultBackend],
+        () => sessionActionDefaultBackend?.backendTarget ?? null,
+        [sessionActionDefaultBackend],
     );
-    const initialDefaultBackendId = sessionActionDefaultBackend?.defaultBackendId ?? agentId ?? null;
+    const initialDefaultBackendId = sessionActionDefaultBackend?.defaultBackendId ?? null;
     const [isStarting, setIsStarting] = React.useState(false);
     const [startError, setStartError] = React.useState<string | null>(null);
+
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId,
+        serverId: sessionServerId ?? null,
+        enabled: Boolean(machineId),
+        staleMs: 60_000,
+    });
 
     const backendChoices = React.useMemo(() => {
         if (!executionRunsBackends || Object.keys(executionRunsBackends).length === 0) return [];
@@ -156,12 +169,21 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
             executionRunsBackends,
             acpCatalogSettingsV1: (settings as any)?.acpCatalogSettingsV1 ?? { v: 2, backends: [] },
             intent,
+            mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
+            mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
         });
-    }, [enabledAgentIds, executionRunsBackends, intent, settings]);
+    }, [
+        daemonMergedProjection.inputs?.mergedBackendProjectionById,
+        daemonMergedProjection.inputs?.mergedProviderProjectionById,
+        enabledAgentIds,
+        executionRunsBackends,
+        intent,
+        settings,
+    ]);
 
     const initialBackendTargetKey = React.useMemo(() => {
         if (!initialBackendTarget) return null;
-        const targetKey = buildBackendTargetKey(initialBackendTarget);
+        const targetKey = buildBackendTargetKey(convertBackendTargetRefV2ToV1(initialBackendTarget) as any);
         return backendChoices.some((choice) => choice.targetKey === targetKey && choice.disabled !== true) ? targetKey : null;
     }, [backendChoices, initialBackendTarget]);
 
@@ -231,15 +253,16 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     }, [actionInput, backendChoices, intent]);
 
     const permissionModeOptions = React.useMemo(() => {
-        const rawAgentType =
-            selectedBackendChoices[0]?.target.kind === 'builtInAgent'
-                ? selectedBackendChoices[0].backendId
-                : sessionActionDefaultBackend?.defaultBackendId
+        const rawAgentType = selectedBackendChoices[0] && isAgentId(selectedBackendChoices[0].backendId)
+            ? selectedBackendChoices[0].backendId
+            : sessionActionDefaultBackend?.defaultBackendId
             ?? (session as any)?.metadata?.agent
             ?? enabledAgentIds[0]
             ?? null;
-        const agentType = typeof rawAgentType === 'string' ? rawAgentType : DEFAULT_AGENT_ID;
-        return getPermissionModeOptionsForAgentType(agentType as any);
+        if (typeof rawAgentType !== 'string') {
+            return [];
+        }
+        return getPermissionModeOptionsForAgentType(rawAgentType as any);
     }, [enabledAgentIds, selectedBackendChoices, session, sessionActionDefaultBackend]);
     const selectedPermissionMode = React.useMemo(() => {
         const value = getValueAtPath(actionInput, 'permissionMode');

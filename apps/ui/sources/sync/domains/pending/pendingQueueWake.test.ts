@@ -210,14 +210,14 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
     });
 
-    it('infers the agent from agentRuntimeDescriptorV1 when legacy flavor is missing', () => {
+    it('infers the agent from runtimeDescriptorV1 when legacy flavor is missing', () => {
         const session: any = {
             thinking: false,
             agentState: null,
             metadata: {
                 machineId: 'm1',
                 path: '/tmp',
-                agentRuntimeDescriptorV1: {
+                runtimeDescriptorV1: {
                     v: 1,
                     providerId: 'codex',
                     provider: {
@@ -239,7 +239,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             resume: 'x1',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -300,7 +300,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
         });
     });
 
-    it('prefers agentRuntimeDescriptorV1 over legacy codex metadata when building wake options', () => {
+    it('prefers runtimeDescriptorV1 over legacy codex metadata when building wake options', () => {
         const session: any = {
             thinking: false,
             agentState: null,
@@ -309,7 +309,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 path: '/tmp',
                 flavor: 'codex',
                 codexSessionId: 'x1',
-                agentRuntimeDescriptorV1: {
+                runtimeDescriptorV1: {
                     v: 1,
                     providerId: 'codex',
                     provider: {
@@ -330,7 +330,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             resume: 'x1',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {

@@ -25,13 +25,13 @@ export function buildNewSessionAgentPickerOptionInteractions(
         closeOnSelectImmediate: false,
         onSelectImmediate: () => {
             if (params.disabled) return;
-            const nextSelection = params.getEngineSelectionForTargetKey(params.entry.targetKey);
+            const nextSelection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             params.selectEngineSelection(params.entry, nextSelection);
         },
         renderDetailContent: () => {
-            const selection = params.getEngineSelectionForTargetKey(params.entry.targetKey);
+            const selection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             return buildNewSessionAgentPickerDetailContent({
-                backendTarget: params.entry.target,
+                backendTarget: params.entry.backendTarget,
                 selectedMachineId: params.selectedMachineId,
                 capabilityServerId: params.capabilityServerId,
                 cwd: params.selectedPath,

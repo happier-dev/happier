@@ -71,4 +71,22 @@ describe('pendingSetupIntent.web', () => {
             remoteSetupIntent: 'remoteRelayHost',
         });
     });
+
+    it('reads a legacy mmkv pending setup intent record on web', async () => {
+        const record = JSON.stringify({
+            branch: 'thisComputer',
+            phase: 'dismissed',
+            relayUrl: null,
+            createdAtMs: Date.now(),
+        });
+        globalThis.localStorage.setItem('mmkv.pending-setup-intent\\record', record);
+
+        const { getPendingSetupIntent } = await importFreshWeb();
+
+        expect(getPendingSetupIntent()).toEqual({
+            branch: 'thisComputer',
+            phase: 'dismissed',
+            relayUrl: null,
+        });
+    });
 });

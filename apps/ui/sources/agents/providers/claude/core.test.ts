@@ -15,6 +15,10 @@ describe('CLAUDE_CORE install banner', () => {
         expect(CLAUDE_CORE.resume.supportsVendorResume).toBe(true);
         expect(CLAUDE_CORE.resume.experimental).toBe(false);
         expect(CLAUDE_CORE.resume.vendorResumeIdField).toBe('claudeSessionId');
-        expect(CLAUDE_CORE.connectedService.id).toBe('anthropic');
+        expect(CLAUDE_CORE.uiConnectedService).toEqual({
+            serviceId: 'anthropic',
+            label: 'Claude Code',
+            connectRoute: '/(app)/settings/connect/claude',
+        });
     });
 });

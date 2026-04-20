@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
@@ -13,7 +13,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     modelMode: ModelMode;
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV1>>;
+    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
     setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
@@ -26,7 +26,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
 }> {
     const engineSelectionByTargetKeyRef = React.useRef(new Map<string, NewSessionAgentPickerSelection>());
-    const selectedTargetKey = params.selectedBackendEntry?.targetKey ?? params.selectedBackendTargetKey;
+    const selectedTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
 
     const buildInitialEngineSelection = React.useCallback((targetKey: string): NewSessionAgentPickerSelection => ({
         modelId: targetKey === selectedTargetKey ? String(params.modelMode) : 'default',
@@ -61,7 +61,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
 
     const applyEngineSelection = React.useCallback((entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => {
         const nextConfigOverrides: Readonly<Record<string, string>> = selection.configOverrides ?? {};
-        params.setBackendTarget(entry.target);
+        params.setBackendTarget(entry.backendTarget);
         params.setModelMode(selection.modelId as ModelMode);
         params.setAcpSessionModeId(selection.sessionModeId);
         if (Object.keys(nextConfigOverrides).length === 0) {
@@ -81,7 +81,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
     }, [params]);
 
     const selectEngineSelection = React.useCallback((entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => {
-        engineSelectionByTargetKeyRef.current.set(entry.targetKey, selection);
+        engineSelectionByTargetKeyRef.current.set(entry.backendTargetKey, selection);
         applyEngineSelection(entry, selection);
     }, [applyEngineSelection]);
 

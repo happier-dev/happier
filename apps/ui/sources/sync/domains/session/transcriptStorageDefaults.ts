@@ -1,5 +1,6 @@
-import { BackendTargetKeySchema, buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema, type BackendTargetRefV2Input } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export const SESSION_TRANSCRIPT_STORAGE_MODES = ['persisted', 'direct'] as const;
 
@@ -26,7 +27,7 @@ export function serializeTranscriptStorageModeByTargetKeyAnalytics(
     return Object.fromEntries(
         Object.entries(value)
             .flatMap(([targetKey, rawValue]) => {
-                if (!BackendTargetKeySchema.safeParse(targetKey).success) {
+                if (!BackendTargetKeyV2Schema.safeParse(targetKey).success) {
                     return [];
                 }
                 const normalized = normalizeSessionTranscriptStorageMode(rawValue);
@@ -42,7 +43,7 @@ export function serializeTranscriptStorageModeByTargetKeyAnalytics(
 export function readAccountTranscriptStorageDefaults(params: Readonly<{
     globalDefault: unknown;
     byTargetKey: unknown;
-    enabledBackendTargets: readonly BackendTargetRefV1[];
+    enabledBackendTargets: readonly BackendTargetRefV2Input[];
 }>): AccountTranscriptStorageDefaults {
     const rawByTargetKey = params.byTargetKey && typeof params.byTargetKey === 'object'
         ? params.byTargetKey as Record<string, unknown>
@@ -50,7 +51,7 @@ export function readAccountTranscriptStorageDefaults(params: Readonly<{
 
     const byTargetKey: Partial<Record<string, SessionTranscriptStorageMode>> = {};
     for (const target of params.enabledBackendTargets) {
-        const targetKey = buildBackendTargetKey(target);
+        const targetKey = resolveBackendTargetKeyV2(target);
         const parsed = normalizeSessionTranscriptStorageMode(rawByTargetKey[targetKey]);
         if (parsed) {
             byTargetKey[targetKey] = parsed;
@@ -65,13 +66,11 @@ export function readAccountTranscriptStorageDefaults(params: Readonly<{
 
 export function resolveNewSessionDefaultTranscriptStorage(params: Readonly<{
     agentType: AgentId;
-    backendTarget?: BackendTargetRefV1 | null;
+    backendTarget?: BackendTargetRefV2Input | null;
     accountDefaults: AccountTranscriptStorageDefaults;
     profileDefaultsByTargetKey?: Record<string, SessionTranscriptStorageMode | undefined> | null;
 }>): SessionTranscriptStorageMode {
-    const targetKey = buildBackendTargetKey(
-        params.backendTarget ?? { kind: 'builtInAgent', agentId: params.agentType },
-    );
+    const targetKey = resolveBackendTargetKeyV2(params.backendTarget ?? { kind: 'backend', backendId: params.agentType });
     const profileDefaultForTarget = params.profileDefaultsByTargetKey?.[targetKey];
     if (profileDefaultForTarget === 'direct' || profileDefaultForTarget === 'persisted') {
         return profileDefaultForTarget;

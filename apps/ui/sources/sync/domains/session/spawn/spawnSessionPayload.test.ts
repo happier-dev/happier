@@ -20,7 +20,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).toEqual(expect.objectContaining({
             type: 'spawn-in-directory',
             directory: '/tmp/workspace',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro' },
+            backendTarget: { kind: 'backend', backendId: 'custom-kiro', configuredBackendId: 'custom-kiro', sourceKind: 'configured' },
         }));
         expect(params).not.toHaveProperty('workspaceId');
         expect(params).not.toHaveProperty('workspaceLocationId');
@@ -39,7 +39,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).toEqual(expect.objectContaining({
             type: 'spawn-in-directory',
             directory: '/tmp/workspace',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'appServer',
         }));
         expect(params).not.toHaveProperty('experimentalCodexAcp');
@@ -54,9 +54,9 @@ describe('buildSpawnHappySessionRpcParams', () => {
         } as any)).toEqual(expect.objectContaining({
             type: 'spawn-in-directory',
             directory: '/tmp/workspace',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'acp',
-            agentRuntimeDescriptorV1: expect.objectContaining({
+            runtimeDescriptorV1: expect.objectContaining({
                 v: 1,
                 providerId: 'codex',
                 provider: expect.objectContaining({
@@ -66,13 +66,13 @@ describe('buildSpawnHappySessionRpcParams', () => {
         }));
     });
 
-    it('prefers agentRuntimeDescriptorV1 over legacy experimentalCodexAcp when codexBackendMode is absent', () => {
+    it('prefers runtimeDescriptorV1 over legacy experimentalCodexAcp when codexBackendMode is absent', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'machine-1',
             directory: '/tmp/workspace',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             experimentalCodexAcp: true,
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -85,9 +85,9 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).toEqual(expect.objectContaining({
             type: 'spawn-in-directory',
             directory: '/tmp/workspace',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'appServer',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -99,7 +99,32 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).not.toHaveProperty('experimentalCodexAcp');
     });
 
-    it('derives agentRuntimeDescriptorV1 for codex spawn requests when codexBackendMode is set', () => {
+    it('ignores legacy agentRuntimeDescriptorV1 input when building the canonical spawn payload', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentRuntimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+                provider: {
+                    backendMode: 'appServer',
+                    vendorSessionId: 'legacy-thread',
+                },
+            },
+        } as any);
+
+        expect(params).toEqual(expect.objectContaining({
+            type: 'spawn-in-directory',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        }));
+        expect(params).not.toHaveProperty('codexBackendMode');
+        expect(params).not.toHaveProperty('runtimeDescriptorV1');
+        expect(params).not.toHaveProperty('agentRuntimeDescriptorV1');
+    });
+
+    it('derives runtimeDescriptorV1 for codex spawn requests when codexBackendMode is set', () => {
         expect(buildSpawnHappySessionRpcParams({
             machineId: 'machine-1',
             directory: '/tmp/workspace',
@@ -109,14 +134,53 @@ describe('buildSpawnHappySessionRpcParams', () => {
         } as any)).toEqual(expect.objectContaining({
             type: 'spawn-in-directory',
             directory: '/tmp/workspace',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             codexBackendMode: 'appServer',
-            agentRuntimeDescriptorV1: expect.objectContaining({
+            runtimeDescriptorV1: expect.objectContaining({
                 v: 1,
                 providerId: 'codex',
                 provider: expect.objectContaining({
                     backendMode: 'appServer',
                     vendorSessionId: 'codex-session-1',
+                }),
+            }),
+        }));
+    });
+
+    it('does not emit codex transport fields when the target backend is not codex', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            codexBackendMode: 'acp',
+            experimentalCodexAcp: true,
+        } as any);
+
+        expect(params).not.toHaveProperty('codexBackendMode');
+        expect(params).not.toHaveProperty('runtimeDescriptorV1');
+    });
+
+    it('derives codex runtime descriptor for canonical codex backend targets', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'codex',
+                sourceKind: 'built_in',
+            },
+            resume: 'codex-session-canonical',
+            codexBackendMode: 'acp',
+        } as any);
+
+        expect(params).toEqual(expect.objectContaining({
+            codexBackendMode: 'acp',
+            runtimeDescriptorV1: expect.objectContaining({
+                v: 1,
+                providerId: 'codex',
+                provider: expect.objectContaining({
+                    backendMode: 'acp',
+                    vendorSessionId: 'codex-session-canonical',
                 }),
             }),
         }));

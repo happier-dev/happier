@@ -2,6 +2,7 @@ import {
     createManagedConnectionSupervisor,
     DEFAULT_MANAGED_CONNECTION_POLICY,
     type ManagedConnectionState,
+    type ManagedProbeReportScope,
     type ManagedConnectionSupervisor,
     type ManagedConnectionTransport,
     type ReadinessProbeResult,
@@ -12,6 +13,7 @@ import { probeAuthenticatedServerAuthPingEndpoint } from '@/sync/api/capabilitie
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
+import { createNotAuthenticatedError } from './authErrors';
 import { readServerReachabilityBackgroundRetryMs, readServerReachabilityProbeTimeoutMs } from './serverReachabilityTuning';
 
 export class ServerReachabilityWaitTimeoutError extends Error {
@@ -390,6 +392,12 @@ export function peekServerReachabilityToken(serverUrl: string): string | null | 
     return entry ? entry.token : undefined;
 }
 
+export function peekServerReachabilityState(serverUrl: string): ManagedConnectionState | null {
+    const normalized = canonicalizeServerUrl(String(serverUrl ?? ''));
+    if (!normalized) return null;
+    return entriesByServerUrl.get(normalized)?.state ?? null;
+}
+
 export async function waitForServerReachable(params: Readonly<{
     serverUrl: string;
     token: string | null;
@@ -496,6 +504,35 @@ export function reportServerUnreachable(serverUrl: string, error: unknown): void
         reason: 'network_error',
         error,
     });
+}
+
+export function reportServerAuthFailed(
+    serverUrl: string,
+    statusCode: 401 | 403,
+    scope?: ManagedProbeReportScope,
+): void {
+    const entry = entriesByServerUrl.get(canonicalizeServerUrl(serverUrl));
+    if (!entry) return;
+    if (typeof entry.supervisor.reportProbeResult !== 'function') return;
+    const resolvedScope = scope ?? entry.supervisor.captureProbeReportScope?.();
+    if (!resolvedScope) return;
+    entry.supervisor.reportProbeResult({
+        status: 'auth_failed',
+        statusCode,
+        errorMessage: `HTTP ${statusCode}`,
+    }, resolvedScope);
+}
+
+export function peekServerReachabilityScope(serverUrl: string): ManagedProbeReportScope | null {
+    const entry = entriesByServerUrl.get(canonicalizeServerUrl(serverUrl));
+    const captureProbeReportScope = entry?.supervisor.captureProbeReportScope;
+    return typeof captureProbeReportScope === 'function' ? captureProbeReportScope() : null;
+}
+
+export function assertServerReachabilityAuthenticated(serverUrl: string): void {
+    if (peekServerReachabilityState(serverUrl)?.phase === 'auth_failed') {
+        throw createNotAuthenticatedError();
+    }
 }
 
 export async function stopServerReachabilitySupervisors(): Promise<void> {

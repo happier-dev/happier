@@ -18,6 +18,7 @@ import {
 
 export type UseSessionPaneUrlSyncInput = Readonly<{
     enabled: boolean;
+    routeParamSyncEnabled?: boolean;
     /**
      * Stable key for the pane scope being synced (e.g. `session:<id>`). When this changes,
      * the hook must treat the next effect cycle as a fresh mount so we don't reconcile the
@@ -39,11 +40,15 @@ export type UseSessionPaneUrlSyncInput = Readonly<{
     setParams: ((params: Record<string, unknown>) => void) | null | undefined;
 }>;
 
-function signatureFromSerialized(params: Readonly<{ right?: unknown; bottom?: unknown; details?: unknown; path?: unknown; sha?: unknown }>): string {
-    return `${String(params.right ?? '')}|${String(params.bottom ?? '')}|${String(params.details ?? '')}|${String(params.path ?? '')}|${String(params.sha ?? '')}`;
+function signatureFromSerialized(
+    params: Readonly<{ right?: unknown; bottom?: unknown; details?: unknown; path?: unknown; sha?: unknown; terminalInstanceId?: unknown }>,
+): string {
+    return `${String(params.right ?? '')}|${String(params.bottom ?? '')}|${String(params.details ?? '')}|${String(params.path ?? '')}|${String(params.sha ?? '')}|${String(params.terminalInstanceId ?? '')}`;
 }
 
-function serializeToParamShape(state: SessionPaneUrlState | null): Readonly<{ right?: string; bottom?: string; details?: string; path?: string; sha?: string }> {
+function serializeToParamShape(
+    state: SessionPaneUrlState | null,
+): Readonly<{ right?: string; bottom?: string; details?: string; path?: string; sha?: string; terminalInstanceId?: string }> {
     const serialized = state ? serializeSessionPaneUrlState(state) : {};
     return {
         right: serialized.right,
@@ -51,6 +56,7 @@ function serializeToParamShape(state: SessionPaneUrlState | null): Readonly<{ ri
         details: serialized.details,
         path: serialized.path,
         sha: serialized.sha,
+        terminalInstanceId: serialized.terminalInstanceId,
     };
 }
 
@@ -65,6 +71,7 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
     const restoredScopeKeyRef = React.useRef<string | null>(null);
     const storedStateHydratedScopeKeyRef = React.useRef<string | null>(null);
     const pendingStoredStateWriteSigRef = React.useRef<string | null>(null);
+    const routeParamSyncEnabled = input.routeParamSyncEnabled !== false;
 
     const derivedState = React.useMemo(() => deriveSessionPaneUrlStateFromScopeState((input.scopeState ?? null) as any), [input.scopeState]);
     const derivedParams = React.useMemo(() => serializeToParamShape(derivedState), [derivedState]);
@@ -74,16 +81,16 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
     const scopeKey = input.scopeKey ?? 'default';
     const currentHistoryPaneState = React.useMemo(() => readCurrentSessionPaneHistoryState(scopeKey), [scopeKey, urlSig]);
     const storedState = React.useMemo(() => {
-        if (input.urlState) return null;
+        if (routeParamSyncEnabled && input.urlState) return null;
         return readStoredSessionPaneUrlState(scopeKey);
-    }, [input.urlState, scopeKey]);
+    }, [input.urlState, routeParamSyncEnabled, scopeKey]);
 
     React.useEffect(() => {
         if (!input.enabled) return;
         if (restoredScopeKeyRef.current === scopeKey) return;
         restoredScopeKeyRef.current = scopeKey;
 
-        if (input.urlState || !storedState) {
+        if ((routeParamSyncEnabled && input.urlState) || !storedState) {
             return;
         }
 
@@ -97,7 +104,7 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
 
         pendingStoredStateWriteSigRef.current = signatureFromSerialized(serializeToParamShape(storedState));
         applySessionPaneUrlState(input.pane, storedState);
-    }, [currentHistoryPaneState?.urlSig, input.enabled, input.pane, input.urlState, scopeKey, storedState, urlSig]);
+    }, [currentHistoryPaneState?.urlSig, input.enabled, input.pane, input.urlState, routeParamSyncEnabled, scopeKey, storedState, urlSig]);
 
     React.useEffect(() => {
         if (!input.enabled) return;
@@ -165,19 +172,20 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
         // Initial mount: if the URL includes pane params, apply them into pane state.
         // Important: initial state application should be additive (open requested panes),
         // not subtractive (closing panes the URL cannot represent, e.g. `scmReview`).
-        if (isFirstRun && input.urlState) {
+        if (routeParamSyncEnabled && isFirstRun && input.urlState) {
             applySessionPaneUrlState(input.pane, input.urlState);
             pendingPaneReconcileRef.current = { targetUrlSig: urlSig };
             return;
         }
 
         // Browser back/forward: URL changed without us writing it.
-        if (prevUrlSig !== null && urlSig !== prevUrlSig) {
+        if (routeParamSyncEnabled && prevUrlSig !== null && urlSig !== prevUrlSig) {
             reconcileSessionPaneScopeFromUrlState(input.pane, input.urlState);
             pendingPaneReconcileRef.current = { targetUrlSig: urlSig };
             return;
         }
 
+        if (!routeParamSyncEnabled) return;
         if (!input.setParams) return;
         if (derivedSig === urlSig) return;
 
@@ -192,6 +200,7 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
                 details: derivedParams.details,
                 path: derivedParams.path,
                 sha: derivedParams.sha,
+                terminalInstanceId: derivedParams.terminalInstanceId,
             });
         }
         pendingUrlWriteRef.current = { fromSig: urlSig, toSig: derivedSig };
@@ -201,6 +210,7 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
             details: derivedParams.details,
             path: derivedParams.path,
             sha: derivedParams.sha,
+            terminalInstanceId: derivedParams.terminalInstanceId,
         });
         scheduleCurrentSessionPaneHistoryState({ scopeKey, urlSig: derivedSig });
     }, [
@@ -209,11 +219,13 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
         derivedParams.path,
         derivedParams.right,
         derivedParams.sha,
+        derivedParams.terminalInstanceId,
         derivedSig,
         input.enabled,
         scopeKey,
         urlSig,
         input.pane,
+        routeParamSyncEnabled,
         input.setParams,
         input.urlState,
     ]);

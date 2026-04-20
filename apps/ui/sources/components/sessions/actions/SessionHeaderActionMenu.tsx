@@ -7,7 +7,7 @@ import { useRouter } from 'expo-router';
 
 import { storage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { AGENTS_UI_BEHAVIOR } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -138,7 +138,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
   );
   const supportsDirectSessionBackgroundFollow =
     directSessionAgentId != null
-      ? AGENTS_UI_BEHAVIOR[directSessionAgentId]?.directSessions?.supportsBackgroundFollow === true
+      ? resolveAgentUiBehavior(directSessionAgentId).directSessions?.supportsBackgroundFollow === true
       : false;
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()

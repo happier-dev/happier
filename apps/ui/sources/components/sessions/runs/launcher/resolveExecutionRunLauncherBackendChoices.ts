@@ -1,25 +1,72 @@
-import { buildBackendTargetKey, type AcpCatalogSettingsV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    convertBackendTargetRefV2ToV1,
+    readLegacyConfiguredAcpBackendId,
+    type AcpCatalogSettingsV1,
+    type BackendTargetRefV2,
+} from '@happier-dev/protocol';
 
-import { getAgentCore } from '@/agents/catalog/catalog';
-import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import {
+    getResolvedBackendCatalogEntries,
+} from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type {
+    MergedBackendProjectionEntry,
+    MergedProviderProjectionEntry,
+} from '@/agents/backendCatalog/mergedProjectionTypes';
+import {
+    LEGACY_COMPAT_PRIMARY_AGENT_ID,
+} from '@/agents/backendCatalog/legacyCompatAgents';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildAvailableReviewEngineOptions, type ExecutionRunsBackendSnapshotEntry } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 
 export type ExecutionRunLauncherBackendChoice = Readonly<{
-    target: BackendTargetRefV1;
+    backendTarget: BackendTargetRefV2;
     targetKey: string;
     backendId: string;
     title: string;
     disabled: boolean;
 }>;
 
-function isResolvableBuiltInCatalogAgent(id: string): boolean {
-    try {
-        getAgentCore(id as any);
+type ResolvedBackendCatalogEntry = ReturnType<typeof getResolvedBackendCatalogEntries>[number];
+
+function collapseConfiguredAcpBackendCollisions(
+    entries: readonly ResolvedBackendCatalogEntry[],
+): readonly ResolvedBackendCatalogEntry[] {
+    const configuredAcpBackendIds = new Set(
+        entries
+            .filter((entry) => entry.kind === 'configuredBackend')
+            .map((entry) => entry.backendId)
+            .filter((backendId): backendId is string => typeof backendId === 'string' && backendId.length > 0),
+    );
+
+    if (configuredAcpBackendIds.size === 0) {
+        return entries;
+    }
+
+    return entries.filter((entry) => {
+        if (entry.kind === 'configuredBackend') {
+            return true;
+        }
+        return !configuredAcpBackendIds.has(entry.backendId ?? '');
+    });
+}
+
+function isCanonicalCatalogBackendId(value: string): boolean {
+    return value.length > 0 && value !== LEGACY_COMPAT_PRIMARY_AGENT_ID && !readLegacyConfiguredAcpBackendId(value);
+}
+
+function hasLegacyCompatExecutionRunAvailabilityCarrier(
+    availableBackendIds: ReadonlySet<string>,
+    configuredBackendId?: string | null,
+): boolean {
+    if (availableBackendIds.has(LEGACY_COMPAT_PRIMARY_AGENT_ID)) {
         return true;
-    } catch {
+    }
+    if (!configuredBackendId) {
         return false;
     }
+    return Array.from(availableBackendIds).some((backendId) => readLegacyConfiguredAcpBackendId(backendId) === configuredBackendId);
 }
 
 export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
@@ -27,13 +74,17 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
     executionRunsBackends: Readonly<Record<string, ExecutionRunsBackendSnapshotEntry>> | null | undefined;
     acpCatalogSettingsV1: AcpCatalogSettingsV1;
     intent: string;
+    mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null;
+    mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
 }>): readonly ExecutionRunLauncherBackendChoice[] {
-    const catalogAgentIds = Array.from(
+    const catalogBackendIds = Array.from(
         new Set([
             ...params.enabledAgentIds,
             ...Object.keys(params.executionRunsBackends ?? {}),
         ]),
-    ).filter((id) => isResolvableBuiltInCatalogAgent(id));
+    )
+        .map((id) => String(id ?? '').trim())
+        .filter(isCanonicalCatalogBackendId);
     const availableBackendIds = new Set(
         resolveExecutionRunAvailableBackends(params.executionRunsBackends, params.intent),
     );
@@ -44,32 +95,42 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
             executionRunsBackends: params.executionRunsBackends,
             resolveAgentLabel: (id) => id,
         }).map((option) => {
-            const target: BackendTargetRefV1 = { kind: 'builtInAgent', agentId: option.id };
+            const target: BackendTargetRefV2 = { kind: 'backend', backendId: option.id };
             return {
-                target,
-                targetKey: buildBackendTargetKey(target),
+                backendTarget: target,
+                targetKey: resolveBackendTargetKeyV2(target),
                 backendId: option.id,
-                title: option.id,
+                title: option.label,
                 disabled: option.disabled === true,
             };
         });
     }
 
-    return getResolvedBackendCatalogEntries({
-        enabledAgentIds: catalogAgentIds as any,
+    return collapseConfiguredAcpBackendCollisions(getResolvedBackendCatalogEntries({
+        enabledAgentIds: catalogBackendIds,
         acpCatalogSettingsV1: params.acpCatalogSettingsV1,
-    }).map((entry) => {
-        const backendId = entry.target.kind === 'configuredAcpBackend'
-            ? entry.target.backendId
-            : entry.target.agentId;
-        const isAvailable = entry.family === 'configuredAcpBackend'
-            ? availableBackendIds.has(backendId) || availableBackendIds.has(entry.providerAgentId)
+        discoveredBackendIds: Object.keys(params.executionRunsBackends ?? {}).map((id) => String(id ?? '').trim()).filter(isCanonicalCatalogBackendId),
+        mergedBackendProjectionById: params.mergedBackendProjectionById ?? null,
+        mergedProviderProjectionById: params.mergedProviderProjectionById ?? null,
+    })).map((entry) => {
+        const backendId = entry.backendId;
+        const providerAgentId = entry.providerAgentId;
+        const isAvailable = entry.kind === 'configuredBackend'
+            ? availableBackendIds.has(backendId)
+                || (providerAgentId ? availableBackendIds.has(providerAgentId) : false)
+                || hasLegacyCompatExecutionRunAvailabilityCarrier(availableBackendIds, backendId)
             : availableBackendIds.has(backendId);
+
+        // UI action inputs (and their protocol schemas) still use the legacy target key vocabulary
+        // (`agent:*`, `acpBackend:*`) for execution-run launcher surfaces. Keep V2 backend-target
+        // identity elsewhere (routes/settings/spawn/resume), but do not push V2 keys into action
+        // schemas that do not accept them.
+        const legacyTargetKey = buildBackendTargetKey(convertBackendTargetRefV2ToV1(entry.backendTarget) as any);
         return {
-            target: entry.target,
-            targetKey: entry.targetKey,
+            backendTarget: entry.backendTarget,
+            targetKey: legacyTargetKey,
             backendId,
-            title: entry.family === 'configuredAcpBackend' ? entry.title : backendId,
+            title: entry.title,
             disabled: !isAvailable,
         };
     });

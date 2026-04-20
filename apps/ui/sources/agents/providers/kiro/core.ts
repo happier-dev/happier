@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
@@ -12,11 +13,8 @@ export const KIRO_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.kiroSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
-    connectedService: {
-        id: null,
-        name: 'Kiro',
-        connectRoute: null,
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'kiro' }),
+    uiConnectedService: { serviceId: null, label: 'Kiro', connectRoute: null },
     flavorAliases: ['kiro', 'kiro-cli'],
     cli: buildCatalogProviderCliUiConfig('kiro'),
     permissions: {

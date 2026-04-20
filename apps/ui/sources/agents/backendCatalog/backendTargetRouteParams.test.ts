@@ -1,23 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from './backendTargetRouteParams';
+import {
+    buildBackendTargetRouteParams,
+    resolveBackendTargetFromRouteParams,
+} from './backendTargetRouteParams';
 
 describe('buildBackendTargetRouteParams', () => {
     it('prefers the current fallback target over stale serialized route params', () => {
         expect(buildBackendTargetRouteParams({
-            agentType: 'customAcp',
             backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
             backendTargetKey: 'acpBackend:review-bot',
             fallbackTarget: {
-                kind: 'builtInAgent',
-                agentId: 'claude',
+                kind: 'backend',
+                backendId: 'claude',
             },
         })).toEqual({
             agentType: 'claude',
             backendTarget: JSON.stringify({
                 kind: 'backend',
                 backendId: 'claude',
-                sourceKind: 'built_in',
             }),
             backendTargetKey: 'backend:claude',
         });
@@ -25,36 +26,62 @@ describe('buildBackendTargetRouteParams', () => {
 
     it('serializes configured ACP targets using the canonical V2 route contract', () => {
         expect(buildBackendTargetRouteParams({
-            agentType: 'customAcp',
             backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'review-bot' }),
             backendTargetKey: 'acpBackend:review-bot',
             fallbackTarget: {
-                kind: 'configuredAcpBackend',
+                kind: 'backend',
                 backendId: 'review-bot',
+                configuredBackendId: 'review-bot',
             },
         })).toEqual({
             backendTarget: JSON.stringify({
                 kind: 'backend',
                 backendId: 'review-bot',
                 configuredBackendId: 'review-bot',
-                sourceKind: 'configured',
             }),
             backendTargetKey: 'backend:review-bot:configured:review-bot',
         });
     });
 
-    it('accepts canonical V2 route params while returning the legacy compatibility target shape', () => {
+    it('accepts canonical V2 route params', () => {
         expect(resolveBackendTargetFromRouteParams({
             backendTarget: JSON.stringify({
                 kind: 'backend',
                 backendId: 'review-bot',
                 configuredBackendId: 'review-bot',
-                sourceKind: 'configured',
             }),
             backendTargetKey: 'backend:review-bot:configured:review-bot',
         })).toEqual({
-            kind: 'configuredAcpBackend',
+            kind: 'backend',
             backendId: 'review-bot',
+            configuredBackendId: 'review-bot',
+        });
+    });
+
+    it('does not reconstruct unknown backend ids from agentType route compatibility alone anymore', () => {
+        expect(resolveBackendTargetFromRouteParams({
+            agentType: 'acme.review.backend',
+        })).toBeNull();
+    });
+
+    it('does not reconstruct configured ACP backend targets from legacy agentType acp:<backendId> params anymore', () => {
+        expect(resolveBackendTargetFromRouteParams({
+            agentType: 'acp:review-bot',
+        })).toBeNull();
+    });
+
+    it('serializes plugin backend ids through backendTarget fields (without overloading agentType)', () => {
+        expect(buildBackendTargetRouteParams({
+            fallbackTarget: {
+                kind: 'backend',
+                backendId: 'acme.review.backend',
+            },
+        })).toEqual({
+            backendTarget: JSON.stringify({
+                kind: 'backend',
+                backendId: 'acme.review.backend',
+            }),
+            backendTargetKey: 'backend:acme.review.backend',
         });
     });
 });

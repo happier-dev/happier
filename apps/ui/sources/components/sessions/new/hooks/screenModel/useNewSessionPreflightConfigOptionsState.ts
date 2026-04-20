@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { buildBackendTargetKey, isBuiltInAgentTarget, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { isAgentId } from '@/agents/catalog/catalog';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/acp/configOptionsControl';
 import { buildDynamicConfigOptionsProbeCacheKey } from '@/sync/acp/dynamicConfigOptionsProbeCacheKey';
@@ -21,7 +23,8 @@ import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/n
 import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
 
 export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
-    backendTarget: BackendTargetRefV1;
+    backendTarget: BackendTargetRefV2;
+    runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
@@ -51,18 +54,22 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         setRefreshNonce((current) => current + 1);
     }, []);
 
-    const backendTargetKind = params.backendTarget.kind;
-    const backendTargetAgentId = isBuiltInAgentTarget(params.backendTarget) ? params.backendTarget.agentId : null;
-    const backendTargetBackendId = isBuiltInAgentTarget(params.backendTarget) ? null : params.backendTarget.backendId;
+    const backendTargetInput = params.backendTarget;
+    const probeKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTargetInput), [backendTargetInput]);
+    const backendTargetForProbe = React.useMemo(() => {
+        // Stabilize by semantic identity (probeKey) so effects don't thrash on object identity churn.
+        return readBackendTargetRefV2(backendTargetInput);
+    }, [probeKey]);
 
-    const backendTarget = React.useMemo<BackendTargetRefV1>(() => {
-        return backendTargetKind === 'builtInAgent'
-            ? { kind: 'builtInAgent', agentId: backendTargetAgentId! }
-            : { kind: 'configuredAcpBackend', backendId: backendTargetBackendId! };
-    }, [backendTargetAgentId, backendTargetBackendId, backendTargetKind]);
-
-    const agentType = React.useMemo(() => resolveProviderAgentIdForBackendTarget(backendTarget), [backendTarget]);
-    const probeKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
+    const agentType = React.useMemo(() => {
+        if (isAgentId(params.runtimeCarrierAgentId)) {
+            return params.runtimeCarrierAgentId;
+        }
+        // For built-in backends the backend id is already a canonical agent id.
+        // For plugin-contributed backends the provider may still override it.
+        return resolveProviderAgentIdForBackendTarget(backendTargetForProbe)
+            ?? (isAgentId(backendTargetForProbe.backendId) ? backendTargetForProbe.backendId : null);
+    }, [backendTargetForProbe, params.runtimeCarrierAgentId]);
     const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);
     const probeContextCacheKeySuffixParts = React.useMemo(
         () => normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(params.probeContext),
@@ -82,7 +89,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     }), [params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts, probeKey]);
 
     React.useEffect(() => {
-        if (!cacheKey) {
+        if (!cacheKey || !agentType) {
             setConfigOptions(null);
             setProbePhase('idle');
             setRefreshedAt(null);
@@ -127,7 +134,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                         method: 'probeConfigOptions',
                         params: {
                             timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
-                            backendTarget,
+                            backendTarget: backendTargetForProbe,
                             ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
                             ...(cwd ? { cwd } : {}),
                         },
@@ -197,7 +204,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTarget, cacheKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCapabilityParams, probeContextKey, refreshNonce]);
+    }, [agentType, backendTargetForProbe, cacheKey, probeContextCapabilityParams, refreshNonce]);
 
     return {
         configOptions,

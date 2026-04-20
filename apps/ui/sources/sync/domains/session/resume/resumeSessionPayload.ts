@@ -1,16 +1,16 @@
 import { z } from 'zod';
-import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
+import type { CodexBackendMode } from '@happier-dev/agents';
 import {
-    AgentRuntimeDescriptorV1Schema,
-    BackendTargetRefSchema,
-    normalizeBackendTargetRefV2InputToV1,
+    BackendTargetRefV2Schema,
+    normalizeBackendTargetRefV2InputToV2,
     readBackendTargetRefV2,
+    RuntimeDescriptorV1Schema,
     SessionAttachMetadataIdentityPolicySchema,
     SessionAuthoringValueV1Schema,
     type SessionAttachMetadataIdentityPolicy,
-    type AgentRuntimeDescriptorV1,
-    type BackendTargetRefV1,
+    type BackendTargetRefV2,
     type BackendTargetRefV2Input,
+    type RuntimeDescriptorV1,
     type SessionAuthoringValueV1,
 } from '@happier-dev/protocol';
 import { isPermissionMode, type PermissionMode } from '../../permissions/permissionTypes';
@@ -21,9 +21,9 @@ export type ResumeHappySessionRpcParams = CodexBackendTransportFields & {
     type: 'resume-session';
     sessionId: string;
     directory: string;
-    backendTarget: BackendTargetRefV1;
+    backendTarget: BackendTargetRefV2;
     resume?: string;
-    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
     environmentVariables?: Record<string, string>;
     connectedServices?: SessionAuthoringValueV1['connectedServices'];
     transcriptStorage?: 'direct' | 'persisted';
@@ -44,9 +44,9 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     type: z.literal('resume-session'),
     sessionId: z.string().min(1),
     directory: z.string().min(1),
-    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV1, BackendTargetRefSchema),
+    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
     resume: z.string().min(1).optional(),
-    agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     environmentVariables: z.record(z.string(), z.string()).optional(),
     connectedServices: SessionAuthoringValueV1Schema.shape.connectedServices.optional(),
     transcriptStorage: z.enum(['direct', 'persisted']).optional(),
@@ -65,7 +65,7 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         modelUpdatedAt,
         codexBackendMode,
         experimentalCodexAcp,
-        agentRuntimeDescriptorV1,
+        runtimeDescriptorV1,
         connectedServices,
         ...rest
     } = input;
@@ -75,32 +75,26 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         normalizedModelId !== 'default' &&
         typeof modelUpdatedAt === 'number' &&
         Number.isFinite(modelUpdatedAt);
-    const codexTransportFields = buildCodexBackendTransportFields({ codexBackendMode, experimentalCodexAcp, agentRuntimeDescriptorV1 });
-    const canonicalCodexBackendMode = codexTransportFields.codexBackendMode;
+    const codexTransportFields = buildCodexBackendTransportFields({
+        backendTarget: rest.backendTarget,
+        codexBackendMode,
+        experimentalCodexAcp,
+        runtimeDescriptorV1,
+        resume: rest.resume,
+    });
     const canonicalBackendTarget = readBackendTargetRefV2(rest.backendTarget);
 
     const params: ResumeHappySessionRpcParams = {
         type: 'resume-session',
         ...rest,
-        backendTarget: rest.backendTarget as unknown as BackendTargetRefV1,
-        ...codexTransportFields,
+        backendTarget: canonicalBackendTarget,
+        ...(codexTransportFields.codexBackendMode ? { codexBackendMode: codexTransportFields.codexBackendMode } : {}),
         ...(connectedServices === undefined || connectedServices === null ? {} : { connectedServices }),
-        ...(() => {
-            if (agentRuntimeDescriptorV1) {
-                return { agentRuntimeDescriptorV1 };
-            }
-
-            if (canonicalBackendTarget.kind === 'backend' && canonicalBackendTarget.sourceKind !== 'configured' && canonicalBackendTarget.backendId === 'codex' && canonicalCodexBackendMode) {
-                return {
-                    agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-                        backendMode: canonicalCodexBackendMode,
-                        vendorSessionId: rest.resume,
-                    }),
-                };
-            }
-
-            return {};
-        })(),
+        ...(runtimeDescriptorV1
+            ? { runtimeDescriptorV1 }
+            : codexTransportFields.runtimeDescriptorV1
+                ? { runtimeDescriptorV1: codexTransportFields.runtimeDescriptorV1 }
+                : {}),
         ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
     };
     // Validate shape early to avoid accidentally sending secrets in wrong fields.

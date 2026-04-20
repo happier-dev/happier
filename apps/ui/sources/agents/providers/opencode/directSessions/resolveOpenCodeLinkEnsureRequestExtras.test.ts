@@ -7,7 +7,7 @@ describe('resolveOpenCodeLinkEnsureRequestExtras', () => {
         expect(resolveOpenCodeLinkEnsureRequestExtras({
             candidate: {
                 details: {
-                    agentRuntimeDescriptorV1: {
+                    runtimeDescriptorV1: {
                         v: 1,
                         providerId: 'opencode',
                         provider: {
@@ -20,7 +20,7 @@ describe('resolveOpenCodeLinkEnsureRequestExtras', () => {
                 },
             },
         })).toEqual({
-            runtimeDescriptor: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'opencode',
                 provider: {
@@ -54,7 +54,7 @@ describe('resolveOpenCodeLinkEnsureRequestExtras', () => {
         expect(resolveOpenCodeLinkEnsureRequestExtras({
             candidate: {
                 details: {
-                    agentRuntimeDescriptorV1: {
+                    runtimeDescriptorV1: {
                         v: 1,
                         providerId: 'opencode',
                         provider: {
@@ -65,7 +65,7 @@ describe('resolveOpenCodeLinkEnsureRequestExtras', () => {
                 },
             },
         })).toEqual({
-            runtimeDescriptor: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'opencode',
                 provider: {
@@ -78,6 +78,41 @@ describe('resolveOpenCodeLinkEnsureRequestExtras', () => {
                         runtimeHandle: {
                             backendMode: 'server',
                             vendorSessionId: 'oc_2',
+                        },
+                    },
+                },
+            },
+        });
+    });
+
+    it('falls back to the legacy agent-prefixed candidate details carrier', () => {
+        expect(resolveOpenCodeLinkEnsureRequestExtras({
+            candidate: {
+                details: {
+                    agentRuntimeDescriptorV1: {
+                        v: 1,
+                        providerId: 'opencode',
+                        provider: {
+                            backendMode: 'server',
+                            vendorSessionId: 'oc_legacy',
+                        },
+                    },
+                },
+            },
+        })).toEqual({
+            runtimeDescriptorV1: {
+                v: 1,
+                providerId: 'opencode',
+                provider: {
+                    backendMode: 'server',
+                    vendorSessionId: 'oc_legacy',
+                    providerExtra: {
+                        owner: 'opencode',
+                        schemaId: 'opencode.agentRuntimeDescriptorExtra',
+                        v: 1,
+                        runtimeHandle: {
+                            backendMode: 'server',
+                            vendorSessionId: 'oc_legacy',
                         },
                     },
                 },

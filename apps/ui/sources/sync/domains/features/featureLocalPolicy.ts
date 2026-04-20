@@ -9,6 +9,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'execution.runs': (settings) => resolveUiFeatureToggleEnabled(settings, 'execution.runs'),
     voice: (settings) => resolveUiFeatureToggleEnabled(settings, 'voice'),
     'voice.agent': (settings) => resolveUiFeatureToggleEnabled(settings, 'voice.agent'),
+    'voice.daemonInference': (settings) => resolveUiFeatureToggleEnabled(settings, 'voice.daemonInference'),
     connectedServices: (settings) =>
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true)
         && resolveUiFeatureToggleEnabled(settings, 'connectedServices'),

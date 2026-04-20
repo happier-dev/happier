@@ -38,12 +38,6 @@ vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const sendTextMessage = vi.hoisted(() => vi.fn());
-vi.mock('@/realtime/RealtimeSession', () => ({
-    getCurrentRealtimeSessionId: () => 's1',
-    getVoiceSession: () => ({ sendTextMessage }),
-}));
-
 vi.mock('@/sync/runtime/orchestration/projectManager', () => ({
     projectManager: {
         updateSessions: vi.fn(),
@@ -80,7 +74,6 @@ describe('sync: voice permission request announcements', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
         kvStore.clear();
-        sendTextMessage.mockClear();
         storage.setState((state) => {
             const messagesById: Record<string, any> = {};
             return {
@@ -106,7 +99,7 @@ describe('sync: voice permission request announcements', () => {
         vi.clearAllMocks();
     });
 
-    it('does not announce permission requests via sync.applySessions (socket pipeline owns voice announcements)', async () => {
+    it('applies pending permission requests to the loaded transcript when agentStateVersion advances (no voice side effects asserted here)', async () => {
         const { sync } = await import('./sync');
 
         (sync as any).applySessions([createSession('s1')]);
@@ -126,6 +119,12 @@ describe('sync: voice permission request announcements', () => {
             },
         } as any]);
 
-        expect(sendTextMessage).not.toHaveBeenCalled();
+        const stateAny: any = storage.getState();
+        const messageIds = stateAny?.sessionMessages?.s1?.messageIdsOldestFirst ?? [];
+        expect(messageIds.length).toBe(1);
+
+        const msg = stateAny?.sessionMessages?.s1?.messagesMap?.[messageIds[0]] ?? null;
+        expect(msg?.kind).toBe('tool-call');
+        expect(msg?.tool?.permission?.status).toBe('pending');
     });
 });

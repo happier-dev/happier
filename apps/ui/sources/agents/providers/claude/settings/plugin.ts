@@ -1,5 +1,4 @@
 import {
-    buildClaudeRemoteOutgoingMessageMetaExtras,
     CLAUDE_REMOTE_PROVIDER_FIELDS,
 } from '@happier-dev/agents';
 
@@ -180,7 +179,4 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
             ],
         },
     ],
-    buildOutgoingMessageMetaExtras: ({ settings }) => {
-        return buildClaudeRemoteOutgoingMessageMetaExtras(settings);
-    },
 };

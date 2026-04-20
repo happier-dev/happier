@@ -20,12 +20,13 @@ let cliRefreshCurrent = cliRefreshA;
 const resolveProfileAvailabilityForNewSessionSpy = vi.fn<(params: unknown) => { available: boolean; reason?: string }>(() => ({ available: true }));
 const useCLIDetectionSpy = vi.hoisted(() => vi.fn());
 const probeSafeAgents = vi.hoisted(() => new Set<string>(['claude']));
+let cliAvailableByIdCurrent: Record<string, boolean> = { claude: false, codex: true };
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
     useCLIDetection: (...args: unknown[]) => {
         useCLIDetectionSpy(...args);
         return {
-        available: { claude: false, codex: true },
+        available: cliAvailableByIdCurrent,
         login: {},
         authStatus: {
             claude: { state: 'logged_out', checkedAt: 1 },
@@ -62,7 +63,9 @@ vi.mock('@/hooks/server/useDaemonScopedMachineCapabilitiesCache', () => ({
 }));
 
 vi.mock('@/components/sessions/new/modules/newSessionAgentSelection', () => ({
-    isAgentSelectableForNewSession: ({ agentId, availabilityById }: any) => availabilityById?.[agentId] !== false,
+    isAgentSelectableForNewSession: ({ agentId, availabilityById, selectableWithoutCliByAgentId }: any) => (
+        availabilityById?.[agentId] !== false || selectableWithoutCliByAgentId?.[agentId] === true
+    ),
     resolveProfileAvailabilityForNewSession: (params: unknown) => resolveProfileAvailabilityForNewSessionSpy(params),
 }));
 
@@ -83,6 +86,7 @@ describe('useNewSessionAvailabilityState', () => {
         capabilitiesRefreshB.mockClear();
         cliRefreshCurrent = cliRefreshA;
         capabilitiesRefreshCurrent = capabilitiesRefreshA;
+        cliAvailableByIdCurrent = { claude: false, codex: true };
     });
 
     it('does not auto-switch the selected backend when CLI detection marks it unavailable', async () => {
@@ -96,6 +100,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: null,
             selectedMachine: null,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
@@ -134,6 +139,46 @@ describe('useNewSessionAvailabilityState', () => {
         expect(setBackendTarget).not.toHaveBeenCalled();
     });
 
+    it('keeps direct-browse agents selectable without detected CLI when sessions.direct is enabled', async () => {
+        vi.resetModules();
+        cliAvailableByIdCurrent = { claude: false, codex: false };
+
+        const { useNewSessionAvailabilityState } = await import('./useNewSessionAvailabilityState');
+
+        const hook = await renderHook(() => useNewSessionAvailabilityState({
+            selectedMachineId: 'machine-1',
+            selectedMachine: {
+                id: 'machine-1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: Date.now(),
+                revokedAt: null,
+                metadata: null,
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 1,
+            } satisfies Machine,
+            capabilityServerId: 'server-1',
+            settings: {} as any,
+            agentType: 'claude' as any,
+            resumeSessionId: null,
+            enabledAgentIds: ['claude', 'codex'] as any,
+            backendNewSessionOptionStateByTargetKey: {},
+            resolvedBackendEntries: [],
+            selectedBackendEntry: null,
+            setBackendTarget: vi.fn(),
+            machines: [],
+            dismissedCliWarnings: null,
+            setDismissedCliWarnings: vi.fn(),
+            allProfiles: [],
+            directSessionsFeatureEnabled: true,
+        } as any));
+
+        expect(hook.getCurrent().isAgentSelectable('codex' as any)).toBe(true);
+    });
+
     it('does not re-run the initial probe refresh when refresh callback identities churn', async () => {
         vi.resetModules();
 
@@ -158,6 +203,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: 'm1',
             selectedMachine: machine,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
@@ -211,6 +257,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: props.machine.id,
             selectedMachine: props.machine,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
@@ -249,6 +296,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: null,
             selectedMachine: null,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
@@ -310,6 +358,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: machine.id,
             selectedMachine: machine,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
@@ -340,6 +389,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: machine.id,
             selectedMachine: machine,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
@@ -381,6 +431,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: baseMachine.id,
             selectedMachine: baseMachine,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
@@ -408,6 +459,7 @@ describe('useNewSessionAvailabilityState', () => {
             selectedMachineId: otherMachine.id,
             selectedMachine: otherMachine,
             capabilityServerId: 'server-1',
+            directSessionsFeatureEnabled: false,
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,

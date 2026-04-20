@@ -20,15 +20,24 @@ vi.mock('@/sync/ops/capabilities', () => ({
   machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
 }));
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-  return {
-    ...actual,
-    getAgentCore: (agentId: string) => ({
-      sessionModes: { kind: agentId === 'codex' ? 'acpPolicyPresets' : 'acpAgentModes' },
-    }),
-  };
-});
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+  resolveProviderAgentIdForBackendTarget: (backendTarget: { kind: string; agentId?: string }) =>
+    backendTarget.kind === 'builtInAgent' ? (backendTarget.agentId ?? null) : null,
+}));
+
+vi.mock('@/agents/registry/compat/customAcp', () => ({
+  LEGACY_CUSTOM_ACP_AGENT_ID: 'customAcp',
+  resolveAgentLookupCoreConfig: (agentId: string) => ({
+    sessionModes: { kind: agentId === 'codex' ? 'acpPolicyPresets' : 'acpAgentModes' },
+  }),
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+  isAgentId: (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude',
+  getAgentCore: (agentId: string) => ({
+    sessionModes: { kind: agentId === 'codex' ? 'acpPolicyPresets' : 'acpAgentModes' },
+  }),
+}));
 
 describe('useNewSessionPreflightSessionModesState (cwd)', () => {
   it('passes params.cwd through to capabilities.invoke(cli.* probeModes)', async () => {
@@ -49,7 +58,7 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
 
     function Harness() {
       useNewSessionPreflightSessionModesState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -71,29 +80,21 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
     });
   });
 
-  it('uses cli.customAcp and forwards configured preset backendTarget', async () => {
+  it('does not synthesize a legacy compat sentinel for configured backend mode probes without a runtime carrier', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();
     resetDynamicSessionModeProbeCacheForTests();
 
     const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
 
-    const captured: any[] = [];
-    machineCapabilitiesInvokeMock.mockImplementationOnce(async (_machineId: any, request: any, _options: any) => {
-      captured.push(request);
-      return {
-        supported: true as const,
-        response: { ok: true as const, result: { availableModes: [{ id: 'plan', name: 'Plan' }] } },
-      };
-    });
-
-    function Harness() {
-      useNewSessionPreflightSessionModesState({
-        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      });
+    let latest: any = null;
+	    function Harness() {
+	      latest = useNewSessionPreflightSessionModesState({
+	        backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+	        selectedMachineId: 'machine-1',
+	        capabilityServerId: 'server-1',
+	        cwd: '/repo',
+	      });
       return null;
     }
 
@@ -103,16 +104,10 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
       root.unmount();
     });
 
-    expect(captured.length).toBeGreaterThan(0);
-    expect(captured[0]).toMatchObject({
-      id: 'cli.customAcp',
-      method: 'probeModes',
-      params: expect.objectContaining({
-        timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
-        cwd: '/repo',
-        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-      }),
-    });
+    expect(machineCapabilitiesInvokeMock).not.toHaveBeenCalled();
+    expect(latest.preflightModes).toBeNull();
+    expect(latest.modeOptions).toEqual([]);
+    expect(latest.probe.phase).toBe('idle');
   });
 
   it('probes Codex appServer modes through the generic preflight path', async () => {
@@ -125,7 +120,7 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
     let latest: any = null;
     function Harness() {
       latest = useNewSessionPreflightSessionModesState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -166,7 +161,7 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
 
     function Harness() {
       useNewSessionPreflightSessionModesState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',

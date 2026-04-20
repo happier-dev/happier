@@ -1,6 +1,8 @@
-import { AcpCatalogSettingsV1Schema, BackendTargetRefSchema, LlmTaskRunnerConfigV1Schema, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { getAllProviderDefinitions } from '@happier-dev/agents';
+import { AcpCatalogSettingsV1Schema, BackendTargetRefV2Schema, LlmTaskRunnerConfigV1Schema, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
-import { isAgentId } from '@/agents/registry/registryCore';
+
+const BUILT_IN_BACKEND_IDS = new Set<string>(getAllProviderDefinitions().map((entry) => entry.id));
 
 function buildExecutionRunsGuidanceSummaryProperties(value: unknown): Record<string, number> {
     const entries = Array.isArray(value) ? value : [];
@@ -137,17 +139,18 @@ export const ExecutionRunsGuidanceEntrySchema = z.object({
     title: z.string().max(200).optional(),
     description: z.string().min(1).max(10_000),
     enabled: z.boolean().default(true),
-    suggestedBackendTarget: BackendTargetRefSchema.optional(),
+    suggestedBackendTarget: BackendTargetRefV2Schema.optional(),
     suggestedModelId: z.string().min(1).max(200).optional(),
     suggestedIntent: z.enum(['review', 'plan', 'delegate']).optional(),
     exampleToolCalls: z.array(z.string()).optional(),
 }).superRefine((value, ctx) => {
     const target = value.suggestedBackendTarget;
-    if (!target || target.kind !== 'builtInAgent') return;
-    if (isAgentId(target.agentId)) return;
+    if (!target) return;
+    if (target.sourceKind === 'configured' || typeof target.configuredBackendId === 'string') return;
+    if (BUILT_IN_BACKEND_IDS.has(target.backendId)) return;
     ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['suggestedBackendTarget', 'agentId'],
+        path: ['suggestedBackendTarget', 'backendId'],
         message: 'Unknown built-in backend target',
     });
 });

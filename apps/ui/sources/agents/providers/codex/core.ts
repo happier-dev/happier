@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
@@ -12,11 +13,8 @@ export const CODEX_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.codexSubtitle',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: false },
-    connectedService: {
-        id: 'openai',
-        name: 'OpenAI Codex',
-        connectRoute: null,
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'codex' }),
+    uiConnectedService: { serviceId: 'openai', label: 'OpenAI Codex', connectRoute: null },
     // Persisted metadata has used a few aliases over time.
     flavorAliases: ['codex', 'openai', 'gpt'],
     cli: buildCatalogProviderCliUiConfig('codex'),

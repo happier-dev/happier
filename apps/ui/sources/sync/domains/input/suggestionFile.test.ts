@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const machineRipgrepMock = vi.fn();
 const machineFilesystemListDirectoryMock = vi.fn();
-const readMachineTargetForSessionMock = vi.fn();
-const resolvePreferredServerIdForSessionIdMock = vi.fn();
+const resolveWorkspaceTargetForSessionMock = vi.fn();
 
 vi.mock('@/sync/ops/machineRipgrep', () => ({
     machineRipgrep: (...args: unknown[]) => machineRipgrepMock(...args),
@@ -13,27 +12,27 @@ vi.mock('@/sync/ops/machineFileBrowser', () => ({
     machineFilesystemListDirectory: (...args: unknown[]) => machineFilesystemListDirectoryMock(...args),
 }));
 
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: (...args: unknown[]) => resolvePreferredServerIdForSessionIdMock(...args),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: (...args: unknown[]) => resolveWorkspaceTargetForSessionMock(...args),
 }));
 
 describe('searchFiles', () => {
     beforeEach(async () => {
+        vi.resetModules();
         machineRipgrepMock.mockReset();
         machineFilesystemListDirectoryMock.mockReset();
-        readMachineTargetForSessionMock.mockReset();
-        resolvePreferredServerIdForSessionIdMock.mockReset();
+        resolveWorkspaceTargetForSessionMock.mockReset();
         const { fileSearchCache } = await import('./suggestionFile');
         fileSearchCache.clearCache();
     });
 
     it('falls back to directory listing when ripgrep fails', async () => {
-        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
+        resolveWorkspaceTargetForSessionMock.mockReturnValue({
+            workspaceCacheKey: 'server:m1:/repo',
+            machineId: 'm1',
+            rootPath: '/repo',
+            serverId: 'server',
+        });
 
         machineRipgrepMock.mockRejectedValue(new Error('ripgrep unavailable'));
 
@@ -76,8 +75,12 @@ describe('searchFiles', () => {
     });
 
     it('uses ripgrep results directly when available', async () => {
-        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
+        resolveWorkspaceTargetForSessionMock.mockReturnValue({
+            workspaceCacheKey: 'server:m1:/repo',
+            machineId: 'm1',
+            rootPath: '/repo',
+            serverId: 'server',
+        });
 
         machineRipgrepMock.mockResolvedValue({
             success: true,
@@ -96,8 +99,12 @@ describe('searchFiles', () => {
     });
 
     it('matches hyphenated filenames and extensions', async () => {
-        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
+        resolveWorkspaceTargetForSessionMock.mockReturnValue({
+            workspaceCacheKey: 'server:m1:/repo',
+            machineId: 'm1',
+            rootPath: '/repo',
+            serverId: 'server',
+        });
 
         machineRipgrepMock.mockResolvedValue({
             success: true,
@@ -120,8 +127,12 @@ describe('searchFiles', () => {
     });
 
     it('falls back to ripgrep glob search when the initial file index misses a match', async () => {
-        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
+        resolveWorkspaceTargetForSessionMock.mockReturnValue({
+            workspaceCacheKey: 'server:m1:/repo',
+            machineId: 'm1',
+            rootPath: '/repo',
+            serverId: 'server',
+        });
 
         machineRipgrepMock
             .mockResolvedValueOnce({
@@ -153,11 +164,22 @@ describe('searchFiles', () => {
     });
 
     it('reuses the file index across sessions in the same workspace', async () => {
-        readMachineTargetForSessionMock.mockImplementation((sessionId: string) => {
-            if (sessionId === 'session-1' || sessionId === 'session-2') return { machineId: 'm1', basePath: '/repo' };
-            return { machineId: 'm2', basePath: '/other' };
+        resolveWorkspaceTargetForSessionMock.mockImplementation((sessionId: string) => {
+            if (sessionId === 'session-1' || sessionId === 'session-2') {
+                return {
+                    workspaceCacheKey: 'server:m1:/repo',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                    serverId: 'server',
+                };
+            }
+            return {
+                workspaceCacheKey: 'server:m2:/other',
+                machineId: 'm2',
+                rootPath: '/other',
+                serverId: 'server',
+            };
         });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
 
         machineRipgrepMock.mockResolvedValue({
             success: true,
@@ -174,8 +196,7 @@ describe('searchFiles', () => {
     });
 
     it('returns no results without falling back to a machine-only cache key when no preferred server is available', async () => {
-        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue(null);
+        resolveWorkspaceTargetForSessionMock.mockReturnValue(null);
 
         const { searchFiles } = await import('./suggestionFile');
         await expect(searchFiles('session-1', '', { limit: 10 })).resolves.toEqual([]);

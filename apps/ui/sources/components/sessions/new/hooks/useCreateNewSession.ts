@@ -15,18 +15,18 @@ import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secret
 import { clearNewSessionDraft, loadSessionDrafts, saveSessionDrafts } from '@/sync/domains/state/persistence';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
-import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { isProfileCompatibleWithBackendTarget, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
-import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
+import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { isAgentId } from '@/agents/catalog/catalog';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
 import { transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { SPAWN_SESSION_ERROR_CODES, type BackendTargetRefV1, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES, type BackendTargetRefV2, type BackendTargetRefV2Input, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import type { CodexBackendMode } from '@happier-dev/agents';
@@ -49,6 +49,7 @@ import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import { materializeNewSessionCheckout } from '@/components/sessions/new/modules/materializeNewSessionCheckout';
 import { rollbackNewSessionArtifacts } from '@/components/sessions/new/modules/rollbackNewSessionArtifacts';
+import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
 import {
     followUpSpawnedSessionWithServerScope,
     readRecoverableFollowUpPayload,
@@ -111,7 +112,8 @@ export function useCreateNewSession(params: Readonly<{
     recentMachinePaths: Array<{ machineId: string; path: string }>;
 
     agentType: AgentId;
-    backendTarget?: BackendTargetRefV1;
+    backendTarget?: BackendTargetRefV2;
+    spawnBackendTarget?: BackendTargetRefV2Input;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode: PermissionMode;
     modelMode: ModelMode;
@@ -192,26 +194,37 @@ export function useCreateNewSession(params: Readonly<{
 
             const updatedPaths = [{ machineId: current.selectedMachineId, path: effectiveSelectedPath }, ...current.recentMachinePaths.filter((rp) => rp.machineId !== current.selectedMachineId)].slice(0, 10);
             const profilesActive = current.useProfiles;
-            const nextLastUsedAgent = resolvePersistedAgentIdForBackendTarget({
+            const canonicalAgentId = resolveNewSessionCompatAgentType({
                 backendTarget: current.backendTarget ?? null,
                 persistedAgentId: current.settings.lastUsedAgent,
-                selectedBuiltInAgentId: current.agentType,
+                selectedBuiltInAgentId: isAgentId(current.agentType) ? current.agentType : DEFAULT_AGENT_ID,
             });
-
             const settingsUpdate: MutableSettingsDelta = {
                 recentMachinePaths: updatedPaths,
-                lastUsedAgent: nextLastUsedAgent,
-                lastUsedBackendTarget: current.backendTarget,
             };
+            if (current.backendTarget) {
+                const shouldWriteLastUsedAgent =
+                    !current.backendTarget.configuredBackendId
+                    && isAgentId(current.backendTarget.backendId);
+                if (shouldWriteLastUsedAgent) settingsUpdate.lastUsedAgent = canonicalAgentId;
+                settingsUpdate.lastUsedBackendTarget = current.backendTarget;
+            }
             if (profilesActive) {
                 settingsUpdate.lastUsedProfile = current.selectedProfileId;
             }
             applySettings(settingsUpdate);
 
+            const backendTarget: BackendTargetRefV2 = current.backendTarget ?? { kind: 'backend', backendId: canonicalAgentId };
             let environmentVariables = undefined;
             if (profilesActive && current.selectedProfileId) {
                 const selectedProfile = current.profileMap.get(current.selectedProfileId) || getBuiltInProfile(current.selectedProfileId);
                 if (selectedProfile) {
+                    if (!isProfileCompatibleWithBackendTarget(selectedProfile, backendTarget)) {
+                        Modal.alert(t('common.error'), t('newSession.aiBackendNotCompatibleWithSelectedProfile'));
+                        current.setIsCreating(false);
+                        return;
+                    }
+
                     environmentVariables = transformProfileToEnvironmentVars(selectedProfile);
 
                     const selectedSecretIdByEnvVarName = current.selectedSecretIdByProfileIdByEnvVarName[current.selectedProfileId] ?? {};
@@ -274,7 +287,7 @@ export function useCreateNewSession(params: Readonly<{
             }
 
             environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
-                agentId: current.agentType,
+                agentId: canonicalAgentId,
                 settings: current.settings,
                 environmentVariables,
                 newSessionOptions: {
@@ -282,7 +295,6 @@ export function useCreateNewSession(params: Readonly<{
                     targetServerId: resolvedTargetServerId,
                 },
             });
-            const backendTarget: BackendTargetRefV1 = current.backendTarget ?? { kind: 'builtInAgent', agentId: current.agentType };
             const connectedServices = (current.agentNewSessionOptions as any)?.connectedServices;
 
             const terminal = resolveTerminalSpawnOptions({
@@ -292,9 +304,9 @@ export function useCreateNewSession(params: Readonly<{
 
             const machineCapsSnapshot = getMachineCapabilitiesSnapshot(current.selectedMachineId, resolvedTargetServerId);
             const machineCapsResults = machineCapsSnapshot?.response.results as any;
-            const experiments = getAgentResumeExperimentsFromSettings(current.agentType, current.settings);
+            const experiments = getAgentResumeExperimentsFromSettings(canonicalAgentId, current.settings);
             const preflightIssues = getNewSessionPreflightIssues({
-                agentId: current.agentType,
+                agentId: canonicalAgentId,
                 experiments,
                 resumeSessionId: current.resumeSessionId,
                 results: machineCapsResults,
@@ -318,7 +330,7 @@ export function useCreateNewSession(params: Readonly<{
             const spawnPermissionModeUpdatedAt = nowServerMs();
             const normalizedAcpModeId = typeof current.acpSessionModeId === 'string' ? current.acpSessionModeId.trim() : '';
             const spawnModelId =
-                getAgentCore(current.agentType).model.supportsSelection === true &&
+                getAgentCore(canonicalAgentId).model.supportsSelection === true &&
                 typeof current.modelMode === 'string' &&
                 current.modelMode.trim().length > 0 &&
                 current.modelMode !== 'default'
@@ -332,7 +344,7 @@ export function useCreateNewSession(params: Readonly<{
             }).mode;
             const normalizedSessionPrompt = current.sessionPrompt.trim();
             const spawnSessionExtras = buildSpawnSessionExtrasFromUiState({
-                agentId: current.agentType,
+                agentId: canonicalAgentId,
                 settings: current.settings,
                 resumeSessionId: current.resumeSessionId,
             });
@@ -341,7 +353,7 @@ export function useCreateNewSession(params: Readonly<{
                 checkoutCreationDraft: current.checkoutCreationDraft ?? null,
                 prompt: normalizedSessionPrompt,
                 displayText: normalizedSessionPrompt,
-                agentId: nextLastUsedAgent,
+                agentId: canonicalAgentId,
                 backendTarget,
                 transcriptStorage: current.transcriptStorage ?? null,
                 profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
@@ -443,6 +455,7 @@ export function useCreateNewSession(params: Readonly<{
                     serverId: resolvedTargetServerId,
                     approvedNewDirectoryCreation: true,
                     agentModeUpdatedAt: normalizedAcpModeId ? spawnPermissionModeUpdatedAt : null,
+                    spawnBackendTarget: current.spawnBackendTarget,
                 }),
                 ...spawnSessionExtras,
             });
@@ -498,7 +511,7 @@ export function useCreateNewSession(params: Readonly<{
                             targetServerId: resolvedTargetServerId,
                             initialMessageText,
                             metaOverrides: (() => {
-                                const agentCore = getAgentCore(current.agentType);
+                const agentCore = getAgentCore(canonicalAgentId);
                                 if (
                                     agentCore.model.supportsSelection
                                     && agentCore.model.nonAcpApplyScope === 'next_prompt'
@@ -521,7 +534,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 storage.getState().updateSessionPermissionMode(result.sessionId, current.permissionMode);
-                if (getAgentCore(current.agentType).model.supportsSelection && current.modelMode && current.modelMode !== 'default') {
+                if (getAgentCore(canonicalAgentId).model.supportsSelection && current.modelMode && current.modelMode !== 'default') {
                     storage.getState().updateSessionModelMode(result.sessionId, current.modelMode);
                 }
 
@@ -560,9 +573,9 @@ export function useCreateNewSession(params: Readonly<{
                 };
 
                 if (!opts?.afterCreated) {
+                    let initialMessageText = '';
                     try {
                         const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
-                        let initialMessageText = '';
 
                         if (shouldSendInitialMessage && current.sessionPrompt.trim()) {
                             const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
@@ -590,7 +603,7 @@ export function useCreateNewSession(params: Readonly<{
                             targetServerId: resolvedTargetServerId,
                             initialMessageText,
                             metaOverrides: (() => {
-                                const agentCore = getAgentCore(current.agentType);
+                                const agentCore = getAgentCore(canonicalAgentId);
                                 if (
                                     agentCore.model.supportsSelection
                                     && agentCore.model.nonAcpApplyScope === 'next_prompt'

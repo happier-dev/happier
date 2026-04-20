@@ -12,16 +12,17 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => factory({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
             colors: {
                 text: '#111',
                 textSecondary: '#666',
             },
-        }),
-    },
-}));
+        },
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

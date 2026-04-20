@@ -290,16 +290,18 @@ vi.mock('@/utils/system/versionUtils', () => ({
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
   const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    getAgentCore: () => ({
-      model: { defaultMode: 'default' },
-      resume: { vendorResumeIdField: null },
-      sessionModes: { kind: 'none' },
-    }),
-    resolveAgentIdFromFlavor: () => 'codex',
-    DEFAULT_AGENT_ID: 'codex',
-  };
+    return {
+      ...actual,
+      getAgentCore: () => ({
+        cli: { detectKey: 'codex' },
+        uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+        model: { defaultMode: 'default' },
+        resume: { vendorResumeIdField: null },
+        sessionModes: { kind: 'none' },
+      }),
+      resolveAgentIdFromFlavor: () => 'codex',
+      DEFAULT_AGENT_ID: 'codex',
+    };
 });
 
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
@@ -349,6 +351,7 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
   shouldRenderChatTimelineForSession: () => true,
+  shouldRequestRemoteControl: () => false,
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({

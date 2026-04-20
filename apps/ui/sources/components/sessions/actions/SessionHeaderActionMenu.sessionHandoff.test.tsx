@@ -354,7 +354,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     };
 
     vi.resetModules();
-    return import('@/voice/sessionBinding/voiceSessionBindingStore').then(({ voiceSessionBindingStore }) => {
+    return import('@/voice/binding/voiceConversationBindingStore').then(({ voiceSessionBindingStore }) => {
       for (const binding of voiceSessionBindingStore.getState().list()) {
         voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
       }
@@ -1008,7 +1008,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       canStop: false,
     };
 
-    const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',

@@ -58,8 +58,8 @@ describe('settingsParse provider plugin defaults', () => {
         } as any);
 
         expect((settings as any).backendCliSourcePreferenceByTargetKey).toEqual({
-            'agent:codex': 'managed-first',
-            'agent:gemini': 'system-first',
+            'backend:codex': 'managed-first',
+            'backend:gemini': 'system-first',
         });
     });
 });

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { InteractionManager } from 'react-native';
-import { type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { type AgentId } from '@/agents/catalog/catalog';
 import {
@@ -25,7 +25,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     profileMap: ReadonlyMap<string, AIBackendProfile>;
     getCompatibleProfileBackendEntries: (profile: AIBackendProfile) => readonly NewSessionSelectableBackendEntry[];
     selectedBackendTargetKey: string;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV1>>;
+    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
     cliAvailabilityTimestamp: number;
     cliAvailabilityByAgentId: AgentAvailabilityById;
     cliAuthStatusByAgentId: AgentAuthStatusById;
@@ -72,7 +72,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     const isCurrentCompatibleBackendSelectable = React.useCallback((
         compatibleBackendEntries: readonly NewSessionSelectableBackendEntry[],
     ) => {
-        const currentEntry = compatibleBackendEntries.find((entry) => entry.targetKey === params.selectedBackendTargetKey) ?? null;
+        const currentEntry = compatibleBackendEntries.find((entry) => entry.backendTargetKey === params.selectedBackendTargetKey) ?? null;
         if (!currentEntry) {
             return false;
         }
@@ -128,7 +128,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
             if (compatibleBackendEntries.length > 0 && !currentSelectable) {
                 const nextEntry = resolveNextCompatibleBackendEntry(compatibleBackendEntries);
                 if (nextEntry) {
-                    params.setBackendTarget(nextEntry.target);
+                    params.setBackendTarget(nextEntry.backendTarget);
                 }
             }
 
@@ -169,7 +169,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         if (compatibleBackendEntries.length > 0 && !currentSelectable) {
             const nextEntry = resolveNextCompatibleBackendEntry(compatibleBackendEntries);
             if (nextEntry) {
-                params.setBackendTarget(nextEntry.target);
+                params.setBackendTarget(nextEntry.backendTarget);
             }
         }
     }, [

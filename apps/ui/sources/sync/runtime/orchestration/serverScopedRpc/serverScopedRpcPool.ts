@@ -1,4 +1,9 @@
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import {
+    createNotAuthenticatedError,
+    isAuthenticationResponseStatus,
+    isTerminalAuthError,
+} from '@/sync/runtime/connectivity/authErrors';
 
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
@@ -93,7 +98,12 @@ async function fetchMachineDataKey(params: Readonly<{
             },
             timeoutMs: params.timeoutMs,
         });
-        if (!response.ok) return null;
+        if (!response.ok) {
+            if (isAuthenticationResponseStatus(response.status)) {
+                throw createNotAuthenticatedError(response.status);
+            }
+            return null;
+        }
 
         const machines = await response.json() as Array<{
             id: string;
@@ -103,7 +113,10 @@ async function fetchMachineDataKey(params: Readonly<{
         if (!machine?.dataEncryptionKey) return null;
 
         return await params.decryptEncryptionKey(machine.dataEncryptionKey);
-    } catch {
+    } catch (error) {
+        if (isTerminalAuthError(error)) {
+            throw error;
+        }
         return null;
     } finally {
         if (timeoutId) clearTimeout(timeoutId);

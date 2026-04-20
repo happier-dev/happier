@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LocalNeuralExecutionSchema } from '@happier-dev/protocol';
 
 import { SecretStringSchema } from '../../encryption/secretSettings';
 
@@ -25,6 +26,7 @@ const VoiceLocalSttLocalNeuralSchema = z
   .object({
     assetId: z.string().nullable().default('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17'),
     language: z.string().nullable().default(null),
+    execution: LocalNeuralExecutionSchema.default('auto'),
   })
   .prefault({});
 
@@ -59,7 +61,7 @@ function migrateLegacyLocalStt(input: Record<string, unknown>): VoiceLocalSttV2 
       model: 'gemini-2.5-flash',
       language: null,
     },
-    localNeural: { assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17', language: null },
+    localNeural: { assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17', language: null, execution: 'auto' },
   };
 }
 

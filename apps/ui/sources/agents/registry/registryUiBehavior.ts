@@ -1,29 +1,27 @@
 import type { ReactNode } from 'react';
 import type {
     AccountProfile,
-    AgentRuntimeDescriptorV1,
     DirectSessionLinkEnsureRequest,
     DirectSessionsSource,
+    RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
-import type { AgentId } from './registryCore';
-import { AGENT_IDS, getAgentCore, resolveAgentIdFromFlavor } from './registryCore';
+import type { AgentCoreConfig, AgentId, CanonicalAgentId } from './registryCore';
+import { CANONICAL_AGENT_IDS, getAgentCore, resolveAgentIdFromFlavor } from './registryCore';
 import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { TranslationKey } from '@/text';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
-import { CODEX_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/codex/uiBehavior';
-import { CLAUDE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/claude/uiBehavior';
-import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/auggie/uiBehavior';
-import { OPENCODE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/opencode/uiBehavior';
-import { PI_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/pi/uiBehavior';
-import { CUSTOM_ACP_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/customAcp/uiBehavior';
-import { OH_MY_PI_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/ohMyPi/uiBehavior';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
+import { BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES } from './generatedBundledPluginEntries.uiBehaviorOverrides';
+import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCompatAgents';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
+
+// RU-02: allow legacy compat ids at ingress (never as canonical agents).
+type AgentLookupId = AgentId | typeof LEGACY_COMPAT_PRIMARY_AGENT_ID;
 
 export type AgentExperimentSwitches = Readonly<Record<string, boolean>>;
 
@@ -61,8 +59,8 @@ export type DirectBrowseLinkEnsureRequestExtras = Readonly<
 export type AgentSessionHandoffProviderPatch = Readonly<{
     clearMetadataKeys?: readonly string[];
     metadataPatch?: Record<string, unknown>;
-    runtimeDescriptor?: AgentRuntimeDescriptorV1 | null;
-    directSessionRuntimeDescriptor?: AgentRuntimeDescriptorV1 | null;
+    runtimeDescriptor?: RuntimeDescriptorV1 | null;
+    directSessionRuntimeDescriptor?: RuntimeDescriptorV1 | null;
 }>;
 
 export type AgentUiBehavior = Readonly<{
@@ -80,17 +78,17 @@ export type AgentUiBehavior = Readonly<{
     }>;
     newSession?: Readonly<{
         buildNewSessionOptions?: (ctx: {
-            agentId: AgentId;
+            agentId: AgentLookupId;
             agentOptionState?: Record<string, unknown> | null;
         }) => Record<string, unknown> | null;
         canSelectWithoutDetectedCli?: (ctx: NewSessionCliSelectabilityContext) => boolean;
         getAgentInputExtraActionChips?: (ctx: {
-            agentId: AgentId;
+            agentId: AgentLookupId;
             agentOptionState?: Record<string, unknown> | null;
             setAgentOptionState: (key: string, value: unknown) => void;
         }) => ReadonlyArray<AgentInputExtraActionChip> | undefined;
         supportsTranscriptStorageMode?: (ctx: {
-            agentId: AgentId;
+            agentId: AgentLookupId;
             settings: Settings;
             storageMode: AgentTranscriptStorageMode;
         }) => boolean;
@@ -102,19 +100,19 @@ export type AgentUiBehavior = Readonly<{
         browse?: Readonly<{
             order?: number;
             getSourceOptions?: (ctx: {
-                agentId: AgentId;
+                agentId: AgentLookupId;
                 profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
                 settings: Settings;
             }) => readonly DirectBrowseSourceOption[];
             resolveLockedSourceOption?: (ctx: {
-                agentId: AgentId;
+                agentId: AgentLookupId;
                 sourceOptions: readonly DirectBrowseSourceOption[];
                 agentOptionState?: Record<string, unknown> | null;
                 profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
                 settings: Settings;
             }) => DirectBrowseSourceOption | null;
             buildLinkEnsureRequestExtras?: (ctx: {
-                agentId: AgentId;
+                agentId: AgentLookupId;
                 source: DirectSessionsSource;
                 candidate: Readonly<{ details?: Record<string, unknown> }>;
             }) => DirectBrowseLinkEnsureRequestExtras;
@@ -127,30 +125,30 @@ export type AgentUiBehavior = Readonly<{
             sourceMetadataForHandoff?: Record<string, unknown>;
             targetRemoteSessionId: string;
             targetDirectSource: DirectSessionsSource | Record<string, unknown>;
-            targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
+            targetRuntimeDescriptor?: RuntimeDescriptorV1;
         }) => AgentSessionHandoffProviderPatch;
     }>;
     payload?: Readonly<{
         buildSpawnEnvironmentVariables?: (opts: {
-            agentId: AgentId;
+            agentId: AgentLookupId;
             settings: Settings;
             environmentVariables: Record<string, string> | undefined;
             newSessionOptions?: Record<string, unknown> | null;
         }) => Record<string, string> | undefined;
         buildSpawnSessionExtras?: (opts: {
-            agentId: AgentId;
+            agentId: AgentLookupId;
             settings: Settings;
             experiments: AgentResumeExperiments;
             resumeSessionId: string;
         }) => Record<string, unknown>;
         buildResumeSessionExtras?: (opts: {
-            agentId: AgentId;
+            agentId: AgentLookupId;
             experiments: AgentResumeExperiments;
             settings: Settings;
             session?: Session | null;
         }) => Record<string, unknown>;
         buildWakeResumeExtras?: (opts: {
-            agentId: AgentId;
+            agentId: AgentLookupId;
             resumeCapabilityOptions: ResumeCapabilityOptions;
             session?: Session | null;
         }) => Record<string, unknown>;
@@ -176,20 +174,20 @@ export type AgentUiBehavior = Readonly<{
 }>;
 
 export type NewSessionPreflightContext = Readonly<{
-    agentId: AgentId;
+    agentId: AgentLookupId;
     experiments: AgentResumeExperiments;
     resumeSessionId: string;
     results: CapabilityResults | undefined;
 }>;
 
 export type NewSessionCliSelectabilityContext = Readonly<{
-    agentId: AgentId;
+    agentId: AgentLookupId;
     settings: Settings;
     agentOptionState?: Record<string, unknown> | null;
 }>;
 
 export type NewSessionRelevantInstallableDepsContext = Readonly<{
-    agentId: AgentId;
+    agentId: AgentLookupId;
     settings: Settings;
     experiments: AgentResumeExperiments;
     resumeSessionId: string;
@@ -241,8 +239,8 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
     };
 }
 
-function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
-    const promptProtocol = getAgentCore(agentId).permissions.promptProtocol;
+function buildDefaultAgentUiBehaviorFromCore(core: Pick<AgentCoreConfig, 'permissions' | 'sessionStorage'>): AgentUiBehavior {
+    const promptProtocol = core.permissions.promptProtocol;
 
     return {
         permissions: {
@@ -254,39 +252,72 @@ function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
             },
         },
         newSession: {
-            supportsTranscriptStorageMode: ({ storageMode }) => getAgentCore(agentId).sessionStorage[storageMode] === true,
+            supportsTranscriptStorageMode: ({ storageMode }) => core.sessionStorage[storageMode] === true,
         },
     };
 }
 
-const AGENTS_UI_BEHAVIOR_OVERRIDES: Readonly<Partial<Record<AgentId, AgentUiBehavior>>> = Object.freeze({
-    claude: CLAUDE_UI_BEHAVIOR_OVERRIDE,
-    codex: CODEX_UI_BEHAVIOR_OVERRIDE,
-    opencode: OPENCODE_UI_BEHAVIOR_OVERRIDE,
-    auggie: AUGGIE_UI_BEHAVIOR_OVERRIDE,
-    pi: PI_UI_BEHAVIOR_OVERRIDE,
-    ohMyPi: OH_MY_PI_UI_BEHAVIOR_OVERRIDE,
-    customAcp: CUSTOM_ACP_UI_BEHAVIOR_OVERRIDE,
-});
+function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
+    return buildDefaultAgentUiBehaviorFromCore(getAgentCore(agentId));
+}
 
-export const AGENTS_UI_BEHAVIOR: Readonly<Record<AgentId, AgentUiBehavior>> = Object.freeze(
+const CANONICAL_AGENTS_UI_BEHAVIOR_OVERRIDES = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES;
+
+export const CANONICAL_AGENTS_UI_BEHAVIOR: Readonly<Record<CanonicalAgentId, AgentUiBehavior>> = Object.freeze(
     Object.fromEntries(
-        AGENT_IDS.map((id) => {
+        CANONICAL_AGENT_IDS.map((id: CanonicalAgentId) => {
             const base = buildDefaultAgentUiBehavior(id);
-            const override = AGENTS_UI_BEHAVIOR_OVERRIDES[id] ?? {};
+            const override = CANONICAL_AGENTS_UI_BEHAVIOR_OVERRIDES[id] ?? {};
             return [id, mergeAgentUiBehavior(base, override)] as const;
         }),
-    ) as Record<AgentId, AgentUiBehavior>,
+    ) as Record<CanonicalAgentId, AgentUiBehavior>,
 );
+
+export const AGENTS_UI_BEHAVIOR: Readonly<Record<CanonicalAgentId, AgentUiBehavior>> = Object.freeze({
+    ...CANONICAL_AGENTS_UI_BEHAVIOR,
+});
+
+const UNKNOWN_AGENT_UI_BEHAVIOR: AgentUiBehavior = Object.freeze({
+    permissions: {
+        footer: {
+            usePermissionUpdates: false,
+            forceReadOnlyAfterStop: true,
+            supportsExecPolicyAmendment: false,
+            stopHandling: 'denyAndAbortRun',
+        },
+    },
+    newSession: {
+        supportsTranscriptStorageMode: () => false,
+    },
+});
+
+function isCanonicalAgentId(value: unknown): value is CanonicalAgentId {
+    return typeof value === 'string' && (CANONICAL_AGENT_IDS as readonly string[]).includes(value);
+}
+
+function resolveKnownAgentUiBehavior(agentId: string | null | undefined): AgentUiBehavior | null {
+    if (isCanonicalAgentId(agentId)) {
+        return CANONICAL_AGENTS_UI_BEHAVIOR[agentId];
+    }
+    return null;
+}
+
+export function resolveAgentUiBehavior(agentId: string | null | undefined): AgentUiBehavior {
+    const behavior = resolveKnownAgentUiBehavior(agentId);
+    if (behavior) {
+        return behavior;
+    }
+    return UNKNOWN_AGENT_UI_BEHAVIOR;
+}
 
 export function resolveAgentUiBehaviorFromFlavor(flavor: unknown): AgentUiBehavior | null {
     const agentId = typeof flavor === 'string' ? resolveAgentIdFromFlavor(flavor) : null;
-    return agentId ? AGENTS_UI_BEHAVIOR[agentId] ?? null : null;
+    return agentId ? resolveAgentUiBehavior(agentId) : null;
 }
 
-export function getAgentResumeExperimentsFromSettings(agentId: AgentId, settings: Settings): AgentResumeExperiments {
+export function getAgentResumeExperimentsFromSettings(agentId: AgentLookupId, settings: Settings): AgentResumeExperiments {
     const enabled = true;
-    const defs = AGENTS_UI_BEHAVIOR[agentId].resume?.experimentSwitches ?? [];
+    const defs = resolveAgentUiBehavior(agentId).resume?.experimentSwitches ?? [];
     if (defs.length === 0) return { enabled, switches: {} };
     const switches: Record<string, boolean> = {};
     for (const def of defs) {
@@ -310,80 +341,80 @@ export function buildResumeCapabilityOptionsFromUiState(opts: {
 }
 
 export function getNewSessionPreflightIssues(ctx: NewSessionPreflightContext): readonly NewSessionPreflightIssue[] {
-    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].newSession?.getPreflightIssues;
+    const fn = resolveAgentUiBehavior(ctx.agentId).newSession?.getPreflightIssues;
     return fn ? fn(ctx) : [];
 }
 
 export function buildNewSessionOptionsFromUiState(opts: {
-    agentId: AgentId;
+    agentId: AgentLookupId;
     agentOptionState?: Record<string, unknown> | null;
 }): Record<string, unknown> | null {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].newSession?.buildNewSessionOptions;
+    const fn = resolveAgentUiBehavior(opts.agentId).newSession?.buildNewSessionOptions;
     return fn ? fn(opts) : null;
 }
 
 export function canSelectAgentWithoutDetectedCli(ctx: NewSessionCliSelectabilityContext): boolean {
-    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].newSession?.canSelectWithoutDetectedCli;
+    const fn = resolveAgentUiBehavior(ctx.agentId).newSession?.canSelectWithoutDetectedCli;
     return fn ? fn(ctx) : false;
 }
 
 export function getNewSessionAgentInputExtraActionChips(opts: {
-    agentId: AgentId;
+    agentId: AgentLookupId;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionState: (key: string, value: unknown) => void;
 }): ReadonlyArray<AgentInputExtraActionChip> | undefined {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].newSession?.getAgentInputExtraActionChips;
+    const fn = resolveAgentUiBehavior(opts.agentId).newSession?.getAgentInputExtraActionChips;
     return fn ? fn(opts) : undefined;
 }
 
 export function getNewSessionRelevantInstallableDepKeys(
     ctx: NewSessionRelevantInstallableDepsContext,
 ): readonly string[] {
-    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].newSession?.getRelevantInstallableDepKeys;
+    const fn = resolveAgentUiBehavior(ctx.agentId).newSession?.getRelevantInstallableDepKeys;
     return fn ? fn(ctx) : [];
 }
 
 export function buildSpawnSessionExtrasFromUiState(opts: {
-    agentId: AgentId;
+    agentId: AgentLookupId;
     settings: Settings;
     resumeSessionId: string;
 }): Record<string, unknown> {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].payload?.buildSpawnSessionExtras;
+    const fn = resolveAgentUiBehavior(opts.agentId).payload?.buildSpawnSessionExtras;
     if (!fn) return {};
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
     return fn({ agentId: opts.agentId, settings: opts.settings, experiments, resumeSessionId: opts.resumeSessionId });
 }
 
 export function buildSpawnEnvironmentVariablesFromUiState(opts: {
-    agentId: AgentId;
+    agentId: AgentLookupId;
     settings: Settings;
     environmentVariables: Record<string, string> | undefined;
     newSessionOptions?: Record<string, unknown> | null;
 }): Record<string, string> | undefined {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].payload?.buildSpawnEnvironmentVariables;
+    const fn = resolveAgentUiBehavior(opts.agentId).payload?.buildSpawnEnvironmentVariables;
     return fn ? fn(opts) : opts.environmentVariables;
 }
 
 export function buildResumeSessionExtrasFromUiState(opts: {
-    agentId: AgentId;
+    agentId: AgentLookupId;
     settings: Settings;
     session?: Session | null;
 }): Record<string, unknown> {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].payload?.buildResumeSessionExtras;
+    const fn = resolveAgentUiBehavior(opts.agentId).payload?.buildResumeSessionExtras;
     if (!fn) return {};
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
     return fn({ agentId: opts.agentId, experiments, settings: opts.settings, session: opts.session });
 }
 
 export function buildWakeResumeExtras(opts: {
-    agentId: AgentId;
+    agentId: AgentLookupId;
     resumeCapabilityOptions: ResumeCapabilityOptions;
     session?: Session | null;
 }): Record<string, unknown> {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId]?.payload?.buildWakeResumeExtras;
+    const fn = resolveAgentUiBehavior(opts.agentId)?.payload?.buildWakeResumeExtras;
     return fn ? fn(opts) : {};
 }
 
-export function supportsDetectedMcpConfigScan(agentId: AgentId): boolean {
-    return AGENTS_UI_BEHAVIOR[agentId]?.mcpServers?.supportsDetectedConfigScan === true;
+export function supportsDetectedMcpConfigScan(agentId: AgentLookupId): boolean {
+    return resolveAgentUiBehavior(agentId).mcpServers?.supportsDetectedConfigScan === true;
 }

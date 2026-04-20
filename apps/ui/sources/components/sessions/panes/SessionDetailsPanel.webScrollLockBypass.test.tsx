@@ -158,10 +158,15 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
 
         const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        const root = screen.findByTestId('session-details-panel-root');
-        if (!root) {
+        const workspaceRoot = screen.findByTestId('session-details-panel-root');
+        if (!workspaceRoot) {
             throw new Error('expected session-details-panel-root to render');
         }
+        const root = workspaceRoot.find((node) => (
+            node !== workspaceRoot
+            && typeof node.props?.onWheel === 'function'
+            && typeof node.props?.onTouchMove === 'function'
+        ));
         expect(typeof root.props.onWheel).toBe('function');
         expect(typeof root.props.onTouchMove).toBe('function');
 

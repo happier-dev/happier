@@ -279,6 +279,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
             cli: { spawnAgent: 'codex' },
             model: { defaultMode: 'default' },
             resume: { vendorResumeIdField: null },
+            uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
         }),
         resolveAgentIdFromFlavor: () => 'codex',
         DEFAULT_AGENT_ID: 'codex',
@@ -326,6 +327,7 @@ vi.mock('@/sync/acp/sessionModeControl', () => ({
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
     shouldRenderChatTimelineForSession: (args: any) => shouldRenderChatTimelineForSessionMock(args),
+    shouldRequestRemoteControl: () => false,
     shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 vi.mock('@/sync/runtime/time', () => ({
@@ -340,10 +342,10 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         <AppPaneProvider>{children ?? null}</AppPaneProvider>
     );
 
-    async function renderSessionView() {
+    async function renderSessionView(props?: Partial<React.ComponentProps<(typeof import('./SessionView'))['SessionView']>>) {
         const { SessionView } = await import('./SessionView');
         return renderScreen(
-            <SessionView id="s1" />,
+            <SessionView id="s1" {...props} />,
             {
                 wrapper: AppPaneProviderWrapper,
             },
@@ -493,6 +495,37 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
 
         realtimeStatusValue.current = { status: 'disconnected' };
         await screen.update(<SessionView id="s1" />);
+
+        expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
+
+        await screen.unmount();
+    });
+
+    it('does not mark a retained hidden split leaf as visible until that surface becomes visible again', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        const screen = await renderScreen(
+            <SessionView
+                id="s1"
+                surfaceFocusedOverride={false}
+                surfaceVisibleOverride={false}
+                routeAnchorOverride={false}
+            />,
+            {
+                wrapper: AppPaneProviderWrapper,
+            },
+        );
+
+        expect(onSessionVisibleSpy).not.toHaveBeenCalled();
+
+        await screen.update(
+            <SessionView
+                id="s1"
+                surfaceFocusedOverride={true}
+                surfaceVisibleOverride={true}
+                routeAnchorOverride={false}
+            />,
+        );
 
         expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
 

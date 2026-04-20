@@ -1,11 +1,14 @@
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
+    CANONICAL_AGENT_IDS as SHARED_CANONICAL_AGENT_IDS,
     DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor as resolveAgentIdFromFlavorShared,
+    type AgentCore as SharedAgentCore,
     type AgentId,
     type AgentModelConfig,
     type AgentSessionStorage,
@@ -14,21 +17,10 @@ import {
     type VendorResumeIdField,
 } from '@happier-dev/agents';
 
-import { CLAUDE_CORE } from '@/agents/providers/claude/core';
-import { CODEX_CORE } from '@/agents/providers/codex/core';
-import { OPENCODE_CORE } from '@/agents/providers/opencode/core';
-import { GEMINI_CORE } from '@/agents/providers/gemini/core';
-import { AUGGIE_CORE } from '@/agents/providers/auggie/core';
-import { QWEN_CORE } from '@/agents/providers/qwen/core';
-import { KIMI_CORE } from '@/agents/providers/kimi/core';
-import { KILO_CORE } from '@/agents/providers/kilo/core';
-import { KIRO_CORE } from '@/agents/providers/kiro/core';
-import { CUSTOM_ACP_CORE } from '@/agents/providers/customAcp/core';
-import { PI_CORE } from '@/agents/providers/pi/core';
-import { OH_MY_PI_CORE } from '@/agents/providers/ohMyPi/core';
-import { COPILOT_CORE } from '@/agents/providers/copilot/core';
+import { BUNDLED_CANONICAL_AGENTS_CORE } from './generatedBundledPluginEntries';
 
 export type { AgentId };
+export type CanonicalAgentId = AgentId;
 
 export type PermissionModeGroupId = 'claude' | 'codexLike';
 export type PermissionPromptProtocol = 'claude' | 'codexDecision';
@@ -60,21 +52,25 @@ export type AgentCoreConfig = Readonly<{
          */
         experimental: boolean;
     }>;
-    connectedService: Readonly<{
+    /**
+     * Shared Happier Connected Services compatibility from `@happier-dev/agents`.
+     */
+    connectedServices: SharedAgentCore['connectedServices'];
+    uiConnectedService: Readonly<{
         /**
-         * Server-side connected service id (e.g. `anthropic`, `openai`).
+         * UI presentation metadata for the service backing this agent.
          * When null, the agent has no account-level OAuth connection surface in the UI.
          */
-        id: string | null;
+        serviceId: ConnectedServiceId | null;
         /**
-         * Human-friendly name shown in account settings.
+         * Human-friendly label shown in account settings and provider surfaces.
          * (This is intentionally not i18n'd yet; can be moved to translations later.)
          */
-        name: string;
+        label: string;
         /**
          * Optional app route used to connect the service.
          */
-        connectRoute?: Href | null;
+        connectRoute: Href | null;
     }>;
     flavorAliases: readonly string[];
     cli: Readonly<{
@@ -203,24 +199,18 @@ export type AgentCoreConfig = Readonly<{
     }>;
 }>;
 
+export const CANONICAL_AGENTS_CORE = BUNDLED_CANONICAL_AGENTS_CORE;
+
 export const AGENTS_CORE = Object.freeze({
-    claude: CLAUDE_CORE,
-    codex: CODEX_CORE,
-    opencode: OPENCODE_CORE,
-    gemini: GEMINI_CORE,
-    auggie: AUGGIE_CORE,
-    qwen: QWEN_CORE,
-    kimi: KIMI_CORE,
-    kilo: KILO_CORE,
-    kiro: KIRO_CORE,
-    customAcp: CUSTOM_ACP_CORE,
-    pi: PI_CORE,
-    ohMyPi: OH_MY_PI_CORE,
-    copilot: COPILOT_CORE,
-}) satisfies Readonly<Record<string, AgentCoreConfig>>;
+    ...CANONICAL_AGENTS_CORE,
+}) satisfies Readonly<Record<CanonicalAgentId, AgentCoreConfig>>;
+
+export const CANONICAL_AGENT_IDS = Object.freeze(
+    [...SHARED_CANONICAL_AGENT_IDS] as CanonicalAgentId[],
+);
 
 export const AGENT_IDS = Object.freeze(
-    Object.keys(AGENTS_CORE) as AgentId[],
+    [...SHARED_AGENT_IDS] as AgentId[],
 );
 
 export { DEFAULT_AGENT_ID };
@@ -230,7 +220,7 @@ export function isAgentId(value: unknown): value is AgentId {
 }
 
 export function getAgentCore(id: AgentId): AgentCoreConfig {
-    const core = (AGENTS_CORE as Partial<Record<AgentId, AgentCoreConfig>>)[id];
+    const core = (CANONICAL_AGENTS_CORE as Partial<Record<AgentId, AgentCoreConfig>>)[id];
     if (!core) {
         throw new Error(`Unsupported UI agent core: ${id}`);
     }
@@ -246,8 +236,8 @@ export function resolveAgentIdFromCliDetectKey(detectKey: string | null | undefi
     if (typeof detectKey !== 'string') return null;
     const normalized = detectKey.trim().toLowerCase();
     if (!normalized) return null;
-    for (const id of AGENT_IDS) {
-        if (AGENTS_CORE[id].cli.detectKey === normalized) return id;
+    for (const id of CANONICAL_AGENT_IDS) {
+        if (CANONICAL_AGENTS_CORE[id].cli.detectKey === normalized) return id;
     }
     return null;
 }
@@ -256,9 +246,30 @@ export function resolveAgentIdFromConnectedServiceId(serviceId: string | null | 
     if (typeof serviceId !== 'string') return null;
     const normalized = serviceId.trim().toLowerCase();
     if (!normalized) return null;
-    for (const id of AGENT_IDS) {
-        const svc = AGENTS_CORE[id].connectedService?.id;
-        if (typeof svc === 'string' && svc.toLowerCase() === normalized) return id;
+    for (const id of CANONICAL_AGENT_IDS) {
+        const supportedServiceIds = CANONICAL_AGENTS_CORE[id].connectedServices?.supportedServiceIds ?? [];
+        if (supportedServiceIds.some((svc) => typeof svc === 'string' && svc.toLowerCase() === normalized)) return id;
     }
     return null;
+}
+
+export function formatAgentLikeIdForDisplay(id: string | null | undefined): string {
+    const trimmed = String(id ?? '').trim();
+    if (!trimmed) {
+        return 'Unknown Backend';
+    }
+
+    const tokenized = trimmed
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .split(/[.\-_\\s]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length > 0);
+
+    if (tokenized.length === 0) {
+        return 'Unknown Backend';
+    }
+
+    return tokenized
+        .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+        .join(' ');
 }

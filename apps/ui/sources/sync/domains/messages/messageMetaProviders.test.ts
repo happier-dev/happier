@@ -1,15 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProviderSettingsRuntime } from '@/agents/providers/shared/providerSettingsPlugin';
-import { getProviderSettingsRuntime } from '@/agents/providers/registry/providerSettingsRegistry';
+import { resolveProviderOutgoingMessageMetaExtras } from '@happier-dev/agents';
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 import { addProviderMessageMetaExtras } from '@/sync/domains/messages/messageMetaProviders';
 
-vi.mock('@/agents/providers/registry/providerSettingsRegistry', () => ({
-    getProviderSettingsRuntime: vi.fn(),
+vi.mock('@happier-dev/agents', () => ({
+    resolveProviderOutgoingMessageMetaExtras: vi.fn(),
 }));
 
-const getProviderSettingsRuntimeMock = vi.mocked(getProviderSettingsRuntime);
+const resolveProviderOutgoingMessageMetaExtrasMock = vi.mocked(resolveProviderOutgoingMessageMetaExtras);
 
 function buildBaseMeta(): MessageMeta {
     return {
@@ -20,29 +19,18 @@ function buildBaseMeta(): MessageMeta {
     };
 }
 
-function buildPlugin(
-    buildOutgoingMessageMetaExtras: ProviderSettingsRuntime['buildOutgoingMessageMetaExtras'],
-): ProviderSettingsRuntime {
-    return {
-        providerId: 'claude',
-        buildOutgoingMessageMetaExtras,
-    };
-}
-
 describe('addProviderMessageMetaExtras', () => {
     beforeEach(() => {
-        getProviderSettingsRuntimeMock.mockReset();
+        resolveProviderOutgoingMessageMetaExtrasMock.mockReset();
     });
 
-    it('drops non-primitive extras returned by provider plugins', () => {
-        getProviderSettingsRuntimeMock.mockReturnValue(
-            buildPlugin(() => ({
-                ok: true,
-                nested: { a: 1 },
-                list: [1, 2],
-                nil: null,
-            })),
-        );
+    it('drops non-primitive extras returned by provider message-meta enrichers', () => {
+        resolveProviderOutgoingMessageMetaExtrasMock.mockReturnValue({
+            ok: true,
+            nested: { a: 1 },
+            list: [1, 2],
+            nil: null,
+        });
 
         const merged = addProviderMessageMetaExtras({
             meta: buildBaseMeta(),
@@ -58,15 +46,13 @@ describe('addProviderMessageMetaExtras', () => {
     });
 
     it('ignores unsafe keys and does not override existing meta fields', () => {
-        getProviderSettingsRuntimeMock.mockReturnValue(
-            buildPlugin(() => ({
-                __proto__: 'unsafe',
-                constructor: 'unsafe',
-                prototype: 'unsafe',
-                source: 'plugin-source',
-                providerEnabled: true,
-            })),
-        );
+        resolveProviderOutgoingMessageMetaExtrasMock.mockReturnValue({
+            __proto__: 'unsafe',
+            constructor: 'unsafe',
+            prototype: 'unsafe',
+            source: 'plugin-source',
+            providerEnabled: true,
+        });
 
         const merged = addProviderMessageMetaExtras({
             meta: buildBaseMeta(),
@@ -81,12 +67,10 @@ describe('addProviderMessageMetaExtras', () => {
         expect(Object.prototype.hasOwnProperty.call(merged, 'prototype')).toBe(false);
     });
 
-    it('returns base meta when plugin extra generation throws', () => {
-        getProviderSettingsRuntimeMock.mockReturnValue(
-            buildPlugin(() => {
-                throw new Error('boom');
-            }),
-        );
+    it('returns base meta when provider message-meta shaping throws', () => {
+        resolveProviderOutgoingMessageMetaExtrasMock.mockImplementation(() => {
+            throw new Error('boom');
+        });
 
         const base = buildBaseMeta();
         const merged = addProviderMessageMetaExtras({
@@ -97,5 +81,22 @@ describe('addProviderMessageMetaExtras', () => {
         });
 
         expect(merged).toEqual(base);
+    });
+
+    it('does not consult provider settings runtime behavior when message-meta shaping is unavailable', () => {
+        resolveProviderOutgoingMessageMetaExtrasMock.mockImplementation(() => {
+            throw new Error('provider settings runtime should not be consulted');
+        });
+
+        const base = buildBaseMeta();
+
+        expect(() =>
+            addProviderMessageMetaExtras({
+                meta: base,
+                agentId: 'claude',
+                settings: {},
+                session: {},
+            }),
+        ).not.toThrow();
     });
 });

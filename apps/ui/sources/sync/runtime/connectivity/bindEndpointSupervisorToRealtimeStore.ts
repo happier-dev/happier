@@ -1,9 +1,26 @@
-import type { ManagedEndpointSupervisor } from '@happier-dev/connection-supervisor';
+import type { ManagedConnectionState, ManagedEndpointSupervisor } from '@happier-dev/connection-supervisor';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { PauseController } from '@/utils/timing/pauseController';
 
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
+
+type EndpointConnectivityStateLike = Pick<
+    ManagedConnectionState,
+    'phase' | 'reason' | 'attempt' | 'nextRetryAt' | 'lastConnectedAt' | 'lastDisconnectedAt' | 'lastErrorMessage'
+>;
+
+export function applyEndpointConnectivityStateToRealtimeStore(state: EndpointConnectivityStateLike): void {
+    storage.getState().setEndpointConnectivity({
+        status: state.phase,
+        reason: state.reason,
+        attempt: state.attempt,
+        nextRetryAt: state.nextRetryAt,
+        lastConnectedAt: state.lastConnectedAt,
+        lastDisconnectedAt: state.lastDisconnectedAt,
+        lastErrorMessage: sanitizeEndpointErrorMessage(state.lastErrorMessage),
+    });
+}
 
 export function bindEndpointSupervisorToRealtimeStore(params: Readonly<{
     supervisor: ManagedEndpointSupervisor;
@@ -16,7 +33,6 @@ export function bindEndpointSupervisorToRealtimeStore(params: Readonly<{
     let sawOfflineLike = false;
 
     return params.supervisor.subscribe((state) => {
-        const lastErrorMessage = sanitizeEndpointErrorMessage(state.lastErrorMessage);
         if (pause) {
             if (state.phase === 'online') {
                 pause.resume();
@@ -34,14 +50,6 @@ export function bindEndpointSupervisorToRealtimeStore(params: Readonly<{
                 // ignore
             }
         }
-        storage.getState().setEndpointConnectivity({
-            status: state.phase,
-            reason: state.reason,
-            attempt: state.attempt,
-            nextRetryAt: state.nextRetryAt,
-            lastConnectedAt: state.lastConnectedAt,
-            lastDisconnectedAt: state.lastDisconnectedAt,
-            lastErrorMessage,
-        });
+        applyEndpointConnectivityStateToRealtimeStore(state);
     });
 }

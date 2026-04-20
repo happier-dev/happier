@@ -5,6 +5,7 @@ import {
     type V2SessionRecord,
 } from '@happier-dev/protocol';
 
+import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 import { HappyError } from '@/utils/errors/errors';
 
 type SessionRequest = (path: string, init: RequestInit) => Promise<Response>;
@@ -164,6 +165,9 @@ export function parseCompatSessionByIdResponse(raw: unknown): { session: V2Sessi
 }
 
 function throwSessionListHttpError(status: number, routeLabel: string): never {
+    if (status === 401 || status === 403) {
+        throw createNotAuthenticatedError();
+    }
     if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
         throw new HappyError(`Failed to fetch sessions (${status})`, false);
     }

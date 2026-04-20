@@ -1741,7 +1741,7 @@ const ChatListInternal = React.memo((props: {
     return (
         <TranscriptMotionProvider sessionKey={props.sessionId} config={motionConfig}>
             <View
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}
               {...(Platform.OS === 'web'
                 ? ({
                                         onWheel: stopScrollEventPropagationOnWeb,

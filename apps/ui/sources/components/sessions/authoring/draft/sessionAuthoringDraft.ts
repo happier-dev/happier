@@ -1,6 +1,6 @@
 import type {
     AcpConfigOptionOverridesV1,
-    BackendTargetRefV1,
+    BackendTargetRefV2,
     SessionAuthoringAutomationV1,
     SessionAuthoringCheckoutCreationDraftV1,
     SessionAuthoringCodexBackendMode,
@@ -19,7 +19,7 @@ type SessionAuthoringDraftBase = Readonly<Omit<
 > & {
     targetType: AutomationTargetType;
     checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1 | null;
-    backendTarget: BackendTargetRefV1 | null;
+    backendTarget: BackendTargetRefV2 | null;
     mcpSelection: SessionMcpSelectionV1 | null;
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchMode | null;
     codexBackendMode?: SessionAuthoringCodexBackendMode | CodexBackendMode | null;

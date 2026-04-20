@@ -108,4 +108,45 @@ describe('ChatList', () => {
 
         expect(thrown).toBeUndefined();
     });
+
+    it('keeps the transcript root shrinkable inside constrained split panes', async () => {
+        const { ChatList } = await import('./ChatList');
+
+        const session = {
+            id: 'session-1',
+            metadata: null,
+            accessLevel: null,
+            canApprovePermissions: true,
+        } as any;
+
+        const screen = await renderScreen(<ChatList session={session} />);
+
+        const flatList = screen.tree.root.findByType('FlatList');
+        const transcriptRoot = findAncestorWithStyle(flatList, (style) => {
+            return style != null && typeof style === 'object' && 'flex' in style;
+        });
+
+        expect(transcriptRoot?.props?.style).toEqual(
+            expect.objectContaining({
+                flex: 1,
+                minWidth: 0,
+                minHeight: 0,
+                overflow: 'hidden',
+            }),
+        );
+    });
 });
+
+function findAncestorWithStyle(
+    node: { parent?: { parent?: unknown; props?: { style?: unknown } } | null } | null | undefined,
+    predicate: (style: unknown) => boolean,
+) {
+    let current = node?.parent ?? null;
+    while (current) {
+        const style = current.props?.style;
+        if (predicate(style)) return current;
+        if (Array.isArray(style) && style.some((entry) => predicate(entry))) return current;
+        current = current.parent ?? null;
+    }
+    return null;
+}

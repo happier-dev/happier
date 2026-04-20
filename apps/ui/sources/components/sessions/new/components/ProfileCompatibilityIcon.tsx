@@ -3,15 +3,17 @@ import { View, ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { isProfileCompatibleWithBackendTarget, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAgentCliGlyph, getAgentCore } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import { Text } from '@/components/ui/text/Text';
 import { useSetting } from '@/sync/domains/state/storage';
 
 
 type Props = {
     profile: Pick<AIBackendProfile, 'compatibility' | 'compatibilityByTargetKey' | 'isBuiltIn'>;
+    backendEntries?: readonly ResolvedBackendCatalogEntry[] | null;
     size?: number;
     style?: ViewStyle;
 };
@@ -33,28 +35,40 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function ProfileCompatibilityIcon({ profile, size = 32, style }: Props) {
+export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntriesOverride, size = 32, style }: Props) {
     useUnistyles(); // Subscribe to theme changes for re-render
     const styles = stylesheet;
     const enabledAgentIds = useEnabledAgentIds();
     const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const backendEntries = React.useMemo(() => {
+        if (Array.isArray(backendEntriesOverride)) {
+            return backendEntriesOverride;
+        }
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
             acpCatalogSettingsV1: acpCatalogSettingsV1 as any,
             backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
         });
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds]);
+    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, backendEntriesOverride, enabledAgentIds]);
 
     const glyphs = React.useMemo(() => {
         const items: Array<{ key: string; glyph: string; factor: number }> = [];
         for (const entry of backendEntries) {
-            if (!isProfileCompatibleWithBackendTarget(profile, entry.target)) continue;
-            const core = getAgentCore(entry.iconAgentId);
+            if (!isProfileCompatibleWithBackendTarget(profile, entry.backendTarget)) continue;
+            const displayAgentId = entry.iconAgentId ?? entry.providerAgentId ?? entry.builtInAgentId;
+            if (!displayAgentId || isLegacyCompatAgentType(displayAgentId)) {
+                items.push({
+                    key: entry.backendTargetKey,
+                    glyph: '•',
+                    factor: 0.85,
+                });
+                continue;
+            }
+            const core = getAgentCore(displayAgentId);
             items.push({
-                key: entry.targetKey,
-                glyph: getAgentCliGlyph(entry.iconAgentId),
+                key: entry.backendTargetKey,
+                glyph: getAgentCliGlyph(displayAgentId),
                 factor: core.ui.profileCompatibilityGlyphScale ?? 1.0,
             });
         }

@@ -11,6 +11,8 @@ import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
+
 type TestWorkspace = {
     id: string;
     displayName: string;
@@ -159,6 +161,7 @@ const routerSetParamsMock = vi.hoisted(() => vi.fn());
 const featureFlags = vi.hoisted(() => ({
     mcpServersEnabled: false,
     automationsEnabled: false,
+    directSessionsEnabled: false,
 }));
 const persistDraftNowRef = vi.hoisted(() => ({
     current: null as null | (() => void),
@@ -445,15 +448,11 @@ installNewSessionScreenModelCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const expoRouterMock = createExpoRouterMock({
-            router: { push: routerPushMock, replace: vi.fn(), back: vi.fn(), setParams: routerSetParamsMock },
-            params: () => searchParamsState.value as Record<string, string | string[] | undefined>,
-            navigation: {},
-            pathname: '/new',
-        });
-        return expoRouterMock.module;
+    routerConfig: {
+        router: { push: routerPushMock, replace: vi.fn(), back: vi.fn(), setParams: routerSetParamsMock },
+        params: () => searchParamsState.value as Record<string, string | string[] | undefined>,
+        navigation: {},
+        pathname: '/new',
     },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -538,6 +537,11 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
     };
 });
 
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    machineContributionRegistryProjectionDescribe: (...args: unknown[]) =>
+        machineContributionRegistryProjectionDescribeMock(...args),
+}));
+
 vi.mock('@/scm/scmRepositoryService', () => ({
     scmRepositoryService: {
         readCachedSnapshotForMachinePath: readCachedSnapshotForMachinePathMock,
@@ -582,14 +586,22 @@ vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) =
         isProfileCompatibleWithBackendTarget: (profile: any, target: any) => {
             const targetKey = target?.kind === 'configuredAcpBackend'
                 ? `acpBackend:${String(target.backendId ?? '')}`
-                : `agent:${String(target?.agentId ?? '')}`;
+                : target?.kind === 'builtInAgent'
+                    ? `agent:${String(target.agentId ?? '')}`
+                    : target?.kind === 'backend'
+                        ? (target.configuredBackendId
+                            ? `backend:${String(target.backendId ?? '')}:configured:${String(target.configuredBackendId ?? '')}`
+                            : `backend:${String(target.backendId ?? '')}`)
+                        : 'unknown:unknown';
             const explicitCompatibility = profile?.compatibilityByTargetKey?.[targetKey];
             if (typeof explicitCompatibility === 'boolean') {
                 return explicitCompatibility;
             }
             const legacyCompatibility = target?.kind === 'builtInAgent'
                 ? profile?.compatibility?.[String(target.agentId ?? '')]
-                : undefined;
+                : target?.kind === 'backend' && !target.configuredBackendId
+                    ? profile?.compatibility?.[String(target.backendId ?? '')]
+                    : undefined;
             if (typeof legacyCompatibility === 'boolean') {
                 return legacyCompatibility;
             }
@@ -731,6 +743,7 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => {
         if (featureId === 'mcp.servers') return featureFlags.mcpServersEnabled;
+        if (featureId === 'sessions.direct') return featureFlags.directSessionsEnabled;
         return false;
     },
 }));
@@ -864,6 +877,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     });
 
     beforeEach(() => {
+        machineContributionRegistryProjectionDescribeMock.mockReset();
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
+
         platformOsState.value = 'web';
         modalShowMock.mockReset();
         modalAlertMock.mockReset();
@@ -878,6 +894,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         routerSetParamsMock.mockClear();
         featureFlags.mcpServersEnabled = false;
         featureFlags.automationsEnabled = false;
+        featureFlags.directSessionsEnabled = false;
         persistDraftNowRef.current = null;
         saveNewSessionDraftMock.mockClear();
         clearNewSessionDraftMock.mockClear();
@@ -1110,6 +1127,196 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             },
         });
     }
+
+    it('applies the daemon contribution registry projection to agent picker labels without blanking while fetching', async () => {
+        let resolveProjection:
+            | ((value: Readonly<{ supported: true; projection: unknown }> | Readonly<{ supported: false; reason: string }>) => void)
+            | null = null;
+
+        machineContributionRegistryProjectionDescribeMock.mockImplementation(() => {
+            return new Promise((resolve) => {
+                resolveProjection = resolve as any;
+            });
+        });
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalled();
+
+        const initialLabels = (model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label);
+        expect(initialLabels).not.toContain('Codex (Projected)');
+
+        await act(async () => {
+            resolveProjection?.({
+                supported: true,
+                projection: {
+                    v: 1,
+                    providersById: {},
+                    backendsById: {
+                        codex: {
+                            id: 'codex',
+                            providerId: 'codex',
+                            title: 'Codex (Projected)',
+                            subtitle: null,
+                            providerAgentId: null,
+                            iconAgentId: null,
+                        },
+                    },
+                },
+            });
+        });
+
+        await settleNewSessionScreenModel();
+
+        const nextLabels = (model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label);
+        expect(nextLabels).toContain('Codex (Projected)');
+    });
+
+    it('keeps daemon contribution projections cached per server scope for the same machine id', async () => {
+        targetServerState.allowedTargetServerIds = ['server-a', 'server-b'];
+        targetServerState.targetServerId = 'server-a';
+        targetServerState.targetServerName = 'Server A';
+        machineContributionRegistryProjectionDescribeMock.mockImplementation(async (_machineId: string, options?: { serverId?: string | null }) => ({
+            supported: true,
+            projection: {
+                v: 1,
+                providersById: {},
+                backendsById: {
+                    codex: {
+                        id: 'codex',
+                        providerId: 'codex',
+                        title: options?.serverId === 'server-b' ? 'Codex (Projected B)' : 'Codex (Projected A)',
+                        subtitle: null,
+                        providerAgentId: null,
+                        iconAgentId: null,
+                    },
+                },
+            },
+        }));
+
+        let model: any = null;
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+        await settleNewSessionScreenModel();
+
+        expect((model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label)).toContain('Codex (Projected A)');
+
+        targetServerState.targetServerId = 'server-b';
+        targetServerState.targetServerName = 'Server B';
+
+        await hook.rerender();
+        await settleNewSessionScreenModel();
+
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-2', expect.objectContaining({ serverId: 'server-a' }));
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-2', expect.objectContaining({ serverId: 'server-b' }));
+        expect((model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label)).toContain('Codex (Projected B)');
+    });
+
+    it('keeps a routed plugin backend selected during projection loading and switches create-session carrier when projection metadata arrives', async () => {
+        let resolveProjection:
+            | ((value: Readonly<{ supported: true; projection: unknown }> | Readonly<{ supported: false; reason: string }>) => void)
+            | null = null;
+
+        searchParamsState.value = {
+            backendTargetKey: 'backend:acme.review.backend',
+            backendTarget: JSON.stringify({
+                kind: 'backend',
+                backendId: 'acme.review.backend',
+            }),
+        };
+        machineContributionRegistryProjectionDescribeMock.mockImplementation(() => {
+            return new Promise((resolve) => {
+                resolveProjection = resolve as any;
+            });
+        });
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
+            spawnBackendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
+        }));
+        expect(model?.simpleProps?.agentType).not.toBe('customAcp');
+
+        await act(async () => {
+            resolveProjection?.({
+                supported: true,
+                projection: {
+                    v: 1,
+                    providersById: {
+                        'plugin:acme.review': {
+                            providerId: 'plugin:acme.review',
+                            title: 'Acme Review',
+                            subtitle: null,
+                            channel: 'plugin',
+                            isBuiltIn: false,
+                            providerAgentId: 'claude',
+                            iconAgentId: 'claude',
+                        },
+                    },
+                    backendsById: {
+                        'acme.review.backend': {
+                            id: 'acme.review.backend',
+                            providerId: 'plugin:acme.review',
+                            title: 'Acme Review Backend',
+                            subtitle: null,
+                            providerAgentId: 'claude',
+                            iconAgentId: 'claude',
+                        },
+                    },
+                },
+            });
+        });
+
+        await settleNewSessionScreenModel();
+
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            agentType: 'claude',
+            backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
+            spawnBackendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
+        }));
+    });
+
+    it('clears stale daemon contribution projections when the selected machine becomes unavailable', async () => {
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: {
+                v: 1,
+                providersById: {},
+                backendsById: {
+                    codex: {
+                        id: 'codex',
+                        providerId: 'codex',
+                        title: 'Codex (Projected)',
+                        subtitle: null,
+                        providerAgentId: null,
+                        iconAgentId: null,
+                    },
+                },
+            },
+        });
+
+        let model: any = null;
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+        await settleNewSessionScreenModel();
+
+        expect((model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label)).toContain('Codex (Projected)');
+
+        activeMachinesState.value = [];
+        await hook.rerender();
+        await settleNewSessionScreenModel();
+
+        expect((model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label)).not.toContain('Codex (Projected)');
+    });
 
     it('hydrates permission, agent, and path from the persisted draft', async () => {
         let model: any = null;
@@ -1415,7 +1622,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             machineId: 'machine-1',
             path: '/repo/edit-seed',
             agentType: 'codex',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             codexBackendMode: 'appServer',
             transcriptStorage: 'direct',
             permissionMode: 'acceptEdits',
@@ -1442,7 +1649,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
             authoringDraft: expect.objectContaining({
                 directory: '/repo/edit-seed',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'codex' }),
                 prompt: 'Review the open pull requests',
                 displayText: 'Review the open pull requests',
             }),
@@ -1456,7 +1663,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             input: 'Review the open pull requests',
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/edit-seed',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             permissionMode: 'acceptEdits',
             automationDraft: expect.objectContaining({
                 enabled: true,
@@ -1466,7 +1673,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }));
     });
 
-    it('persists configured ACP autosave drafts with the preserved built-in fallback agent id', async () => {
+    it('persists configured backend autosave drafts with the canonical backend target carrier', async () => {
         settingsState.lastUsedAgent = 'codex';
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
@@ -1491,21 +1698,21 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 },
             ],
         };
-        persistedDraft.agentType = 'customAcp';
-        (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+        persistedDraft.agentType = 'codex';
+        (persistedDraft as any).backendTarget = { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' };
 
         let model: any = null;
         await renderNewSessionScreenModel((nextModel) => {
             model = nextModel;
         });
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('codex');
         expect(model?.simpleProps?.agentLabel).toBe('Review Bot');
         await settleNewSessionScreenModel();
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
             authoringDraft: expect.objectContaining({
                 agentId: 'codex',
-                backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             }),
         }));
 
@@ -1515,7 +1722,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
             agentType: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
         }));
     });
 
@@ -1547,7 +1754,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.agentType = 'claude';
         delete (persistedDraft as any).backendTarget;
         searchParamsState.value = {
-            backendTargetKey: 'acpBackend:review-bot',
+            backendTargetKey: 'backend:review-bot:configured:review-bot',
         };
 
         let model: any = null;
@@ -1555,7 +1762,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             model = nextModel;
         });
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentLabel).toBe('Review Bot');
     });
 
@@ -1689,7 +1896,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'claude' }),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -1728,7 +1935,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     it('persists the canonical authoring draft before opening profile edit', async () => {
         settingsState.useProfiles = true;
         settingsState.useEnhancedSessionWizard = true;
-        persistedDraft.backendTarget = { kind: 'builtInAgent', agentId: 'claude' };
+        persistedDraft.backendTarget = { kind: 'backend', backendId: 'claude' } as any;
 
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
@@ -1755,7 +1962,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             }),
         }));
         expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'claude' }),
             selectedMachineId: 'machine-2',
             selectedPath: '/repo/custom',
         }));
@@ -1793,7 +2000,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             ],
         };
         persistedDraft.agentType = 'customAcp';
-        (persistedDraft as any).backendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+        (persistedDraft as any).backendTarget = { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' };
 
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
@@ -1830,8 +2037,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         (persistedDraft as any).backendTarget = { kind: 'builtInAgent', agentId: 'claude' };
         searchParamsState.value = {
             agentType: 'customAcp',
-            backendTargetKey: 'acpBackend:stale-review-bot',
-            backendTarget: JSON.stringify({ kind: 'configuredAcpBackend', backendId: 'stale-review-bot' }),
+            backendTargetKey: 'backend:stale-review-bot:configured:stale-review-bot',
+            backendTarget: JSON.stringify({ kind: 'backend', backendId: 'stale-review-bot', configuredBackendId: 'stale-review-bot' }),
         };
 
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
@@ -1907,6 +2114,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     it('opens the shared direct-sessions resume browser modal from the resume popover without navigating away', async () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
         const portalTarget = { tag: 'new-session-parent-modal-target' } as unknown as Element;
+        featureFlags.directSessionsEnabled = true;
 
         let model: any = null;
         function Probe() {
@@ -1943,6 +2151,29 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }));
         expect(routerPushMock).not.toHaveBeenCalled();
         expect(model?.simpleProps?.resumeSessionId).toBe('session-picked');
+    });
+
+    it('hides the direct-sessions resume browse trigger when sessions.direct is disabled', async () => {
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        const requestClose = vi.fn();
+        const rendered = model?.simpleProps?.resumePopover?.renderContent?.({ requestClose });
+        expect(rendered).toBeTruthy();
+        if (!rendered) {
+            throw new Error('expected resume popover content');
+        }
+
+        const popoverScreen = await renderScreen(rendered);
+        expect(popoverScreen.findByTestId('resume-id-browse-trigger')).toBeNull();
+        expect(openDirectSessionsResumeIdPickerModalMock).not.toHaveBeenCalled();
     });
 
     it('keeps the profile picker on the current route and exposes a shared profile popover in the simple panel', async () => {

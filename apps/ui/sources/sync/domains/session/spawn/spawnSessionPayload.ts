@@ -1,14 +1,19 @@
 import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
+import type { CodexBackendMode } from '@happier-dev/agents';
 import {
     isVersionSupported,
     MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
 } from '@/utils/system/versionUtils';
+import {
+    convertBackendTargetRefV2ToV1,
+    readBackendTargetRefV2,
+    type BackendTargetRefV2Input,
+    type BackendTargetRefV2,
+} from '@happier-dev/protocol';
 import type {
     AcpConfigOptionOverridesV1,
-    AgentRuntimeDescriptorV1,
-    BackendTargetRefV1,
+    RuntimeDescriptorV1,
     SessionMcpSelectionV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
@@ -22,7 +27,7 @@ export interface SpawnSessionOptions {
     directory: string;
     transcriptStorage?: 'persisted' | 'direct';
     approvedNewDirectoryCreation?: boolean;
-    backendTarget: BackendTargetRefV1;
+    backendTarget: BackendTargetRefV2Input;
     // Session-scoped profile identity (non-secret). Empty string means "no profile".
     profileId?: string;
     // Environment variables from AI backend profile
@@ -53,7 +58,7 @@ export interface SpawnSessionOptions {
      */
     experimentalCodexAcp?: boolean;
     codexBackendMode?: CodexBackendMode;
-    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
     terminal?: TerminalSpawnOptions | null;
     /**
      * Windows-only: when starting a session remotely via the daemon, optionally open a visible console window
@@ -76,11 +81,11 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     directory: string
     transcriptStorage?: 'persisted' | 'direct'
     approvedNewDirectoryCreation?: boolean
-    backendTarget: BackendTargetRefV1
+    backendTarget: BackendTargetRefV2
     profileId?: string
     environmentVariables?: Record<string, string>
     resume?: string
-    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1
+    runtimeDescriptorV1?: RuntimeDescriptorV1
     permissionMode?: PermissionMode
     permissionModeUpdatedAt?: number
     agentModeId?: string
@@ -137,7 +142,8 @@ function resolveLegacyWindowsRemoteSessionConsole(params: Readonly<{
 
 function buildLegacySpawnHappySessionRpcParams(options: SpawnSessionOptions): LegacySpawnHappySessionRpcParams {
     const params = buildSpawnHappySessionRpcParams(options);
-    const legacyAgent = params.backendTarget.kind === 'builtInAgent' ? params.backendTarget.agentId.trim() : '';
+    const legacyBackendTarget = convertBackendTargetRefV2ToV1(readBackendTargetRefV2(params.backendTarget));
+    const legacyAgent = legacyBackendTarget.kind === 'builtInAgent' ? legacyBackendTarget.agentId.trim() : '';
     if (legacyAgent.length === 0) {
         throw new Error('Legacy spawn payload is only available for built-in agents');
     }
@@ -198,7 +204,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         sessionConfigOptionOverrides,
         experimentalCodexAcp,
         codexBackendMode,
-        agentRuntimeDescriptorV1,
+        runtimeDescriptorV1,
         terminal,
         windowsRemoteSessionLaunchMode,
         windowsRemoteSessionConsole,
@@ -212,15 +218,21 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         normalizedModelId !== 'default' &&
         typeof modelUpdatedAt === 'number' &&
         Number.isFinite(modelUpdatedAt);
-    const codexTransportFields = buildCodexBackendTransportFields({ codexBackendMode, experimentalCodexAcp, agentRuntimeDescriptorV1 });
-    const canonicalCodexBackendMode = codexTransportFields.codexBackendMode;
+    const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
+    const codexTransportFields = buildCodexBackendTransportFields({
+        backendTarget: canonicalBackendTarget,
+        codexBackendMode,
+        experimentalCodexAcp,
+        runtimeDescriptorV1,
+        resume,
+    });
 
     const params: SpawnHappySessionRpcParams = {
         type: 'spawn-in-directory',
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation,
-        backendTarget,
+        backendTarget: canonicalBackendTarget,
         profileId,
         environmentVariables,
         resume,
@@ -236,23 +248,12 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
             : {}),
         ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
         ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
-        ...codexTransportFields,
-        ...(() => {
-            if (agentRuntimeDescriptorV1) {
-                return { agentRuntimeDescriptorV1 };
-            }
-
-            if (backendTarget.kind === 'builtInAgent' && backendTarget.agentId === 'codex' && canonicalCodexBackendMode) {
-                return {
-                    agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-                        backendMode: canonicalCodexBackendMode,
-                        vendorSessionId: resume,
-                    }),
-                };
-            }
-
-            return {};
-        })(),
+        ...(codexTransportFields.codexBackendMode ? { codexBackendMode: codexTransportFields.codexBackendMode } : {}),
+        ...(runtimeDescriptorV1
+            ? { runtimeDescriptorV1 }
+            : codexTransportFields.runtimeDescriptorV1
+                ? { runtimeDescriptorV1: codexTransportFields.runtimeDescriptorV1 }
+                : {}),
         connectedServices,
         ...(mcpSelection ? { mcpSelection } : {}),
     };

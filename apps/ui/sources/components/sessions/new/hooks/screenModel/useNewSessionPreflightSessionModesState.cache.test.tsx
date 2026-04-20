@@ -37,7 +37,7 @@ describe('useNewSessionPreflightSessionModesState (cache)', () => {
 
     function Harness() {
       useNewSessionPreflightSessionModesState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -58,5 +58,31 @@ describe('useNewSessionPreflightSessionModesState (cache)', () => {
     });
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not attempt dynamic session-mode probing for plugin backend targets', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicSessionModeProbeCacheForTests();
+
+    const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+
+    function Harness() {
+      useNewSessionPreflightSessionModesState({
+        backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(0);
   });
 });

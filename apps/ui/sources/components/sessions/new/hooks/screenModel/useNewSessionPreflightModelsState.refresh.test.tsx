@@ -35,7 +35,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
         const hook = await renderHook(
             () => useNewSessionPreflightModelsState({
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                backendTarget: { kind: 'backend', backendId: 'claude' },
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
                 cwd: '/repo',
@@ -73,7 +73,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
         const hook = await renderHook(
             (props: { cwd: string }) => useNewSessionPreflightModelsState({
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
                 cwd: props.cwd,
@@ -120,7 +120,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
         const hook = await renderHook(
             (props: { cwd: string }) => useNewSessionPreflightModelsState({
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
                 cwd: props.cwd,
@@ -181,7 +181,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
         const hook = await renderHook(
             () => useNewSessionPreflightModelsState({
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
                 cwd: '/repo',
@@ -254,7 +254,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
         const hook = await renderHook(
             () => useNewSessionPreflightModelsState({
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
                 cwd: '/repo',
@@ -315,7 +315,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
 
         const hook = await renderHook(() => useNewSessionPreflightModelsState({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             cwd: '/repo',

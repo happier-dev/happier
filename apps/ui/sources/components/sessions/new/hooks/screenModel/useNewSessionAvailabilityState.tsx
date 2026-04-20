@@ -4,12 +4,13 @@ import {
     buildResumeCapabilityOptionsFromUiState,
     canSelectAgentWithoutDetectedCli,
     getAgentCore,
+    getAgentBehavior,
     getAgentResumeExperimentsFromSettings,
     getNewSessionRelevantInstallableDepKeys,
+    isAgentId,
     type AgentId,
 } from '@/agents/catalog/catalog';
 import {
-    resolveProviderAgentIdForBackendTarget,
     type ResolvedBackendCatalogEntry,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
@@ -34,8 +35,9 @@ import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSet
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 type ProfileAvailability = Readonly<{ available: boolean; reason?: string }>;
 
@@ -57,6 +59,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     selectedMachineId: string | null;
     selectedMachine: Machine | null;
     capabilityServerId: string;
+    directSessionsFeatureEnabled: boolean;
     settings: Settings;
     agentType: AgentId;
     resumeSessionId: string | null;
@@ -64,7 +67,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     backendNewSessionOptionStateByTargetKey: Readonly<BackendNewSessionOptionStateByTargetKey>;
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedBackendEntry: ResolvedBackendCatalogEntry | null;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV1>>;
+    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
     machines: ReadonlyArray<Machine>;
     dismissedCliWarnings: DismissedCliWarnings | null | undefined;
     setDismissedCliWarnings: (next: DismissedCliWarnings) => void;
@@ -73,6 +76,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const automaticLoginStatusAgentIds = React.useMemo(() => {
         const out: AgentId[] = [];
         for (const agentId of params.enabledAgentIds) {
+            if (!isAgentId(agentId)) continue;
             if (!isAgentAuthProbeSafeForBackgroundChecks(agentId)) continue;
             if (out.includes(agentId)) continue;
             out.push(agentId);
@@ -169,16 +173,28 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const selectableWithoutCliByAgentId = React.useMemo(() => {
         const out: Partial<Record<AgentId, boolean>> = {};
         for (const id of params.enabledAgentIds) {
-            out[id] = canSelectAgentWithoutDetectedCli({
+            if (!isAgentId(id)) {
+                out[id as AgentId] = true;
+                continue;
+            }
+            const supportsDirectSessionBrowse = params.directSessionsFeatureEnabled === true
+                && getAgentCore(id).sessionStorage.direct === true
+                && typeof getAgentBehavior(id).directSessions?.browse?.getSourceOptions === 'function';
+            out[id] = supportsDirectSessionBrowse || canSelectAgentWithoutDetectedCli({
                 agentId: id,
                 settings: params.settings,
                 agentOptionState: params.backendNewSessionOptionStateByTargetKey[
-                    buildBackendTargetKey({ kind: 'builtInAgent', agentId: id })
+                    resolveBackendTargetKeyV2({ kind: 'backend', backendId: id })
                 ] ?? null,
             });
         }
         return out;
-    }, [params.backendNewSessionOptionStateByTargetKey, params.enabledAgentIds, params.settings]);
+    }, [
+        params.backendNewSessionOptionStateByTargetKey,
+        params.directSessionsFeatureEnabled,
+        params.enabledAgentIds,
+        params.settings,
+    ]);
 
     const isAgentSelectable = React.useCallback((agentId: AgentId): boolean => {
         return isAgentSelectableForNewSession({
@@ -192,10 +208,14 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     }, [cliAvailability.authStatus, cliAvailability.available, cliAvailability.timestamp, installableDepKeyCountByAgentId, selectableWithoutCliByAgentId]);
 
     const isBackendEntrySelectable = React.useCallback((entry: ResolvedBackendCatalogEntry): boolean => {
-        if (entry.family === 'configuredAcpBackend') {
+        if (entry.kind === 'pluginBackend') {
+            // Plugin backends should not be gated on built-in CLI detection/auth probes.
             return true;
         }
-        return isAgentSelectable(entry.builtInAgentId ?? resolveProviderAgentIdForBackendTarget(entry.target));
+        if (entry.kind !== 'builtInAgent') {
+            return true;
+        }
+        return isAgentId(entry.builtInAgentId) ? isAgentSelectable(entry.builtInAgentId) : true;
     }, [isAgentSelectable]);
 
     const selectedMachineOnline = React.useMemo(() => {
@@ -302,7 +322,11 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     }, [params.dismissedCliWarnings, params.selectedMachineId, params.setDismissedCliWarnings]);
 
     const getCompatibleProfileBackendEntries = React.useCallback((profile: AIBackendProfile) => {
-        return params.resolvedBackendEntries.filter((entry) => isProfileCompatibleWithBackendTarget(profile, entry.target));
+        // Fail closed: malformed/untyped projection entries must not crash profile availability resolution.
+        return params.resolvedBackendEntries.filter((entry) => (
+            entry.backendTarget
+            && isProfileCompatibleWithBackendTarget(profile, entry.backendTarget)
+        ));
     }, [params.resolvedBackendEntries]);
 
     const isProfileAvailable = React.useCallback((profile: AIBackendProfile): ProfileAvailability => {

@@ -144,6 +144,22 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
+    it('disables voice.daemonInference by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('voice.daemonInference', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables voice.daemonInference when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('voice.daemonInference', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'voice.daemonInference': true },
+        })).toBe(true);
+    });
+
     it('enables automations by default when experiments are on', () => {
         expect(resolveLocalFeaturePolicyEnabled('automations', {
             ...settingsDefaults,

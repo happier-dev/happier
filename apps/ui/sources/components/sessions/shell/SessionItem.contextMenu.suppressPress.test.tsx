@@ -21,6 +21,13 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
     getSessionAvatarId: () => 'avatar',
+    getSessionStatus: () => ({
+        isConnected: true,
+        statusText: 'Connected',
+        statusColor: '#000',
+        statusDotColor: '#0f0',
+        isPulsing: false,
+    }),
     useSessionStatus: () => ({
         isConnected: true,
         statusText: 'Connected',

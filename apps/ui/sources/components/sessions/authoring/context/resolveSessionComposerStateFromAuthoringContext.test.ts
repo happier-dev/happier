@@ -39,7 +39,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     prompt: 'Summarize changes',
     displayText: 'Summarize changes',
     agentId: 'claude',
-    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    backendTarget: { kind: 'backend', backendId: 'claude' },
     transcriptStorage: 'direct',
     profileId: 'profile-draft',
     environmentVariables: null,
@@ -87,6 +87,26 @@ describe('resolveSessionComposerStateFromAuthoringContext', () => {
         expect(state.currentPath).toBe('/repo/snapshot');
     });
 
+    it('leaves the live-session agent unset when there is no valid snapshot agent and no fallback', () => {
+        const context: LiveSessionAuthoringContext = {
+            kind: 'liveSession',
+            session: BASE_SESSION as any,
+            snapshot: {
+                ...BASE_SNAPSHOT,
+                agentId: 'not-a-real-agent',
+            } as any,
+        };
+
+        const state = resolveSessionComposerStateFromAuthoringContext(context);
+
+        expect(state.agentId).toBeNull();
+        expect(state.machineName).toBe('Builder');
+        expect(state.permissionMode).toBe('acceptEdits');
+        expect(state.modelMode).toBe('claude-sonnet-4-5');
+        expect(state.profileId).toBe('profile-snapshot');
+        expect(state.currentPath).toBe('/repo/snapshot');
+    });
+
     it('prefers existing-session automation draft overrides over inherited snapshot values', () => {
         const context: ExistingSessionAutomationAuthoringContext = {
             kind: 'automationExistingSession',
@@ -112,8 +132,8 @@ describe('resolveSessionComposerStateFromAuthoringContext', () => {
                 machineId: 'machine-1',
                 eligibility: {
                     eligible: true,
-                    agentId: 'claude',
                     strategy: 'happy_attach',
+                    compatBackendId: 'review-bot',
                 },
             },
         };

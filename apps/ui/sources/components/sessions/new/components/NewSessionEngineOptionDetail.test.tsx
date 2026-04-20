@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { renderScreen } from '@/dev/testkit';
@@ -115,10 +115,6 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
 }));
 
-vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
-    resolveProviderAgentIdForBackendTarget: () => 'claude',
-}));
-
 vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
     OptionPickerOverlay: (props: any) => {
         if (props.title === 'agentInput.model.title') {
@@ -183,9 +179,11 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfi
 }));
 
 describe('NewSessionEngineOptionDetail', () => {
-    const backendTarget: BackendTargetRefV1 = {
-        kind: 'configuredAcpBackend',
+    const backendTarget: BackendTargetRefV2 = {
+        kind: 'backend',
         backendId: 'custom-preset',
+        configuredBackendId: 'custom-preset',
+        sourceKind: 'configured',
     };
 
     beforeEach(() => {

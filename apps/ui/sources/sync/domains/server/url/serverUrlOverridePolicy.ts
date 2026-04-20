@@ -1,4 +1,4 @@
-import { canonicalizeServerUrl } from './serverUrlCanonical';
+import { canonicalizeServerUrl, createServerUrlComparableKey } from './serverUrlCanonical';
 import { isLoopbackServerUrl } from './serverUrlClassification';
 
 /**
@@ -16,10 +16,20 @@ export function resolveEffectiveServerUrlOverride(params: Readonly<{
     const requested = canonicalizeServerUrl(String(params.requestedServerUrl ?? ''));
     if (!requested) return null;
 
+    const requestedKey = createServerUrlComparableKey(requested);
+    if (!requestedKey) return null;
+
     const active = canonicalizeServerUrl(String(params.activeServerUrl ?? ''));
-    if (requested && isLoopbackServerUrl(requested) && active && !isLoopbackServerUrl(active)) {
+    if (!active) return requested;
+
+    const activeKey = createServerUrlComparableKey(active);
+    if (!activeKey) return requested;
+
+    // Loopback targets are only safe when they resolve to the same active server.
+    // This avoids treating a forwarded web origin as if it could reach a different
+    // machine-local relay just because both URLs are loopback-shaped.
+    if (isLoopbackServerUrl(requested) && requestedKey !== activeKey) {
         return null;
     }
     return requested;
 }
-

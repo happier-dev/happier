@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
@@ -11,11 +12,8 @@ export const PI_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.piSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
-    connectedService: {
-        id: null,
-        name: 'Pi',
-        connectRoute: null,
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'pi' }),
+    uiConnectedService: { serviceId: null, label: 'Pi', connectRoute: null },
     flavorAliases: ['pi', 'pi-coding-agent'],
     cli: buildCatalogProviderCliUiConfig('pi'),
     permissions: {

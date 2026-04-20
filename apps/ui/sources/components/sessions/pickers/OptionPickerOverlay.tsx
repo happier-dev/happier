@@ -84,6 +84,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const [customValue, setCustomValue] = React.useState(selectedCustomValue);
     const [customEditorVisible, setCustomEditorVisible] = React.useState(selectedCustomValue.length > 0);
     const lastCommittedCustomValueRef = React.useRef<string>(selectedCustomValue.trim());
+    const previousSelectedValueRef = React.useRef(selectedValue);
     const probeHintText = React.useMemo(() => {
         if (!probe || probe.phase === 'idle') return null;
         if (props.options.length > 1 || props.canEnterCustomValue) return null;
@@ -97,16 +98,22 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     ]);
 
     React.useEffect(() => {
+        const previousSelectedValue = previousSelectedValueRef.current;
+        previousSelectedValueRef.current = selectedValue;
+
         if (selectedCustomValue.length > 0) {
             setCustomValue(selectedCustomValue);
             setCustomEditorVisible(true);
             lastCommittedCustomValueRef.current = selectedCustomValue.trim();
             return;
         }
+        if (customEditorVisible && previousSelectedValue === selectedValue) {
+            return;
+        }
         if (optionValues.has(selectedValue)) {
             setCustomEditorVisible(false);
         }
-    }, [optionValues, selectedCustomValue, selectedValue]);
+    }, [customEditorVisible, optionValues, selectedCustomValue, selectedValue]);
 
     const filteredOptions = React.useMemo(() => {
         if (!showSearch || !normalizedQuery) return props.options;

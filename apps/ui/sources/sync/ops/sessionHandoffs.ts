@@ -1,4 +1,5 @@
 import {
+    readRuntimeDescriptorV1,
     readServerEnabledBit,
     SessionHandoffCommitResponseSchema,
     SessionHandoffPrepareTargetResultGetResponseSchema,
@@ -8,7 +9,7 @@ import {
     SPAWN_SESSION_ERROR_CODES,
 } from '@happier-dev/protocol';
 import type {
-    AgentRuntimeDescriptorV1,
+    RuntimeDescriptorV1,
     SessionHandoffCommitResponse,
     SessionHandoffPrepareTargetResponse,
     SessionHandoffStartResponse,
@@ -282,17 +283,12 @@ function writeSessionMetadataToLocalSession(sessionId: string, metadata: Metadat
     return currentSession;
 }
 
-function isAgentRuntimeDescriptorV1(value: unknown): value is AgentRuntimeDescriptorV1 {
-    return Boolean(
-        value
-        && typeof value === 'object'
-        && !Array.isArray(value)
-        && (value as { v?: unknown }).v === 1
-        && typeof (value as { providerId?: unknown }).providerId === 'string'
-        && (value as { provider?: unknown }).provider
-        && typeof (value as { provider?: unknown }).provider === 'object'
-        && !Array.isArray((value as { provider?: unknown }).provider),
-    );
+function readSessionHandoffRuntimeDescriptor(value: unknown): RuntimeDescriptorV1 | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return undefined;
+    }
+
+    return readRuntimeDescriptorV1((value as { runtimeDescriptorV1?: unknown }).runtimeDescriptorV1) ?? undefined;
 }
 
 function normalizePrepareTargetResponseCandidate(raw: unknown): Record<string, unknown> | null {
@@ -317,9 +313,9 @@ function normalizePrepareTargetResponseCandidate(raw: unknown): Record<string, u
     if (directSource !== undefined) {
         candidate.directSource = directSource;
     }
-    const agentRuntimeDescriptorV1 = (raw as { agentRuntimeDescriptorV1?: unknown }).agentRuntimeDescriptorV1;
-    if (agentRuntimeDescriptorV1 !== undefined) {
-        candidate.agentRuntimeDescriptorV1 = agentRuntimeDescriptorV1;
+    const runtimeDescriptorV1 = readSessionHandoffRuntimeDescriptor(raw);
+    if (runtimeDescriptorV1 !== undefined) {
+        candidate.runtimeDescriptorV1 = runtimeDescriptorV1;
     }
     const resume = (raw as { resume?: unknown }).resume;
     if (resume !== undefined) {
@@ -1125,9 +1121,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         phaseDetail: 'resuming_target_session',
     });
 
-    const preparedAgentRuntimeDescriptor = isAgentRuntimeDescriptorV1(preparedResponse.agentRuntimeDescriptorV1)
-        ? preparedResponse.agentRuntimeDescriptorV1
-        : undefined;
+    const preparedRuntimeDescriptorV1 = readSessionHandoffRuntimeDescriptor(preparedResponse);
     const resumeConnectedServices = (() => {
         const metadata = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord | null;
         if (!metadata) return undefined;
@@ -1139,18 +1133,18 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         sessionId: options.sessionId,
         machineId: options.targetMachineId,
         directory: preparedResponse.resume.directory,
-        backendTarget: { kind: 'builtInAgent', agentId: preparedResponse.resume.agent },
+        backendTarget: { kind: 'backend', backendId: preparedResponse.resume.agent },
         resume: preparedResponse.resume.resume,
         attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
         preferRequestedMachineTarget: true,
         preferScopedMachineRpc: true,
-        ...(preparedAgentRuntimeDescriptor ? { agentRuntimeDescriptorV1: preparedAgentRuntimeDescriptor } : {}),
+        ...(preparedRuntimeDescriptorV1 ? { runtimeDescriptorV1: preparedRuntimeDescriptorV1 } : {}),
         ...(preparedResponse.resume.environmentVariables ? { environmentVariables: preparedResponse.resume.environmentVariables } : {}),
         ...(resumeConnectedServices !== undefined ? { connectedServices: resumeConnectedServices } : {}),
         transcriptStorage: preparedResponse.resume.transcriptStorage,
         ...buildCodexBackendTransportFields({
             codexBackendMode: preparedResponse.resume.codexBackendMode,
-            agentRuntimeDescriptorV1: preparedAgentRuntimeDescriptor,
+            runtimeDescriptorV1: preparedRuntimeDescriptorV1,
         }),
         ...(normalizeId(options.serverId) ? { serverId: normalizeId(options.serverId) } : {}),
     });
@@ -1194,7 +1188,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         completedAtMs,
         targetRemoteSessionId: preparedResponse.remoteSessionId,
         targetDirectSource: preparedResponse.directSource as unknown as Record<string, unknown>,
-        targetRuntimeDescriptor: preparedResponse.agentRuntimeDescriptorV1,
+        targetRuntimeDescriptor: preparedRuntimeDescriptorV1,
     });
     const currentSessionMetadata = sourceMetadataForHandoffPatch;
     const restoreOptimisticBinding = applyOptimisticSessionHandoffBinding({
@@ -1335,21 +1329,19 @@ export async function performSessionHandoffRecoveryAction(params: Readonly<{
     if (!sourceResume) {
         return { ok: false, error: 'No source recovery resume plan is available' };
     }
-    const sourceAgentRuntimeDescriptor = isAgentRuntimeDescriptorV1(sourceResume.agentRuntimeDescriptorV1)
-        ? sourceResume.agentRuntimeDescriptorV1
-        : undefined;
+    const sourceRuntimeDescriptorV1 = readSessionHandoffRuntimeDescriptor(sourceResume);
     const resumed = await resumeSession({
         sessionId: sourceResume.sessionId,
         machineId: sourceResume.machineId,
         directory: sourceResume.directory,
-        backendTarget: { kind: 'builtInAgent', agentId: sourceResume.agent },
+        backendTarget: { kind: 'backend', backendId: sourceResume.agent },
         ...(sourceResume.resume ? { resume: sourceResume.resume } : {}),
-        ...(sourceAgentRuntimeDescriptor ? { agentRuntimeDescriptorV1: sourceAgentRuntimeDescriptor } : {}),
+        ...(sourceRuntimeDescriptorV1 ? { runtimeDescriptorV1: sourceRuntimeDescriptorV1 } : {}),
         ...(sourceResume.environmentVariables ? { environmentVariables: sourceResume.environmentVariables } : {}),
         transcriptStorage: sourceResume.transcriptStorage,
         ...buildCodexBackendTransportFields({
             codexBackendMode: sourceResume.codexBackendMode,
-            agentRuntimeDescriptorV1: sourceAgentRuntimeDescriptor,
+            runtimeDescriptorV1: sourceRuntimeDescriptorV1,
         }),
         ...(sourceResume.serverId ? { serverId: sourceResume.serverId } : {}),
     });

@@ -28,13 +28,13 @@ export function resolveNewSessionAgentPickerSelectionContext(
         ? params.getCompatibleProfileBackendEntries(profileForAgentSelection)
         : params.resolvedBackendEntries;
 
-    const compatibleBackendTargetKeys = new Set(compatibleBackendEntries.map((entry) => entry.targetKey));
+    const compatibleBackendTargetKeys = new Set(compatibleBackendEntries.map((entry) => entry.backendTargetKey));
 
     const selectableBackendEntries = params.resolvedBackendEntries.filter((entry) => (
         params.isBackendEntrySelectable(entry)
         && (
             !profileForAgentSelection
-            || compatibleBackendTargetKeys.has(entry.targetKey)
+            || compatibleBackendTargetKeys.has(entry.backendTargetKey)
         )
     ));
 

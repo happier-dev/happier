@@ -12,7 +12,8 @@ import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScree
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 type SpawnPayloadCapture = {
-    backendTarget?: { kind: 'builtInAgent'; agentId: string } | { kind: 'configuredAcpBackend'; backendId: string };
+    backendTarget?:
+        | { kind: 'backend'; backendId: string; configuredBackendId?: string; sourceKind?: 'built_in' | 'configured' };
 } | null;
 
 const applySettingsMock = vi.hoisted(() => vi.fn());
@@ -267,8 +268,10 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 recentMachinePaths: [],
                 agentType: 'customAcp',
                 backendTarget: {
-                    kind: 'configuredAcpBackend',
+                    kind: 'backend',
                     backendId: 'custom-kiro-preset',
+                    configuredBackendId: 'custom-kiro-preset',
+                    sourceKind: 'configured',
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
@@ -297,10 +300,85 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expect(captured.value).not.toBeNull();
         expect(applySettingsMock).toHaveBeenCalledWith({
             recentMachinePaths: [{ machineId: 'm1', path: '/tmp' }],
-            lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' },
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'custom-kiro-preset', configuredBackendId: 'custom-kiro-preset', sourceKind: 'configured' },
         });
-        expect(captured.value?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' });
+        expect(captured.value?.backendTarget).toEqual({
+            kind: 'backend',
+            backendId: 'custom-kiro-preset',
+            configuredBackendId: 'custom-kiro-preset',
+        });
+    });
+
+    it('passes the canonical plugin backend target into machineSpawnNewSession without rewriting lastUsedAgent', async () => {
+        const { useCreateNewSession, captured } = await setupHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'codex',
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'claude',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'acme.review.backend',
+                },
+                spawnBackendTarget: {
+                    kind: 'backend',
+                    backendId: 'acme.review.backend',
+                },
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            } as any);
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        expect(handleCreateSession).toBeTruthy();
+        await handleCreateSession!();
+
+        expect(captured.value?.backendTarget).toEqual({
+            kind: 'backend',
+            backendId: 'acme.review.backend',
+        });
+        expect(applySettingsMock).toHaveBeenCalledWith({
+            recentMachinePaths: [{ machineId: 'm1', path: '/tmp' }],
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+        });
     });
 
     it('passes a configured ACP backend target into new-session automation template building', async () => {
@@ -334,8 +412,10 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 recentMachinePaths: [],
                 agentType: 'customAcp',
                 backendTarget: {
-                    kind: 'configuredAcpBackend',
+                    kind: 'backend',
                     backendId: 'custom-kiro-preset',
+                    configuredBackendId: 'custom-kiro-preset',
+                    sourceKind: 'configured',
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
@@ -357,8 +437,10 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                     displayText: '',
                     agentId: 'customAcp',
                     backendTarget: {
-                        kind: 'configuredAcpBackend',
+                        kind: 'backend',
                         backendId: 'custom-kiro-preset',
+                        configuredBackendId: 'custom-kiro-preset',
+                        sourceKind: 'configured',
                     },
                     transcriptStorage: null,
                     profileId: null,
@@ -399,8 +481,74 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         expect(createdAutomationTemplate.value).toEqual(expect.objectContaining({
             agent: 'codex',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' },
+            backendTarget: { kind: 'backend', backendId: 'custom-kiro-preset', configuredBackendId: 'custom-kiro-preset' },
         }));
+    });
+
+    it('falls back to the canonical default built-in agent when configured ACP creation only has legacy customAcp carriers', async () => {
+        const { useCreateNewSession } = await setupHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'customAcp',
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'customAcp',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'review-bot',
+                    configuredBackendId: 'review-bot',
+                    sourceKind: 'configured',
+                },
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            } as any);
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        expect(handleCreateSession).toBeTruthy();
+        await handleCreateSession!();
+
+        expect(applySettingsMock).toHaveBeenCalledWith({
+            recentMachinePaths: [{ machineId: 'm1', path: '/tmp' }],
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+        });
     });
 
     it('replaces the route to the created session before the follow-up send resolves', async () => {
@@ -438,8 +586,10 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 recentMachinePaths: [],
                 agentType: 'customAcp',
                 backendTarget: {
-                    kind: 'configuredAcpBackend',
+                    kind: 'backend',
                     backendId: 'custom-kiro-preset',
+                    configuredBackendId: 'custom-kiro-preset',
+                    sourceKind: 'configured',
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
@@ -513,7 +663,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 profileMap: new Map(),
                 recentMachinePaths: [],
                 agentType: 'codex',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
                 sessionPrompt: 'Review the repo',
@@ -533,7 +683,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                     prompt: 'Review the repo',
                     displayText: 'Review the repo',
                     agentId: 'codex',
-                    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                    backendTarget: { kind: 'backend', backendId: 'codex' },
                     transcriptStorage: null,
                     profileId: null,
                     environmentVariables: null,
@@ -572,7 +722,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         await handleCreateSession!();
 
         expect(createdAutomationTemplate.value).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             codexBackendMode: 'appServer',
         }));
         expect(createdAutomationTemplate.value).not.toHaveProperty('experimentalCodexAcp');

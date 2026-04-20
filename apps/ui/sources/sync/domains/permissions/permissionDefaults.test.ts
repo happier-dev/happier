@@ -1,22 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { PermissionMode } from './permissionTypes';
 import { readAccountPermissionDefaults, resolveNewSessionDefaultPermissionMode } from './permissionDefaults';
 
 describe('resolveNewSessionDefaultPermissionMode', () => {
     const accountDefaultsByTargetKey = {
-        [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'plan' as PermissionMode,
-        [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'safe-yolo' as PermissionMode,
-        [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: 'read-only' as PermissionMode,
+        [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'plan' as PermissionMode,
+        [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'safe-yolo' as PermissionMode,
+        [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: 'read-only' as PermissionMode,
     };
-    const accountDefaults = readAccountPermissionDefaults(accountDefaultsByTargetKey, ['claude', 'codex', 'gemini', 'customAcp']);
+    const accountDefaults = readAccountPermissionDefaults(accountDefaultsByTargetKey, ['claude', 'codex', 'gemini']);
 
     it('reads account defaults from backend target keys', () => {
         expect(readAccountPermissionDefaults(accountDefaultsByTargetKey, ['claude', 'codex', 'gemini'])).toEqual({
             byTargetKey: {
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'plan',
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'safe-yolo',
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: 'read-only',
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'plan',
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'safe-yolo',
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: 'read-only',
             },
         });
     });
@@ -29,22 +29,22 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
 
     it('uses canonical target-keyed profile overrides when present', () => {
         const profileDefaultsByTargetKey = {
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'yolo' as PermissionMode,
+            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'yolo' as PermissionMode,
         };
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, profileDefaultsByTargetKey })).toBe('yolo');
         // Other providers fall back to account defaults when no override exists.
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, profileDefaultsByTargetKey })).toBe('read-only');
     });
 
-    it('prefers configured ACP backend target defaults over the custom ACP family default', () => {
+    it('prefers configured ACP backend target defaults over the agent-type fallback default', () => {
         const configuredTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' } as const;
         const configuredDefaults = readAccountPermissionDefaults({
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' })]: 'read-only',
-            [buildBackendTargetKey(configuredTarget)]: 'safe-yolo',
-        }, ['customAcp']);
+            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'read-only',
+            [resolveBackendTargetKeyV2(configuredTarget)]: 'safe-yolo',
+        }, ['codex']);
 
         expect(resolveNewSessionDefaultPermissionMode({
-            agentType: 'customAcp',
+            agentType: 'codex',
             backendTarget: configuredTarget,
             accountDefaults: configuredDefaults,
         })).toBe('safe-yolo');

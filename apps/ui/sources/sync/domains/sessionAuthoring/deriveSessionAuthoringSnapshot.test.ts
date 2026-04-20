@@ -53,7 +53,12 @@ describe('deriveSessionAuthoringSnapshot', () => {
         expect(snapshot).toEqual({
             directory: '/tmp/project',
             agentId: null,
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'review-bot',
+                sourceKind: 'configured',
+                configuredBackendId: 'review-bot',
+            },
             transcriptStorage: null,
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
@@ -101,8 +106,8 @@ describe('deriveSessionAuthoringSnapshot', () => {
         });
 
         expect(snapshot.directory).toBe('/home/leeroy');
-        expect(snapshot.backendTarget?.kind).toBe('builtInAgent');
-        expect(snapshot.agentId).toBe(snapshot.backendTarget?.kind === 'builtInAgent' ? snapshot.backendTarget.agentId : null);
+        expect(snapshot.backendTarget?.kind).toBe('backend');
+        expect(snapshot.agentId).toBe(snapshot.backendTarget?.kind === 'backend' ? snapshot.backendTarget.backendId : null);
         expect(snapshot.codexBackendMode).toBeNull();
         expect(snapshot.existingSessionId).toBe('session-2');
         expect(snapshot.sessionEncryptionMode).toBe('plain');

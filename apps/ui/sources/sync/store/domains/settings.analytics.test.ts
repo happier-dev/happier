@@ -23,7 +23,7 @@ const storageStoreStub = {
 vi.mock('../../domains/state/storageStore', () => storageStoreStub);
 vi.mock('@/sync/domains/state/storageStore', () => storageStoreStub);
 
-vi.mock('../../domains/state/persistence', () => ({
+vi.mock('../../domains/state/settingsPersistence', () => ({
     loadSettings: () => ({
         settings: {
             analyticsOptOut: false,

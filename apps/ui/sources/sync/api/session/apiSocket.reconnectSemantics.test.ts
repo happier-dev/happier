@@ -26,6 +26,12 @@ type ManagedConnectionTransport = Readonly<{
     onError: (listener: (error: unknown) => void) => () => void;
 }>;
 
+type SocketStub = Readonly<{
+    onAny: (listener: (event: string, data: unknown) => void) => void;
+    timeout: (ms: number) => Readonly<{ emitWithAck: (event: string, payload: unknown) => Promise<unknown> }>;
+    emitWithAck: (event: string, payload: unknown) => Promise<unknown>;
+}>;
+
 const reachability = vi.hoisted(() => ({
     subscribeSpy: vi.fn(),
     startSpy: vi.fn(async (..._args: unknown[]) => {}),
@@ -158,6 +164,24 @@ function createTransportController(): {
     };
 
     return controller;
+}
+
+function createSessionEncryptionStub() {
+    return {
+        getSessionEncryption: () => ({
+            encryptRaw: async (value: unknown) => value,
+            decryptRaw: async (value: unknown) => value,
+        }),
+        getMachineEncryption: vi.fn(),
+    } as never;
+}
+
+function createSocketStub(emitWithAck: (event: string, payload: unknown) => Promise<unknown>): SocketStub {
+    return {
+        onAny: vi.fn(),
+        timeout: vi.fn((_ms: number) => ({ emitWithAck })),
+        emitWithAck,
+    };
 }
 
 function emitReachability(serverUrl: string, state: ManagedConnectionState): void {
@@ -405,6 +429,132 @@ describe('apiSocket reconnect semantics', () => {
         expect(transportFactory.createSyncSocketTransportSpy).toHaveBeenCalledTimes(2);
         const secondParams = transportFactory.createSyncSocketTransportSpy.mock.calls[1]?.[0] as { token?: string } | undefined;
         expect(secondParams?.token).toBe('token-2');
+    });
+
+    it('rejects session RPC as not_authenticated when reachability is auth_failed', async () => {
+        const controller = createTransportController();
+        const emitWithAck = vi.fn(async () => {
+            throw new Error('operation has timed out');
+        });
+        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: unknown) => ({
+            socket: createSocketStub(emitWithAck),
+            transport: controller.transport,
+            ...(params as object),
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+        const endpoint = 'https://server.example.test';
+        apiSocket.initialize({ endpoint, token: 'token-1' }, createSessionEncryptionStub());
+
+        emitReachability(endpoint, {
+            phase: 'online',
+            reason: null,
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+        await settleAsyncWork();
+        emitReachability(endpoint, {
+            phase: 'auth_failed',
+            reason: 'auth_failed',
+            attempt: 2,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: Date.now(),
+            lastErrorMessage: 'expired token',
+        });
+
+        await expect(
+            apiSocket.sessionRPC('session-1', 'send_message', { text: 'hello' }, { timeoutMs: 5 }),
+        ).rejects.toMatchObject({
+            name: 'HappyError',
+            canTryAgain: false,
+            kind: 'auth',
+            code: 'not_authenticated',
+        });
+        expect(emitWithAck).not.toHaveBeenCalled();
+    });
+
+    it('rejects session RPC timeout as not_authenticated when reachability settles to auth_failed', async () => {
+        const controller = createTransportController();
+        const emitWithAck = vi.fn(async () => {
+            throw new Error('operation has timed out');
+        });
+        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: unknown) => ({
+            socket: createSocketStub(emitWithAck),
+            transport: controller.transport,
+            ...(params as object),
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+        const endpoint = 'https://server.example.test';
+        apiSocket.initialize({ endpoint, token: 'token-1' }, createSessionEncryptionStub());
+
+        emitReachability(endpoint, {
+            phase: 'online',
+            reason: null,
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+        await settleAsyncWork();
+
+        const request = apiSocket.sessionRPC('session-1', 'send_message', { text: 'hello' }, { timeoutMs: 5 });
+        await settleAsyncWork();
+
+        emitReachability(endpoint, {
+            phase: 'auth_failed',
+            reason: 'auth_failed',
+            attempt: 2,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: Date.now(),
+            lastErrorMessage: 'expired token',
+        });
+
+        await expect(request).rejects.toMatchObject({
+            name: 'HappyError',
+            canTryAgain: false,
+            kind: 'auth',
+            code: 'not_authenticated',
+        });
+        expect(emitWithAck).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps session RPC socket timeout errors when reachability is online', async () => {
+        const controller = createTransportController();
+        const emitWithAck = vi.fn(async () => {
+            throw new Error('operation has timed out');
+        });
+        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: unknown) => ({
+            socket: createSocketStub(emitWithAck),
+            transport: controller.transport,
+            ...(params as object),
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+        const endpoint = 'https://server.example.test';
+        apiSocket.initialize({ endpoint, token: 'token-1' }, createSessionEncryptionStub());
+
+        emitReachability(endpoint, {
+            phase: 'online',
+            reason: null,
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+        await settleAsyncWork();
+
+        await expect(
+            apiSocket.sessionRPC('session-1', 'send_message', { text: 'hello' }, { timeoutMs: 5 }),
+        ).rejects.toThrow('operation has timed out');
+        expect(emitWithAck).toHaveBeenCalledTimes(1);
     });
 
     it('publishes richer managed connection state changes alongside legacy status listeners', async () => {

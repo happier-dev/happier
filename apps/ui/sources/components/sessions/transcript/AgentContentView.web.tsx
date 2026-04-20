@@ -18,13 +18,23 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
     const state = useKeyboardState();
     const keyboardDismissOnTapHandlers = useKeyboardDismissOnTap();
     return (
-        <View style={{ flexBasis: 0, flexGrow: 1, paddingBottom: state.isVisible ? state.height - safeArea.bottom : 0 }}>
+        <View style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, paddingBottom: state.isVisible ? state.height - safeArea.bottom : 0 }}>
             <View
-                style={{ flexBasis: 0, flexGrow: 1 }}
+                style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0 }}
                 {...keyboardDismissOnTapHandlers}
             >
                 {content ? (
-                    <View style={[{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}>
+                    <View
+                        style={[{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            minWidth: 0,
+                            overflow: 'hidden',
+                        }]}
+                    >
                         {content}
                     </View>
                 ) : null}
@@ -39,7 +49,7 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
                     </ScrollView>
                 ) : null}
             </View>
-            <View>
+            <View style={{ minWidth: 0 }}>
                 {input}
             </View>
         </View>

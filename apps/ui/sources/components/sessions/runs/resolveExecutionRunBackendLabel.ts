@@ -1,28 +1,37 @@
-import { readBackendTargetRefV2, type AcpCatalogSettingsV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type AcpCatalogSettingsV1, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol';
 
+import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
 import { normalizeAcpCatalogSettingsV1 } from '@/sync/domains/acpCatalog/normalizeAcpCatalogSettingsV1';
 import { storage } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 
-function resolveConfiguredBackendLabel(target: Extract<BackendTargetRefV1, { kind: 'configuredAcpBackend' }>, catalog: AcpCatalogSettingsV1): string {
+function resolveConfiguredBackendLabel(target: BackendTargetRefV2, catalog: AcpCatalogSettingsV1): string {
+    const configuredBackendId = target.configuredBackendId ?? '';
+    if (!configuredBackendId) return target.backendId;
+
     const normalized = normalizeAcpCatalogSettingsV1(catalog);
-    const backend = normalized.backends.find((candidate) => candidate.id === target.backendId) ?? null;
-    if (!backend) return target.backendId;
-    return backend.title || backend.name || target.backendId;
+    const backend = normalized.backends.find((candidate) => candidate.id === configuredBackendId) ?? null;
+    if (!backend) return configuredBackendId;
+    return backend.title || backend.name || configuredBackendId;
 }
 
 export function resolveExecutionRunBackendLabel(
-    backendTarget: BackendTargetRefV1 | null | undefined,
+    backendTarget: BackendTargetRefV2Input | null | undefined,
     catalog?: AcpCatalogSettingsV1 | null,
 ): string | null {
     if (!backendTarget) return null;
-    const canonicalBackendTarget = readBackendTargetRefV2(backendTarget as any);
-    if (canonicalBackendTarget.kind === 'backend' && canonicalBackendTarget.sourceKind !== 'configured') {
-        return canonicalBackendTarget.backendId;
+
+    const canonicalTarget: BackendTargetRefV2 = readBackendTargetRefV2(backendTarget);
+
+    if (!canonicalTarget.configuredBackendId) {
+        if (isAgentId(canonicalTarget.backendId)) {
+            return t(getAgentCore(canonicalTarget.backendId).displayNameKey);
+        }
+        return canonicalTarget.backendId;
     }
+
     return resolveConfiguredBackendLabel(
-        backendTarget.kind === 'configuredAcpBackend'
-            ? backendTarget
-            : { kind: 'configuredAcpBackend', backendId: canonicalBackendTarget.configuredBackendId ?? canonicalBackendTarget.backendId },
+        canonicalTarget,
         catalog
             ?? storage.getState()?.settings?.acpCatalogSettingsV1
             ?? { v: 2, backends: [] },

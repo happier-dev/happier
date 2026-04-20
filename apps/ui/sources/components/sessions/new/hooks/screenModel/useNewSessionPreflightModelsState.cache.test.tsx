@@ -67,7 +67,7 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
 
     function Harness() {
       useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -90,6 +90,32 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
   });
 
+  it('does not attempt dynamic model probing for plugin backend targets', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    function Harness() {
+      useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(0);
+  });
+
   it('keeps a freeform-only probe result when the backend supports custom model ids without listing models', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();
@@ -108,7 +134,7 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
 
     function Harness() {
       latestPreflightModels = useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -145,7 +171,7 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
 
     function Harness(props: { agentId: 'codex' | 'opencode' }) {
       latestProbePhase = useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: props.agentId },
+        backendTarget: { kind: 'backend', backendId: props.agentId },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',

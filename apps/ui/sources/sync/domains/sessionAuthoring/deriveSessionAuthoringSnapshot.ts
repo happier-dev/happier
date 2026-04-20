@@ -1,5 +1,6 @@
-import { SessionMcpSelectionV1Schema, isBuiltInAgentTarget } from '@happier-dev/protocol';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
+import { isAgentId } from '@/agents/catalog/catalog';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -54,7 +55,9 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
             ?? normalizeOptionalString(metadata?.homeDir)
             ?? '/',
         ),
-        agentId: backendTarget && isBuiltInAgentTarget(backendTarget) ? backendTarget.agentId : null,
+        agentId: backendTarget && isAgentId(backendTarget.backendId) && !backendTarget.configuredBackendId
+            ? backendTarget.backendId
+            : null,
         backendTarget,
         transcriptStorage: normalizeTranscriptStorage((metadata as Record<string, unknown> | null)?.transcriptStorage),
         profileId: normalizeOptionalString(metadata?.profileId),

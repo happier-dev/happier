@@ -57,7 +57,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
 
         expect(updated.codexSessionId).toBe('thread_new');
         expect(updated.codexBackendMode).toBe('acp');
-        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+        expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
             providerId: 'codex',
             provider: {
@@ -67,13 +67,10 @@ describe('buildSessionHandoffMetadataPatch', () => {
                     owner: 'codex',
                     schemaId: 'codex.agentRuntimeDescriptorExtra',
                     v: 1,
-                    runtimeAffinity: {
-                        backendMode: 'acp',
-                        vendorSessionId: 'thread_new',
-                    },
                 },
             },
         });
+        expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
     it('normalizes legacy codex backend aliases when rebuilding handoff metadata', () => {
@@ -99,13 +96,14 @@ describe('buildSessionHandoffMetadataPatch', () => {
         });
 
         expect(updated.codexBackendMode).toBe('acp');
-        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+        expect(updated.runtimeDescriptorV1).toMatchObject({
             providerId: 'codex',
             provider: {
                 backendMode: 'acp',
                 vendorSessionId: 'thread_new',
             },
         });
+        expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
     it('preserves the imported codex runtime descriptor and connected-service source after handoff', () => {
@@ -143,7 +141,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated.directSessionV1).toMatchObject({
             source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex' },
         });
-        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+        expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
             providerId: 'codex',
             provider: {
@@ -153,6 +151,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 connectedServiceId: 'openai-codex',
             },
         });
+        expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
         expect(updated.codexBackendMode).toBe('appServer');
     });
 
@@ -184,7 +183,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             },
         });
 
-        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+        expect(updated.runtimeDescriptorV1).toMatchObject({
             providerId: 'codex',
             provider: {
                 backendMode: 'acp',
@@ -203,10 +202,11 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 connectedServiceProfileId: 'work',
                 homePath: '/tmp/connected-codex-home',
             },
-            agentRuntimeDescriptorV1: expect.objectContaining({
+            runtimeDescriptorV1: expect.objectContaining({
                 providerId: 'codex',
             }),
         });
+        expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
     it('rebuilds opencode runtime descriptor metadata with target server affinity', () => {
@@ -237,7 +237,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated.opencodeBackendMode).toBe('server');
         expect(updated.opencodeServerBaseUrl).toBe('http://new.example');
         expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
-        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+        expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
             providerId: 'opencode',
             provider: {
@@ -249,15 +249,10 @@ describe('buildSessionHandoffMetadataPatch', () => {
                     owner: 'opencode',
                     schemaId: 'opencode.agentRuntimeDescriptorExtra',
                     v: 1,
-                    runtimeHandle: {
-                        backendMode: 'server',
-                        vendorSessionId: 'sess_new',
-                        serverBaseUrl: 'http://new.example',
-                        serverBaseUrlExplicit: true,
-                    },
                 },
             },
         });
+        expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
     it('preserves the imported OpenCode runtime descriptor when provided', () => {
@@ -294,7 +289,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
 
         expect(updated.opencodeBackendMode).toBe('server');
         expect(updated.opencodeServerBaseUrl).toBe('http://canonical.example');
-        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+        expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
             providerId: 'opencode',
             provider: {
@@ -304,6 +299,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 serverBaseUrlExplicit: true,
             },
         });
+        expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
     it('clears stale externalHistoryImportV1 when a later handoff lands in direct mode', () => {
@@ -361,6 +357,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             targetDirectSource: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: 'p1' },
         });
 
+        expect(updated).not.toHaveProperty('runtimeDescriptorV1');
         expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
@@ -443,7 +440,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
 
         expect(updated.opencodeBackendMode).toBe('server');
         expect(updated.opencodeServerBaseUrl).toBe('http://new.example');
-        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+        expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
             providerId: 'opencode',
             provider: {
@@ -455,14 +452,9 @@ describe('buildSessionHandoffMetadataPatch', () => {
                     owner: 'opencode',
                     schemaId: 'opencode.agentRuntimeDescriptorExtra',
                     v: 1,
-                    runtimeHandle: {
-                        backendMode: 'server',
-                        vendorSessionId: 'sess_new',
-                        serverBaseUrl: 'http://new.example',
-                        serverBaseUrlExplicit: true,
-                    },
                 },
             },
         });
+        expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 });

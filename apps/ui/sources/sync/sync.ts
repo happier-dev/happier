@@ -13,11 +13,15 @@ import { Session, Machine, MetadataSchema, type Metadata } from './domains/state
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { PauseController } from '@/utils/timing/pauseController';
 import {
+    assertServerReachabilityAuthenticated,
     invalidateAllServerReachabilitySupervisors,
     setServerReachabilityNetworkAllowed,
     stopServerReachabilitySupervisors,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { acquireEndpointSupervisor, getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
+import { applyEndpointConnectivityStateToRealtimeStore } from '@/sync/runtime/connectivity/bindEndpointSupervisorToRealtimeStore';
 import { applyInitialAppStateConnectivityGate } from '@/sync/runtime/connectivity/appStateConnectivityGate';
+import { createNotAuthenticatedError, isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
 import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 import {
@@ -41,8 +45,8 @@ import {
     saveSessionMaterializedMaxSeqById,
     loadChangesCursor,
     saveChangesCursor,
-    loadProfile as loadPersistedProfile,
 } from './domains/state/persistence';
+import { loadProfile as loadPersistedProfile } from './domains/state/profilePersistence';
 import {
     clearWarmCacheAccountScope,
     loadMachineDisplayWarmCacheEntries,
@@ -76,6 +80,10 @@ import { EncryptionCache } from './encryption/encryptionCache';
 import { nowServerMs } from './runtime/time';
 import { listSessionListLookupActiveSessionIds } from './domains/session/listing/sessionListLookupState';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import {
+    catchUpTranscriptSourceWindow,
+    readInitialTranscriptSourceWindow,
+} from '@happier-dev/agents';
 import { computeNextReadStateV1 } from './domains/state/readStateV1';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
 import type { ArtifactHeader, DecryptedArtifact } from './domains/artifacts/artifactTypes';
@@ -249,6 +257,80 @@ function canUseSessionUserMessageRuntimeRpc(session: Readonly<{
         return true;
     }
     return isVersionSupported(cliVersion, MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION);
+}
+
+function recordTerminalAuthSyncError(
+    error: unknown,
+    options?: Readonly<{
+        serverId?: string | null;
+    }>,
+): void {
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    const scopedServerId = String(options?.serverId ?? '').trim();
+    const serverId = scopedServerId || activeServerId;
+    storage.getState().setSyncError({
+        message: error instanceof Error ? error.message : 'Authentication required',
+        retryable: false,
+        kind: 'auth',
+        at: Date.now(),
+        ...(serverId ? { serverId } : {}),
+    });
+}
+
+const STATIC_EXPO_PUBLIC_HAPPIER_USER_SEND_NO_ACK_AUTH_PROBE_TIMEOUT_MS =
+    process.env.EXPO_PUBLIC_HAPPIER_USER_SEND_NO_ACK_AUTH_PROBE_TIMEOUT_MS;
+
+function readUserSendNoAckAuthProbeTimeoutMs(): number {
+    const raw = String(STATIC_EXPO_PUBLIC_HAPPIER_USER_SEND_NO_ACK_AUTH_PROBE_TIMEOUT_MS ?? '').trim();
+    if (!raw) return 750;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return 750;
+    return Math.max(0, Math.min(5_000, parsed));
+}
+
+async function waitForEndpointProbeToSettle(
+    supervisor: ManagedEndpointSupervisor,
+    timeoutMs: number,
+): Promise<ManagedEndpointSupervisorState> {
+    const current = supervisor.getState();
+    if (current.phase !== 'connecting' || timeoutMs <= 0) {
+        return current;
+    }
+
+    return await new Promise<ManagedEndpointSupervisorState>((resolve) => {
+        let unsubscribe: (() => void) | null = null;
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+        let cleanupBeforeSubscribeReturned = false;
+        const cleanup = (): void => {
+            if (timeout) {
+                clearTimeout(timeout);
+                timeout = null;
+            }
+            if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+                return;
+            }
+            cleanupBeforeSubscribeReturned = true;
+        };
+
+        timeout = setTimeout(() => {
+            cleanup();
+            resolve(supervisor.getState());
+        }, Math.max(0, timeoutMs));
+
+        unsubscribe = supervisor.subscribe((state) => {
+            if (state.phase === 'connecting') {
+                return;
+            }
+            cleanup();
+            resolve(state);
+        });
+        if (cleanupBeforeSubscribeReturned && unsubscribe) {
+            unsubscribe();
+            unsubscribe = null;
+        }
+    });
 }
 
 function readOptionalSessionMetadataString(value: unknown): string | null {
@@ -545,6 +627,83 @@ class Sync {
 
     resetMessageTransport(): void {
         this.messageTransport = createDefaultMessageTransport();
+    }
+
+    private getActiveEndpointTarget(): { serverId: string; serverUrl: string } | null {
+        const activeServer = getActiveServerSnapshot();
+        const serverId = String(activeServer.serverId ?? '').trim();
+        const serverUrl = String(activeServer.serverUrl ?? '').trim();
+        if (!serverId || !serverUrl) {
+            return null;
+        }
+        return { serverId, serverUrl };
+    }
+
+    private getProductionActiveEndpointSupervisor(): ManagedEndpointSupervisor | null {
+        const target = this.getActiveEndpointTarget();
+        if (!target) {
+            return null;
+        }
+        const { serverId, serverUrl } = target;
+        return getEndpointSupervisorForServer({ serverId, serverUrl });
+    }
+
+    private getActiveEndpointAuthSupervisors(): ManagedEndpointSupervisor[] {
+        return [
+            this.activeEndpointSupervisor,
+            this.getProductionActiveEndpointSupervisor(),
+        ].filter((supervisor, index, supervisors): supervisor is ManagedEndpointSupervisor =>
+            Boolean(supervisor) && supervisors.indexOf(supervisor) === index,
+        );
+    }
+
+    private async assertActiveEndpointAuthenticated(options?: Readonly<{ forceProbe?: boolean }>): Promise<void> {
+        const target = this.getActiveEndpointTarget();
+        if (target) {
+            assertServerReachabilityAuthenticated(target.serverUrl);
+        }
+
+        const supervisors = this.getActiveEndpointAuthSupervisors();
+        if (supervisors.some((supervisor) => supervisor.getState().phase === 'auth_failed')) {
+            throw createNotAuthenticatedError();
+        }
+        if (options?.forceProbe !== true) {
+            return;
+        }
+
+        const targetToAcquire = supervisors.length === 0 ? target : null;
+        const acquiredHandle = targetToAcquire
+            ? await acquireEndpointSupervisor({ serverId: targetToAcquire.serverId, endpoint: targetToAcquire.serverUrl })
+            : null;
+
+        try {
+            const supervisorsToProbe = acquiredHandle ? [...supervisors, acquiredHandle.supervisor] : supervisors;
+            const timeoutMs = readUserSendNoAckAuthProbeTimeoutMs();
+            for (const supervisor of supervisorsToProbe) {
+                const current = supervisor.getState();
+                if (current.phase === 'auth_failed') {
+                    throw createNotAuthenticatedError();
+                }
+                if (current.phase === 'online') {
+                    supervisor.invalidate();
+                    const next = await waitForEndpointProbeToSettle(supervisor, timeoutMs);
+                    if (next.phase === 'auth_failed') {
+                        throw createNotAuthenticatedError();
+                    }
+                    continue;
+                }
+                if (current.phase === 'connecting') {
+                    const next = await waitForEndpointProbeToSettle(supervisor, timeoutMs);
+                    if (next.phase === 'auth_failed') {
+                        throw createNotAuthenticatedError();
+                    }
+                }
+            }
+        } finally {
+            if (acquiredHandle) {
+                await acquiredHandle.release().catch(() => {});
+            }
+        }
     }
 
     private getChangesCursorScope(): string | null {
@@ -951,6 +1110,10 @@ class Sync {
                     }
                     return true;
                 } catch (err) {
+                    if (isTerminalAuthError(err)) {
+                        recordTerminalAuthSyncError(err, { serverId: preferredServerId });
+                        return true;
+                    }
                     log.log(`⚠️ ensureSessionVisibleForMessageRoute failed for ${normalized}: ${err instanceof Error ? err.message : 'unknown error'}`);
                     return false;
                 }
@@ -1121,15 +1284,24 @@ class Sync {
                 permissionMode: permissionMode || 'default'
             };
 
-            const rawAck = await socketEmitWithAckFallback<MessageAckResponse>({
-                emitWithAck: (event, payload, opts) =>
-                    this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
-                send: (event, payload) => this.messageTransport.send(event, payload),
-                event: 'message',
-                payload,
-                timeoutMs: this.syncTuning.socketAckTimeoutMs,
-                onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
-            });
+            const rawAck = await (async () => {
+                try {
+                    await this.assertActiveEndpointAuthenticated();
+                    return await socketEmitWithAckFallback<MessageAckResponse>({
+                        emitWithAck: (event, payload, opts) =>
+                            this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
+                        send: (event, payload) => this.messageTransport.send(event, payload),
+                        event: 'message',
+                        payload,
+                        timeoutMs: this.syncTuning.socketAckTimeoutMs,
+                        onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
+                        beforeFallback: () => this.assertActiveEndpointAuthenticated({ forceProbe: true }),
+                    });
+                } catch (error) {
+                    storage.getState().removePendingMessage(sessionId, localId);
+                    throw error;
+                }
+            })();
 
             if (!rawAck) {
                 storage.getState().clearSessionOptimisticThinking(sessionId);
@@ -1203,6 +1375,9 @@ class Sync {
             // when the session enters a permission/action-required gate, when the session is marked thinking by live
             // activity updates, or when the optimistic timeout expires.
         } catch (e) {
+            if (isTerminalAuthError(e)) {
+                recordTerminalAuthSyncError(e);
+            }
             storage.getState().clearSessionOptimisticThinking(sessionId);
             throw e;
         }
@@ -1269,15 +1444,26 @@ class Sync {
                 permissionMode: permissionMode || 'default',
             };
 
-            const rawAck = await socketEmitWithAckFallback<MessageAckResponse>({
-                emitWithAck: (event, payload, opts) =>
-                    this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
-                send: (event, payload) => this.messageTransport.send(event, payload),
-                event: 'message',
-                payload,
-                timeoutMs: this.syncTuning.socketAckTimeoutMs,
-                onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
-            });
+            const rawAck = await (async () => {
+                try {
+                    await this.assertActiveEndpointAuthenticated();
+                    return await socketEmitWithAckFallback<MessageAckResponse>({
+                        emitWithAck: (event, payload, opts) =>
+                            this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
+                        send: (event, payload) => this.messageTransport.send(event, payload),
+                        event: 'message',
+                        payload,
+                        timeoutMs: this.syncTuning.socketAckTimeoutMs,
+                        onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
+                        beforeFallback: () => this.assertActiveEndpointAuthenticated({ forceProbe: true }),
+                    });
+                } catch (error) {
+                    if (isTerminalAuthError(error)) {
+                        storage.getState().removePendingMessage(sessionId, localId);
+                    }
+                    throw error;
+                }
+            })();
 
             if (!rawAck) {
                 storage.getState().clearSessionOptimisticThinking(sessionId);
@@ -1340,6 +1526,9 @@ class Sync {
 
             // Same policy as sendMessage(): keep optimistic thinking until lifecycle clears.
         } catch (e) {
+            if (isTerminalAuthError(e)) {
+                recordTerminalAuthSyncError(e);
+            }
             storage.getState().clearSessionOptimisticThinking(sessionId);
             throw e;
         }
@@ -1351,67 +1540,113 @@ class Sync {
             return;
         }
 
+        const clearRetry = (): void => {
+            const existing = this.pendingMessageCommitRetryTimers.get(key);
+            if (existing) {
+                clearTimeout(existing);
+            }
+            this.pendingMessageCommitRetryTimers.delete(key);
+        };
+
         const run = async (attempt: number): Promise<void> => {
             const pendingState = storage.getState().sessionPending[params.sessionId];
             const pending = pendingState?.messages?.find((m) => m.id === params.localId) ?? null;
             if (!pending) {
-                const existing = this.pendingMessageCommitRetryTimers.get(key);
-                if (existing) {
-                    clearTimeout(existing);
-                }
-                this.pendingMessageCommitRetryTimers.delete(key);
+                clearRetry();
                 return;
             }
 
-                  const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
-                  if (!sessionEncryption) {
-                      // If the session/encryption isn't available (e.g. session list was cleared or the app is mid-rehydrate),
-                      // don't leave this retry stuck. Ask for a sessions refresh and reschedule with backoff.
-                      fireAndForget(this.fetchSessions(), { tag: 'Sync.pendingMessageCommitRetry.fetchSessions' });
+            const scheduleRetryWithBackoff = () => {
+                fireAndForget(this.fetchSessions(), { tag: 'Sync.pendingMessageCommitRetry.fetchSessions' });
 
-                    const nextAttempt = attempt + 1;
-                    if (nextAttempt >= 6) {
-                        const existing = this.pendingMessageCommitRetryTimers.get(key);
-                        if (existing) {
-                        clearTimeout(existing);
-                    }
-                    this.pendingMessageCommitRetryTimers.delete(key);
+                const nextAttempt = attempt + 1;
+                if (nextAttempt >= 6) {
+                    clearRetry();
                     return;
                 }
 
-                  const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
-                  const jitterMs = Math.floor(Math.random() * 250);
-                  const timeout = setTimeout(() => {
-                      fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
-                  }, baseDelayMs + jitterMs);
-                  this.pendingMessageCommitRetryTimers.set(key, timeout);
-                  return;
-              }
+                const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
+                const jitterMs = Math.floor(Math.random() * 250);
+                const timeout = setTimeout(() => {
+                    fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
+                }, baseDelayMs + jitterMs);
+                this.pendingMessageCommitRetryTimers.set(key, timeout);
+            };
 
-            const encrypted = await sessionEncryption.encryptRawRecord(pending.rawRecord as RawRecord);
+            const session = storage.getState().sessions[params.sessionId] ?? null;
+            if (!session) {
+                scheduleRetryWithBackoff();
+                return;
+            }
+
+            const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+            const parsed = RawRecordSchema.safeParse(pending.rawRecord);
+            const rawRecord: RawRecord = parsed.success
+                ? parsed.data
+                : {
+                    role: 'user',
+                    content: { type: 'text', text: pending.text },
+                    meta: {},
+                };
+
+            const messagePayload =
+                sessionEncryptionMode === 'plain'
+                    ? { t: 'plain' as const, v: rawRecord }
+                    : await (async () => {
+                        const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
+                        if (!sessionEncryption) {
+                            scheduleRetryWithBackoff();
+                            return null;
+                        }
+                        return await sessionEncryption.encryptRawRecord(rawRecord);
+                    })();
+            if (!messagePayload) {
+                return;
+            }
+
             const payload = {
                 sid: params.sessionId,
-                message: encrypted,
+                message: messagePayload,
                 localId: params.localId,
                 sentFrom: 'retry',
                 permissionMode: 'default',
             };
 
+            let terminalAuthFailure = false;
             const rawAck = await (async () => {
                 try {
+                    await this.assertActiveEndpointAuthenticated();
                     return await this.messageTransport.emitWithAck<MessageAckResponse>('message', payload, {
                         timeoutMs: this.syncTuning.socketAckTimeoutMs,
                     });
-                } catch {
+                } catch (error) {
+                    let terminalError = error;
+                    if (!isTerminalAuthError(terminalError)) {
+                        try {
+                            await this.assertActiveEndpointAuthenticated({ forceProbe: true });
+                        } catch (probeError) {
+                            terminalError = probeError;
+                        }
+                    }
+                    if (isTerminalAuthError(terminalError)) {
+                        terminalAuthFailure = true;
+                        recordTerminalAuthSyncError(terminalError);
+                        storage.getState().removePendingMessage(params.sessionId, params.localId);
+                        storage.getState().clearSessionOptimisticThinking(params.sessionId);
+                        clearRetry();
+                    }
                     return null;
                 }
             })();
+            if (terminalAuthFailure) {
+                return;
+            }
 
             const ack = rawAck ? MessageAckResponseSchema.safeParse(rawAck) : null;
 
             if (ack?.success && ack.data.ok === true) {
                 storage.getState().removePendingMessage(params.sessionId, params.localId);
-                const committed = normalizeRawMessage(ack.data.id, params.localId, pending.createdAt, pending.rawRecord as RawRecord, { seq: ack.data.seq });
+                const committed = normalizeRawMessage(ack.data.id, params.localId, pending.createdAt, rawRecord, { seq: ack.data.seq });
                 if (committed) {
                     this.applyMessages(params.sessionId, [committed]);
                 }
@@ -1428,31 +1663,19 @@ class Sync {
                     ]);
                 }
 
-                const existing = this.pendingMessageCommitRetryTimers.get(key);
-                if (existing) {
-                    clearTimeout(existing);
-                }
-                this.pendingMessageCommitRetryTimers.delete(key);
+                clearRetry();
                 return;
             }
 
             if (ack?.success && ack.data.ok === false) {
                 storage.getState().removePendingMessage(params.sessionId, params.localId);
-                const existing = this.pendingMessageCommitRetryTimers.get(key);
-                if (existing) {
-                    clearTimeout(existing);
-                }
-                this.pendingMessageCommitRetryTimers.delete(key);
+                clearRetry();
                 return;
             }
 
             const nextAttempt = attempt + 1;
             if (nextAttempt >= 6) {
-                const existing = this.pendingMessageCommitRetryTimers.get(key);
-                if (existing) {
-                    clearTimeout(existing);
-                }
-                this.pendingMessageCommitRetryTimers.delete(key);
+                clearRetry();
                 return;
             }
 
@@ -2912,46 +3135,60 @@ class Sync {
           directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
       ): Promise<void> {
           const shouldContinue = this.createServerScopeGuard();
-          const page = await machineDirectSessionTranscriptPage({
-              machineId: directSessionLink.machineId,
-              providerId: directSessionLink.providerId,
-              remoteSessionId: directSessionLink.remoteSessionId,
-              source: directSessionLink.source,
-              direction: 'older',
-          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          const initialWindow = await readInitialTranscriptSourceWindow({
+              shouldContinue,
+              pageOlder: async () => {
+                  const page = await machineDirectSessionTranscriptPage({
+                      machineId: directSessionLink.machineId,
+                      providerId: directSessionLink.providerId,
+                      remoteSessionId: directSessionLink.remoteSessionId,
+                      source: directSessionLink.source,
+                      direction: 'older',
+                  }, { serverId: this.getDirectSessionServerScope(sessionId) });
+                  if (!page.ok) {
+                      throw new Error(page.error);
+                  }
+                  return {
+                      items: page.items,
+                      nextCursor: page.nextCursor ?? null,
+                      tailCursor: page.tailCursor ?? null,
+                      hasMore: page.hasMore === true,
+                      truncated: page.truncated === true,
+                  };
+              },
+              readAfter: async ({ cursor }) => {
+                  const tail = await machineDirectSessionTranscriptReadAfter({
+                      machineId: directSessionLink.machineId,
+                      providerId: directSessionLink.providerId,
+                      remoteSessionId: directSessionLink.remoteSessionId,
+                      source: directSessionLink.source,
+                      cursor,
+                  }, { serverId: this.getDirectSessionServerScope(sessionId) });
+                  if (!tail.ok) {
+                      throw new Error(tail.error);
+                  }
+                  return {
+                      items: tail.items,
+                      nextCursor: tail.nextCursor ?? null,
+                      truncated: tail.truncated === true,
+                  };
+              },
+              onPageItems: async (page) => {
+                  await this.applyDirectSessionTranscriptItems(sessionId, page.items, {
+                      nextCursor: page.nextCursor,
+                  });
+              },
+              onTailItems: async (page) => {
+                  await this.applyDirectSessionTranscriptItems(sessionId, page.items, {
+                      nextCursor: page.nextCursor,
+                  });
+              },
+          });
           if (!shouldContinue()) return;
 
-          if (!page.ok) {
-              throw new Error(page.error);
-          }
-
-          this.directSessionOlderCursorBySessionId.set(sessionId, page.nextCursor ?? null);
-          this.directSessionHasMoreOlderBySessionId.set(sessionId, page.hasMore === true);
-          await this.applyDirectSessionTranscriptItems(sessionId, page.items, {
-              nextCursor: typeof page.tailCursor === 'string' ? page.tailCursor : null,
-          });
+          this.directSessionOlderCursorBySessionId.set(sessionId, initialWindow.olderCursor);
+          this.directSessionHasMoreOlderBySessionId.set(sessionId, initialWindow.hasMoreOlder);
           storage.getState().applyMessagesLoaded(sessionId);
-
-          if (typeof page.tailCursor === 'string' && page.tailCursor.trim().length > 0) {
-              return;
-          }
-
-          const tail = await machineDirectSessionTranscriptReadAfter({
-              machineId: directSessionLink.machineId,
-              providerId: directSessionLink.providerId,
-              remoteSessionId: directSessionLink.remoteSessionId,
-              source: directSessionLink.source,
-              cursor: 'tail',
-          }, { serverId: this.getDirectSessionServerScope(sessionId) });
-          if (!shouldContinue()) return;
-
-          if (!tail.ok) {
-              throw new Error(tail.error);
-          }
-
-          await this.applyDirectSessionTranscriptItems(sessionId, tail.items, {
-              nextCursor: tail.nextCursor ?? null,
-          });
       }
 
       private async catchUpDirectSessionMessages(
@@ -2960,28 +3197,39 @@ class Sync {
       ): Promise<void> {
           const shouldContinue = this.createServerScopeGuard();
           const cursor = this.directSessionTailCursorBySessionId.get(sessionId) ?? 'tail';
-          const tail = await machineDirectSessionTranscriptReadAfter({
-              machineId: directSessionLink.machineId,
-              providerId: directSessionLink.providerId,
-              remoteSessionId: directSessionLink.remoteSessionId,
-              source: directSessionLink.source,
+          const tail = await catchUpTranscriptSourceWindow({
               cursor,
-          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+              shouldContinue,
+              readAfter: async ({ cursor: nextCursor }) => {
+                  const response = await machineDirectSessionTranscriptReadAfter({
+                      machineId: directSessionLink.machineId,
+                      providerId: directSessionLink.providerId,
+                      remoteSessionId: directSessionLink.remoteSessionId,
+                      source: directSessionLink.source,
+                      cursor: nextCursor,
+                  }, { serverId: this.getDirectSessionServerScope(sessionId) });
+                  if (!response.ok) {
+                      throw new Error(response.error);
+                  }
+                  return {
+                      items: response.items,
+                      nextCursor: response.nextCursor ?? null,
+                      truncated: response.truncated === true,
+                  };
+              },
+              onItems: async (page) => {
+                  await this.applyDirectSessionTranscriptItems(sessionId, page.items, {
+                      nextCursor: page.nextCursor,
+                  });
+              },
+          });
           if (!shouldContinue()) return;
-
-          if (!tail.ok) {
-              throw new Error(tail.error);
-          }
 
           if (tail.truncated === true) {
               this.resetSessionTranscriptState(sessionId);
               await this.fetchDirectSessionMessages(sessionId, directSessionLink);
               return;
           }
-
-          await this.applyDirectSessionTranscriptItems(sessionId, tail.items, {
-              nextCursor: tail.nextCursor ?? null,
-          });
       }
 
       private async loadOlderMessagesForChain(params: Readonly<{
@@ -3858,6 +4106,9 @@ async function syncInit(credentials: AuthCredentials, restore: boolean) {
     // Wire socket status to storage
     apiSocket.onStatusChange((status) => {
         storage.getState().setSocketStatus(status);
+    });
+    apiSocket.onConnectionStateChange((state) => {
+        applyEndpointConnectivityStateToRealtimeStore(state);
     });
     apiSocket.onError((error) => {
         if (!error) {

@@ -1,24 +1,36 @@
 import {
-    buildBackendTargetKeyV2,
-    convertBackendTargetRefV2ToV1,
     parseBackendTargetKeyV2,
     readBackendTargetRefV2,
-    type BackendTargetRefV1,
     type BackendTargetRefV2,
+    type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
-import { isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { resolveBuiltInAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { isAgentId } from '@/agents/catalog/catalog';
+import { isLegacyCompatAgentType } from './legacyCompatAgents';
+import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 
 export type SerializedBackendTargetRouteParams = Partial<Readonly<{
-    agentType: AgentId;
+    agentType: string;
     backendTarget: string;
     backendTargetKey: string;
 }>>;
 
+function stripBackendTargetSourceKind(target: BackendTargetRefV2): BackendTargetRefV2 {
+    // `sourceKind` is legacy split-brain vocabulary (built-in vs plugin vs configured).
+    // Route params must not carry it; `configuredBackendId` is the only needed carrier.
+    if (!('sourceKind' in target)) {
+        return target;
+    }
+
+    const { sourceKind: _ignored, ...rest } = target as BackendTargetRefV2 & {
+        sourceKind?: unknown;
+    };
+    return rest;
+}
+
 function parseSerializedBackendTarget(value: unknown): BackendTargetRefV2 | null {
     try {
-        return readBackendTargetRefV2(value as never);
+        return stripBackendTargetSourceKind(readBackendTargetRefV2(value as BackendTargetRefV2Input));
     } catch {
         if (typeof value !== 'string') {
             return null;
@@ -31,7 +43,7 @@ function parseSerializedBackendTarget(value: unknown): BackendTargetRefV2 | null
 
         try {
             const parsed = JSON.parse(trimmed);
-            return readBackendTargetRefV2(parsed as never);
+            return stripBackendTargetSourceKind(readBackendTargetRefV2(parsed as BackendTargetRefV2Input));
         } catch {
             return null;
         }
@@ -49,106 +61,99 @@ function parseBackendTargetKeySafe(value: unknown): BackendTargetRefV2 | null {
     }
 
     try {
-        return parseBackendTargetKeyV2(trimmed);
+        return stripBackendTargetSourceKind(parseBackendTargetKeyV2(trimmed));
     } catch {
         try {
-            return readBackendTargetRefV2(trimmed as never);
+            return stripBackendTargetSourceKind(readBackendTargetRefV2(trimmed as BackendTargetRefV2Input));
         } catch {
             return null;
         }
     }
 }
 
-function parseSerializedBackendTargetCompat(value: unknown): BackendTargetRefV1 | null {
-    const parsedTarget = parseSerializedBackendTarget(value);
-    return parsedTarget ? convertBackendTargetRefV2ToV1(parsedTarget) : null;
-}
-
-function parseBackendTargetKeyCompat(value: unknown): BackendTargetRefV1 | null {
-    const parsedTarget = parseBackendTargetKeySafe(value);
-    return parsedTarget ? convertBackendTargetRefV2ToV1(parsedTarget) : null;
-}
-
-export function resolveBackendTargetFromRouteParams(params: Readonly<{
+function resolveBackendTargetV2FromRouteParams(params: Readonly<{
     backendTarget?: unknown;
     backendTargetKey?: unknown;
     agentType?: unknown;
-}>): BackendTargetRefV1 | null {
-    const parsedTarget = parseSerializedBackendTargetCompat(params.backendTarget);
+}>): BackendTargetRefV2 | null {
+    const parsedTarget = parseSerializedBackendTarget(params.backendTarget);
     if (parsedTarget) {
         return parsedTarget;
     }
 
-    const parsedTargetKey = parseBackendTargetKeyCompat(params.backendTargetKey);
+    const parsedTargetKey = parseBackendTargetKeySafe(params.backendTargetKey);
     if (parsedTargetKey) {
         return parsedTargetKey;
     }
 
-    if (isAgentId(params.agentType)) {
+    if (typeof params.agentType === 'string') {
+        const normalizedAgentType = params.agentType.trim();
+        if (!normalizedAgentType || isLegacyCompatAgentType(normalizedAgentType) || !isAgentId(normalizedAgentType)) {
+            return null;
+        }
+
         return {
-            kind: 'builtInAgent',
-            agentId: params.agentType,
+            kind: 'backend',
+            backendId: normalizedAgentType,
         };
     }
 
     return null;
 }
 
+export function resolveBackendTargetFromRouteParams(params: Readonly<{
+    backendTarget?: unknown;
+    backendTargetKey?: unknown;
+    agentType?: unknown;
+}>): BackendTargetRefV2 | null {
+    return resolveBackendTargetV2FromRouteParams(params);
+}
+
 export function resolveRouteCloseoutFallbackTarget(params: Readonly<{
     backendTarget?: unknown;
     backendTargetKey?: unknown;
     agentType?: unknown;
-    preferredBackendTarget?: BackendTargetRefV1 | null;
-}>): BackendTargetRefV1 | null {
-    const routeTarget = resolveBackendTargetFromRouteParams(params);
-    if (routeTarget?.kind === 'configuredAcpBackend') {
-        return routeTarget;
-    }
-
-    if (routeTarget && !(routeTarget.kind === 'builtInAgent' && routeTarget.agentId === 'customAcp')) {
-        return routeTarget;
-    }
-
-    if (routeTarget?.kind === 'builtInAgent' && routeTarget.agentId === 'customAcp') {
-        return params.preferredBackendTarget ?? routeTarget;
-    }
-
-    return routeTarget;
+    preferredBackendTarget?: BackendTargetRefV2 | null;
+}>): BackendTargetRefV2 | null {
+    return resolveBackendTargetV2FromRouteParams(params)
+        ?? params.preferredBackendTarget
+        ?? null;
 }
 
 export function buildBackendTargetRouteParams(params: Readonly<{
     backendTarget?: unknown;
     backendTargetKey?: unknown;
     agentType?: unknown;
-    fallbackTarget: BackendTargetRefV1 | null;
+    fallbackTarget: BackendTargetRefV2 | null;
 }>): SerializedBackendTargetRouteParams {
-    const resolvedTarget = params.fallbackTarget ?? resolveBackendTargetFromRouteParams(params);
-    const resolvedTargetV2 = resolvedTarget ? readBackendTargetRefV2(resolvedTarget) : null;
+    const resolvedTargetV2 = params.fallbackTarget ?? resolveBackendTargetV2FromRouteParams(params);
     const routeParams: Partial<{
-        agentType: AgentId;
+        agentType: string;
         backendTarget: string;
         backendTargetKey: string;
     }> = {};
 
-    if (resolvedTarget?.kind === 'builtInAgent') {
-        routeParams.agentType = resolveBuiltInAgentIdForBackendTarget(resolvedTarget);
-    } else if (!resolvedTarget && isAgentId(params.agentType)) {
+    const sanitizedTarget = resolvedTargetV2 ? stripBackendTargetSourceKind(resolvedTargetV2) : null;
+
+    if (sanitizedTarget && isAgentId(sanitizedTarget.backendId) && !isLegacyCompatAgentType(sanitizedTarget.backendId)) {
+        routeParams.agentType = sanitizedTarget.backendId;
+    } else if (!resolvedTargetV2 && isAgentId(params.agentType) && !isLegacyCompatAgentType(params.agentType)) {
         routeParams.agentType = params.agentType;
     }
 
-    if (resolvedTargetV2) {
-        routeParams.backendTarget = JSON.stringify(resolvedTargetV2);
-        routeParams.backendTargetKey = buildBackendTargetKeyV2(resolvedTargetV2);
+    if (sanitizedTarget) {
+        routeParams.backendTarget = JSON.stringify(sanitizedTarget);
+        routeParams.backendTargetKey = resolveBackendTargetKeyV2(sanitizedTarget);
     } else {
         const serializedTarget = parseSerializedBackendTarget(params.backendTarget);
         if (serializedTarget) {
             routeParams.backendTarget = JSON.stringify(serializedTarget);
-            routeParams.backendTargetKey = buildBackendTargetKeyV2(serializedTarget);
+            routeParams.backendTargetKey = resolveBackendTargetKeyV2(serializedTarget);
         } else {
             const parsedTargetKey = parseBackendTargetKeySafe(params.backendTargetKey);
             if (parsedTargetKey) {
                 routeParams.backendTarget = JSON.stringify(parsedTargetKey);
-                routeParams.backendTargetKey = buildBackendTargetKeyV2(parsedTargetKey);
+                routeParams.backendTargetKey = resolveBackendTargetKeyV2(parsedTargetKey);
             }
         }
     }

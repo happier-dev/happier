@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsDefaults } from '../settings/settings';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -218,6 +219,34 @@ describe('persistence', () => {
             // added to the schema. Pending must remain delta-only.
             store.set('pending-settings', JSON.stringify({}));
             expect(loadPendingSettings()).toEqual({});
+        });
+
+        it('does not synthesize local-neural execution defaults inside pending voice deltas', () => {
+            store.set('pending-settings', JSON.stringify({
+                voice: {
+                    adapters: {
+                        local_direct: {
+                            tts: {
+                                provider: 'local_neural',
+                                localNeural: {
+                                    model: 'kokoro',
+                                    assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+                                },
+                            },
+                            stt: {
+                                provider: 'local_neural',
+                                localNeural: {
+                                    assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+                                },
+                            },
+                        },
+                    },
+                },
+            }));
+
+            const pending = loadPendingSettings() as any;
+            expect(pending.voice?.adapters?.local_direct?.tts?.localNeural?.execution).toBeUndefined();
+            expect(pending.voice?.adapters?.local_direct?.stt?.localNeural?.execution).toBeUndefined();
         });
 
         it('returns empty object when pending-settings JSON is invalid', () => {
@@ -565,26 +594,30 @@ describe('persistence', () => {
             expect(draft?.resumeSessionId).toBe('abc123');
         });
 
-        it('roundtrips backendTarget when persisted', () => {
-            store.set(
-                'new-session-draft-v1',
-                JSON.stringify({
-                    input: '',
-                    selectedMachineId: null,
-                    selectedPath: null,
-                    selectedProfileId: null,
-                    agentType: 'customAcp',
-                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-                    permissionMode: 'default',
-                    modelMode: 'default',
-                    sessionType: 'simple',
-                    updatedAt: Date.now(),
-                }),
-            );
+	        it('roundtrips backendTarget when persisted', () => {
+	            store.set(
+	                'new-session-draft-v1',
+	                JSON.stringify({
+	                    input: '',
+	                    selectedMachineId: null,
+	                    selectedPath: null,
+	                    selectedProfileId: null,
+	                    agentType: 'customAcp',
+	                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+	                    permissionMode: 'default',
+	                    modelMode: 'default',
+	                    sessionType: 'simple',
+	                    updatedAt: Date.now(),
+	                }),
+	            );
 
-            const draft = loadNewSessionDraft();
-            expect((draft as any)?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
-        });
+	            const draft = loadNewSessionDraft();
+	            expect((draft as any)?.backendTarget).toMatchObject({
+	                kind: 'backend',
+	                backendId: 'review-bot',
+	                configuredBackendId: 'review-bot',
+	            });
+	        });
 
         it('roundtrips codexBackendMode when persisted', () => {
             store.set(
@@ -667,7 +700,8 @@ describe('persistence', () => {
             );
 
             const draft = loadNewSessionDraft();
-            expect((draft as any)?.backendNewSessionOptionStateByTargetKey?.['agent:auggie']?.allowIndexing).toBe(true);
+            const auggieTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'auggie' });
+            expect((draft as any)?.backendNewSessionOptionStateByTargetKey?.[auggieTargetKey]?.allowIndexing).toBe(true);
         });
 
         it('clamps invalid permissionMode to default', () => {

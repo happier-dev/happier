@@ -4,7 +4,7 @@ export function resolveNewSessionAgentPickerEntryByTargetKey(params: Readonly<{
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedId: string;
 }>): ResolvedBackendCatalogEntry | null {
-    return params.resolvedBackendEntries.find((entry) => entry.targetKey === params.selectedId) ?? null;
+    return params.resolvedBackendEntries.find((entry) => entry.backendTargetKey === params.selectedId) ?? null;
 }
 
 export function resolveNewSessionAgentPickerSingleSelectFallbackEntry(params: Readonly<{
@@ -16,7 +16,7 @@ export function resolveNewSessionAgentPickerSingleSelectFallbackEntry(params: Re
     }
 
     const nextEntry = params.selectableBackendEntries[0] ?? null;
-    if (nextEntry === null || nextEntry.targetKey === params.selectedBackendTargetKey) {
+    if (nextEntry === null || nextEntry.backendTargetKey === params.selectedBackendTargetKey) {
         return null;
     }
 

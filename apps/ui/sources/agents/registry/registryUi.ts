@@ -1,28 +1,17 @@
 import type { ImageSourcePropType } from 'react-native';
 
-import type { AgentId } from './registryCore';
+import type { CanonicalAgentId } from './registryCore';
+import { CANONICAL_AGENT_IDS } from './registryCore';
 import type { Theme } from '@/theme';
 
-import { CLAUDE_UI } from '@/agents/providers/claude/ui';
-import { CODEX_UI } from '@/agents/providers/codex/ui';
-import { OPENCODE_UI } from '@/agents/providers/opencode/ui';
-import { GEMINI_UI } from '@/agents/providers/gemini/ui';
-import { AUGGIE_UI } from '@/agents/providers/auggie/ui';
-import { QWEN_UI } from '@/agents/providers/qwen/ui';
-import { KIMI_UI } from '@/agents/providers/kimi/ui';
-import { KILO_UI } from '@/agents/providers/kilo/ui';
-import { KIRO_UI } from '@/agents/providers/kiro/ui';
-import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
-import { PI_UI } from '@/agents/providers/pi/ui';
-import { OH_MY_PI_UI } from '@/agents/providers/ohMyPi/ui';
-import { COPILOT_UI } from '@/agents/providers/copilot/ui';
+import { BUNDLED_CANONICAL_AGENTS_UI } from './generatedBundledPluginEntries';
 
 export type AgentIconSvgXmlResolver = (
     theme: Theme,
 ) => string;
 
 export type AgentUiConfig = Readonly<{
-    id: AgentId;
+    id: string;
     icon: ImageSourcePropType | null;
     svgIconXml: AgentIconSvgXmlResolver | null;
     /**
@@ -47,53 +36,66 @@ export type AgentUiConfig = Readonly<{
     cliGlyph: string;
 }>;
 
-export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze({
-    claude: CLAUDE_UI,
-    codex: CODEX_UI,
-    opencode: OPENCODE_UI,
-    gemini: GEMINI_UI,
-    auggie: AUGGIE_UI,
-    qwen: QWEN_UI,
-    kimi: KIMI_UI,
-    kilo: KILO_UI,
-    kiro: KIRO_UI,
-    customAcp: CUSTOM_ACP_UI,
-    pi: PI_UI,
-    ohMyPi: OH_MY_PI_UI,
-    copilot: COPILOT_UI,
+export const CANONICAL_AGENTS_UI = BUNDLED_CANONICAL_AGENTS_UI;
+
+export const AGENTS_UI: Readonly<Record<CanonicalAgentId, AgentUiConfig>> = Object.freeze({
+    ...CANONICAL_AGENTS_UI,
 });
 
-export function getAgentIconSource(agentId: AgentId): ImageSourcePropType | null {
-    return AGENTS_UI[agentId].icon;
+const UNKNOWN_AGENT_UI: AgentUiConfig = Object.freeze({
+    id: '__unknown__',
+    icon: null,
+    svgIconXml: null,
+    pickerIconScale: 1,
+    tintColor: null,
+    avatarOverlay: {
+        circleScale: 1,
+        iconScale: ({ size }) => size,
+    },
+    cliGlyph: '?',
+});
+
+function isCanonicalAgentId(value: unknown): value is CanonicalAgentId {
+    return typeof value === 'string' && (CANONICAL_AGENT_IDS as readonly string[]).includes(value);
+}
+
+export function getAgentUiConfig(agentId: string | null | undefined): AgentUiConfig {
+    if (isCanonicalAgentId(agentId)) {
+        return CANONICAL_AGENTS_UI[agentId];
+    }
+    return UNKNOWN_AGENT_UI;
+}
+
+export function getAgentIconSource(agentId: string): ImageSourcePropType | null {
+    return getAgentUiConfig(agentId).icon;
 }
 
 export function getAgentIconSvgXml(
-    agentId: AgentId,
+    agentId: string,
     theme: Theme,
 ): string | null {
-    const resolveSvgXml = AGENTS_UI[agentId].svgIconXml;
+    const resolveSvgXml = getAgentUiConfig(agentId).svgIconXml;
     return resolveSvgXml ? resolveSvgXml(theme) : null;
 }
 
-export function getAgentIconTintColor(agentId: AgentId, theme: Theme): string | undefined {
-    const tint = AGENTS_UI[agentId].tintColor;
+export function getAgentIconTintColor(agentId: string, theme: Theme): string | undefined {
+    const tint = getAgentUiConfig(agentId).tintColor;
     if (!tint) return undefined;
     return tint(theme);
 }
 
-export function getAgentPickerIconScale(agentId: AgentId): number {
-    const cfg = AGENTS_UI[agentId];
-    if (!cfg) return 1;
+export function getAgentPickerIconScale(agentId: string): number {
+    const cfg = getAgentUiConfig(agentId);
     return cfg.pickerIconScale ?? 1;
 }
 
-export function getAgentAvatarOverlaySizes(agentId: AgentId, size: number): { circleSize: number; iconSize: number } {
-    const cfg = AGENTS_UI[agentId];
+export function getAgentAvatarOverlaySizes(agentId: string, size: number): { circleSize: number; iconSize: number } {
+    const cfg = getAgentUiConfig(agentId);
     const circleSize = Math.round(size * cfg.avatarOverlay.circleScale);
     const iconSize = cfg.avatarOverlay.iconScale({ size });
     return { circleSize, iconSize };
 }
 
-export function getAgentCliGlyph(agentId: AgentId): string {
-    return AGENTS_UI[agentId].cliGlyph;
+export function getAgentCliGlyph(agentId: string): string {
+    return getAgentUiConfig(agentId).cliGlyph;
 }

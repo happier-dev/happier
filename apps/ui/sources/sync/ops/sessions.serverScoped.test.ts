@@ -172,7 +172,12 @@ describe('sessions ops server-scoped routing', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             payload: expect.objectContaining({
-                backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro' },
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'custom-kiro',
+                    configuredBackendId: 'custom-kiro',
+                    sourceKind: 'configured',
+                },
             }),
         }));
     });

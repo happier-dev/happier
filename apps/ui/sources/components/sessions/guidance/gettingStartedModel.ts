@@ -56,6 +56,12 @@ export type SessionGettingStartedViewModelInput = Readonly<{
     sessionsReady: boolean;
     sessionCount: number;
     activeMachines: ReadonlyArray<Readonly<{ active: boolean; revokedAt?: number | null }>>;
+    localDaemonStatus?: Readonly<{
+        serviceInstalled: boolean;
+        daemonRunning: boolean;
+        needsAuth: boolean;
+        machineId: string | null;
+    }> | null;
     selection: Readonly<{
         activeTarget: Readonly<{ kind: 'server' | 'group'; id: string; groupId?: string }>;
         activeServerId: string;
@@ -74,6 +80,30 @@ export type SessionGettingStartedViewModel = Readonly<{
     serverUrl: string;
     showServerSetup: boolean;
 }>;
+
+function hasHealthyLocalDaemon(status: SessionGettingStartedViewModelInput['localDaemonStatus']): boolean {
+    return status?.serviceInstalled === true
+        && status?.daemonRunning === true
+        && status?.needsAuth !== true
+        && typeof status?.machineId === 'string'
+        && status.machineId.trim().length > 0;
+}
+
+function applyLocalDaemonHealthHint(
+    summary: Readonly<{ machineCount: number | null; onlineCount: number | null }>,
+    localDaemonHealthy: boolean,
+): Readonly<{ machineCount: number | null; onlineCount: number | null }> {
+    if (!localDaemonHealthy) {
+        return summary;
+    }
+    if (summary.machineCount === null || summary.onlineCount === null) {
+        return summary;
+    }
+    return {
+        machineCount: Math.max(summary.machineCount, 1),
+        onlineCount: Math.max(summary.onlineCount, 1),
+    };
+}
 
 export function resolveActiveServerProfile(
     serverProfiles: ReadonlyArray<Readonly<{ id: string; name: string; serverUrl: string }>>,
@@ -99,6 +129,7 @@ function resolveTargetLabel(input: SessionGettingStartedViewModelInput, activeSe
 export function buildSessionGettingStartedViewModel(input: SessionGettingStartedViewModelInput): SessionGettingStartedViewModel {
     const activeProfile = input.activeServerProfile;
     const targetLabel = resolveTargetLabel(input, activeProfile.name);
+    const localDaemonHealthy = hasHealthyLocalDaemon(input.localDaemonStatus);
 
     const selectedServerIds = input.selection.allowedServerIds;
     const activeServerMachines = resolveServerScopedMachines({
@@ -118,16 +149,28 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
             return { machineCount: null, onlineCount: null };
         }
         const online = machines.filter((m) => m.active === true).length;
-        return { machineCount: machines.length, onlineCount: online };
+        return applyLocalDaemonHealthHint(
+            { machineCount: machines.length, onlineCount: online },
+            serverId === input.selection.activeServerId && localDaemonHealthy,
+        );
     });
     const selectedMachines = computeMachinesSummary(perServer);
-    const machines = selectedMachines.machineCount > 0
-        ? selectedMachines
-        : !selectedMachines.hasUnknownServers && activeServerMachines && activeServerMachines.length > 0
-            ? {
-                hasUnknownServers: false,
+    const activeServerSummary = activeServerMachines
+        ? applyLocalDaemonHealthHint(
+            {
                 machineCount: activeServerMachines.length,
                 onlineCount: activeServerMachines.filter((machine) => machine.active === true).length,
+            },
+            localDaemonHealthy,
+        )
+        : null;
+    const machines = selectedMachines.machineCount > 0
+        ? selectedMachines
+        : !selectedMachines.hasUnknownServers && activeServerSummary && activeServerSummary.machineCount && activeServerSummary.machineCount > 0
+            ? {
+                hasUnknownServers: false,
+                machineCount: activeServerSummary.machineCount,
+                onlineCount: activeServerSummary.onlineCount ?? 0,
             }
             : selectedMachines;
 

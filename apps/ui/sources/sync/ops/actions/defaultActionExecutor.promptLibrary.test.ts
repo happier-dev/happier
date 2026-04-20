@@ -59,7 +59,6 @@ vi.mock('@/sync/ops/sessionHandoffs', () => ({ completeSessionHandoff: vi.fn() }
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({ sessionRpcWithServerScope: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({ sendSessionMessageWithServerScope: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: vi.fn() }));
-vi.mock('@/voice/activity/voiceActivityController', () => ({ voiceActivityController: { clearSession: vi.fn() } }));
 vi.mock('@/voice/session/voiceSession', () => ({ voiceSessionManager: { stop: vi.fn() } }));
 vi.mock('@/voice/agent/voiceAgentGlobalSessionId', () => ({ VOICE_AGENT_GLOBAL_SESSION_ID: 'voice-global' }));
 vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({ teleportVoiceAgentToSessionRoot: vi.fn() }));

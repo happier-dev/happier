@@ -1,6 +1,7 @@
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
+import { SessionSplitCanvasLayoutsSchema } from '@/sync/domains/session/sessionSplitCanvasPersistence';
 import { WorkspaceRefV1Schema } from '@/sync/domains/workspaces/workspaceRefModel';
 
 function objectKeyCount(value: unknown): number {
@@ -225,6 +226,20 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
             privacy: 'count_only',
             identityScope: 'person',
             serializeCurrentProperties: buildSessionListGroupOrderSummaryProperties,
+        },
+    },
+    sessionSplitCanvasLayoutsV1: {
+        schema: SessionSplitCanvasLayoutsSchema,
+        default: {},
+        description: 'Synced semantic split-canvas layouts for workspace-scoped session canvases',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrent: objectKeyCount,
         },
     },
     dismissedCLIWarnings: {

@@ -1,29 +1,47 @@
 import { describe, it, expect } from 'vitest';
 
-import { AGENT_IDS as SHARED_AGENT_IDS, getAgentModelConfig, getProviderCliInstallGuideUrl } from '@happier-dev/agents';
+import {
+    AGENT_IDS as SHARED_AGENT_IDS,
+    CANONICAL_AGENT_IDS as SHARED_CANONICAL_AGENT_IDS,
+    getAgentCore as getSharedAgentCore,
+    getAgentModelConfig,
+    getProviderCliInstallGuideUrl,
+} from '@happier-dev/agents';
 
 import {
+    AGENTS_CORE,
+    CANONICAL_AGENTS_CORE,
+    CANONICAL_AGENT_IDS,
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     resolveAgentIdFromFlavor,
-    getAgentCore,
+    formatAgentLikeIdForDisplay,
+    getAgentCore as getUiAgentCore,
     AGENT_IDS,
 } from './registryCore';
 import { buildAgentToolsUiConfig } from './buildAgentToolsUiConfig';
+import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCompatAgents';
 
 describe('agents/registryCore', () => {
     it('exposes a stable list of agent ids', () => {
         expect(Array.isArray(AGENT_IDS)).toBe(true);
         expect(AGENT_IDS.length).toBeGreaterThan(0);
         expect([...AGENT_IDS].sort()).toEqual([...SHARED_AGENT_IDS].sort());
+        expect([...CANONICAL_AGENT_IDS].sort()).toEqual([...SHARED_CANONICAL_AGENT_IDS].sort());
     });
 
     it('exports only agent ids that have a UI core config', () => {
         for (const agentId of AGENT_IDS) {
-            const core = getAgentCore(agentId);
+            const core = getUiAgentCore(agentId);
             expect(core.id).toBe(agentId);
             expect(typeof core.cli.detectKey).toBe('string');
         }
+    });
+
+    it('keeps legacy compat agent ids out of the canonical UI core registry', () => {
+        expect(AGENTS_CORE).not.toHaveProperty(LEGACY_COMPAT_PRIMARY_AGENT_ID);
+        expect(CANONICAL_AGENTS_CORE).not.toHaveProperty(LEGACY_COMPAT_PRIMARY_AGENT_ID);
+        expect(CANONICAL_AGENT_IDS).not.toContain(LEGACY_COMPAT_PRIMARY_AGENT_ID);
     });
 
     it('resolves known flavors and aliases to canonical agent ids', () => {
@@ -50,7 +68,6 @@ describe('agents/registryCore', () => {
             { detectKey: 'codex', expected: 'codex' },
             { detectKey: 'opencode', expected: 'opencode' },
             { detectKey: 'kiro-cli', expected: 'kiro' },
-            { detectKey: 'custom-acp', expected: 'customAcp' },
             { detectKey: '  ', expected: null },
             { detectKey: 'unknown', expected: null },
             { detectKey: null, expected: null },
@@ -64,6 +81,7 @@ describe('agents/registryCore', () => {
     it('resolves connected service ids in a case-insensitive way', () => {
         expect(resolveAgentIdFromConnectedServiceId('anthropic')).toBe('claude');
         expect(resolveAgentIdFromConnectedServiceId('Anthropic')).toBe('claude');
+        expect(resolveAgentIdFromConnectedServiceId('claude-subscription')).toBe('claude');
         expect(resolveAgentIdFromConnectedServiceId('openai')).toBe('codex');
         expect(resolveAgentIdFromConnectedServiceId('')).toBeNull();
         expect(resolveAgentIdFromConnectedServiceId(null)).toBeNull();
@@ -71,44 +89,38 @@ describe('agents/registryCore', () => {
     });
 
     it('provides core config for known agents', () => {
-        const claude = getAgentCore('claude');
+        const claude = getUiAgentCore('claude');
         expect(claude.id).toBe('claude');
         expect(claude.cli.detectKey).toBeTruthy();
     });
 
     it('provides core config for kilo', () => {
-        const kilo = getAgentCore('kilo');
+        const kilo = getUiAgentCore('kilo');
         expect(kilo.id).toBe('kilo');
         expect(kilo.cli.detectKey).toBeTruthy();
     });
 
     it('provides core config for pi', () => {
-        const pi = getAgentCore('pi');
+        const pi = getUiAgentCore('pi');
         expect(pi.id).toBe('pi');
         expect(pi.cli.detectKey).toBeTruthy();
     });
 
     it('provides core config for ohMyPi', () => {
-        const ohMyPi = getAgentCore('ohMyPi');
+        const ohMyPi = getUiAgentCore('ohMyPi');
         expect(ohMyPi.id).toBe('ohMyPi');
         expect(ohMyPi.cli.detectKey).toBe('omp');
     });
 
     it('provides core config for kiro', () => {
-        const kiro = getAgentCore('kiro');
+        const kiro = getUiAgentCore('kiro');
         expect(kiro.id).toBe('kiro');
         expect(kiro.cli.detectKey).toBe('kiro-cli');
     });
 
-    it('provides core config for custom ACP', () => {
-        const customAcp = getAgentCore('customAcp');
-        expect(customAcp.id).toBe('customAcp');
-        expect(customAcp.cli.detectKey).toBe('custom-acp');
-    });
-
     it('uses generic installer guidance instead of hardcoded package-manager commands', () => {
-        for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'customAcp', 'ohMyPi', 'pi', 'copilot'] as const) {
-            const core = getAgentCore(agentId);
+        for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'ohMyPi', 'pi', 'copilot'] as const) {
+            const core = getUiAgentCore(agentId);
             expect(core.cli.installBanner.installKind).toBe('ifAvailable');
             expect(core.cli.installBanner.installCommand).toBeUndefined();
         }
@@ -116,8 +128,29 @@ describe('agents/registryCore', () => {
 
     it('uses centralized setup guide URLs for provider install banners', () => {
         for (const agentId of ['claude', 'opencode', 'kimi', 'qwen', 'ohMyPi', 'pi'] as const) {
-            expect(getAgentCore(agentId).cli.installBanner.guideUrl).toBe(getProviderCliInstallGuideUrl(agentId));
+            expect(getUiAgentCore(agentId).cli.installBanner.guideUrl).toBe(getProviderCliInstallGuideUrl(agentId));
         }
+    });
+
+    it('surfaces shared connected-services compatibility from @happier-dev/agents', () => {
+        for (const agentId of AGENT_IDS) {
+            expect(getUiAgentCore(agentId)).toMatchObject({
+                connectedServices: getSharedAgentCore(agentId).connectedServices ?? null,
+            });
+        }
+    });
+
+    it('exposes an explicit UI-only connected service surface separate from capability metadata', () => {
+        expect(getUiAgentCore('claude').uiConnectedService).toEqual({
+            serviceId: 'anthropic',
+            label: 'Claude Code',
+            connectRoute: '/(app)/settings/connect/claude',
+        });
+        expect(getUiAgentCore('opencode').uiConnectedService).toEqual({
+            serviceId: null,
+            label: 'OpenCode',
+            connectRoute: null,
+        });
     });
 
     it('surfaces shared tools delivery config from @happier-dev/agents', () => {
@@ -162,5 +195,11 @@ describe('agents/registryCore', () => {
 
         const pi = getAgentModelConfig('pi');
         expect(pi.supportsSelection).toBe(true);
+    });
+
+    it('formats unknown backend/provider ids into readable fallback display titles', () => {
+        expect(formatAgentLikeIdForDisplay('acme.review-backend.v2')).toBe('Acme Review Backend V2');
+        expect(formatAgentLikeIdForDisplay('  plugin_backend  ')).toBe('Plugin Backend');
+        expect(formatAgentLikeIdForDisplay('')).toBe('Unknown Backend');
     });
 });

@@ -58,5 +58,32 @@ describe('useNewSessionPreflightConfigOptionsState (cache)', () => {
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     });
-});
 
+    it('does not attempt config-options probing for plugin backend targets', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockClear();
+
+        const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/acp/dynamicConfigOptionsProbeCache');
+        resetDynamicConfigOptionsProbeCacheForTests();
+
+        const { useNewSessionPreflightConfigOptionsState } = await import('./useNewSessionPreflightConfigOptionsState');
+
+        function Harness() {
+            useNewSessionPreflightConfigOptionsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'acme.review.backend' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            } as any);
+            return null;
+        }
+
+        let root!: renderer.ReactTestRenderer;
+        root = (await renderScreen(React.createElement(Harness))).tree;
+        await act(async () => {
+            root.unmount();
+        });
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(0);
+    });
+});

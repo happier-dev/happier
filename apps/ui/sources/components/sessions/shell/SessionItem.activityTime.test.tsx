@@ -122,6 +122,7 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
     getSessionAvatarId: () => 'avatar',
+    getSessionStatus: () => mockSessionStatus,
     useSessionStatus: () => mockSessionStatus,
 }));
 

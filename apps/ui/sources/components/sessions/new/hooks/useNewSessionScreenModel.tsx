@@ -12,7 +12,6 @@ import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { tryShowDaemonUnavailableAlertForRpcError } from '@/utils/errors/daemonUnavailableAlert';
 import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
     getProfileEnvironmentVariables,
@@ -20,13 +19,11 @@ import {
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfile, DEFAULT_PROFILES, getProfilePrimaryCli } from '@/sync/domains/profiles/profileUtils';
-import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
-import {
-    getResolvedBackendCatalogEntries,
-    resolveBuiltInAgentIdForBackendTarget,
-} from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
@@ -56,11 +53,7 @@ import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/
 import { useNewSessionBackendTargetState } from '@/components/sessions/new/hooks/screenModel/useNewSessionBackendTargetState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
-import {
-    buildBackendTargetKey,
-    type BackendTargetRefV1,
-    type WindowsRemoteSessionLaunchMode,
-} from '@happier-dev/protocol';
+import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import { useNewSessionMcpSelection } from '@/components/sessions/new/hooks/useNewSessionMcpSelection';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { useNewSessionAvailabilityState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAvailabilityState';
@@ -91,6 +84,8 @@ import { useNewSessionConnectedServicesAgentOptions } from '@/components/session
 import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenPreflightState';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { randomUUID } from '@/platform/randomUUID';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { isProfileCompatibleWithResolvedBackendEntry } from '@/components/profiles/edit/profileBackendEntryStorage';
 
 
 // Configuration constants
@@ -283,15 +278,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             ?? readBackendNewSessionOptionStateByTargetKey(persistedDraft)
             ?? {};
     });
-    const enabledAgentIds = useEnabledAgentIds();
-    const resolvedBackendEntries = React.useMemo(() => {
-        return getResolvedBackendCatalogEntries({
-            enabledAgentIds,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
-            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-            collapseConfiguredBackendProviderSentinels: true,
-        });
-    }, [enabledAgentIds, settings.acpCatalogSettingsV1, settings.backendEnabledByTargetKey]);
+
     const routeBackendTarget = React.useMemo(() => {
         return resolveBackendTargetFromRouteParams({
             backendTarget: backendTargetParam,
@@ -378,19 +365,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
     }, [useProfiles, selectedProfileId]);
 
-    React.useEffect(() => {
-        if (!useProfiles) return;
-        if (!selectedProfileId) return;
-        const selected = profileMap.get(selectedProfileId) ?? getBuiltInProfile(selectedProfileId);
-        if (!selected) {
-            setSelectedProfileId(null);
-            return;
-        }
-        if (resolvedBackendEntries.some((entry) => isProfileCompatibleWithBackendTarget(selected, entry.target))) {
-            return;
-        }
-        setSelectedProfileId(null);
-    }, [profileMap, resolvedBackendEntries, selectedProfileId, useProfiles]);
     // AgentInput autocomplete is unused on this screen today, but passing a new
     // function/array each render forces autocomplete hooks to re-sync.
     // Keep these stable to avoid unnecessary work during taps/selection changes.
@@ -440,27 +414,90 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         return raw || null;
     }, [worktreeParam]);
 
-    const { backendTarget, setBackendTarget, builtInAgentId: agentType } = useNewSessionBackendTargetState({
+    const {
+        selectedMachineId,
+        setSelectedMachineId,
+        selectedPath,
+        setSelectedPath,
+        setDraftSelectedPath,
+        getRequestedPath,
+        getBestPathForMachine,
+    } = useNewSessionMachinePathState({
+        machines,
+        recentMachinePaths,
+        machineIdParam: effectiveMachineIdParam,
+        pathParam: effectivePathParam,
+        persistedMachineId: persistedDraft?.selectedMachineId ?? tempSessionData?.machineId,
+        persistedPath: hydratedPersistedAuthoringDraft?.directory ?? hydratedTempAuthoringDraft?.directory,
+    });
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: selectedMachineId,
+        serverId: targetServerId,
+        enabled: Boolean(selectedMachineId),
+    });
+    const enabledAgentIds = useEnabledAgentIds();
+    const resolvedBackendEntries = React.useMemo(() => {
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+            collapseConfiguredBackendProviderSentinels: true,
+            mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
+            discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds,
+        });
+    }, [
+        daemonMergedProjection.inputs?.discoveredBackendIds,
+        daemonMergedProjection.inputs?.mergedBackendProjectionById,
+        daemonMergedProjection.inputs?.mergedProviderProjectionById,
+        enabledAgentIds,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+    ]);
+    const {
+        backendTarget,
+        setBackendTarget,
+        selectedProviderAgentId: agentType,
+        selectedRuntimeCarrierAgentId,
+        selectedUiAgentType,
+    } = useNewSessionBackendTargetState({
         entries: resolvedBackendEntries,
         lastUsedAgent,
         lastUsedBackendTarget,
+        routeBackendTarget,
         persistedBackendTarget: hydratedPersistedAuthoringDraft?.backendTarget,
-        tempBackendTarget: hydratedTempAuthoringDraft?.backendTarget ?? tempSessionData?.backendTarget ?? routeBackendTarget,
+        tempBackendTarget: routeBackendTarget ?? hydratedTempAuthoringDraft?.backendTarget ?? tempSessionData?.backendTarget,
         tempAgentType: hydratedTempAuthoringDraft?.agentId ?? agentTypeParam ?? hydratedPersistedAuthoringDraft?.agentId,
+        projectionPhase: daemonMergedProjection.phase,
     });
     const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
         setBackendTarget((prevTarget) => {
-            const prevAgentId = resolveBuiltInAgentIdForBackendTarget(prevTarget);
+            const prevAgentId = isAgentId(prevTarget.backendId) ? prevTarget.backendId : DEFAULT_AGENT_ID;
             const nextAgentId = typeof next === 'function' ? next(prevAgentId) : next;
-            return { kind: 'builtInAgent', agentId: nextAgentId };
+            return { kind: 'backend', backendId: nextAgentId };
         });
     }, [setBackendTarget]);
-    const selectedBackendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
+    const selectedBackendTargetKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTarget), [backendTarget]);
     const agentOptionState = backendNewSessionOptionStateByTargetKey[selectedBackendTargetKey] ?? null;
     const selectedBackendEntry = React.useMemo(() => {
-        return resolvedBackendEntries.find((entry) => entry.targetKey === selectedBackendTargetKey) ?? null;
+        return resolvedBackendEntries.find((entry) => entry.backendTargetKey === selectedBackendTargetKey) ?? null;
     }, [resolvedBackendEntries, selectedBackendTargetKey]);
-    const agentLabel = selectedBackendEntry?.title ?? t(getAgentCore(agentType).displayNameKey);
+    const agentLabel = selectedBackendEntry?.title ?? t(getAgentCore(selectedUiAgentType as AgentId).displayNameKey);
+
+    React.useEffect(() => {
+        if (!useProfiles) return;
+        if (!selectedProfileId) return;
+        const selected = profileMap.get(selectedProfileId) ?? getBuiltInProfile(selectedProfileId);
+        if (!selected) {
+            setSelectedProfileId(null);
+            return;
+        }
+        if (resolvedBackendEntries.some((entry) => isProfileCompatibleWithResolvedBackendEntry(selected, entry))) {
+            return;
+        }
+        setSelectedProfileId(null);
+    }, [profileMap, resolvedBackendEntries, selectedProfileId, useProfiles]);
+
     useRouteBackendTargetSelectionSync({
         routeBackendTarget,
         resolvedBackendEntries,
@@ -484,22 +521,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         hydratedPersistedAuthoringDraft,
     });
 
-    const {
-        selectedMachineId,
-        setSelectedMachineId,
-        selectedPath,
-        setSelectedPath,
-        setDraftSelectedPath,
-        getRequestedPath,
-        getBestPathForMachine,
-    } = useNewSessionMachinePathState({
-        machines,
-        recentMachinePaths,
-        machineIdParam: effectiveMachineIdParam,
-        pathParam: effectivePathParam,
-        persistedMachineId: persistedDraft?.selectedMachineId ?? tempSessionData?.machineId,
-        persistedPath: hydratedPersistedAuthoringDraft?.directory ?? hydratedTempAuthoringDraft?.directory,
-    });
     const [pathPickerSearchQuery, setPathPickerSearchQuery] = React.useState('');
     const repoScmSnapshot = useNewSessionRepoScmSnapshot({
         machineId: selectedMachineId,
@@ -550,6 +571,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         selectedMachine,
         capabilityServerId,
+        directSessionsFeatureEnabled,
         settings,
         agentType,
         resumeSessionId,
@@ -596,6 +618,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         acpConfigOptionsProbeState,
     } = useNewSessionScreenPreflightState({
         backendTarget,
+        runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
         settings,
         selectedMachineId,
         capabilityServerId,
@@ -767,7 +790,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedProfileId,
         newSessionDefaultPersistenceModeV1,
         newSessionDefaultPersistenceModeByTargetKeyV1,
-        resolvedBackendTargets: resolvedBackendEntries.map((entry) => entry.target),
+        resolvedBackendTargets: resolvedBackendEntries.map((entry) => entry.backendTarget),
         agentType,
         backendTarget,
         settings,
@@ -863,6 +886,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         getBestPathForMachine,
         useMachinePickerSearch,
         targetServerId,
+        directSessionsFeatureEnabled,
         resumeSessionId,
         setResumeSessionId,
         agentType,
@@ -883,6 +907,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         } as never);
     }, [navigation]);
 
+    const canSelectProfile = React.useCallback((profileId: string): boolean => {
+        const profile = profileMap.get(profileId) ?? getBuiltInProfile(profileId);
+        if (!profile) {
+            return false;
+        }
+        // Keep profiles selectable when they still have structural backend support,
+        // even if all compatible backends are currently logged out or undiscovered.
+        return getCompatibleProfileBackendEntries(profile).length > 0;
+    }, [getCompatibleProfileBackendEntries, profileMap]);
+
     const {
         profilesGroupTitles,
         getProfileDisabled,
@@ -894,6 +928,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedProfileId,
         setSelectedProfileId,
         selectProfile,
+        canSelectProfile,
         profileAvailabilityById,
         clearProfileRouteParam,
     });
@@ -933,6 +968,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentNewSessionOptions,
     } = useNewSessionConnectedServicesAgentOptions({
         agentType,
+        targetServerId,
         selectedBackendTargetKey,
         setBackendNewSessionOptionStateByTargetKey,
         agentOptionState,
@@ -979,6 +1015,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         backendNewSessionOptionStateByTargetKey,
     });
+    const spawnBackendTarget = React.useMemo(() => {
+        return selectedBackendEntry?.backendTarget ?? backendTarget;
+    }, [backendTarget, selectedBackendEntry?.backendTarget]);
 
     const { handleCreateSession } = useNewSessionCreateSessionAction({
         router,
@@ -997,6 +1036,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         recentMachinePaths,
         agentType,
         backendTarget,
+        spawnBackendTarget,
         permissionMode,
         modelMode,
         acpSessionModeId,
@@ -1145,12 +1185,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             isAgentSelectable,
             isCliBannerDismissed,
             dismissCliBanner,
-            agentType,
+            agentType: selectedUiAgentType as AgentId,
             agentLabel,
             setAgentType,
             agentPickerOptions,
             selectedBackendTargetKey,
-            selectedBackendEntryTargetKey: selectedBackendEntry?.targetKey,
+            selectedBackendEntryTargetKey: selectedBackendEntry?.backendTargetKey,
             onAgentPickerSelect: handleAgentPickerSelect,
             modelOptions,
             modelOptionsProbeState: {
@@ -1252,14 +1292,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         },
         agent: {
             agentInputExtraActionChips,
-            agentType,
+            agentType: selectedUiAgentType as AgentId,
             agentLabel,
             handleAgentClick,
             agentPickerOptions,
             onAgentPickerSelect: handleAgentPickerSelect,
             agentPickerProbe: cliAvailabilityProbe,
             selectedBackendTargetKey,
-            selectedBackendEntryTargetKey: selectedBackendEntry?.targetKey,
+            selectedBackendEntryTargetKey: selectedBackendEntry?.backendTargetKey,
         },
         model: {
             permissionMode,

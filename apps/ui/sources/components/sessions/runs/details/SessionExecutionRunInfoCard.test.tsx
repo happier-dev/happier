@@ -88,7 +88,7 @@ describe('SessionExecutionRunInfoCard', () => {
         const text = JSON.stringify(tree!.toJSON());
         expect(text).toContain('Review Subagent');
         expect(text).toContain('Run ID: run_1');
-        expect(text).toContain('Backend: codex');
+        expect(text).toContain('Backend: agentInput.agent.codex');
         expect(text).toContain('Permissions: safe_yolo');
         expect(text).toContain('Mode: bounded · streaming');
         expect(text).toContain('Status: running');

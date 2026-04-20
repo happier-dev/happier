@@ -1510,8 +1510,8 @@ describe('sessionHandoffs ops', () => {
             machineId: 'machine_target',
             directory: '/home/guest/wsrepl-large-replication-9',
             backendTarget: {
-                kind: 'builtInAgent',
-                agentId: 'claude',
+                kind: 'backend',
+                backendId: 'claude',
             },
             resume: 'claude_session_1',
             transcriptStorage: 'persisted',
@@ -3499,7 +3499,7 @@ describe('sessionHandoffs ops', () => {
         expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });
 
-    it('forwards codexBackendMode from the target resume payload when present', async () => {
+    it('forwards the target resume payload and runtime identity fields when present', async () => {
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
                 handoffId: 'handoff_codex',
@@ -3596,16 +3596,18 @@ describe('sessionHandoffs ops', () => {
             machineId: 'machine_target',
             directory: '/repo',
             backendTarget: {
-                kind: 'builtInAgent',
-                agentId: 'codex',
+                kind: 'backend',
+                backendId: 'codex',
             },
             resume: 'codex_session_1',
             transcriptStorage: 'persisted',
-            codexBackendMode: 'acp',
+            attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+            preferRequestedMachineTarget: true,
+            preferScopedMachineRpc: true,
         }));
     });
 
-    it('prefers target agentRuntimeDescriptorV1 over the resume payload during handoff resume forwarding', async () => {
+    it('prefers target runtimeDescriptorV1 over the resume payload during handoff resume forwarding', async () => {
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
                 handoffId: 'handoff_codex_runtime_descriptor',
@@ -3642,7 +3644,7 @@ describe('sessionHandoffs ops', () => {
                     kind: 'codexHome',
                     home: 'user',
                 },
-                agentRuntimeDescriptorV1: {
+                runtimeDescriptorV1: {
                     v: 1,
                     providerId: 'codex',
                     provider: {
@@ -3705,8 +3707,11 @@ describe('sessionHandoffs ops', () => {
 
         expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_codex_runtime_descriptor',
-            codexBackendMode: 'appServer',
-            agentRuntimeDescriptorV1: {
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'codex',
+            },
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -3714,6 +3719,10 @@ describe('sessionHandoffs ops', () => {
                     vendorSessionId: 'codex_session_runtime_descriptor',
                 },
             },
+            attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+            preferRequestedMachineTarget: true,
+            preferScopedMachineRpc: true,
+            transcriptStorage: 'persisted',
         }));
     });
 
@@ -4973,6 +4982,80 @@ describe('sessionHandoffs ops', () => {
         });
     });
 
+    it('ignores legacy agentRuntimeDescriptorV1 fields in raw target prepare responses', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            handoffId: 'handoff_prepare_legacy_runtime_descriptor',
+            status: {
+                handoffId: 'handoff_prepare_legacy_runtime_descriptor',
+                status: 'ready_for_cutover',
+                phase: 'staging_target',
+                transportStrategy: 'server_routed_stream',
+                recoveryActions: [],
+            },
+            remoteSessionId: 'codex_session_prepare_legacy_runtime_descriptor',
+            directSource: {
+                kind: 'codexHome',
+                home: 'user',
+            },
+            agentRuntimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+                provider: {
+                    backendMode: 'appServer',
+                    vendorSessionId: 'codex_session_prepare_legacy_runtime_descriptor',
+                },
+            },
+            resume: {
+                directory: '/repo',
+                agent: 'codex',
+                resume: 'codex_session_prepare_legacy_runtime_descriptor',
+                transcriptStorage: 'persisted',
+                approvedNewDirectoryCreation: true,
+            },
+        });
+
+        const { prepareTargetSessionHandoffWithRetry } = await import('./sessionHandoffs');
+        const result = await prepareTargetSessionHandoffWithRetry({
+            handoffId: 'handoff_prepare_legacy_runtime_descriptor',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            targetPath: '/repo',
+            negotiatedTransportStrategy: 'server_routed_stream',
+            sourceSessionStorageMode: 'persisted',
+            allowServerRoutedFallback: true,
+            handoffMetadataV2: {},
+        }, {
+            timeoutMs: 10,
+            intervalMs: 1,
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            response: {
+                handoffId: 'handoff_prepare_legacy_runtime_descriptor',
+                status: {
+                    handoffId: 'handoff_prepare_legacy_runtime_descriptor',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'codex_session_prepare_legacy_runtime_descriptor',
+                directSource: {
+                    kind: 'codexHome',
+                    home: 'user',
+                },
+                resume: {
+                    directory: '/repo',
+                    agent: 'codex',
+                    resume: 'codex_session_prepare_legacy_runtime_descriptor',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            },
+        });
+    });
+
     it('aborts the source handoff when target resume fails after prepare', async () => {
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
@@ -5932,7 +6015,7 @@ describe('sessionHandoffs ops', () => {
                     transcriptStorage: 'direct',
                     serverId: 'server_a',
                     codexBackendMode: 'appServer',
-                    agentRuntimeDescriptorV1: {
+                    runtimeDescriptorV1: {
                         v: 1,
                         providerId: 'codex',
                         provider: {
@@ -5951,7 +6034,14 @@ describe('sessionHandoffs ops', () => {
 
         expect(result).toEqual({ ok: true });
         expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            agentRuntimeDescriptorV1: {
+            sessionId: 'sess_source',
+            machineId: 'machine_source',
+            directory: '/repo/source',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'codex',
+            },
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {
@@ -5959,11 +6049,12 @@ describe('sessionHandoffs ops', () => {
                     vendorSessionId: 'codex_session_recover',
                 },
             },
-            codexBackendMode: 'appServer',
             environmentVariables: {
                 HAPPIER_OPENCODE_BACKEND_MODE: 'server',
                 HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
             },
+            transcriptStorage: 'direct',
+            serverId: 'server_a',
         }));
     });
 });

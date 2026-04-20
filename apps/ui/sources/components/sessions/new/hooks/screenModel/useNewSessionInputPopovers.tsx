@@ -51,6 +51,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
     getBestPathForMachine: (machineId: string) => string;
     useMachinePickerSearch: boolean;
     targetServerId: string | null;
+    directSessionsFeatureEnabled: boolean;
     resumeSessionId: string;
     setResumeSessionId: React.Dispatch<React.SetStateAction<string>>;
     agentType: AgentId;
@@ -158,7 +159,9 @@ export function useNewSessionInputPopovers(params: Readonly<{
     ]);
 
     const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {
-        const browseEnabled = Boolean(params.selectedMachineId) && canBrowseDirectSessions(params.agentType);
+        const browseEnabled = params.directSessionsFeatureEnabled
+            && Boolean(params.selectedMachineId)
+            && canBrowseDirectSessions(params.agentType);
         return {
             renderContent: ({ requestClose }) => (
                 <NewSessionResumeSelectionContent
@@ -219,6 +222,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         params.agentLabel,
         params.agentOptionState,
         params.agentType,
+        params.directSessionsFeatureEnabled,
         params.resumeSessionId,
         params.selectedMachineId,
         params.settings,

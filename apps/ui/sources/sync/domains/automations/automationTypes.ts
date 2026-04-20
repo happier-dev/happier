@@ -1,6 +1,6 @@
 import type {
     AcpConfigOptionOverridesV1,
-    BackendTargetRefV1,
+    BackendTargetRefV2,
     SessionMcpSelectionV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
@@ -75,7 +75,7 @@ export type AutomationTemplate = Readonly<{
     prompt?: string;
     displayText?: string;
     agent?: string;
-    backendTarget?: BackendTargetRefV1;
+    backendTarget?: BackendTargetRefV2;
     connectedServices?: unknown;
     transcriptStorage?: 'persisted' | 'direct';
     profileId?: string;

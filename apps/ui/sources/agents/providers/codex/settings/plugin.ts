@@ -39,5 +39,4 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
             ],
         },
     ],
-    buildOutgoingMessageMetaExtras: () => ({}),
 };

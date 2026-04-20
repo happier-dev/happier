@@ -9,6 +9,7 @@ export type SyncError = {
   retryable: boolean;
   kind: 'auth' | 'config' | 'network' | 'server' | 'unknown';
   at: number;
+  serverId?: string;
   failuresCount?: number;
   nextRetryAt?: number;
 } | null;

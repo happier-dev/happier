@@ -1,23 +1,42 @@
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { isAgentId } from '@/agents/catalog/catalog';
+import { isLegacyCompatAgentType } from './legacyCompatAgents';
 
-export function resolvePersistedAgentIdForBackendTarget(params: Readonly<{
-    backendTarget?: BackendTargetRefV1 | null;
+function resolveCanonicalPersistedAgentId(params: Readonly<{
     persistedAgentId: unknown;
     selectedBuiltInAgentId: AgentId;
 }>): AgentId {
-    if (params.backendTarget?.kind === 'builtInAgent' && isAgentId(params.backendTarget.agentId)) {
-        return params.backendTarget.agentId;
+    if (isAgentId(params.persistedAgentId)) {
+        return params.persistedAgentId;
+    }
+    return params.selectedBuiltInAgentId;
+}
+
+export function resolvePersistedAgentIdForBackendTarget(params: Readonly<{
+    backendTarget?: BackendTargetRefV2Input | null;
+    persistedAgentId: unknown;
+    selectedBuiltInAgentId: AgentId;
+}>): AgentId {
+    let resolvedTarget: BackendTargetRefV2 | null = null;
+    if (params.backendTarget) {
+        try {
+            resolvedTarget = readBackendTargetRefV2(params.backendTarget);
+        } catch {
+            resolvedTarget = null;
+        }
     }
 
-    if (
-        params.backendTarget?.kind === 'configuredAcpBackend'
-        && isAgentId(params.persistedAgentId)
-        && params.persistedAgentId !== 'customAcp'
-    ) {
-        // Keep a concrete built-in fallback while backendTarget remains the canonical configured-backend identity.
+    if (resolvedTarget && isLegacyCompatAgentType(resolvedTarget.backendId)) {
+        return resolveCanonicalPersistedAgentId(params);
+    }
+
+    if (resolvedTarget && isAgentId(resolvedTarget.backendId)) {
+        return resolvedTarget.backendId;
+    }
+
+    if (isAgentId(params.persistedAgentId)) {
         return params.persistedAgentId;
     }
 

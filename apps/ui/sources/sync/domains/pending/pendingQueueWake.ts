@@ -1,6 +1,6 @@
 import type { ResumeSessionOptions } from '@/sync/ops';
 import type { Session } from '../state/storageTypes';
-import { resolveAgentIdFromFlavor, buildWakeResumeExtras } from '@/agents/catalog/catalog';
+import { isAgentId, resolveAgentIdFromFlavor, buildWakeResumeExtras } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
@@ -52,9 +52,6 @@ export function getPendingQueueWakeResumeOptions(opts: {
     if (!machineId || !directory) return null;
     if (canWakeMachineId && canWakeMachineId(machineId) === false) return null;
 
-    const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? resolveAgentIdFromFlavor(session.metadata?.flavor);
-    if (!agentId) return null;
-
     const base = buildResumeSessionBaseOptionsFromSession({
         sessionId,
         session,
@@ -63,6 +60,19 @@ export function getPendingQueueWakeResumeOptions(opts: {
         permissionOverride,
     });
     if (!base) return null;
+
+    const backendTarget = base.backendTarget;
+    if (typeof backendTarget === 'object' && backendTarget !== null && 'kind' in backendTarget && backendTarget.kind === 'configuredAcpBackend') {
+        return base;
+    }
+
+    const agentId = resolveAgentIdFromSessionMetadata(session.metadata)
+        ?? resolveAgentIdFromFlavor(session.metadata?.flavor)
+        ?? (typeof backendTarget === 'object' && backendTarget !== null && 'kind' in backendTarget && backendTarget.kind === 'builtInAgent'
+            ? backendTarget.agentId
+            : null);
+    if (!agentId) return base;
+    if (!isAgentId(agentId)) return base;
 
     return {
         ...base,

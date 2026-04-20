@@ -1,7 +1,15 @@
 import type { AgentId } from '@/agents/catalog/catalog';
-import { getProviderSettingsRuntime } from '@/agents/providers/registry/providerSettingsRegistry';
+import { resolveProviderOutgoingMessageMetaExtras } from '@happier-dev/agents';
+import { buildClaudeReasoningEffortMessageMetaOverrides } from '@/agents/providers/claude/buildClaudeReasoningEffortMessageMetaOverrides';
 
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
+
+const PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS: Partial<Record<AgentId, (params: {
+    session: unknown;
+    metaOverrides?: Record<string, unknown>;
+}) => Record<string, unknown> | undefined>> = {
+    claude: buildClaudeReasoningEffortMessageMetaOverrides,
+};
 
 export function addProviderMessageMetaExtras(args: {
     meta: MessageMeta;
@@ -11,15 +19,12 @@ export function addProviderMessageMetaExtras(args: {
 }): MessageMeta {
     if (!args.agentId) return args.meta;
 
-    const runtime = getProviderSettingsRuntime(args.agentId);
-    if (!runtime) return args.meta;
-
     let extras: unknown;
     try {
-        extras = runtime.buildOutgoingMessageMetaExtras({
+        extras = resolveProviderOutgoingMessageMetaExtras({
+            agentId: args.agentId,
             settings: args.settings,
             session: args.session,
-            agentId: args.agentId,
         });
     } catch {
         return args.meta;
@@ -42,4 +47,24 @@ export function addProviderMessageMetaExtras(args: {
     }
 
     return merged;
+}
+
+export function resolveProviderMessageMetaOverrides(args: {
+    agentId: AgentId | null;
+    session: unknown;
+    metaOverrides?: Partial<MessageMeta>;
+}): Partial<MessageMeta> | undefined {
+    if (!args.agentId) return args.metaOverrides;
+
+    const builder = PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS[args.agentId];
+    if (!builder) return args.metaOverrides;
+
+    try {
+        return builder({
+            session: args.session,
+            metaOverrides: args.metaOverrides as Record<string, unknown> | undefined,
+        }) as Partial<MessageMeta> | undefined;
+    } catch {
+        return args.metaOverrides;
+    }
 }

@@ -336,6 +336,13 @@ export function normalizeRawMessage(
                 return null;
             }
 
+            // Claude Code "system" output payloads (e.g. `stop_hook_summary`, `away_summary`) are
+            // informational only and are not part of the agent transcript. Drop them so they don't
+            // surface as `[Unsupported agent output]` placeholders.
+            if ((raw.content.data as { type?: unknown }).type === 'system') {
+                return null;
+            }
+
 		            // Handle Assistant messages (including sidechains)
 		            if (isOutputAssistantData(raw.content.data)) {
 		                const outputUuid = raw.content.data.uuid ?? id;

@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -50,8 +53,7 @@ describe('LinkedWorkspaceFilesRow', () => {
 
         let observedState: any = null;
         const Probe = () => {
-            const { state } = useAppPaneContext();
-            observedState = state;
+            observedState = useAppPaneScope('session:s1').scopeState;
             return null;
         };
 
@@ -67,9 +69,74 @@ describe('LinkedWorkspaceFilesRow', () => {
         await pressTestInstanceAsync(fileChip!, 'linked-workspace-file:src/api.ts');
 
         expect(routerPushSpy).not.toHaveBeenCalled();
-        const scope = observedState?.scopes?.['session:s1'];
-        expect(scope?.details?.isOpen).toBe(true);
-        expect(scope?.details?.tabs?.[0]?.key).toBe('file:src/api.ts');
-        expect(scope?.details?.activeTabKey).toBe('file:src/api.ts');
+        expect(observedState?.details?.isOpen).toBe(true);
+        expect(observedState?.details?.tabs?.[0]?.key).toBe('file:src/api.ts');
+        expect(observedState?.details?.activeTabKey).toBe('file:src/api.ts');
+    });
+
+    it('uses the measured pane width instead of the global window width when deciding how to open a file', async () => {
+        const { LinkedWorkspaceFilesRow } = await import('./LinkedWorkspaceFilesRow');
+
+        let observedState: any = null;
+        const Probe = () => {
+            observedState = useAppPaneScope('session:s1').scopeState;
+            return null;
+        };
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <AppPaneScopeHost
+                    scopeId="session:s1"
+                    main={
+                        <>
+                            <LinkedWorkspaceFilesRow sessionId="s1" paths={['src/api.ts']} />
+                            <Probe />
+                        </>
+                    }
+                />
+            </AppPaneProvider>,
+        );
+
+        const hostRoot = screen.findByType('View' as any);
+        expect(typeof hostRoot.props.onLayout).toBe('function');
+
+        await act(async () => {
+            hostRoot.props.onLayout({ nativeEvent: { layout: { width: 800, height: 900 } } });
+        });
+
+        const fileChip = screen.findByTestId('linked-workspace-file:src/api.ts');
+        expect(fileChip).toBeTruthy();
+        await pressTestInstanceAsync(fileChip!, 'linked-workspace-file:src/api.ts');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Fapi.ts');
+        expect(observedState?.details?.isOpen ?? false).toBe(false);
+    });
+
+    it('keeps linked file chips shrinkable inside constrained panes', async () => {
+        const { LinkedWorkspaceFilesRow } = await import('./LinkedWorkspaceFilesRow');
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <LinkedWorkspaceFilesRow sessionId="s1" paths={['deep/nested/AGENTS.md']} />
+            </AppPaneProvider>,
+        );
+
+        const fileChip = screen.findByTestId('linked-workspace-file:deep/nested/AGENTS.md');
+        expect(fileChip).toBeTruthy();
+        const row = fileChip?.parent;
+        expect(row?.props?.style).toEqual(
+            expect.objectContaining({
+                maxWidth: '100%',
+                minWidth: 0,
+            }),
+        );
+        expect(fileChip?.props?.style({ pressed: false })).toEqual([
+            expect.objectContaining({
+                maxWidth: '100%',
+                minWidth: 0,
+                flexShrink: 1,
+            }),
+            null,
+        ]);
     });
 });

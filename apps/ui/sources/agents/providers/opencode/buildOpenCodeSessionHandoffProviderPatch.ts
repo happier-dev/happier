@@ -2,8 +2,8 @@ import {
     buildOpenCodeAgentRuntimeDescriptor,
     normalizeOpenCodeBackendMode,
 } from '@happier-dev/agents';
-import type { AgentRuntimeDescriptorV1, DirectSessionsSource } from '@happier-dev/protocol';
-import { readCanonicalAgentRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
+import type { DirectSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { readCanonicalRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
 
 import type { AgentSessionHandoffProviderPatch } from '@/agents/registry/registryUiBehavior';
 
@@ -50,9 +50,9 @@ function buildOpenCodeRuntimeDescriptor(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
     targetDirectSource: DirectSessionsSource | Record<string, unknown>;
-    targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
-}>): AgentRuntimeDescriptorV1 | null {
-    const importedRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'opencode');
+    targetRuntimeDescriptor?: RuntimeDescriptorV1;
+}>): RuntimeDescriptorV1 | null {
+    const importedRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'opencode');
     if (importedRuntimeDescriptor) {
         return buildOpenCodeAgentRuntimeDescriptor({
             backendMode: importedRuntimeDescriptor.backendMode ?? 'server',
@@ -78,10 +78,10 @@ export function buildOpenCodeSessionHandoffProviderPatch(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
     targetDirectSource: DirectSessionsSource | Record<string, unknown>;
-    targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
+    targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): AgentSessionHandoffProviderPatch {
     const runtimeDescriptor = buildOpenCodeRuntimeDescriptor(input);
-    const canonicalRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(runtimeDescriptor, 'opencode');
+    const canonicalRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(runtimeDescriptor, 'opencode');
     const backendMode = canonicalRuntimeDescriptor?.backendMode
         ?? resolveTargetOpenCodeBackendMode(input.metadata, input.targetDirectSource);
     const serverBaseUrl = canonicalRuntimeDescriptor?.serverBaseUrl

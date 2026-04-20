@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
@@ -12,11 +13,8 @@ export const CLAUDE_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.claudeSubtitle',
     permissionModeI18nPrefix: 'agentInput.permissionMode',
     availability: { experimental: false },
-    connectedService: {
-        id: 'anthropic',
-        name: 'Claude Code',
-        connectRoute: '/(app)/settings/connect/claude',
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'claude' }),
+    uiConnectedService: { serviceId: 'anthropic', label: 'Claude Code', connectRoute: '/(app)/settings/connect/claude' },
     flavorAliases: ['claude'],
     cli: buildCatalogProviderCliUiConfig('claude'),
     permissions: {

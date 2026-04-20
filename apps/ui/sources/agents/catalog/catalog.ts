@@ -17,7 +17,6 @@ import * as RegistryUi from '@/agents/registry/registryUi';
 
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import {
-    AGENTS_UI_BEHAVIOR,
     buildResumeCapabilityOptionsFromUiState,
     buildNewSessionOptionsFromUiState,
     canSelectAgentWithoutDetectedCli,
@@ -29,6 +28,7 @@ import {
     getAgentResumeExperimentsFromSettings,
     getNewSessionPreflightIssues,
     getNewSessionRelevantInstallableDepKeys,
+    resolveAgentUiBehavior,
 } from '@/agents/registry/registryUiBehavior';
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
@@ -63,44 +63,44 @@ export function writeAgentVendorResumeIdToMetadata<Metadata extends Record<strin
 }
 
 export function getAgentUi(id: AgentId): AgentUiConfig {
-    return registryUi().AGENTS_UI[id];
+    return registryUi().CANONICAL_AGENTS_UI[id];
 }
 
-export function getAgentIconSource(agentId: AgentId): ReturnType<RegistryUiModule['getAgentIconSource']> {
+export function getAgentIconSource(agentId: string): ReturnType<RegistryUiModule['getAgentIconSource']> {
     return registryUi().getAgentIconSource(agentId);
 }
 
 export function getAgentIconSvgXml(
-    agentId: AgentId,
+    agentId: string,
     theme: Parameters<RegistryUiModule['getAgentIconSvgXml']>[1],
 ): ReturnType<RegistryUiModule['getAgentIconSvgXml']> {
     return registryUi().getAgentIconSvgXml(agentId, theme);
 }
 
 export function getAgentIconTintColor(
-    agentId: AgentId,
+    agentId: string,
     theme: AgentIconTintTheme,
 ): ReturnType<RegistryUiModule['getAgentIconTintColor']> {
     return registryUi().getAgentIconTintColor(agentId, theme);
 }
 
 export function getAgentAvatarOverlaySizes(
-    agentId: AgentId,
+    agentId: string,
     size: number,
 ): ReturnType<RegistryUiModule['getAgentAvatarOverlaySizes']> {
     return registryUi().getAgentAvatarOverlaySizes(agentId, size);
 }
 
-export function getAgentPickerIconScale(agentId: AgentId): ReturnType<RegistryUiModule['getAgentPickerIconScale']> {
+export function getAgentPickerIconScale(agentId: string): ReturnType<RegistryUiModule['getAgentPickerIconScale']> {
     return registryUi().getAgentPickerIconScale(agentId);
 }
 
-export function getAgentCliGlyph(agentId: AgentId): ReturnType<RegistryUiModule['getAgentCliGlyph']> {
+export function getAgentCliGlyph(agentId: string): ReturnType<RegistryUiModule['getAgentCliGlyph']> {
     return registryUi().getAgentCliGlyph(agentId);
 }
 
 export function getAgentBehavior(id: AgentId): AgentUiBehavior {
-    return AGENTS_UI_BEHAVIOR[id];
+    return resolveAgentUiBehavior(id);
 }
 
 export function getAgent(id: AgentId): AgentCatalogEntry {

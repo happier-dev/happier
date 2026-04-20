@@ -16,6 +16,8 @@ describe('connectedServiceRegistry', () => {
     expect(entry.supportsOauth).toBe(true);
     expect(entry.oauthAddActionModes ?? []).toContain('paste');
     expect(entry.oauthAddActionModes ?? []).toContain('browser');
+    expect(entry.displayNameKey).toBe('connectedServices.serviceNames.claudeSubscription');
+    expect(entry.oauthPasteCopyKeyPrefix).toBe('connectedServices.oauthPaste.providerOverrides.claudeSubscription');
   });
 
   it('exposes an explicit in-app browser oauth method for gemini (native)', () => {

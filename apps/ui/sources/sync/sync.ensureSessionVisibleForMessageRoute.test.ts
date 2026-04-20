@@ -761,4 +761,27 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
         expect(localStorageMock.getItem).toHaveBeenCalledWith('happier.debug.sessionHydrate');
     });
+
+    it('records terminal auth and stops route hydration when session-by-id returns 401', async () => {
+        const sessionId = 'deep_link_auth_failed';
+        storage.getState().resetSessionMessages(sessionId);
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = { token: 't' };
+
+        requestMock.mockResolvedValue(
+            new Response(
+                JSON.stringify({ error: 'auth failed' }),
+                { status: 401, headers: { 'Content-Type': 'application/json' } },
+            ),
+        );
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+
+        expect(storage.getState().syncError).toMatchObject({
+            kind: 'auth',
+            retryable: false,
+            message: 'Authentication required',
+        });
+    });
 });

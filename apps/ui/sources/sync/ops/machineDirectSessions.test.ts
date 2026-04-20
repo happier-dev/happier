@@ -67,9 +67,9 @@ describe('machine direct sessions ops server-scoped routing', () => {
             titleHint: 'Existing Codex Session',
             directoryHint: '/tmp/worktree',
             codexBackendMode: 'appServer',
-            runtimeDescriptor,
+            runtimeDescriptorV1: runtimeDescriptor,
             source: directSource,
-        }, { serverId: 'server-a' });
+        } as any, { serverId: 'server-a' });
 
         expect(result).toEqual({
             ok: true,
@@ -87,7 +87,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
                 titleHint: 'Existing Codex Session',
                 directoryHint: '/tmp/worktree',
                 codexBackendMode: 'appServer',
-                runtimeDescriptor,
+                runtimeDescriptorV1: runtimeDescriptor,
                 source: directSource,
             },
         }));

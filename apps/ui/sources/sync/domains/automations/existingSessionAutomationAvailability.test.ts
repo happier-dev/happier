@@ -143,4 +143,28 @@ describe('resolveExistingSessionAutomationAvailability', () => {
             },
         });
     });
+
+    it('surfaces configured ACP attach eligibility as an explicit compat backend carrier instead of a shared customAcp agent id', () => {
+        expect(resolveExistingSessionAutomationAvailability({
+            sessionHydrated: true,
+            session: {
+                id: 's1',
+                encryptionMode: 'plain',
+                metadata: {
+                    machineId: 'm1',
+                    flavor: 'acp:review-bot',
+                },
+            },
+            sessionDekBase64: null,
+            accountSettings: {},
+        })).toEqual({
+            kind: 'ready',
+            machineId: 'm1',
+            eligibility: {
+                eligible: true,
+                strategy: 'happy_attach',
+                compatBackendId: 'review-bot',
+            },
+        });
+    });
 });

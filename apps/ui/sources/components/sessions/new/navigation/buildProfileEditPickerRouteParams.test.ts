@@ -7,8 +7,8 @@ describe('buildProfileEditPickerRouteParams', () => {
         expect(buildProfileEditPickerRouteParams({
             backendTargetRouteParams: {
                 agentType: 'customAcp',
-                backendTarget: '{"kind":"configuredAcpBackend","backendId":"review-bot"}',
-                backendTargetKey: 'acpBackend:review-bot',
+                backendTarget: '{"kind":"backend","backendId":"review-bot","configuredBackendId":"review-bot"}',
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
             },
             dataId: 'draft-1',
             machineId: 'machine-1',
@@ -18,8 +18,8 @@ describe('buildProfileEditPickerRouteParams', () => {
             },
         })).toEqual({
             agentType: 'customAcp',
-            backendTarget: '{"kind":"configuredAcpBackend","backendId":"review-bot"}',
-            backendTargetKey: 'acpBackend:review-bot',
+            backendTarget: '{"kind":"backend","backendId":"review-bot","configuredBackendId":"review-bot"}',
+            backendTargetKey: 'backend:review-bot:configured:review-bot',
             cloneFromProfileId: 'profile-1',
             dataId: 'draft-1',
             machineId: 'machine-1',

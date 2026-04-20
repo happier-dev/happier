@@ -29,6 +29,92 @@ export type PreflightModelList = Readonly<{
     supportsFreeform: boolean;
 }>;
 
+type SessionModelListState = Readonly<{
+    provider?: string;
+    availableModels?: Array<{
+        id?: unknown;
+        name?: unknown;
+        description?: unknown;
+        modelOptions?: unknown;
+    }>;
+}>;
+
+function dedupeModelOptionsByValue(options: readonly ModelOption[]): readonly ModelOption[] {
+    const seen = new Set<string>();
+    return options.filter((option) => {
+        if (seen.has(option.value)) return false;
+        seen.add(option.value);
+        return true;
+    });
+}
+
+function mergeDynamicModelOptionWithCatalog(
+    option: ModelOption,
+    catalogByValue: ReadonlyMap<string, ModelOption>,
+): ModelOption {
+    const catalog = catalogByValue.get(option.value) ?? null;
+    if (!catalog) return option;
+    const hasModelOptions = Array.isArray(option.modelOptions) && option.modelOptions.length > 0;
+    const hasDescription = typeof option.description === 'string' && option.description.trim().length > 0;
+    return {
+        ...option,
+        ...(!hasDescription && catalog.description ? { description: catalog.description } : {}),
+        ...(!hasModelOptions && catalog.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
+    };
+}
+
+function mergeModelOptionsWithCatalog(params: Readonly<{
+    options: readonly ModelOption[];
+    catalogOptions: readonly ModelOption[];
+    appendMissingCatalogOptions: boolean;
+}>): readonly ModelOption[] {
+    const catalogByValue = new Map(params.catalogOptions.map((option) => [option.value, option] as const));
+    const merged = dedupeModelOptionsByValue(params.options.map((option) => mergeDynamicModelOptionWithCatalog(option, catalogByValue)));
+
+    if (!params.appendMissingCatalogOptions) return merged;
+
+    const seen = new Set(merged.map((option) => option.value));
+    return [
+        ...merged,
+        ...params.catalogOptions.filter((option) => {
+            if (seen.has(option.value)) return false;
+            seen.add(option.value);
+            return true;
+        }),
+    ];
+}
+
+function appendSelectedFreeformModelOption(params: Readonly<{
+    options: readonly ModelOption[];
+    selectedModelId: string;
+    supportsFreeform: boolean;
+}>): readonly ModelOption[] {
+    if (!params.supportsFreeform) return params.options;
+    if (!params.selectedModelId) return params.options;
+    if (params.options.some((option) => option.value === params.selectedModelId)) return params.options;
+    return [
+        ...params.options,
+        { value: params.selectedModelId, label: params.selectedModelId, description: '' },
+    ];
+}
+
+function readSessionModelListState(metadata: Metadata | null | undefined): SessionModelListState | null {
+    return readMetadataAliasValue<SessionModelListState>(
+        (metadata as any) ?? {},
+        SESSION_MODELS_STATE_KEY,
+        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+    ) ?? null;
+}
+
+function readSelectedModelOverrideId(metadata: Metadata | null | undefined): string {
+    const metadataModelOverrideRaw = (metadata as any)?.modelOverrideV1 as { modelId?: unknown } | undefined;
+    return typeof metadataModelOverrideRaw?.modelId === 'string' ? metadataModelOverrideRaw.modelId.trim() : '';
+}
+
+function supportsDynamicSessionModelList(agentType: AgentType): boolean {
+    return getAgentCore(agentType).model.dynamicProbe !== 'static-only';
+}
+
 export function getModelOptionsForPreflightModelList(list: PreflightModelList): readonly ModelOption[] {
     const dynamic = (list.availableModels ?? [])
         .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
@@ -44,21 +130,14 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
         ...dynamic.filter((m) => m.value !== 'default'),
     ];
 
-    // De-duplicate by value while preserving order (default first).
-    const seen = new Set<string>();
-    return withDefault.filter((opt) => {
-        if (seen.has(opt.value)) return false;
-        seen.add(opt.value);
-        return true;
-    });
+    return dedupeModelOptionsByValue(withDefault);
 }
 
 export function hasDynamicModelListForSession(agentType: AgentType, metadata: Metadata | null | undefined): boolean {
-    const state = readMetadataAliasValue<{ provider?: unknown; availableModels?: Array<{ id?: unknown }> }>(
-        (metadata as any) ?? {},
-        SESSION_MODELS_STATE_KEY,
-        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
-    );
+    if (!supportsDynamicSessionModelList(agentType)) {
+        return false;
+    }
+    const state = readSessionModelListState(metadata);
     return Boolean(
         state &&
         state.provider === agentType &&
@@ -142,51 +221,64 @@ export function getModelOptionsForAgentTypeOrPreflight(params: {
     if (params.preflight && Array.isArray(params.preflight.availableModels) && params.preflight.availableModels.length > 0) {
         const preflightOptions = getModelOptionsForPreflightModelList(params.preflight);
         const catalogOptions = getModelOptionsForAgentType(params.agentType);
-        const catalogByValue = new Map(catalogOptions.map((option) => [option.value, option] as const));
-
-        // Prefer the preflight list for ids/labels, but preserve catalog metadata like per-model
-        // `modelOptions` when the dynamic probe omits them.
-        const merged: ModelOption[] = preflightOptions.map((option) => {
-            const catalog = catalogByValue.get(option.value) ?? null;
-            if (!catalog) return option;
-            const hasModelOptions = Array.isArray(option.modelOptions) && option.modelOptions.length > 0;
-            const hasDescription = typeof option.description === 'string' && option.description.trim().length > 0;
-            return {
-                ...option,
-                ...(!hasDescription && catalog.description ? { description: catalog.description } : {}),
-                ...(!hasModelOptions && catalog.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
-            };
+        return mergeModelOptionsWithCatalog({
+            options: preflightOptions,
+            catalogOptions,
+            appendMissingCatalogOptions: true,
         });
-
-        const seen = new Set(merged.map((option) => option.value));
-        for (const option of catalogOptions) {
-            if (seen.has(option.value)) continue;
-            seen.add(option.value);
-            merged.push(option);
-        }
-
-        return merged;
     }
     return getModelOptionsForAgentType(params.agentType);
 }
 
-export function getSelectableModelIdsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly string[] {
-    const state = readMetadataAliasValue<{ provider?: string; availableModels?: Array<{ id?: unknown }> }>(
-        (metadata as any) ?? {},
-        SESSION_MODELS_STATE_KEY,
-        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
-    );
+function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly ModelOption[] {
+    const supportsFreeform = supportsFreeformModelSelectionForSession(agentType, metadata);
+    const selectedModelId = readSelectedModelOverrideId(metadata);
+    const state = supportsDynamicSessionModelList(agentType) ? readSessionModelListState(metadata) : null;
     if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
-        const ids = state.availableModels
-            .filter((m) => m && typeof m.id === 'string' && String(m.id).trim().length > 0)
-            .map((m) => String(m.id));
-        return ['default', ...ids];
+        const catalogOptions = getModelOptionsForAgentType(agentType);
+
+        const dynamic = state.availableModels
+            .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
+            .map((m) => {
+                const value = String(m.id);
+                const description = typeof m.description === 'string' ? m.description : '';
+                const modelOptionsRaw = Array.isArray(m.modelOptions) && m.modelOptions.length > 0
+                    ? (m.modelOptions as readonly AcpConfigOption[])
+                    : null;
+
+                return {
+                    value,
+                    label: String(m.name),
+                    description,
+                    ...(modelOptionsRaw ? { modelOptions: modelOptionsRaw } : {}),
+                };
+            });
+
+        return appendSelectedFreeformModelOption({
+            options: mergeModelOptionsWithCatalog({
+                options: [
+                    { value: 'default', label: getModelLabel('default'), description: '' },
+                    ...dynamic.filter((m) => m.value !== 'default'),
+                ],
+                catalogOptions,
+                appendMissingCatalogOptions: supportsFreeform,
+            }),
+            selectedModelId,
+            supportsFreeform,
+        });
     }
 
-    const core = getAgentCore(agentType);
-    if (core.model.supportsSelection !== true) return [];
-    const withDefault = ['default', ...core.model.allowedModes];
-    return Array.from(new Set(withDefault));
+    const base = getModelOptionsForAgentType(agentType);
+    if (base.length === 0) return base;
+    return appendSelectedFreeformModelOption({
+        options: base,
+        selectedModelId,
+        supportsFreeform,
+    });
+}
+
+export function getSelectableModelIdsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly string[] {
+    return resolveModelOptionsForSession(agentType, metadata).map((option) => option.value);
 }
 
 export function isModelSelectableForSession(agentType: AgentType, metadata: Metadata | null | undefined, modelId: string): boolean {
@@ -199,74 +291,5 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Meta
 }
 
 export function getModelOptionsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly ModelOption[] {
-    const state = readMetadataAliasValue<{
-        provider?: string;
-        availableModels?: Array<{
-            id?: unknown;
-            name?: unknown;
-            description?: unknown;
-            modelOptions?: unknown;
-        }>;
-    }>(
-        (metadata as any) ?? {},
-        SESSION_MODELS_STATE_KEY,
-        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
-    );
-    if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
-        const catalogOptions = getModelOptionsForAgentType(agentType);
-        const catalogByValue = new Map(catalogOptions.map((option) => [option.value, option] as const));
-
-        const dynamic = state.availableModels
-            .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
-            .map((m) => {
-                const value = String(m.id);
-                const catalog = catalogByValue.get(value) ?? null;
-                const description = typeof m.description === 'string' ? m.description : '';
-                const modelOptionsRaw = Array.isArray(m.modelOptions) && m.modelOptions.length > 0
-                    ? (m.modelOptions as readonly AcpConfigOption[])
-                    : null;
-
-                return {
-                    value,
-                    label: String(m.name),
-                    description: description || (catalog?.description ?? ''),
-                    ...(modelOptionsRaw ? { modelOptions: modelOptionsRaw } : {}),
-                    ...(!modelOptionsRaw && catalog?.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
-                };
-            });
-
-        const metadataModelOverrideRaw = (metadata as any)?.modelOverrideV1 as { modelId?: unknown } | undefined;
-        const selectedModelId =
-            typeof metadataModelOverrideRaw?.modelId === 'string' ? metadataModelOverrideRaw.modelId.trim() : '';
-
-        const extraSelected: ModelOption[] = selectedModelId && !dynamic.some((m) => m.value === selectedModelId)
-            ? [catalogByValue.get(selectedModelId) ?? { value: selectedModelId, label: selectedModelId, description: '' }]
-            : [];
-
-        const withDefault: ModelOption[] = [
-            { value: 'default', label: getModelLabel('default'), description: '' },
-            ...dynamic.filter((m) => m.value !== 'default'),
-            ...extraSelected,
-        ];
-
-        // De-duplicate by value while preserving order (default first).
-        const seen = new Set<string>();
-        return withDefault.filter((opt) => {
-            if (seen.has(opt.value)) return false;
-            seen.add(opt.value);
-            return true;
-        });
-    }
-
-    const base = getModelOptionsForAgentType(agentType);
-    if (base.length === 0) return base;
-
-    const metadataModelOverrideRaw = (metadata as any)?.modelOverrideV1 as { modelId?: unknown } | undefined;
-    const selectedModelId =
-        typeof metadataModelOverrideRaw?.modelId === 'string' ? metadataModelOverrideRaw.modelId.trim() : '';
-    if (!selectedModelId) return base;
-    if (base.some((opt) => opt.value === selectedModelId)) return base;
-    if (!supportsFreeformModelSelectionForSession(agentType, metadata)) return base;
-
-    return [...base, { value: selectedModelId, label: selectedModelId, description: '' }];
+    return resolveModelOptionsForSession(agentType, metadata);
 }

@@ -13,6 +13,10 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
+vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
+    ContextMenu: (props: any) => React.createElement('ContextMenu', props),
+}));
+
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
 }));
@@ -26,6 +30,13 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
     getSessionAvatarId: () => 'avatar',
+    getSessionStatus: () => ({
+        isConnected: true,
+        statusText: 'Connected',
+        statusColor: '#000',
+        statusDotColor: '#0f0',
+        isPulsing: false,
+    }),
     useSessionStatus: () => ({
         isConnected: true,
         statusText: 'Connected',
@@ -241,7 +252,7 @@ describe('SessionItem server-scoped mutations', () => {
         expect(stopSpy).not.toHaveBeenCalled();
     });
 
-    it('offers to archive a stopped unpinned session when hidden inactive sessions are enabled', async () => {
+    it('stops without archiving when hidden inactive sessions are enabled', async () => {
         hideInactiveSessions = true;
         archiveSpy.mockClear();
         stopSpy.mockClear();
@@ -298,11 +309,72 @@ describe('SessionItem server-scoped mutations', () => {
         });
 
         expect(stopSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
-        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
-        expect(archiveSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
+        expect(modalConfirmSpy).not.toHaveBeenCalled();
+        expect(archiveSpy).not.toHaveBeenCalled();
     });
 
-    it('does not prompt to archive a stopped pinned session when hidden inactive sessions are enabled', async () => {
+    it('offers an archive action for active sessions in the more menu and stops before archiving', async () => {
+        hideInactiveSessions = false;
+        archiveSpy.mockClear();
+        stopSpy.mockClear();
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_active_archive',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_d"
+                serverName="Server D"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
+        const moreMenu = contextMenus.find((node: any) =>
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'archive'),
+        );
+        expect(moreMenu).toBeTruthy();
+        expect(moreMenu!.props.items.some((item: any) => item?.id === 'stop')).toBe(true);
+
+        await act(async () => {
+            moreMenu!.props.onSelect('archive');
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await act(async () => {
+            await actions[1].onPress();
+        });
+
+        expect(stopSpy).toHaveBeenCalledWith('sess_active_archive', { serverId: 'server_d' });
+        expect(archiveSpy).toHaveBeenCalledWith('sess_active_archive', { serverId: 'server_d' });
+    });
+
+    it('stops pinned sessions without archiving when hidden inactive sessions are enabled', async () => {
         hideInactiveSessions = true;
         archiveSpy.mockClear();
         stopSpy.mockClear();

@@ -56,4 +56,58 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         expect(first?.cacheKeySuffixParts).not.toBe(second?.cacheKeySuffixParts);
         expect(first?.capabilityParams).not.toBe(second?.capabilityParams);
     });
+
+    it('returns null for plugin backend targets (no built-in runtimeKind probing)', async () => {
+        vi.resetModules();
+
+        const resolveAgentConfiguredRuntimeKind = vi.fn(() => 'appServer');
+        vi.doMock('@happier-dev/agents', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+            return {
+                ...actual,
+                resolveAgentConfiguredRuntimeKind,
+            };
+        });
+
+        const { resolveNewSessionCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
+
+        const settings = {} as any;
+        const backendTarget = { kind: 'builtInAgent', agentId: 'acme.review.backend' } as any;
+
+        expect(resolveNewSessionCapabilityProbeContext({ backendTarget, settings })).toBeNull();
+        expect(resolveAgentConfiguredRuntimeKind).toHaveBeenCalledTimes(0);
+    });
+
+    it('uses the projected runtime carrier for plugin backend targets when available', async () => {
+        vi.resetModules();
+
+        const resolveAgentConfiguredRuntimeKind = vi.fn(() => 'claude-code');
+        vi.doMock('@happier-dev/agents', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+            return {
+                ...actual,
+                resolveAgentConfiguredRuntimeKind,
+            };
+        });
+
+        const { resolveNewSessionCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
+
+        const settings = {} as any;
+        const backendTarget = { kind: 'builtInAgent', agentId: 'acme.review.backend' } as any;
+
+        const context = resolveNewSessionCapabilityProbeContext({
+            backendTarget,
+            settings,
+            runtimeCarrierAgentId: 'claude',
+        });
+
+        expect(context).toEqual({
+            cacheKeySuffixParts: ['claude-code'],
+            capabilityParams: { runtimeKindOverride: 'claude-code' },
+        });
+        expect(resolveAgentConfiguredRuntimeKind).toHaveBeenCalledWith({
+            agentId: 'claude',
+            accountSettings: settings,
+        });
+    });
 });

@@ -20,11 +20,9 @@ describe('assertProviderSettingKeysCompatible', () => {
                 },
             }),
             uiSections: [],
-            buildOutgoingMessageMetaExtras: () => ({}),
         } as const;
 
         expect(() => assertProviderSettingKeysCompatible({ coreSettingKeys: [], plugins: [plugin] }))
             .toThrow(/schemaVersion/);
     });
 });
-

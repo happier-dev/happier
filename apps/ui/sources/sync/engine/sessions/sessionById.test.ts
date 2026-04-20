@@ -216,6 +216,31 @@ describe('fetchAndApplySessionById', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it.each([401, 403] as const)('throws terminal auth for session-by-id status %s', async (status) => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async () => new Response(JSON.stringify({ error: 'auth failed' }), { status }));
+
+    await expect(fetchAndApplySessionById({
+      sessionId: 's_auth_failed',
+      credentials: { token: 't', secret: 's' },
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    })).rejects.toMatchObject({
+      name: 'HappyError',
+      kind: 'auth',
+      code: 'not_authenticated',
+    });
+
+    expect(applySessions).not.toHaveBeenCalled();
+  });
+
   it('announces new fetched agent requests relative to existing session state', async () => {
     onAgentRequest.mockReset();
     const applySessions = vi.fn();

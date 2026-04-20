@@ -1,11 +1,9 @@
-import {
-    buildBackendTargetKey,
-    type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 import type { PermissionMode } from './permissionTypes';
 import { normalizePermissionModeForGroup } from './permissionTypes';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export type AccountPermissionDefaults = Readonly<{
     byTargetKey: Record<string, PermissionMode>;
@@ -37,14 +35,14 @@ export function readAccountPermissionDefaults(
 
 export function resolveNewSessionDefaultPermissionMode(params: Readonly<{
     agentType: AgentId;
-    backendTarget?: BackendTargetRefV1 | null;
+    backendTarget?: BackendTargetRefV2Input | null;
     accountDefaults: AccountPermissionDefaults;
     profileDefaultsByTargetKey?: Record<string, PermissionMode | undefined> | null;
     legacyProfileDefaultPermissionMode?: PermissionMode | null | undefined;
 }>): PermissionMode {
     const { agentType, backendTarget, accountDefaults, profileDefaultsByTargetKey, legacyProfileDefaultPermissionMode } = params;
-    const effectiveTarget = backendTarget ?? { kind: 'builtInAgent', agentId: agentType } satisfies BackendTargetRefV1;
-    const targetKey = buildBackendTargetKey(effectiveTarget);
+    const effectiveTarget = backendTarget ?? { kind: 'backend', backendId: agentType };
+    const targetKey = resolveBackendTargetKeyV2(effectiveTarget);
 
     const directProfileMode = profileDefaultsByTargetKey?.[targetKey];
     if (directProfileMode) {

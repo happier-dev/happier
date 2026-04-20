@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -9,6 +10,12 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 type SessionItemProps = React.ComponentProps<(typeof import('./SessionItem'))['SessionItem']>;
 
 const navigateSpy = vi.fn();
+const splitCanvasActionState = vi.hoisted(() => ({
+    mode: 'none' as 'none' | 'open' | 'reveal',
+    openInSplitRight: vi.fn(),
+    openInSplitDown: vi.fn(),
+    revealInSplit: vi.fn(),
+}));
 const themeColors = vi.hoisted(() => ({
     surface: '#fff',
     surfaceSelected: '#eee',
@@ -93,6 +100,13 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
     getSessionAvatarId: () => 'avatar',
+    getSessionStatus: () => ({
+        isConnected: true,
+        statusText: 'Connected',
+        statusColor: '#000',
+        statusDotColor: '#0f0',
+        isPulsing: false,
+    }),
     useSessionStatus: () => ({
         isConnected: true,
         statusText: 'Connected',
@@ -115,6 +129,10 @@ vi.mock('@/components/sessions/pendingBadge', () => ({
 }));
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => navigateSpy,
+}));
+vi.mock('@/components/sessions/canvas/useSessionSplitCanvasRowActions', () => ({
+    useSessionSplitCanvasRowActions: () => splitCanvasActionState,
+    useSessionSplitCanvasRowActionsForScope: () => splitCanvasActionState,
 }));
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
@@ -171,8 +189,18 @@ describe('SessionItem navigation', () => {
         return renderScreen(<SessionItem {...props} />);
     }
 
+    function triggerHoverEnter(node: any) {
+        node.props.onMouseEnter?.();
+        node.props.onHoverIn?.();
+        node.props.onPointerEnter?.();
+    }
+
     afterEach(() => {
         standardCleanup();
+        splitCanvasActionState.mode = 'none';
+        splitCanvasActionState.openInSplitRight.mockClear();
+        splitCanvasActionState.openInSplitDown.mockClear();
+        splitCanvasActionState.revealInSplit.mockClear();
     });
 
     it('passes serverId when navigating to a session', async () => {
@@ -215,6 +243,111 @@ describe('SessionItem navigation', () => {
         });
 
         expect(screen.findByTestId('session-item-avatar')).toBeNull();
+
+        await screen.unmount();
+    });
+
+    it('adds split commands to the more menu when a compatible split canvas is available', async () => {
+        splitCanvasActionState.mode = 'open';
+
+        const screen = await renderSessionItem({
+            session: createSession('sess_split'),
+            serverId: 'server_a',
+            serverName: 'Server A',
+            showServerBadge: true,
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
+        });
+
+        const row = screen.findByTestId('session-list-item-sess_split') as any;
+        await act(async () => {
+            triggerHoverEnter(row);
+        });
+
+        const moreMenu = screen.findAllByType('DropdownMenu').find((dropdown: any) => dropdown.props.search !== true);
+        expect(moreMenu?.props.items.map((item: any) => item.id)).toEqual(expect.arrayContaining([
+            'openInSplitRight',
+            'openInSplitDown',
+        ]));
+
+        await act(async () => {
+            moreMenu?.props.onSelect('openInSplitRight');
+        });
+
+        expect(splitCanvasActionState.openInSplitRight).toHaveBeenCalledTimes(1);
+        expect(splitCanvasActionState.openInSplitDown).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('renders a draggable split-canvas handle that triggers the default split action from the row', async () => {
+        splitCanvasActionState.mode = 'open';
+
+        const screen = await renderSessionItem({
+            session: createSession('sess_drag'),
+            serverId: 'server_a',
+            serverName: 'Server A',
+            showServerBadge: true,
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
+        });
+
+        const row = screen.findByTestId('session-list-item-sess_drag') as any;
+        await act(async () => {
+            triggerHoverEnter(row);
+        });
+
+        const handle = screen.findByTestId('session-item-split-drag-handle-sess_drag') as any;
+        expect(handle).toBeTruthy();
+
+        await act(async () => {
+            handle.props.onPress?.();
+        });
+
+        expect(splitCanvasActionState.openInSplitRight).toHaveBeenCalledTimes(1);
+
+        await screen.unmount();
+    });
+
+    it('shows reveal-in-split instead of duplicate split commands for sessions already open in the active canvas', async () => {
+        splitCanvasActionState.mode = 'reveal';
+
+        const screen = await renderSessionItem({
+            session: createSession('sess_reveal'),
+            serverId: 'server_a',
+            serverName: 'Server A',
+            showServerBadge: true,
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
+        });
+
+        const row = screen.findByTestId('session-list-item-sess_reveal') as any;
+        await act(async () => {
+            triggerHoverEnter(row);
+        });
+
+        const moreMenu = screen.findAllByType('DropdownMenu').find((dropdown: any) => dropdown.props.search !== true);
+        expect(moreMenu?.props.items.map((item: any) => item.id)).toContain('revealInCurrentSplit');
+        expect(moreMenu?.props.items.map((item: any) => item.id)).not.toContain('openInSplitRight');
+        expect(moreMenu?.props.items.map((item: any) => item.id)).not.toContain('openInSplitDown');
+
+        await act(async () => {
+            moreMenu?.props.onSelect('revealInCurrentSplit');
+        });
+
+        expect(splitCanvasActionState.revealInSplit).toHaveBeenCalledTimes(1);
 
         await screen.unmount();
     });

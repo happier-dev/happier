@@ -286,6 +286,58 @@ describe('machineRpcWithServerScope', () => {
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
     });
 
+    it('falls back to a scoped socket when the active rpc path hits an uninitialized encryption dereference', async () => {
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
+        machineRpcSpy.mockRejectedValue(new Error("Cannot read properties of null (reading 'getMachineEncryption')"));
+        getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+        const machineEncryption = {
+            encryptRaw: vi.fn(async () => 'encrypted-payload'),
+            decryptRaw: vi.fn(async () => ({ decoded: true })),
+        };
+        createEncryptionSpy.mockResolvedValue({
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeMachines: vi.fn(async () => {}),
+            getMachineEncryption: vi.fn(() => machineEncryption),
+        });
+
+        vi.stubGlobal('fetch', vi.fn(async () => ({
+            ok: true,
+            json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
+        })));
+
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
+        const fakeSocket = {
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
+
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const result = await machineRpcWithServerScope({
+            machineId: 'machine-1',
+            method: 'method-test',
+            payload: { value: 5 },
+        });
+
+        expect(result).toEqual({ decoded: true });
+        expect(machineRpcSpy).toHaveBeenCalledTimes(1);
+        expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://server-a.example.test',
+            token: 'token-a',
+            timeoutMs: expect.any(Number),
+        }));
+        expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ value: 5 });
+        expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
+        expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
+    });
+
     it('falls back to a scoped socket on the active server when the active machine rpc reports method not available', async () => {
         getActiveServerSnapshotSpy.mockReturnValue({
             serverId: 'server-a',

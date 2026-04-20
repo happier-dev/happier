@@ -72,6 +72,16 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'sparkles-outline', color: '#AF52DE' },
         },
     },
+    'voice.daemonInference': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expVoiceDaemonInference',
+            subtitleKey: 'settingsFeatures.expVoiceDaemonInferenceSubtitle',
+            icon: { ioniconName: 'hardware-chip-outline', color: '#34C759' },
+        },
+    },
     connectedServices: {
         settingsToggle: {
             showInSettings: true,

@@ -3,7 +3,7 @@ import {
     defineSettingDefinitions,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
-import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
+import { AIBackendProfileSchema } from '@/sync/domains/profiles/aiBackendProfileSchema';
 import { SavedSecretSchema } from '../../savedSecretTypes';
 
 function buildProfilesSummaryProperties(value: unknown): Record<string, number> {

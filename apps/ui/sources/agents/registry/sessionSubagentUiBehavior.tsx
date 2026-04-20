@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { AGENT_IDS } from '@/agents/registry/registryCore';
-import { AGENTS_UI_BEHAVIOR, resolveAgentUiBehaviorFromFlavor } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentUiBehavior, resolveAgentUiBehaviorFromFlavor } from '@/agents/registry/registryUiBehavior';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -56,7 +56,7 @@ export function renderProviderSessionDetailsTab(params: Readonly<{
     tab: DetailsTab;
 }>): React.ReactNode | null {
     for (const agentId of AGENT_IDS) {
-        const renderDetailsTab = AGENTS_UI_BEHAVIOR[agentId].sessionSubagents?.renderDetailsTab;
+        const renderDetailsTab = resolveAgentUiBehavior(agentId).sessionSubagents?.renderDetailsTab;
         if (!renderDetailsTab) continue;
         const rendered = renderDetailsTab(params);
         if (rendered) return rendered;
@@ -66,7 +66,7 @@ export function renderProviderSessionDetailsTab(params: Readonly<{
 
 export function resolveProviderSessionDetailsTabIconName(tab: DetailsTab): string | null {
     for (const agentId of AGENT_IDS) {
-        const getIconName = AGENTS_UI_BEHAVIOR[agentId].sessionSubagents?.getDetailsTabIconName;
+        const getIconName = resolveAgentUiBehavior(agentId).sessionSubagents?.getDetailsTabIconName;
         if (!getIconName) continue;
         const iconName = getIconName({ tab });
         if (iconName) return iconName;

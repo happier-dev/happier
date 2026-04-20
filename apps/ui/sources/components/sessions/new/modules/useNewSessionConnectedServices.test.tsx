@@ -1,5 +1,5 @@
 import { renderHook } from '@/dev/testkit';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installNewSessionModulesCommonModuleMocks } from './newSessionModulesTestHelpers';
 import type { NewSessionConnectedServicesResult } from './useNewSessionConnectedServices';
 
@@ -10,6 +10,7 @@ import type { NewSessionConnectedServicesResult } from './useNewSessionConnected
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const modalShowMock = vi.hoisted(() => vi.fn());
+const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const profileState = vi.hoisted(() => ({
     current: {
         connectedServicesV2: [
@@ -73,7 +74,7 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () =>
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
+    useFeatureEnabled: (...args: any[]) => useFeatureEnabledMock(...args),
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -81,6 +82,12 @@ vi.mock('@/sync/store/hooks', () => ({
 }));
 
 describe('useNewSessionConnectedServices', () => {
+    beforeEach(() => {
+        modalShowMock.mockReset();
+        useFeatureEnabledMock.mockReset();
+        useFeatureEnabledMock.mockReturnValue(true);
+    });
+
     it('returns a connected-services chip with canonical control metadata and a collapsed action', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
@@ -101,6 +108,7 @@ describe('useNewSessionConnectedServices', () => {
                     connectedServicesProfileLabelByKey: { 'anthropic:work': 'Work' },
                     connectedServicesDefaultProfileByServiceId: {},
                 },
+                targetServerId: null,
                 router: { push: routerPush },
                 setAgentOptionStateForCurrentAgent,
             }),
@@ -135,6 +143,43 @@ describe('useNewSessionConnectedServices', () => {
 
         expect(dismiss).toHaveBeenCalledTimes(1);
         expect(modalShowMock).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+    });
+
+    it('uses spawn-scoped feature gating so the chip stays available for the selected target server', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+
+        useFeatureEnabledMock.mockImplementation((featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
+            return featureId === 'connectedServices'
+                && scope?.scopeKind === 'spawn'
+                && scope?.serverId === 'server-123';
+        });
+
+        const hook = await renderHook(() =>
+            useNewSessionConnectedServices({
+                agentCore: {
+                    connectedServices: {
+                        supportedServiceIds: ['anthropic'],
+                        supportedKindsByServiceId: { anthropic: ['token'] },
+                    },
+                },
+                agentOptionState: null,
+                settings: {
+                    connectedServicesProfileLabelByKey: { 'anthropic:work': 'Work' },
+                    connectedServicesDefaultProfileByServiceId: {},
+                },
+                targetServerId: 'server-123',
+                router: { push: vi.fn() },
+                setAgentOptionStateForCurrentAgent: vi.fn(),
+            }),
+        );
+
+        expect(hook.getCurrent().connectedServicesAuthChip).toEqual(
+            expect.objectContaining({
+                key: 'new-session-connected-services-auth',
+                controlId: 'connectedServices',
+            }),
+        );
         await hook.unmount();
     });
 });

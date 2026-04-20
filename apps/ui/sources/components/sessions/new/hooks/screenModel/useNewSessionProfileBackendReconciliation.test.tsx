@@ -1,14 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-    buildBackendTargetKey,
-    type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import {
     useNewSessionProfileBackendReconciliation,
@@ -77,14 +75,14 @@ async function flushNextInteractionTask() {
 
 type HarnessProps = Readonly<{
     initialSelectedProfileId: string | null;
-    initialBackendTarget: BackendTargetRefV1;
+    initialBackendTarget: BackendTargetRefV2;
     compatibleEntriesByProfileId: Readonly<Record<string, readonly NewSessionSelectableBackendEntry[]>>;
     profileMap: ReadonlyMap<string, AIBackendProfile>;
     cliAvailabilityTimestamp?: number;
-    cliAvailabilityByAgentId?: Readonly<Partial<Record<'claude' | 'codex' | 'customAcp', boolean | null>>>;
-    cliAuthStatusByAgentId?: Readonly<Partial<Record<'claude' | 'codex' | 'customAcp', { state: 'logged_in' | 'logged_out' | 'unknown'; checkedAt: number } | null>>>;
-    installableDepKeyCountByAgentId?: Readonly<Partial<Record<'claude' | 'codex' | 'customAcp', number>>>;
-    selectableWithoutCliByAgentId?: Readonly<Partial<Record<'claude' | 'codex' | 'customAcp', boolean>>>;
+    cliAvailabilityByAgentId?: Readonly<Partial<Record<'claude' | 'codex', boolean | null>>>;
+    cliAuthStatusByAgentId?: Readonly<Partial<Record<'claude' | 'codex', { state: 'logged_in' | 'logged_out' | 'unknown'; checkedAt: number } | null>>>;
+    installableDepKeyCountByAgentId?: Readonly<Partial<Record<'claude' | 'codex', number>>>;
+    selectableWithoutCliByAgentId?: Readonly<Partial<Record<'claude' | 'codex', boolean>>>;
     useProfiles?: boolean;
     applyPermissionModeSpy: ReturnType<typeof vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>>;
     prepareSecretPromptForProfileSelectionSpy: ReturnType<typeof vi.fn<(prevProfileId: string | null) => void>>;
@@ -93,7 +91,7 @@ type HarnessProps = Readonly<{
 
 function useHarness(props: HarnessProps) {
     const [selectedProfileId, setSelectedProfileId] = React.useState<string | null>(props.initialSelectedProfileId);
-    const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV1>(props.initialBackendTarget);
+    const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV2>(props.initialBackendTarget);
     const hasUserSelectedPermissionModeRef = React.useRef(false);
     const permissionModeRef = React.useRef<PermissionMode>('default');
     const hasUserTouchedProfileSelectionRef = React.useRef(false);
@@ -104,7 +102,7 @@ function useHarness(props: HarnessProps) {
         setSelectedProfileId,
         profileMap: props.profileMap,
         getCompatibleProfileBackendEntries: (profile) => props.compatibleEntriesByProfileId[profile.id] ?? [],
-        selectedBackendTargetKey: buildBackendTargetKey(backendTarget),
+        selectedBackendTargetKey: resolveBackendTargetKeyV2(backendTarget),
         setBackendTarget,
         cliAvailabilityTimestamp: props.cliAvailabilityTimestamp ?? 0,
         cliAvailabilityByAgentId: props.cliAvailabilityByAgentId ?? {},
@@ -147,19 +145,19 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         const hook = await renderHook(useHarness, {
             initialProps: {
                 initialSelectedProfileId: null,
-                initialBackendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                initialBackendTarget: { kind: 'backend', backendId: 'codex' },
                 compatibleEntriesByProfileId: {
                     'profile-a': [{
-                        target: { kind: 'builtInAgent', agentId: 'claude' },
-                        targetKey: 'agent:claude',
+                        backendTarget: { kind: 'backend', backendId: 'claude' },
+                        backendTargetKey: 'backend:claude',
                         builtInAgentId: 'claude',
-                        family: 'builtInAgent',
+                        kind: 'builtInAgent',
                     }],
                     'profile-b': [{
-                        target: { kind: 'builtInAgent', agentId: 'codex' },
-                        targetKey: 'agent:codex',
+                        backendTarget: { kind: 'backend', backendId: 'codex' },
+                        backendTargetKey: 'backend:codex',
                         builtInAgentId: 'codex',
-                        family: 'builtInAgent',
+                        kind: 'builtInAgent',
                     }],
                 },
                 profileMap: new Map([
@@ -187,7 +185,7 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         await flushNextInteractionTask();
 
         expect(hook.getCurrent().selectedProfileId).toBe('profile-b');
-        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
+        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: 'codex' });
         expect(applyPermissionModeSpy).not.toHaveBeenCalled();
     });
 
@@ -199,20 +197,20 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         const hook = await renderHook(useHarness, {
             initialProps: {
                 initialSelectedProfileId: profile.id,
-                initialBackendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+                initialBackendTarget: { kind: 'backend', backendId: 'acme.review' },
                 compatibleEntriesByProfileId: {
                     [profile.id]: [
                         {
-                            target: { kind: 'builtInAgent', agentId: 'claude' },
-                            targetKey: 'agent:claude',
+                            backendTarget: { kind: 'backend', backendId: 'claude' },
+                            backendTargetKey: 'backend:claude',
                             builtInAgentId: 'claude',
-                            family: 'builtInAgent',
+                            kind: 'builtInAgent',
                         },
                         {
-                            target: { kind: 'builtInAgent', agentId: 'codex' },
-                            targetKey: 'agent:codex',
+                            backendTarget: { kind: 'backend', backendId: 'codex' },
+                            backendTargetKey: 'backend:codex',
                             builtInAgentId: 'codex',
-                            family: 'builtInAgent',
+                            kind: 'builtInAgent',
                         },
                     ],
                 },
@@ -221,12 +219,10 @@ describe('useNewSessionProfileBackendReconciliation', () => {
                 cliAvailabilityByAgentId: {
                     claude: false,
                     codex: true,
-                    customAcp: false,
                 },
                 installableDepKeyCountByAgentId: {
                     claude: 0,
                     codex: 0,
-                    customAcp: 0,
                 },
                 applyPermissionModeSpy,
                 prepareSecretPromptForProfileSelectionSpy,
@@ -234,7 +230,7 @@ describe('useNewSessionProfileBackendReconciliation', () => {
             },
         });
 
-        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
+        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: 'codex' });
     });
 
     it('reconciles away from a logged-out backend when another compatible backend remains selectable', async () => {
@@ -245,20 +241,20 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         const hook = await renderHook(useHarness, {
             initialProps: {
                 initialSelectedProfileId: profile.id,
-                initialBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                initialBackendTarget: { kind: 'backend', backendId: 'claude' },
                 compatibleEntriesByProfileId: {
                     [profile.id]: [
                         {
-                            target: { kind: 'builtInAgent', agentId: 'claude' },
-                            targetKey: 'agent:claude',
+                            backendTarget: { kind: 'backend', backendId: 'claude' },
+                            backendTargetKey: 'backend:claude',
                             builtInAgentId: 'claude',
-                            family: 'builtInAgent',
+                            kind: 'builtInAgent',
                         },
                         {
-                            target: { kind: 'builtInAgent', agentId: 'codex' },
-                            targetKey: 'agent:codex',
+                            backendTarget: { kind: 'backend', backendId: 'codex' },
+                            backendTargetKey: 'backend:codex',
                             builtInAgentId: 'codex',
-                            family: 'builtInAgent',
+                            kind: 'builtInAgent',
                         },
                     ],
                 },
@@ -267,7 +263,6 @@ describe('useNewSessionProfileBackendReconciliation', () => {
                 cliAvailabilityByAgentId: {
                     claude: true,
                     codex: true,
-                    customAcp: false,
                 },
                 cliAuthStatusByAgentId: {
                     claude: { state: 'logged_out', checkedAt: 1 },
@@ -276,7 +271,6 @@ describe('useNewSessionProfileBackendReconciliation', () => {
                 installableDepKeyCountByAgentId: {
                     claude: 0,
                     codex: 0,
-                    customAcp: 0,
                 },
                 applyPermissionModeSpy,
                 prepareSecretPromptForProfileSelectionSpy,
@@ -284,6 +278,6 @@ describe('useNewSessionProfileBackendReconciliation', () => {
             },
         });
 
-        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
+        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: 'codex' });
     });
 });

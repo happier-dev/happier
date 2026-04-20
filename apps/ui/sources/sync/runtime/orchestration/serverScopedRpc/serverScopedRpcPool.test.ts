@@ -265,4 +265,35 @@ describe('resolveScopedMachineDataKey', () => {
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(0);
         expect(decryptSpy).not.toHaveBeenCalled();
     });
+
+    it('throws terminal auth instead of returning null for scoped machine-key 403 responses', async () => {
+        const fetchSpy = vi.fn(async (url: string) => {
+            const href = String(url ?? '');
+            if (href.endsWith('/health') || href.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
+            if (href.includes('/v1/machines')) {
+                return { ok: false, status: 403, json: async () => ({}) };
+            }
+            throw new Error(`unexpected fetch url: ${href}`);
+        });
+        vi.stubGlobal('fetch', fetchSpy);
+
+        const decryptSpy = vi.fn(async () => new Uint8Array([1]));
+
+        await expect(resolveScopedMachineDataKey({
+            serverId: 'server-b',
+            serverUrl: 'https://server-b.example.test',
+            token: 'token-b',
+            machineId: 'machine-1',
+            decryptEncryptionKey: decryptSpy,
+            timeoutMs: 50,
+        })).rejects.toMatchObject({
+            name: 'HappyError',
+            kind: 'auth',
+            code: 'not_authenticated',
+        });
+
+        expect(decryptSpy).not.toHaveBeenCalled();
+    });
 });

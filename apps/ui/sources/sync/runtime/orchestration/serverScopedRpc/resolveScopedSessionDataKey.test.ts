@@ -116,4 +116,30 @@ describe('resolveScopedSessionDataKey', () => {
     expect(decrypt).not.toHaveBeenCalled();
     expect(runtimeFetchMock.mock.calls.filter(([input]) => String(input).includes('/v2/sessions/session-1')).length).toBe(2);
   });
+
+  it('throws terminal auth instead of returning an unknown key for scoped 401 responses', async () => {
+    runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      return { ok: false, status: 401, json: async () => ({}) };
+    });
+    const decrypt = vi.fn(async () => new Uint8Array([9]));
+
+    await expect(resolveScopedSessionDataKey({
+      serverId: 's-id',
+      serverUrl: 'https://server.example.test',
+      token: 'token',
+      sessionId: 'session-1',
+      decryptEncryptionKey: decrypt,
+      timeoutMs: 10,
+    })).rejects.toMatchObject({
+      name: 'HappyError',
+      kind: 'auth',
+      code: 'not_authenticated',
+    });
+
+    expect(decrypt).not.toHaveBeenCalled();
+  });
 });

@@ -82,7 +82,7 @@ const LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS = {
   minSpeechMs: 120,
 } as const;
 
-const CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS = {
+export const VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS = {
   silenceMs: 5000,
   minSpeechMs: 1000,
 } as const;
@@ -98,11 +98,11 @@ function migrateLegacyHandsFreeDefaults(raw: unknown): unknown {
   const minSpeechMs = endpointingRecord.minSpeechMs;
   const nextSilenceMs =
     silenceMs === LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs
-      ? CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs
+      ? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs
       : silenceMs;
   const nextMinSpeechMs =
     minSpeechMs === LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs
-      ? CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs
+      ? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs
       : minSpeechMs;
 
   if (nextSilenceMs === silenceMs && nextMinSpeechMs === minSpeechMs) {
@@ -126,16 +126,16 @@ const VoiceHandsFreeSchema = z.preprocess(
       enabled: z.boolean().default(false),
       endpointing: z
         .object({
-          silenceMs: z.number().int().min(0).max(5000).default(CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs),
-          minSpeechMs: z.number().int().min(0).max(5000).default(CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs),
+          silenceMs: z.number().int().min(0).max(5000).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs),
+          minSpeechMs: z.number().int().min(0).max(5000).default(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs),
         })
         .prefault({}),
     })
     .default({
       enabled: false,
       endpointing: {
-        silenceMs: CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
-        minSpeechMs: CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
+        silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+        minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
       },
     }),
 );

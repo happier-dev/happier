@@ -39,7 +39,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
 
         const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
         const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             cwd: '/repo',
@@ -87,7 +87,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
 
         const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
         const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             cwd: '/repo',
@@ -141,7 +141,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
 
         const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
         const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             cwd: '/repo',

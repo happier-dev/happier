@@ -1,8 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 
@@ -23,8 +22,6 @@ const sessionState = vi.hoisted(() => ({
         agentState: {},
     } as any,
 }));
-const focusCleanupState = vi.hoisted(() => ({ current: null as null | (() => void) }));
-
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
@@ -38,10 +35,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (effect: () => void | (() => void)) => {
-        const cleanup = effect();
-        focusCleanupState.current = typeof cleanup === 'function' ? cleanup : null;
-    },
+    useFocusEffect: () => {},
     useIsFocused: () => true,
 }));
 
@@ -232,11 +226,7 @@ vi.mock('@/agents/catalog/catalog', async () => {
     const actual = await vi.importActual<typeof import('@/agents/catalog/catalog')>('@/agents/catalog/catalog');
     return {
         ...actual,
-        AGENT_IDS: ['default'],
-        DEFAULT_AGENT_ID: 'default',
         buildResumeSessionExtrasFromUiState: () => null,
-        getAgentCore: () => ({ title: 'Agent', model: { defaultMode: 'build' } }),
-        resolveAgentIdFromFlavor: () => 'default',
     };
 });
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
@@ -365,6 +355,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
     shouldRenderChatTimelineForSession: () => true,
+    shouldRequestRemoteControl: () => false,
     shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 vi.mock('@/sync/domains/session/control/controlSwitchUiTimeout', () => ({
@@ -376,25 +367,33 @@ describe('SessionView read cursor on blur', () => {
         sessionState.current.seq = 2;
         markSessionViewedSpy.mockClear();
         scheduledInteractionCallbacks.length = 0;
-        focusCleanupState.current = null;
     });
 
     it('bounds the blur read mark to the seq visible when leaving the session', async () => {
-        const { SessionView } = await import('./SessionView');
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(<AppPaneProvider>
-                    <SessionView id="s1" />
-                </AppPaneProvider>)).tree;
-
-        expect(focusCleanupState.current).toBeTypeOf('function');
+        const { useSessionViewedLifecycle } = await import('./view/useSessionViewedLifecycle');
+        const hook = await renderHook((props: {
+            sessionId: string;
+            sessionSeq: number | null;
+            surfaceFocused: boolean;
+        }) => {
+            useSessionViewedLifecycle(props);
+            return null;
+        }, {
+            initialProps: {
+                sessionId: 's1',
+                sessionSeq: 2,
+                surfaceFocused: true,
+            },
+        });
 
         // Ignore work scheduled on initial focus; we care about the blur path.
         scheduledInteractionCallbacks.length = 0;
         markSessionViewedSpy.mockClear();
 
-        act(() => {
-            focusCleanupState.current?.();
+        await hook.rerender({
+            sessionId: 's1',
+            sessionSeq: 2,
+            surfaceFocused: false,
         });
 
         expect(scheduledInteractionCallbacks).toHaveLength(1);
@@ -410,8 +409,6 @@ describe('SessionView read cursor on blur', () => {
         expect(markSessionViewedSpy).toHaveBeenCalledTimes(1);
         expect(markSessionViewedSpy).toHaveBeenCalledWith('s1', { sessionSeq: 2 });
 
-        act(() => {
-            tree?.unmount();
-        });
+        await hook.unmount();
     });
 });

@@ -12,7 +12,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
     agentId: 'claude',
-    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    backendTarget: { kind: 'backend', backendId: 'claude' },
     transcriptStorage: 'direct',
     profileId: 'profile-1',
     environmentVariables: null,
@@ -60,8 +60,8 @@ const READY_AVAILABILITY: ExistingSessionAutomationAvailability = {
     machineId: 'machine-1',
     eligibility: {
         eligible: true,
-        agentId: 'claude',
         strategy: 'happy_attach',
+        compatBackendId: 'review-bot',
     },
 };
 

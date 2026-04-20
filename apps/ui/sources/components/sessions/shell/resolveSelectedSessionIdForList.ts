@@ -1,9 +1,14 @@
 export function resolveSelectedSessionIdForList(params: Readonly<{
     selectable: boolean;
     pathname: string;
+    focusedSessionId?: string | null;
 }>): string | null {
     if (!params.selectable) {
         return null;
+    }
+    const focusedSessionId = String(params.focusedSessionId ?? '').trim();
+    if (focusedSessionId) {
+        return focusedSessionId;
     }
     if (!params.pathname.startsWith('/session/')) {
         return null;

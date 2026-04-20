@@ -4,6 +4,7 @@ import {
     getModelOptionsForAgentType,
     getModelOptionsForModes,
     getModelOptionsForSession,
+    getSelectableModelIdsForSession,
     hasDynamicModelListForSession,
     isModelSelectableForSession,
 } from './modelOptions';
@@ -59,12 +60,17 @@ describe('modelOptions', () => {
         const values = options.map((o) => o.value);
         expect(values[0]).toBe('default');
         expect(values.length).toBeGreaterThan(1);
-        expect(options.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
-            value: 'claude-opus-4-6',
-            label: 'Opus 4.6',
+        expect(options.find((option) => option.value === 'claude-opus-4-7')).toMatchObject({
+            value: 'claude-opus-4-7',
+            label: 'Opus 4.7',
             description: expect.any(String),
             modelOptions: expect.arrayContaining([
-                expect.objectContaining({ id: 'reasoning_effort' }),
+                expect.objectContaining({
+                    id: 'reasoning_effort',
+                    options: expect.arrayContaining([
+                        expect.objectContaining({ value: 'xhigh' }),
+                    ]),
+                }),
             ]),
         });
     });
@@ -118,7 +124,8 @@ describe('modelOptions', () => {
         });
     });
 
-    it('preserves catalog model options when session metadata lists the model but omits per-model options', () => {
+    it('ignores stale dynamic session model rows for static-only providers and uses the static catalog', () => {
+        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
         const out = getModelOptionsForSession(
             'claude',
             withMetadata({
@@ -135,10 +142,15 @@ describe('modelOptions', () => {
             }),
         );
 
+        expect(out.map((option) => option.value)).toEqual(staticClaudeValues);
         expect(out.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
+            label: 'Opus 4.6',
             modelOptions: expect.arrayContaining([
                 expect.objectContaining({ id: 'reasoning_effort' }),
             ]),
+        });
+        expect(out.find((option) => option.value === 'claude-sonnet-4-6')).toMatchObject({
+            label: 'Sonnet 4.6',
         });
     });
 
@@ -181,6 +193,51 @@ describe('modelOptions', () => {
         );
 
         expect(out.some((option) => option.value === 'claude-custom-model')).toBe(true);
+    });
+
+    it('appends custom metadata override models after the static catalog for static-only providers', () => {
+        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const out = getModelOptionsForSession(
+            'claude',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'claude',
+                    updatedAt: 1,
+                    currentModelId: 'claude-sonnet-4-6',
+                    availableModels: [
+                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                    ],
+                },
+                modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'claude-custom-model' },
+            }),
+        );
+
+        expect(out.map((option) => option.value)).toEqual([
+            ...staticClaudeValues,
+            'claude-custom-model',
+        ]);
+    });
+
+    it('derives selectable ids from the same static-only session model policy for freeform providers', () => {
+        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const metadata = withMetadata({
+            sessionModelsV1: {
+                v: 1,
+                provider: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-6',
+                availableModels: [
+                    { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                ],
+            },
+            modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'claude-custom-model' },
+        });
+
+        expect(getSelectableModelIdsForSession('claude', metadata)).toEqual([
+            ...staticClaudeValues,
+            'claude-custom-model',
+        ]);
     });
 
     it('adds metadata override model into options for Gemini when freeform is enabled', () => {
@@ -237,6 +294,23 @@ describe('modelOptions', () => {
                         updatedAt: 1,
                         currentModelId: 'model-a',
                         availableModels: [{ id: 'model-a', name: 'Model A' }],
+                    },
+                }),
+            ),
+        ).toBe(false);
+    });
+
+    it('does not treat static-only provider metadata as dynamic list support', () => {
+        expect(
+            hasDynamicModelListForSession(
+                'claude',
+                withMetadata({
+                    sessionModelsV1: {
+                        v: 1,
+                        provider: 'claude',
+                        updatedAt: 1,
+                        currentModelId: 'claude-haiku-4-5',
+                        availableModels: [{ id: 'haiku', name: 'Haiku' }],
                     },
                 }),
             ),

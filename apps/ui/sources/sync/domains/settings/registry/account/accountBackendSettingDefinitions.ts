@@ -1,10 +1,13 @@
-import { buildBackendTargetKey, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-import { AGENT_IDS } from '@/agents/registry/registryCore';
+import {
+    buildProviderUniverseBackendTargetKey,
+    listProviderUniverseIds,
+} from '@/agents/providers/registry/providerUniverse';
 
 const DEFAULT_BACKEND_ENABLED_BY_TARGET_KEY: Record<string, boolean> = Object.fromEntries(
-    AGENT_IDS.map((id) => [buildBackendTargetKey({ kind: 'builtInAgent', agentId: id }), true]),
+    listProviderUniverseIds().map((id) => [buildProviderUniverseBackendTargetKey(id), true]),
 );
 
 const BACKEND_CLI_SOURCE_PREFERENCE_VALUES = ['system-first', 'managed-first'] as const;
@@ -17,8 +20,8 @@ function buildBackendEnabledAnalyticsProperties(
         : {};
 
     return Object.fromEntries(
-        AGENT_IDS.map((agentId) => {
-            const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
+        listProviderUniverseIds().map((agentId) => {
+            const targetKey = buildProviderUniverseBackendTargetKey(agentId);
             return [targetKey, record[targetKey] !== false];
         }),
     );
@@ -32,12 +35,13 @@ function buildBackendCliSourcePreferenceAnalyticsProperties(
         : {};
 
     return Object.fromEntries(
-        AGENT_IDS.map((agentId) => {
-            const raw = record[buildBackendTargetKey({ kind: 'builtInAgent', agentId })];
+        listProviderUniverseIds().map((agentId) => {
+            const targetKey = buildProviderUniverseBackendTargetKey(agentId);
+            const raw = record[targetKey];
             const normalized = raw === 'system-first' || raw === 'managed-first'
                 ? raw
                 : 'default';
-            return [buildBackendTargetKey({ kind: 'builtInAgent', agentId }), normalized];
+            return [targetKey, normalized];
         }),
     );
 }

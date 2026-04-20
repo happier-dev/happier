@@ -17,13 +17,26 @@ vi.mock('@/sync/ops/capabilities', () => ({
   machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
 }));
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-  return {
-    ...actual,
-    getAgentCore: () => ({ model: { supportsSelection: true, allowedModes: [], defaultMode: 'default', supportsFreeform: false } }),
-  };
-});
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+  resolveProviderAgentIdForBackendTarget: (backendTarget: { kind: string; agentId?: string }) =>
+    backendTarget.kind === 'builtInAgent' ? (backendTarget.agentId ?? null) : null,
+}));
+
+vi.mock('@/agents/registry/compat/customAcp', () => ({
+  LEGACY_CUSTOM_ACP_AGENT_ID: 'customAcp',
+  resolveAgentLookupCoreConfig: () => ({
+    model: {
+      supportsSelection: true,
+      supportsFreeform: false,
+      dynamicProbe: 'probe',
+    },
+  }),
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+  isAgentId: (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude',
+  getAgentCore: () => ({ model: { supportsSelection: true, allowedModes: [], defaultMode: 'default', supportsFreeform: false, dynamicProbe: 'probe' } }),
+}));
 
 describe('useNewSessionPreflightModelsState', () => {
   it('passes params.cwd through to capabilities.invoke(cli.* probeModels)', async () => {
@@ -34,7 +47,7 @@ describe('useNewSessionPreflightModelsState', () => {
 
     function Harness() {
       useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -65,7 +78,7 @@ describe('useNewSessionPreflightModelsState', () => {
 
     function Harness() {
       useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -95,6 +108,35 @@ describe('useNewSessionPreflightModelsState', () => {
     });
   });
 
+  it('returns an idle empty state when no backend target is provided', async () => {
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+
+    let latest: any = null;
+    function Harness() {
+      latest = useNewSessionPreflightModelsState({
+        backendTarget: null as any,
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).not.toHaveBeenCalled();
+    expect(latest.preflightModels).toBeNull();
+    expect(latest.modelOptions).toEqual([]);
+    expect(latest.probe.phase).toBe('idle');
+  });
+
   it('uses a long enough timeout for slow ACP providers', async () => {
     const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
 
@@ -104,7 +146,7 @@ describe('useNewSessionPreflightModelsState', () => {
     let latest: any = null;
     function Harness() {
       latest = useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -125,7 +167,36 @@ describe('useNewSessionPreflightModelsState', () => {
     expect(values.slice(0, 2)).toEqual(['default', 'model-a']);
   });
 
-  it('uses cli.customAcp and forwards configured preset backendTarget', async () => {
+  it('does not synthesize a legacy compat sentinel for configured backend targets without a runtime carrier', async () => {
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+
+    let latest: any = null;
+    function Harness() {
+      latest = useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).not.toHaveBeenCalled();
+    expect(latest.preflightModels).toBeNull();
+    expect(latest.modelOptions).toEqual([]);
+    expect(latest.probe.phase).toBe('idle');
+  });
+
+  it('uses the runtime carrier agent id when probing a configured backend target', async () => {
     const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
 
     machineCapabilitiesInvokeMock.mockClear();
@@ -133,7 +204,8 @@ describe('useNewSessionPreflightModelsState', () => {
 
     function Harness() {
       useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+        runtimeCarrierAgentId: 'codex',
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -150,11 +222,11 @@ describe('useNewSessionPreflightModelsState', () => {
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     const request = machineCapabilitiesInvokeMock.mock.calls[0]?.[1];
     expect(request).toMatchObject({
-      id: 'cli.customAcp',
+      id: 'cli.codex',
       method: 'probeModels',
       params: expect.objectContaining({
         cwd: '/repo',
-        backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
       }),
     });
   });

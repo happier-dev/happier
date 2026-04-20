@@ -1,9 +1,17 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { isSessionExclusiveLocalControl } from '@/sync/domains/session/control/sessionLocalControl';
 
-export function shouldRequestRemoteControlAfterPendingEnqueue(session: Session | null): boolean {
+type SessionControlAuthState = CliAuthStatusData['state'] | null | undefined;
+
+export function shouldRequestRemoteControl(session: Session | null, authState?: SessionControlAuthState): boolean {
     if (!session) return false;
+    if (authState === 'logged_out') return false;
     return isSessionExclusiveLocalControl(session);
+}
+
+export function shouldRequestRemoteControlAfterPendingEnqueue(session: Session | null, authState?: SessionControlAuthState): boolean {
+    return shouldRequestRemoteControl(session, authState);
 }
 
 export function shouldRenderChatTimelineForSession(opts: {

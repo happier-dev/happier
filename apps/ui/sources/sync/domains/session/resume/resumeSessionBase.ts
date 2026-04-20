@@ -5,6 +5,7 @@ import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/ru
 import { deriveAcpBackendIdFromFlavor } from '@/agents/runtime/acpFlavor';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import type { ModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -71,6 +72,7 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
     if (!agentId) return null;
 
     const resume = getAgentVendorResumeId(session.metadata, agentId, resumeCapabilityOptions);
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(session.metadata);
 
     return {
         sessionId,
@@ -78,7 +80,7 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         directory,
         backendTarget: { kind: 'builtInAgent', agentId: getAgentCore(agentId).cli.spawnAgent },
         ...(resume ? { resume } : {}),
-        ...(session.metadata?.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: session.metadata.agentRuntimeDescriptorV1 } : {}),
+        ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         ...(permissionOverride ? permissionOverride : {}),
         ...(modelOverride ? modelOverride : {}),
     };

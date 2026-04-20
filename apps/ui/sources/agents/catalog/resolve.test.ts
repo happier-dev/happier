@@ -18,6 +18,10 @@ describe('agents/resolve', () => {
         expect(resolveAgentIdForPermissionUi({ flavor: '', toolName: 'CodexBash' })).toBe('codex');
     });
 
+    it('uses registry-backed tool prefix hints for other agents too', () => {
+        expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'OpenCodeBash' })).toBe('opencode');
+    });
+
     it('falls back to default agent when no flavor or codex tool hint exists', () => {
         expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'Bash' })).toBe('claude');
         expect(resolveAgentIdForPermissionUi({ flavor: undefined, toolName: '' })).toBe('claude');

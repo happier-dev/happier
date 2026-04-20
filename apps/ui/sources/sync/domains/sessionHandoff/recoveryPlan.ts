@@ -1,10 +1,13 @@
 import {
     buildOpenCodeAgentRuntimeDescriptor,
-    readSessionMetadataRuntimeDescriptor,
     resolveVendorHandoffIdFromSessionMetadata,
     type AgentId,
 } from '@happier-dev/agents';
-import { normalizeCodexBackendMode } from '@happier-dev/protocol';
+import {
+    normalizeCodexBackendMode,
+    readCanonicalRuntimeDescriptorV1ForProvider,
+    readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
@@ -18,13 +21,16 @@ export type SessionHandoffSourceResumePlan = Readonly<{
     resume?: string;
     transcriptStorage: 'direct' | 'persisted';
     serverId: string | null;
-    agentRuntimeDescriptorV1?: unknown;
+    runtimeDescriptorV1?: unknown;
     codexBackendMode?: 'mcp' | 'acp' | 'appServer';
     environmentVariables?: Record<string, string>;
 }>;
 
 function buildSourceResumeEnvironmentVariables(metadata: Metadata): Record<string, string> | undefined {
-    const openCodeRuntime = readSessionMetadataRuntimeDescriptor(metadata, 'opencode');
+    const openCodeRuntime = readCanonicalRuntimeDescriptorV1ForProvider(
+        readRuntimeDescriptorV1FromMetadata(metadata),
+        'opencode',
+    );
     const legacyBackendMode = metadata.opencodeBackendMode === 'server' || metadata.opencodeBackendMode === 'acp'
         ? metadata.opencodeBackendMode
         : null;
@@ -50,9 +56,9 @@ function resolveRecoveryAgentId(metadata: Metadata): AgentId | null {
     const byFlavor = resolveAgentIdFromFlavor(metadata.flavor);
     if (byFlavor) return byFlavor;
 
-    if (readSessionMetadataRuntimeDescriptor(metadata, 'codex')) return 'codex';
-    if (readSessionMetadataRuntimeDescriptor(metadata, 'opencode')) return 'opencode';
-    if (readSessionMetadataRuntimeDescriptor(metadata, 'pi')) return 'pi';
+    if (readCanonicalRuntimeDescriptorV1ForProvider(readRuntimeDescriptorV1FromMetadata(metadata), 'codex')) return 'codex';
+    if (readCanonicalRuntimeDescriptorV1ForProvider(readRuntimeDescriptorV1FromMetadata(metadata), 'opencode')) return 'opencode';
+    if (readCanonicalRuntimeDescriptorV1ForProvider(readRuntimeDescriptorV1FromMetadata(metadata), 'pi')) return 'pi';
     return null;
 }
 
@@ -94,7 +100,9 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
             ...(resolveVendorResumeId(input.sourceMetadata) ? { resume: resolveVendorResumeId(input.sourceMetadata) } : {}),
             transcriptStorage: input.sessionStorageMode,
             serverId: typeof input.serverId === 'string' ? input.serverId.trim() || null : null,
-            ...(input.sourceMetadata.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: input.sourceMetadata.agentRuntimeDescriptorV1 } : {}),
+            ...(readRuntimeDescriptorV1FromMetadata(input.sourceMetadata)
+                ? { runtimeDescriptorV1: readRuntimeDescriptorV1FromMetadata(input.sourceMetadata) }
+                : {}),
             ...(codexBackendMode ? { codexBackendMode } : {}),
             ...(buildSourceResumeEnvironmentVariables(input.sourceMetadata)
                 ? { environmentVariables: buildSourceResumeEnvironmentVariables(input.sourceMetadata)! }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LocalNeuralExecutionSchema } from '@happier-dev/protocol';
 
 import { SecretStringSchema } from '../../encryption/secretSettings';
 
@@ -18,12 +19,11 @@ const VoiceLocalTtsOpenAiCompatSchema = z
 const VoiceLocalTtsLocalNeuralSchema = z
   .object({
     model: z.enum(['kokoro']).default('kokoro'),
-    // A stable cross-platform identifier; resolves to:
-    // - native: a downloadable model pack manifest (Sherpa)
-    // - web: a kokoro-js runtime config preset
+    // A stable cross-platform identifier for Kokoro model packs across native and daemon-backed surfaces.
     assetId: z.string().nullable().default('kokoro-82m-v1.0-onnx-q8-wasm'),
     voiceId: z.string().nullable().default(null),
     speed: z.number().min(0.5).max(2).nullable().default(null),
+    execution: LocalNeuralExecutionSchema.default('auto'),
   })
   .prefault({});
 
@@ -75,7 +75,7 @@ function migrateLegacyLocalTts(input: Record<string, unknown>): VoiceLocalTtsV2 
       voice,
       format,
     },
-    localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: null, speed: null },
+    localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: null, speed: null, execution: 'auto' },
     googleCloud: {
       apiKey: null,
       androidCertSha1: null,
@@ -106,6 +106,7 @@ function migrateKokoroProviderToLocalNeural(input: Record<string, unknown>): Voi
       assetId,
       voiceId,
       speed,
+      execution: 'auto',
     },
     autoSpeakReplies: input.autoSpeakReplies !== false,
     bargeInEnabled: input.bargeInEnabled !== false,

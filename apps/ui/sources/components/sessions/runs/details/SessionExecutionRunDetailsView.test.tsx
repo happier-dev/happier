@@ -487,7 +487,7 @@ describe('SessionExecutionRunDetailsView', () => {
                 callId: 'toolu_1',
                 sidechainId: 'toolu_1',
                 intent: 'review',
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
                 runClass: 'bounded',
                 ioMode: 'streaming',
                 retentionPolicy: 'ephemeral',

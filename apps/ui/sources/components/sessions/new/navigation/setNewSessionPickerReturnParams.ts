@@ -2,6 +2,8 @@ import {
     buildBackendTargetRouteParams,
     resolveBackendTargetFromRouteParams,
 } from '@/agents/backendCatalog/backendTargetRouteParams';
+import { isAgentId } from '@/agents/catalog/catalog';
+import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 
 type RouteLike = Readonly<{
     key?: string;
@@ -49,6 +51,7 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'machineId',
     'path',
     'profileId',
+    'previewMachineId',
     'resumeSessionId',
     'secretId',
     'secretRequirementResultId',
@@ -104,6 +107,11 @@ export function pickNewSessionRouteParams(params: Readonly<UnknownRouteParams> |
         return {};
     }
 
+    const nextParams = pickRawNewSessionRouteParams(params);
+    return normalizeNewSessionRouteParams(nextParams);
+}
+
+function pickRawNewSessionRouteParams(params: Readonly<UnknownRouteParams>): RouteParams {
     const nextParams: RouteParams = {};
     for (const [key, value] of Object.entries(params)) {
         if (!NEW_SESSION_PARAM_KEYS.has(key)) {
@@ -115,6 +123,10 @@ export function pickNewSessionRouteParams(params: Readonly<UnknownRouteParams> |
         nextParams[key] = value;
     }
 
+    return nextParams;
+}
+
+function normalizeNewSessionRouteParams(nextParams: RouteParams): RouteParams {
     const backendTargetRouteParams = buildBackendTargetRouteParams({
         agentType: nextParams.agentType,
         backendTarget: nextParams.backendTarget,
@@ -123,8 +135,16 @@ export function pickNewSessionRouteParams(params: Readonly<UnknownRouteParams> |
     });
 
     const resolvedBackendTarget = resolveBackendTargetFromRouteParams(backendTargetRouteParams);
-    if (resolvedBackendTarget?.kind === 'configuredAcpBackend') {
+    if (resolvedBackendTarget?.configuredBackendId) {
         delete nextParams.agentType;
+    } else if (resolvedBackendTarget && isAgentId(resolvedBackendTarget.backendId)) {
+        nextParams.agentType = resolvedBackendTarget.backendId;
+    } else if (resolvedBackendTarget) {
+        // Plugin backend targets must not revive legacy compat agentType carriers.
+        // Keep a real built-in `agentType` only as a UI placeholder; otherwise drop it.
+        if (!isAgentId(nextParams.agentType) || isLegacyCompatAgentType(nextParams.agentType)) {
+            delete nextParams.agentType;
+        }
     }
 
     return {
@@ -183,14 +203,18 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
         ? navigationState.routes[currentIndex]?.params as RouteParams | undefined
         : undefined;
 
+    // Normalize once after merge so we can reliably clear stale compat carriers like
+    // `agentType=customAcp` when later params carry a real backend target.
+    const mergedRawParams: RouteParams = {
+        ...pickRawNewSessionRouteParams((currentRouteParams ?? {}) as UnknownRouteParams),
+        ...pickRawNewSessionRouteParams((params.currentParams ?? {}) as UnknownRouteParams),
+        ...pickRawNewSessionRouteParams((params.replaceParams ?? {}) as UnknownRouteParams),
+        ...pickRawNewSessionRouteParams((params.routeParams ?? {}) as UnknownRouteParams),
+    };
+
     params.router.replace({
         pathname: '/new',
-        params: {
-            ...pickNewSessionRouteParams(currentRouteParams),
-            ...pickNewSessionRouteParams(params.currentParams),
-            ...(params.replaceParams ?? {}),
-            ...params.routeParams,
-        },
+        params: normalizeNewSessionRouteParams(mergedRawParams),
     });
     return 'replace';
 }

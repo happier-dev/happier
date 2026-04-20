@@ -4,11 +4,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
+import { useOptionalAppPaneScopeLayout } from '@/components/appShell/panes/hooks/useAppPaneScopeLayout';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
-import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
+import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/shouldRedirectDetailsRouteToPanes';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 
@@ -23,6 +23,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     row: {
         flexDirection: 'row',
         flexWrap: 'wrap',
+        maxWidth: '100%',
+        minWidth: 0,
         gap: 8,
         marginTop: 8,
     },
@@ -30,6 +32,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+        flexShrink: 1,
+        minWidth: 0,
         borderWidth: 1,
         borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surfaceHigh,
@@ -42,6 +46,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         opacity: 0.8,
     },
     chipText: {
+        flexShrink: 1,
+        minWidth: 0,
         color: theme.colors.text,
         fontSize: 12,
         ...Typography.default('semiBold'),
@@ -66,23 +72,20 @@ export const LinkedWorkspaceFilesRow = React.memo((props: LinkedWorkspaceFilesRo
     const { width: windowWidth } = useWindowDimensions();
     const deviceType = useDeviceType();
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
+    const paneScopeLayout = useOptionalAppPaneScopeLayout();
 
     const scopeId = React.useMemo(() => `session:${props.sessionId}`, [props.sessionId]);
     const pane = useAppPaneScope(scopeId);
 
     const openFile = React.useCallback((path: string) => {
-        const layoutIfOpened = resolvePaneLayout({
-            containerWidthPx: windowWidth,
+        const containerWidthPx = paneScopeLayout?.containerWidthPx ?? windowWidth;
+        const shouldOpenInDetailsPane = shouldRedirectDetailsRouteToPanes({
+            containerWidthPx,
             deviceType,
             multiPaneEnabled,
-            rightOpen: false,
-            detailsOpen: true,
-            mainMinPx: PANE_SIZING_DEFAULTS.mainMinPx,
-            rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
-            detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
         });
 
-        if (layoutIfOpened.kind === 'single') {
+        if (!shouldOpenInDetailsPane) {
             router.push(`/session/${props.sessionId}/file?path=${encodeURIComponent(path)}` as any);
             return;
         }
@@ -93,7 +96,7 @@ export const LinkedWorkspaceFilesRow = React.memo((props: LinkedWorkspaceFilesRo
             title: getBasename(path),
             resource: { kind: 'file', path },
         });
-    }, [deviceType, multiPaneEnabled, pane, props.sessionId, router, windowWidth]);
+    }, [deviceType, multiPaneEnabled, pane, paneScopeLayout?.containerWidthPx, props.sessionId, router, windowWidth]);
 
     if (props.paths.length === 0) return null;
 

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -20,7 +20,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     onAppendLinkedPath: (path: string) => void;
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
-    defaultBackendTarget?: BackendTargetRefV1 | null;
+    defaultBackendTarget?: BackendTargetRefV2Input | null;
     defaultBackendId: string | null;
     instructionsText: string;
 }>): ReadonlyArray<AgentInputExtraActionChip> | undefined {

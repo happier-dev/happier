@@ -34,6 +34,7 @@ import type {
 } from '@happier-dev/protocol';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
+import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import {
     SessionContinueWithReplayRpcResultSchema,
     SessionForkRpcResultSchema,
@@ -197,7 +198,7 @@ export interface ResumeSessionOptions {
      */
     experimentalCodexAcp?: boolean;
     codexBackendMode?: import('@happier-dev/agents').CodexBackendMode;
-    agentRuntimeDescriptorV1?: import('@happier-dev/protocol').AgentRuntimeDescriptorV1;
+    runtimeDescriptorV1?: import('@happier-dev/protocol').RuntimeDescriptorV1;
     /**
      * When true, use the requested machine/directory even if the current session metadata
      * still points at a previously reachable machine. This is required for session handoff
@@ -233,7 +234,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         modelUpdatedAt,
         experimentalCodexAcp,
         codexBackendMode,
-        agentRuntimeDescriptorV1,
+        runtimeDescriptorV1,
         preferRequestedMachineTarget,
         preferScopedMachineRpc,
     } = options;
@@ -271,7 +272,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(typeof modelUpdatedAt === 'number' ? { modelUpdatedAt } : {}),
             experimentalCodexAcp,
             codexBackendMode,
-            ...(agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1 } : {}),
+            ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         });
 
         const result = await machineRpcWithServerScope<unknown, ResumeHappySessionRpcParams>({
@@ -331,18 +332,17 @@ export type ContinueSessionWithReplayOptions = Readonly<{
 
 export async function continueSessionWithReplay(options: ContinueSessionWithReplayOptions): Promise<SessionContinueWithReplayRpcResult> {
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+    const canonicalAgent = isLegacyCompatAgentType(options.agent) ? undefined : options.agent;
     const backendTarget = options.backendTarget
         ? readBackendTargetRefV2(options.backendTarget)
-        : (options.agent !== 'customAcp'
-            ? readBackendTargetRefV2({ kind: 'builtInAgent', agentId: options.agent } as const)
+        : (canonicalAgent
+            ? readBackendTargetRefV2({ kind: 'builtInAgent', agentId: canonicalAgent } as const)
             : undefined);
     const legacyAgent = backendTarget?.kind === 'backend'
         ? backendTarget.sourceKind === 'configured'
-            ? (options.agent !== 'customAcp' ? options.agent : undefined)
+            ? canonicalAgent
             : backendTarget.backendId
-        : options.agent !== 'customAcp'
-            ? options.agent
-            : undefined;
+        : canonicalAgent;
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: options.machineId,
@@ -819,6 +819,7 @@ export interface SessionArchiveResponse {
     success: boolean;
     archivedAt?: number | null;
     message?: string;
+    code?: string;
 }
 
 async function archiveRequestWithContext(params: Readonly<{
@@ -869,6 +870,9 @@ export async function sessionArchiveWithServerScope(
         const response = await archiveRequestWithContext({ sessionId, serverId: opts?.serverId ?? null, action: 'archive' });
         if (!response.ok) {
             const message = await response.text().catch(() => '');
+            if (response.status === 409) {
+                return { success: false, message: message || 'Cannot archive an active session', code: 'session_active' };
+            }
             return { success: false, message: message || 'Failed to archive session' };
         }
         const json = await response.json().catch(() => ({}));

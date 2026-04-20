@@ -1,5 +1,5 @@
 import type { Profile } from '../../domains/profiles/profile';
-import { loadProfile, saveProfile } from '../../domains/state/persistence';
+import { loadProfile, saveProfile } from '../../domains/state/profilePersistence';
 
 import type { StoreGet, StoreSet } from './_shared';
 
@@ -28,4 +28,3 @@ export function createProfileDomain<S extends ProfileDomain>({
             }),
     };
 }
-

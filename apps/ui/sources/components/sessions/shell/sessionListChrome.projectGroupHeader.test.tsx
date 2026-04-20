@@ -8,6 +8,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const dropdownMenuSpy = vi.fn();
+let platformOs: 'ios' | 'web' = 'ios';
 type DropdownTriggerParams = {
     open: boolean;
     toggle: ReturnType<typeof vi.fn>;
@@ -42,7 +43,12 @@ installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            Platform: { OS: 'ios' },
+            Platform: {
+                get OS() {
+                    return platformOs;
+                },
+                select: (value: any) => value[platformOs] ?? value.default,
+            },
         });
     },
     text: async () => {
@@ -62,10 +68,31 @@ installSessionShellCommonModuleMocks({
     },
 });
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (!style || typeof style !== 'object') {
+        return {};
+    }
+    return style as Record<string, unknown>;
+}
+
+function findStyledTextNode(root: any) {
+    return root.findAll((node: any) =>
+        typeof node.props?.children === 'string'
+        && (typeof node.props?.style === 'object' || Array.isArray(node.props?.style))
+    )[0] ?? null;
+}
+
 describe('ProjectGroupHeader menu items', () => {
     afterEach(() => {
         standardCleanup();
         dropdownMenuSpy.mockClear();
+        platformOs = 'ios';
     });
 
     it('reuses the same menu item array when rerendered with identical scope values', async () => {
@@ -91,6 +118,7 @@ describe('ProjectGroupHeader menu items', () => {
                 hasCustomLabel={true}
                 canOpenProject={true}
                 onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
                 onRename={vi.fn()}
                 onReset={vi.fn()}
                 collapsed={false}
@@ -117,6 +145,7 @@ describe('ProjectGroupHeader menu items', () => {
                     hasCustomLabel={true}
                     canOpenProject={true}
                     onOpenProject={vi.fn()}
+                    onCreateSession={vi.fn()}
                     onRename={vi.fn()}
                     onReset={vi.fn()}
                     collapsed={false}
@@ -159,6 +188,7 @@ describe('ProjectGroupHeader menu items', () => {
                 hasCustomLabel={true}
                 canOpenProject={true}
                 onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
                 onRename={vi.fn()}
                 onReset={vi.fn()}
                 collapsed={false}
@@ -199,5 +229,150 @@ describe('ProjectGroupHeader menu items', () => {
         const latestMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
         expect(latestMenuProps?.placement).toBe('bottom');
         expect(latestMenuProps?.popoverAnchorAlign).toBe('end');
+    });
+
+    it('keeps the project add action visible while hover-only controls appear on demand', async () => {
+        platformOs = 'web';
+        const onCreateSession = vi.fn();
+        const { ProjectGroupHeader } = await import('./sessionListChrome');
+
+        const item = {
+            type: 'header',
+            title: '/repo',
+            headerKind: 'project',
+            groupKey: 'project:repo',
+            workspaceKey: 'legacy_repo',
+            workspaceScopeHint: {
+                serverId: 'server_a',
+                machineId: 'machine_a',
+                rootPath: '/repo',
+            },
+        } as const;
+
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={item as any}
+                hasMultipleMachines={false}
+                displayTitle="Important Repo"
+                hasCustomLabel={true}
+                canOpenProject={true}
+                onOpenProject={vi.fn()}
+                onCreateSession={onCreateSession}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        const pressables = screen.root.findAllByType('Pressable');
+        const rowPressable = pressables[0];
+        const addButton = screen.findByProps({ accessibilityLabel: 'machine.launchNewSessionInDirectory' });
+        const chevronWrapper = rowPressable.findAllByType('Ionicons')[0]?.parent;
+
+        expect(addButton).toBeTruthy();
+        expect(chevronWrapper?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 0 })]));
+        expect(screen.root.findAllByType('DropdownMenu')).toHaveLength(0);
+
+        await act(async () => {
+            addButton.props.onPress();
+        });
+
+        expect(onCreateSession).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            rowPressable.props.onHoverIn?.();
+        });
+
+        expect(screen.root.findAllByType('DropdownMenu')).toHaveLength(1);
+        expect(rowPressable.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
+        const menuTrigger = screen.findByProps({ accessibilityLabel: 'common.moreActions' });
+
+        await act(async () => {
+            menuTrigger.props.onHoverIn?.();
+            rowPressable.props.onHoverOut?.();
+        });
+
+        expect(screen.root.findAllByType('DropdownMenu')).toHaveLength(1);
+        expect(screen.findByProps({ accessibilityLabel: 'common.moreActions' })).toBeTruthy();
+
+        await act(async () => {
+            menuTrigger.props.onHoverOut?.();
+            rowPressable.props.onHoverOut?.();
+        });
+
+        expect(rowPressable.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 0 })]));
+
+        const collapsedScreen = await renderScreen(
+            <ProjectGroupHeader
+                item={item as any}
+                hasMultipleMachines={false}
+                displayTitle="Important Repo"
+                hasCustomLabel={true}
+                canOpenProject={true}
+                onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={true}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        expect(collapsedScreen.root.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
+    });
+
+    it('uses the secondary header typography tier for date headers', async () => {
+        platformOs = 'web';
+        const { CollapsibleSectionHeader, ProjectGroupHeader } = await import('./sessionListChrome');
+
+        const activeScreen = await renderScreen(
+            <CollapsibleSectionHeader
+                title="Active"
+                collapsed={false}
+                onPress={vi.fn()}
+                showOrderingMenu={true}
+            />,
+        );
+        const dateScreen = await renderScreen(
+            <CollapsibleSectionHeader
+                title="Yesterday"
+                collapsed={false}
+                onPress={vi.fn()}
+            />,
+        );
+        const projectScreen = await renderScreen(
+            <ProjectGroupHeader
+                item={{
+                    type: 'header',
+                    title: '/repo',
+                    headerKind: 'project',
+                    groupKey: 'project:repo',
+                    workspaceKey: 'legacy_repo',
+                    workspaceScopeHint: {
+                        serverId: 'server_a',
+                        machineId: 'machine_a',
+                        rootPath: '/repo',
+                    },
+                } as any}
+                hasMultipleMachines={false}
+                displayTitle="Important Repo"
+                hasCustomLabel={false}
+                canOpenProject={false}
+                onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        const activeTextStyle = flattenStyle(findStyledTextNode(activeScreen.root)?.props?.style);
+        const dateTextStyle = flattenStyle(findStyledTextNode(dateScreen.root)?.props?.style);
+        const projectTextStyle = flattenStyle(findStyledTextNode(projectScreen.root)?.props?.style);
+
+        expect(Number(activeTextStyle.fontSize)).toBeGreaterThan(Number(dateTextStyle.fontSize));
+        expect(dateTextStyle.fontSize).toBe(projectTextStyle.fontSize);
     });
 });

@@ -17,18 +17,14 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     headerSection: {
         backgroundColor: theme.colors.groupped.background,
         paddingHorizontal: 24,
-        paddingTop: 18,
-        paddingBottom: 6,
+        paddingTop: 14,
     },
     listHeaderSection: {
         backgroundColor: theme.colors.groupped.background,
     },
     headerText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: theme.colors.groupped.sectionTitle,
-        letterSpacing: -0.1,
-        ...Typography.default('semiBold'),
+        fontSize: 13,
+        color: theme.colors.textSecondary,
     },
     groupHeaderSection: {
         backgroundColor: theme.colors.groupped.background,
@@ -40,6 +36,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         fontSize: 12,
         fontWeight: '600',
         color: theme.colors.groupped.sectionTitle,
+        flexShrink: 1,
         ...Typography.default('semiBold'),
     },
     groupHeaderSubtitle: {
@@ -57,10 +54,24 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row' as const,
         alignItems: 'center' as const,
         gap: 6,
+        flex: 1,
+        minWidth: 0,
     },
     groupHeaderContent: {
         flex: 1,
         minWidth: 0,
+    },
+    groupHeaderInlineActions: {
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
+        gap: 2,
+        flexShrink: 0,
+    },
+    groupHeaderTrailingActions: {
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
+        flexShrink: 0,
+        marginLeft: 8,
     },
     groupHeaderActionButton: {
         width: 18,
@@ -86,7 +97,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     headerChevron: {
-        width: 18,
+        width: 16,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
         color: theme.colors.textSecondary,
@@ -100,7 +111,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         marginLeft: 4,
     },
     groupHeaderChevron: {
-        width: 18,
+        width: 16,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
         color: theme.colors.textSecondary,

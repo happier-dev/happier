@@ -83,7 +83,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
                 agent: 'codex',
                 resume: 'thread_runtime',
                 transcriptStorage: 'persisted',
-                agentRuntimeDescriptorV1: sourceMetadata.agentRuntimeDescriptorV1,
+                runtimeDescriptorV1: sourceMetadata.agentRuntimeDescriptorV1,
             }),
         });
     });

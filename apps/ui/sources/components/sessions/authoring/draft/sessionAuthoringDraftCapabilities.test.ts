@@ -10,7 +10,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
     agentId: 'codex',
-    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    backendTarget: { kind: 'backend', backendId: 'codex' },
     transcriptStorage: 'direct',
     profileId: 'profile-1',
     environmentVariables: null,

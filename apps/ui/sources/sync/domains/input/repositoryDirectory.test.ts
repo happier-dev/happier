@@ -1,32 +1,29 @@
-import { describe, expect, it, vi } from 'vitest';
-
-import {
-    clearCachedRepositoryDirectoryEntries,
-    getCachedRepositoryDirectoryEntries,
-    listRepositoryDirectoryEntries,
-    setCachedRepositoryDirectoryEntries,
-    sortRepositoryDirectoryEntries,
-    warmRepositoryDirectoryCache,
-} from './repositoryDirectory';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const machineFilesystemListDirectoryMock = vi.fn();
-const readMachineTargetForSessionMock = vi.fn();
-const resolvePreferredServerIdForSessionIdMock = vi.fn();
+const resolveWorkspaceTargetForSessionMock = vi.fn();
 
 vi.mock('@/sync/ops/machineFileBrowser', () => ({
     machineFilesystemListDirectory: (...args: unknown[]) => machineFilesystemListDirectoryMock(...args),
 }));
 
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
+vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
+    resolveWorkspaceTargetForSession: (...args: unknown[]) => resolveWorkspaceTargetForSessionMock(...args),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: (...args: unknown[]) => resolvePreferredServerIdForSessionIdMock(...args),
-}));
+async function loadRepositoryDirectoryModule() {
+    return await import('./repositoryDirectory');
+}
+
+beforeEach(() => {
+    vi.resetModules();
+    machineFilesystemListDirectoryMock.mockReset();
+    resolveWorkspaceTargetForSessionMock.mockReset();
+});
 
 describe('sortRepositoryDirectoryEntries', () => {
-    it('sorts directories first by name, then files by name (case-insensitive)', () => {
+    it('sorts directories first by name, then files by name (case-insensitive)', async () => {
+        const { sortRepositoryDirectoryEntries } = await loadRepositoryDirectoryModule();
         const sorted = sortRepositoryDirectoryEntries([
             { name: 'b.txt', type: 'file' as const },
             { name: 'A', type: 'directory' as const },
@@ -47,8 +44,13 @@ describe('sortRepositoryDirectoryEntries', () => {
 
 describe('listRepositoryDirectoryEntries', () => {
     it('preserves raw directory entry names for identity (no Unicode normalization)', async () => {
-        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
+        const { listRepositoryDirectoryEntries } = await loadRepositoryDirectoryModule();
+        resolveWorkspaceTargetForSessionMock.mockReturnValue({
+            workspaceCacheKey: 'server:m1:/repo',
+            machineId: 'm1',
+            rootPath: '/repo',
+            serverId: 'server',
+        });
         machineFilesystemListDirectoryMock.mockResolvedValue({
             ok: true,
             path: '/repo',
@@ -71,9 +73,8 @@ describe('listRepositoryDirectoryEntries', () => {
     });
 
     it('does not fall back to a machine-only cache key when no preferred server is available', async () => {
-        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue(null);
-        machineFilesystemListDirectoryMock.mockClear();
+        const { listRepositoryDirectoryEntries } = await loadRepositoryDirectoryModule();
+        resolveWorkspaceTargetForSessionMock.mockReturnValue(null);
 
         const result = await listRepositoryDirectoryEntries({ sessionId: 's', directoryPath: '' });
         expect(result).toEqual({ ok: false, error: 'unknown_error' });
@@ -83,11 +84,24 @@ describe('listRepositoryDirectoryEntries', () => {
 
 describe('warmRepositoryDirectoryCache', () => {
     it('dedupes in-flight warms and reuses cached entries across sessions in the same workspace', async () => {
-        readMachineTargetForSessionMock.mockImplementation((sessionId: string) => {
-            if (sessionId === 's' || sessionId === 's2') return { machineId: 'm1', basePath: '/repo' };
-            return { machineId: 'm2', basePath: '/other' };
+        const { clearCachedRepositoryDirectoryEntries, warmRepositoryDirectoryCache } =
+            await loadRepositoryDirectoryModule();
+        resolveWorkspaceTargetForSessionMock.mockImplementation((sessionId: string) => {
+            if (sessionId === 's' || sessionId === 's2') {
+                return {
+                    workspaceCacheKey: 'server:m1:/repo',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                    serverId: 'server',
+                };
+            }
+            return {
+                workspaceCacheKey: 'server:m2:/other',
+                machineId: 'm2',
+                rootPath: '/other',
+                serverId: 'server',
+            };
         });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
         clearCachedRepositoryDirectoryEntries({ sessionId: 's' });
 
         let resolve!: (value: any) => void;
@@ -131,12 +145,28 @@ describe('warmRepositoryDirectoryCache', () => {
 });
 
 describe('clearCachedRepositoryDirectoryEntries', () => {
-    it('clears all cached directories for a workspace (via a session) without affecting other workspaces', () => {
-        readMachineTargetForSessionMock.mockImplementation((sessionId: string) => {
-            if (sessionId === 'session-1' || sessionId === 'session-2') return { machineId: 'm1', basePath: '/repo' };
-            return { machineId: 'm2', basePath: '/other' };
+    it('clears all cached directories for a workspace (via a session) without affecting other workspaces', async () => {
+        const {
+            clearCachedRepositoryDirectoryEntries,
+            getCachedRepositoryDirectoryEntries,
+            setCachedRepositoryDirectoryEntries,
+        } = await loadRepositoryDirectoryModule();
+        resolveWorkspaceTargetForSessionMock.mockImplementation((sessionId: string) => {
+            if (sessionId === 'session-1' || sessionId === 'session-2') {
+                return {
+                    workspaceCacheKey: 'server:m1:/repo',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                    serverId: 'server',
+                };
+            }
+            return {
+                workspaceCacheKey: 'server:m2:/other',
+                machineId: 'm2',
+                rootPath: '/other',
+                serverId: 'server',
+            };
         });
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server');
 
         setCachedRepositoryDirectoryEntries({
             sessionId: 'session-1',

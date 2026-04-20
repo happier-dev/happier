@@ -37,6 +37,9 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     isDataReady: boolean;
     session: Session | null;
     sessionId: string;
+    sessionInfoHref: string;
+    sessionRunsHref: string;
+    sessionAutomationsHref: string;
     paneScopeId: string;
     windowWidth: number;
     sessionAutomationsEnabledCount: number;
@@ -88,6 +91,9 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     title: string;
     subtitle: string | undefined;
     avatarId: string | undefined;
+    sessionInfoHref: string;
+    sessionRunsHref: string;
+    sessionAutomationsHref: string;
     isConnected: boolean;
     flavor: string | null;
     storageBadge: string;
@@ -112,6 +118,9 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
         input.title,
         input.subtitle ?? '',
         input.avatarId ?? '',
+        input.sessionInfoHref,
+        input.sessionRunsHref,
+        input.sessionAutomationsHref,
         input.isConnected,
         input.flavor ?? '',
         input.storageBadge,
@@ -165,6 +174,9 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         title,
         subtitle,
         avatarId,
+        sessionInfoHref: input.sessionInfoHref,
+        sessionRunsHref: input.sessionRunsHref,
+        sessionAutomationsHref: input.sessionAutomationsHref,
         isConnected,
         flavor,
         storageBadge: resolvedStorageBadge,
@@ -208,7 +220,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         title,
         subtitle,
         avatarId,
-        onAvatarPress: () => input.navigateWithBlurOnWeb(() => input.router.navigate((`/session/${input.sessionId}/info`) as any, {
+        onAvatarPress: () => input.navigateWithBlurOnWeb(() => input.router.navigate(input.sessionInfoHref as any, {
             dangerouslySingular() {
                 return 'session-info';
             },
@@ -231,7 +243,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                 <SessionHeaderTerminalButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
                 {!shouldFoldHeaderIconActions && input.sessionExecutionRunsSupported ? (
                     <Pressable
-                        onPress={() => input.router.push(`/session/${input.sessionId}/runs` as any)}
+                        onPress={() => input.router.push(input.sessionRunsHref as any)}
                         hitSlop={15}
                         style={({ pressed }) => ({
                             width: 44,
@@ -248,7 +260,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                 ) : null}
                 {!shouldFoldHeaderIconActions && input.showAutomations ? (
                     <Pressable
-                        onPress={() => input.navigateWithBlurOnWeb(() => input.router.push(`/session/${input.sessionId}/automations` as any))}
+                        onPress={() => input.navigateWithBlurOnWeb(() => input.router.push(input.sessionAutomationsHref as any))}
                         hitSlop={15}
                         style={({ pressed }) => ({
                             width: 44,

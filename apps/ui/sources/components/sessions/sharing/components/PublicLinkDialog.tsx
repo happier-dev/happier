@@ -24,7 +24,7 @@ export interface PublicLinkDialogProps {
         expiresInDays?: number;
         maxUses?: number;
         isConsentRequired: boolean;
-    }) => Promise<void> | void;
+    }) => Promise<PublicSessionShare | void> | PublicSessionShare | void;
     onDelete: () => Promise<void> | void;
 }
 

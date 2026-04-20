@@ -1,7 +1,6 @@
 import type React from 'react';
 import type { SettingDefinitionMap } from '@happier-dev/protocol';
 
-import type { AgentId } from '@/agents/registry/registryCore';
 import type { TranslationKeyNoParams } from '@/text';
 
 export type TranslationRef = Readonly<{ key: TranslationKeyNoParams }>;
@@ -70,7 +69,7 @@ export type ProviderSubagentSettingsSectionDef = Readonly<{
 }>;
 
 export type ProviderSettingsDescriptor = Readonly<{
-    providerId: AgentId;
+    providerId: string;
     title: TranslatableText;
     icon: Readonly<{ ionName: string; color: ProviderSettingsIconColor }>;
     /**
@@ -90,21 +89,8 @@ export type ProviderSettingsDescriptor = Readonly<{
 }>;
 
 export type ProviderSettingsBehavior = Readonly<{
-    providerId: AgentId;
-    ExtraSectionsComponent?: React.ComponentType<Readonly<{ providerId: AgentId }>>;
-    /**
-     * Provider-specific outgoing message metadata enrichment.
-     *
-     * Must return a flat JSON-serializable object.
-     * This is merged into the existing `MessageMeta` in `sync.sendMessage`.
-     */
-    buildOutgoingMessageMetaExtras: (args: {
-        settings: Record<string, unknown>;
-        session: unknown;
-        agentId: AgentId;
-    }) => Record<string, unknown>;
+    providerId: string;
+    ExtraSectionsComponent?: React.ComponentType<Readonly<{ providerId: string }>>;
 }>;
-
-export type ProviderSettingsRuntime = ProviderSettingsBehavior;
 
 export type ProviderSettingsPlugin = ProviderSettingsDescriptor & ProviderSettingsBehavior;

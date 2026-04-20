@@ -35,12 +35,16 @@ export function useNewSessionConnectedServices(params: Readonly<{
     connectedServicesProfileLabelByKey: Record<string, string | undefined>;
     connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
   };
+  targetServerId: string | null;
   router: { push: (path: any) => void };
   setAgentOptionStateForCurrentAgent: (key: string, value: unknown) => void;
 }>): NewSessionConnectedServicesResult {
-  const { agentCore, agentOptionState, settings, router, setAgentOptionStateForCurrentAgent } = params;
+  const { agentCore, agentOptionState, settings, targetServerId, router, setAgentOptionStateForCurrentAgent } = params;
   const accountProfile = useProfile();
-  const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices');
+  const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices', {
+    scopeKind: 'spawn',
+    serverId: targetServerId,
+  });
 
   const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => {
     return resolveAgentSupportedConnectedServiceIds({

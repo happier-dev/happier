@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
@@ -12,11 +13,8 @@ export const OPENCODE_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.opencodeSubtitle',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: false },
-    connectedService: {
-        id: null,
-        name: 'OpenCode',
-        connectRoute: null,
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'opencode' }),
+    uiConnectedService: { serviceId: null, label: 'OpenCode', connectRoute: null },
     flavorAliases: ['opencode', 'open-code'],
     cli: buildCatalogProviderCliUiConfig('opencode'),
     permissions: {

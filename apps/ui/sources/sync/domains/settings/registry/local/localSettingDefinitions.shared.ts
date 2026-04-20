@@ -48,18 +48,56 @@ export const paneDetailsTabSchema = z.object({
     isPinned: z.boolean(),
 });
 
+const legacyPaneDetailsStateSchema = z.object({
+    isOpen: z.boolean(),
+    tabs: z.array(paneDetailsTabSchema),
+    activeTabKey: z.string().nullable(),
+    tabState: z.record(z.string(), z.unknown()),
+});
+
+const detailsWorkspaceNodeSchema: z.ZodType<unknown> = z.lazy(() => z.union([
+    z.object({
+        id: z.string(),
+        kind: z.literal('leaf'),
+        leafKind: z.literal('details-group'),
+        payload: z.object({
+            groupId: z.string(),
+        }),
+    }),
+    z.object({
+        id: z.string(),
+        kind: z.literal('split'),
+        axis: z.enum(['row', 'column']),
+        ratio: z.number(),
+        first: detailsWorkspaceNodeSchema,
+        second: detailsWorkspaceNodeSchema,
+    }),
+]));
+
+const detailsWorkspaceGroupSchema = z.object({
+    id: z.string(),
+    tabKeys: z.array(z.string()),
+    activeTabKey: z.string().nullable(),
+});
+
+export const paneDetailsWorkspaceStateSchema = z.object({
+    isOpen: z.boolean(),
+    tabState: z.record(z.string(), z.unknown()),
+    tabsByKey: z.record(z.string(), paneDetailsTabSchema),
+    groupsById: z.record(z.string(), detailsWorkspaceGroupSchema),
+    root: detailsWorkspaceNodeSchema.nullable(),
+    focusedGroupId: z.string().nullable(),
+    maximizedGroupId: z.string().nullable(),
+    nextGroupOrdinal: z.number().int().positive(),
+});
+
 export const paneScopeStateSchema = z.object({
     right: z.object({
         isOpen: z.boolean(),
         activeTabId: z.string().nullable(),
         tabState: z.record(z.string(), z.unknown()),
     }),
-    details: z.object({
-        isOpen: z.boolean(),
-        tabs: z.array(paneDetailsTabSchema),
-        activeTabKey: z.string().nullable(),
-        tabState: z.record(z.string(), z.unknown()),
-    }),
+    details: z.union([legacyPaneDetailsStateSchema, paneDetailsWorkspaceStateSchema]),
     bottom: z.object({
         isOpen: z.boolean(),
         activeTabId: z.string().nullable(),

@@ -1,5 +1,10 @@
 import { type V2SessionByIdResponse, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import {
+  createNotAuthenticatedError,
+  isAuthenticationResponseStatus,
+  isTerminalAuthError,
+} from '@/sync/runtime/connectivity/authErrors';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -97,7 +102,12 @@ async function fetchSessionCryptoContext(params: Readonly<{
       },
       timeoutMs: params.timeoutMs,
     });
-    if (!response.ok) return { encryptionMode: 'unknown', sessionDataKey: null };
+    if (!response.ok) {
+      if (isAuthenticationResponseStatus(response.status)) {
+        throw createNotAuthenticatedError(response.status);
+      }
+      return { encryptionMode: 'unknown', sessionDataKey: null };
+    }
 
     const body = (await response.json()) as unknown;
     const parsed = V2SessionByIdResponseSchema.safeParse(body);
@@ -116,7 +126,10 @@ async function fetchSessionCryptoContext(params: Readonly<{
     const sessionDataKey = await params.decryptEncryptionKey(dek);
     if (!sessionDataKey) return { encryptionMode: 'unknown', sessionDataKey: null };
     return { encryptionMode: 'e2ee', sessionDataKey };
-  } catch {
+  } catch (error) {
+    if (isTerminalAuthError(error)) {
+      throw error;
+    }
     return { encryptionMode: 'unknown', sessionDataKey: null };
   } finally {
     if (timeoutId) clearTimeout(timeoutId);

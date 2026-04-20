@@ -1,6 +1,14 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import { ChangesResponseSchema, CursorGoneErrorSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
+import { createNotAuthenticatedError, isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
+
+function readAuthStatus(status: number): 401 | 403 | null {
+    if (status === 401 || status === 403) {
+        return status;
+    }
+    return null;
+}
 
 export async function fetchChanges(params: {
     credentials: AuthCredentials;
@@ -31,7 +39,10 @@ export async function fetchChanges(params: {
             },
             { includeAuth: false },
         );
-    } catch {
+    } catch (error) {
+        if (isTerminalAuthError(error)) {
+            throw error;
+        }
         return { status: 'error' };
     }
 
@@ -49,6 +60,10 @@ export async function fetchChanges(params: {
     }
 
     if (!response.ok) {
+        const authStatus = readAuthStatus(response.status);
+        if (authStatus) {
+            throw createNotAuthenticatedError(authStatus);
+        }
         return { status: 'error' };
     }
 

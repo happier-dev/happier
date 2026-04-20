@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { installSessionHooksCommonModuleMocks } from '@/hooks/session/sessionHooksTestHelpers';
 
 const createDefaultActionExecutorSpy = vi.fn((..._args: unknown[]) => ({
     execute: vi.fn(),
 }));
+const useResumeCapabilityOptionsSpy = vi.fn((..._args: unknown[]) => ({ resumeCapabilityOptions: [] }));
 const useMachineCapabilitiesCacheSpy = vi.fn((..._args: unknown[]) => ({ state: { status: 'idle' } }));
 const launchabilityState = vi.hoisted(() => {
     let sessionServerId = 'server-launcher';
@@ -36,7 +38,7 @@ const launchabilityState = vi.hoisted(() => {
 });
 const resolveSessionTargetServerIdSpy = vi.fn((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
 const routerPushSpy = vi.fn();
-const mockSession = {
+let mockSession = {
     id: 'session-launcher',
     active: false,
     metadata: {
@@ -68,7 +70,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
-    useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: [] }),
+    useResumeCapabilityOptions: (...args: unknown[]) => useResumeCapabilityOptionsSpy(...args),
 }));
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
@@ -112,7 +114,7 @@ vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     useSession: () => mockSession,
     useSettings: () => ({
         executionRunsGuidanceEnabled: false,
@@ -120,7 +122,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
         executionRunsGuidanceEntries: [],
         acpCatalogSettingsV1: { v: 2, backends: [] },
     }),
-}));
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/ops/actions/defaultActionExecutor')>();
@@ -192,8 +196,17 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => {
 describe('SessionExecutionRunLauncherView', () => {
     beforeEach(() => {
         createDefaultActionExecutorSpy.mockClear();
+        useResumeCapabilityOptionsSpy.mockClear();
         useMachineCapabilitiesCacheSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockClear();
+        mockSession = {
+            id: 'session-launcher',
+            active: false,
+            metadata: {
+                flavor: 'claude',
+                machineId: 'machine-launcher',
+            },
+        };
         launchabilityState.sessionServerId = 'server-launcher';
     });
 
@@ -247,6 +260,31 @@ describe('SessionExecutionRunLauncherView', () => {
         };
         expect(executorConfig.resolveServerIdForSessionId('session-launcher')).toBe('server-reactive');
         await screen.unmount();
+    });
+
+    it('does not synthesize a built-in default backend target when the session helper yields no backend default', async () => {
+        mockSession = {
+            id: 'session-launcher',
+            active: false,
+            metadata: {
+                flavor: 'not-a-real-agent',
+                machineId: 'machine-launcher',
+            },
+        };
+        const { SessionExecutionRunLauncherView } = await import('./SessionExecutionRunLauncherView');
+        await renderScreen(React.createElement(SessionExecutionRunLauncherView, {
+            sessionId: 'session-launcher',
+            presentation: 'panel',
+            initialIntent: 'delegate',
+        }));
+
+        expect(useResumeCapabilityOptionsSpy).toHaveBeenCalled();
+        const hookArgs = useResumeCapabilityOptionsSpy.mock.calls.at(-1)?.[0] as {
+            agentId?: unknown;
+        };
+        expect(hookArgs).toMatchObject({
+            agentId: null,
+        });
     });
 
 });

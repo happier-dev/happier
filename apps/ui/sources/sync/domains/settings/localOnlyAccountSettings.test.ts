@@ -8,7 +8,7 @@ describe('localOnlyAccountSettings', () => {
     it('strips UI-local lastUsedAgent from server-synced settings', () => {
         const stripped = stripLocalOnlyAccountSettings({
             lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             analyticsOptOut: true,
         } as any);
 
@@ -18,12 +18,12 @@ describe('localOnlyAccountSettings', () => {
     it('picks UI-local lastUsedAgent for merge overlays', () => {
         const settings = settingsParse({
             lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
         });
         const picked = pickLocalOnlyAccountSettings(settings);
         expect(picked).toMatchObject({
             lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
         });
     });
 

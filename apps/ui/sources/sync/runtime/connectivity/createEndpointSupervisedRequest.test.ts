@@ -95,11 +95,13 @@ describe('createEndpointSupervisedRequest', () => {
         });
 
         const reportFailure = vi.fn();
+        const reportProbeResult = vi.fn();
         const supervisor: ManagedEndpointSupervisor = {
             start: vi.fn(async () => {}),
             stop: vi.fn(async () => {}),
             invalidate: vi.fn(),
             reportFailure,
+            reportProbeResult,
             waitUntilOnline: vi.fn(async () => {}),
             getState: () => onlineState(),
             subscribe: () => () => {},
@@ -125,6 +127,69 @@ describe('createEndpointSupervisedRequest', () => {
         expect(message).not.toContain('hdr.eyJ');
     });
 
+    it('reports authenticated 401 responses directly to the endpoint supervisor', async () => {
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        runtimeFetchMock.mockResolvedValue(new Response('{}', { status: 401, headers: new Headers() }));
+
+        const supervisor: ManagedEndpointSupervisor = {
+            start: vi.fn(async () => {}),
+            stop: vi.fn(async () => {}),
+            invalidate: vi.fn(),
+            reportFailure: vi.fn(),
+            reportProbeResult: vi.fn(),
+            waitUntilOnline: vi.fn(async () => {}),
+            getState: () => onlineState(),
+            subscribe: () => () => {},
+        };
+
+        const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
+        const request = createEndpointSupervisedRequest({
+            serverId: 'server-a',
+            serverUrl: 'https://a.example.test',
+            token: 'token-1',
+            endpointSupervisor: supervisor,
+        });
+
+        const response = await request('/v1/sessions', { method: 'GET', headers: {} });
+
+        expect(response.status).toBe(401);
+        expect(supervisor.reportProbeResult).toHaveBeenCalledWith({
+            status: 'auth_failed',
+            statusCode: 401,
+            errorMessage: 'HTTP 401',
+        }, undefined);
+        expect(supervisor.invalidate).not.toHaveBeenCalled();
+    });
+
+    it('does not report unauthenticated 401 responses as endpoint auth failures', async () => {
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        runtimeFetchMock.mockResolvedValue(new Response('{}', { status: 401, headers: new Headers() }));
+
+        const supervisor: ManagedEndpointSupervisor = {
+            start: vi.fn(async () => {}),
+            stop: vi.fn(async () => {}),
+            invalidate: vi.fn(),
+            reportFailure: vi.fn(),
+            reportProbeResult: vi.fn(),
+            waitUntilOnline: vi.fn(async () => {}),
+            getState: () => onlineState(),
+            subscribe: () => () => {},
+        };
+
+        const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
+        const request = createEndpointSupervisedRequest({
+            serverId: 'server-a',
+            serverUrl: 'https://a.example.test',
+            endpointSupervisor: supervisor,
+        });
+
+        const response = await request('/v1/sessions', { method: 'GET', headers: {} });
+
+        expect(response.status).toBe(401);
+        expect(supervisor.reportProbeResult).not.toHaveBeenCalled();
+        expect(supervisor.invalidate).not.toHaveBeenCalled();
+    });
+
     it('refuses authenticated requests when serverUrl is not a valid absolute http(s) URL', async () => {
         runtimeFetchMock.mockResolvedValue(okResponse());
 
@@ -133,6 +198,7 @@ describe('createEndpointSupervisedRequest', () => {
             stop: vi.fn(async () => {}),
             invalidate: vi.fn(),
             reportFailure: vi.fn(),
+            reportProbeResult: vi.fn(),
             waitUntilOnline: vi.fn(async () => {}),
             getState: () => onlineState(),
             subscribe: () => () => {},
@@ -160,6 +226,7 @@ describe('createEndpointSupervisedRequest', () => {
             stop: vi.fn(async () => {}),
             invalidate: vi.fn(),
             reportFailure: vi.fn(),
+            reportProbeResult: vi.fn(),
             waitUntilOnline: vi.fn(async () => {}),
             getState: () => onlineState(),
             subscribe: () => () => {},

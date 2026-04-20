@@ -11,6 +11,7 @@ type ConnectedServicesParams = Parameters<typeof useNewSessionConnectedServices>
 
 export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     agentType: AgentId;
+    targetServerId: string | null;
     selectedBackendTargetKey: string;
     setBackendNewSessionOptionStateByTargetKey: React.Dispatch<React.SetStateAction<BackendNewSessionOptionStateByTargetKey>>;
     agentOptionState: Record<string, unknown> | null;
@@ -35,6 +36,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
         agentCore,
         agentOptionState: params.agentOptionState,
         settings: params.settings,
+        targetServerId: params.targetServerId,
         router: params.router,
         setAgentOptionStateForCurrentAgent,
     });

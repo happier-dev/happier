@@ -107,10 +107,15 @@ describe('SessionDetailsPanel (commit resource)', () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
         const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        const root = screen.findByTestId('session-details-panel-root');
-        if (!root) {
+        const workspaceRoot = screen.findByTestId('session-details-panel-root');
+        if (!workspaceRoot) {
             throw new Error('Expected the session details panel root to be rendered.');
         }
+        const root = workspaceRoot.find((node) => (
+            node !== workspaceRoot
+            && typeof node.props?.onWheel === 'function'
+            && typeof node.props?.onTouchMove === 'function'
+        ));
         const rootStyle = Array.isArray(root.props.style)
             ? Object.assign({}, ...root.props.style.filter(Boolean))
             : root.props.style;

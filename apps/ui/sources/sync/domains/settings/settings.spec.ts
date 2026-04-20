@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { buildBackendTargetKey, DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
 import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
+import { buildProviderUniverseBackendTargetKey } from '@/agents/providers/registry/providerUniverse';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { settingsParse, applySettings, settingsDefaults, type Settings } from './settings';
 import { AIBackendProfileSchema } from '../profiles/profileCompatibility';
 import type { AIBackendProfile } from '../profiles/profileCompatibility';
 import type { SavedSecret } from './savedSecretTypes';
 import { getBuiltInProfile } from '../profiles/profileUtils';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from './voiceSettings';
 
 describe('settings', () => {
     const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
@@ -349,9 +352,9 @@ describe('settings', () => {
 
         it('defaults per-agent new-session permission modes', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]).toBe('default');
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]).toBe('default');
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]).toBe('default');
         });
 
         it('defaults source-control commit strategy to atomic', () => {
@@ -476,9 +479,9 @@ describe('settings', () => {
             expect((parsed as any).sessionReplaySummaryRunnerV1).toBe(null);
         });
 
-        it('defaults voice settings', () => {
-            const parsed = settingsParse({} as any);
-            expect((parsed as any).voice.providerId).toBe('realtime_elevenlabs');
+	        it('defaults voice settings', () => {
+	            const parsed = settingsParse({} as any);
+	            expect((parsed as any).voice.providerId).toBe('realtime_elevenlabs');
 
             expect((parsed as any).voice.privacy.shareSessionSummary).toBe(true);
             expect((parsed as any).voice.privacy.shareRecentMessages).toBe(true);
@@ -488,14 +491,14 @@ describe('settings', () => {
             expect((parsed as any).voice.privacy.shareFilePaths).toBe(false);
             expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
 
-            expect((parsed as any).voice.adapters.local_conversation.conversationMode).toBe('direct_session');
-            expect((parsed as any).voice.adapters.local_conversation.agent.backend).toBe('daemon');
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.enabled).toBe(false);
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(5000);
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(1000);
-            expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
-            expect((parsed as any).voice.adapters.local_conversation.agent.permissionPolicy).toBe('read_only');
-            expect((parsed as any).voice.adapters.local_conversation.agent.idleTtlSeconds).toBe(1800);
+	            expect((parsed as any).voice.adapters.local_conversation.conversationMode).toBe('direct_session');
+	            expect((parsed as any).voice.adapters.local_conversation.agent.backend).toBe('daemon');
+	            expect((parsed as any).voice.adapters.local_conversation.handsFree.enabled).toBe(false);
+	            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
+	            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
+	            expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
+	            expect((parsed as any).voice.adapters.local_conversation.agent.permissionPolicy).toBe('read_only');
+	            expect((parsed as any).voice.adapters.local_conversation.agent.idleTtlSeconds).toBe(1800);
             expect((parsed as any).voice.adapters.local_conversation.agent.chatModelSource).toBe('custom');
             expect((parsed as any).voice.adapters.local_conversation.agent.chatModelId).toBe('default');
             expect((parsed as any).voice.adapters.local_conversation.agent.commitModelSource).toBe('chat');
@@ -616,19 +619,21 @@ describe('settings', () => {
         });
 
         it('parses new-session persistence defaults', () => {
+            const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+            const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
             const parsed = settingsParse({
                 newSessionDefaultPersistenceModeV1: 'direct',
                 newSessionDefaultPersistenceModeByTargetKeyV1: {
-                    [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'direct',
-                    [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'persisted',
+                    [codexTargetKey]: 'direct',
+                    [claudeTargetKey]: 'persisted',
                     invalid: 'nope',
                 },
             } as any);
 
             expect((parsed as any).newSessionDefaultPersistenceModeV1).toBe('direct');
             expect((parsed as any).newSessionDefaultPersistenceModeByTargetKeyV1).toEqual({
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'direct',
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'persisted',
+                [codexTargetKey]: 'direct',
+                [claudeTargetKey]: 'persisted',
             });
         });
 
@@ -639,9 +644,9 @@ describe('settings', () => {
             } as any);
             // Legacy mapping: "plan" is now a session behavior mode; treat it as read-only at the
             // permission layer when seeding per-agent defaults.
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]).toBe('read-only');
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]).toBe('read-only');
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]).toBe('read-only');
         });
 
         it('should keep valid secrets when one secret entry is invalid', () => {
@@ -678,7 +683,7 @@ describe('settings', () => {
                         id: 'rule-1',
                         description: 'Prefer Claude for UI work',
                         enabled: true,
-                        suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                        suggestedBackendTarget: { kind: 'backend', backendId: 'claude' },
                         suggestedModelId: 'claude-sonnet-4-5',
                         suggestedIntent: 'delegate',
                     },
@@ -686,7 +691,7 @@ describe('settings', () => {
                         id: 'rule-2',
                         description: 'Invalid backend id should be dropped',
                         enabled: true,
-                        suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'not-a-real-agent' },
+                        suggestedBackendTarget: { kind: 'backend', backendId: 'not-a-real-agent' },
                     },
                 ],
             } as any);
@@ -696,7 +701,7 @@ describe('settings', () => {
                 expect.objectContaining({
                     id: 'rule-1',
                     description: 'Prefer Claude for UI work',
-                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'claude' },
                     suggestedModelId: 'claude-sonnet-4-5',
                     suggestedIntent: 'delegate',
                 }),
@@ -869,22 +874,22 @@ describe('settings', () => {
             expect(settingsDefaults.schemaVersion).toBe(6);
             expect(settingsDefaults.experiments).toBe(false);
             expect(settingsDefaults.backendEnabledByTargetKey).toMatchObject({
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'opencode' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'auggie' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'qwen' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'kimi' })]: true,
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'kilo' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'opencode' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'auggie' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'qwen' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kimi' })]: true,
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kilo' })]: true,
             });
             expect((settingsDefaults as any).backendCliSourcePreferenceByTargetKey).toEqual({});
             expect(settingsDefaults.codexBackendMode).toBe('appServer');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
             expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'default',
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'default',
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: 'default',
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'default',
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'default',
+                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: 'default',
             });
             expect(settingsDefaults.toolViewDetailLevelDefault).toBe('default');
             expect(settingsDefaults.toolViewDetailLevelDefaultLocalControl).toBe('title');
@@ -1005,8 +1010,8 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).backendCliSourcePreferenceByTargetKey).toEqual({
-                'agent:codex': 'managed-first',
-                'agent:gemini': 'system-first',
+                'backend:codex': 'managed-first',
+                'backend:gemini': 'system-first',
             });
         });
 

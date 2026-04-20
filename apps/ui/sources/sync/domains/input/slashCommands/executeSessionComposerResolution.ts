@@ -1,4 +1,12 @@
-import { buildBackendTargetKey, type ActionExecuteResult, type ActionExecutorContext, type ActionId, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import {
+  buildBackendTargetKey,
+  convertBackendTargetRefV2ToV1,
+  readBackendTargetRefV2,
+  type ActionExecuteResult,
+  type ActionExecutorContext,
+  type ActionId,
+  type BackendTargetRefV2Input,
+} from '@happier-dev/protocol';
 
 import type { SessionComposerSendResolution } from './resolveSessionComposerSend';
 import { storage } from '@/sync/domains/state/storage';
@@ -14,7 +22,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
   resolved: SessionComposerSendResolution;
   sessionId: string;
   agentId: string;
-  backendTarget?: BackendTargetRefV1 | null;
+  backendTarget?: BackendTargetRefV2Input | null;
   permissionMode: string | null;
   actionExecutor: SessionComposerActionExecutor;
   previousMessage?: string | null;
@@ -124,7 +132,11 @@ export async function executeSessionComposerResolution(args: Readonly<{
       actionId,
       {
         sessionId: args.sessionId,
-        backendTargetKeys: [buildBackendTargetKey(args.backendTarget ?? { kind: 'builtInAgent', agentId: args.agentId as any })],
+        backendTargetKeys: [buildBackendTargetKey(
+          convertBackendTargetRefV2ToV1(
+            readBackendTargetRefV2(args.backendTarget ?? { kind: 'backend', backendId: args.agentId }),
+          ),
+        )],
         instructions,
         permissionMode,
       },

@@ -19,7 +19,7 @@ import { useHasUnreadMessages, useSessionListMeaningfulActivityAt, useSessionLis
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { getSessionAvatarId, getSessionName, getSessionSubtitle, useSessionStatus } from '@/utils/sessions/sessionUtils';
+import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { PinIcon, PinSlashIcon } from './sessionPinIcons';
 import { TagIcon } from './sessionTagIcons';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -34,6 +34,11 @@ import {
 import { clearSessionVisibleWhenInactive, stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
 import { resolveSessionItemTagCollections } from './sessionTagUtils';
+import { useSessionSplitCanvasRowActionsForScope } from '@/components/sessions/canvas/useSessionSplitCanvasRowActions';
+import { SessionSplitCanvasDragHandle } from '@/components/sessions/canvas/SessionSplitCanvasDragHandle';
+import { useSessionListRenderableStatus } from './row/useSessionListRenderableStatus';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { resolveSessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -439,18 +444,28 @@ export const SessionItem = React.memo(
         const sessionId = String(session?.id ?? '').trim();
         const sessionFromStore = useSessionListRenderableWithServerScope(serverId ?? null, sessionId);
         const resolvedSession = sessionFromStore ?? session;
-        const sessionStatus = useSessionStatus(resolvedSession);
+        const sessionStatus = useSessionListRenderableStatus(resolvedSession);
         const sessionNameResolved = getSessionName(resolvedSession);
         const sessionSubtitle = subtitleOverride ?? getSessionSubtitle(resolvedSession);
         const navigateToSession = useNavigateToSession();
+        const splitCanvasScope = React.useMemo(() => {
+            return resolveSessionSplitCanvasScope(resolveWorkspaceTargetForSession(sessionId), {
+                routeServerId: serverId ?? null,
+            });
+        }, [serverId, sessionId]);
+        const splitCanvasRowActions = useSessionSplitCanvasRowActionsForScope({
+            sessionId: resolvedSession.id,
+            scope: splitCanvasScope,
+        });
         const swipeableRef = React.useRef<Swipeable | null>(null);
         const sessionOwnerId = typeof resolvedSession.owner === 'string' ? resolvedSession.owner : null;
         const isOwnedByCurrentUser = !sessionOwnerId || Boolean(currentUserId && sessionOwnerId === currentUserId);
         const hasAdminAccess = isOwnedByCurrentUser || resolvedSession.accessLevel === 'admin';
         const isActiveSession = resolvedSession.active === true;
+        const isArchivedSession = resolvedSession.archivedAt != null;
         const isMinimal = Boolean(compact && compactMinimal);
         const canStopSession = isOwnedByCurrentUser;
-        const canArchiveSession = hasAdminAccess && !isActiveSession;
+        const canArchiveSession = hasAdminAccess && !isArchivedSession;
         const canRenameSession = hasAdminAccess;
         const hideInactiveSessions = useSetting('hideInactiveSessions');
         const [isRowHovered, setIsRowHovered] = React.useState(false);
@@ -465,6 +480,7 @@ export const SessionItem = React.memo(
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
         const showTagAction = supportsTag && showRowActions;
+        const showSplitCanvasDragHandle = splitCanvasRowActions.mode === 'open' && showRowActions;
         const { activeTags, knownTags } = React.useMemo(() => resolveSessionItemTagCollections({
             tags,
             allKnownTags,
@@ -527,12 +543,26 @@ export const SessionItem = React.memo(
             onSetTags([...activeTags, newTag]);
         }, [onSetTags, activeTags]);
 
-        const [mutatingSession, performMutation] = useHappyAction(async () => {
+        const [stoppingSession, performStopMutation] = useHappyAction(async () => {
+            await stopSessionAndMaybeArchive({
+                sessionId: resolvedSession.id,
+                hideInactiveSessions: Boolean(hideInactiveSessions),
+                isPinned: Boolean(pinned),
+                archiveAfterStop: 'never',
+                stopSession: async () => await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
+                archiveSession: async () => await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
+                stopErrorMessage: t('sessionInfo.failedToStopSession'),
+                archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
+            });
+        });
+
+        const [archivingSession, performArchiveMutation] = useHappyAction(async () => {
             if (isActiveSession) {
                 await stopSessionAndMaybeArchive({
                     sessionId: resolvedSession.id,
                     hideInactiveSessions: Boolean(hideInactiveSessions),
                     isPinned: Boolean(pinned),
+                    archiveAfterStop: 'always',
                     stopSession: async () => await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
                     archiveSession: async () => await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
                     stopErrorMessage: t('sessionInfo.failedToStopSession'),
@@ -547,6 +577,7 @@ export const SessionItem = React.memo(
             }
             clearSessionVisibleWhenInactive(resolvedSession.id);
         });
+        const mutatingSession = stoppingSession || archivingSession;
 
         const handleSwipeAction = React.useCallback(() => {
             swipeableRef.current?.close();
@@ -556,7 +587,7 @@ export const SessionItem = React.memo(
                     {
                         text: t('sessionInfo.stopSession'),
                         style: 'destructive',
-                        onPress: performMutation,
+                        onPress: performStopMutation,
                     },
                 ]);
                 return;
@@ -566,10 +597,10 @@ export const SessionItem = React.memo(
                 {
                     text: t('sessionInfo.archiveSession'),
                     style: 'destructive',
-                    onPress: performMutation,
+                    onPress: performArchiveMutation,
                 },
             ]);
-        }, [isActiveSession, performMutation]);
+        }, [isActiveSession, performArchiveMutation, performStopMutation]);
 
         const handleRenameSession = React.useCallback(async () => {
             const newName = await Modal.prompt(
@@ -592,6 +623,24 @@ export const SessionItem = React.memo(
 
         const moreMenuItems = React.useMemo((): DropdownMenuItem[] => {
             const items: DropdownMenuItem[] = [];
+            if (splitCanvasRowActions.mode === 'open') {
+                items.push({
+                    id: 'openInSplitRight',
+                    title: t('sessionInfo.openInSplitRight'),
+                    icon: <Ionicons name="arrow-forward-outline" size={16} color={rowActionIconColor} />,
+                });
+                items.push({
+                    id: 'openInSplitDown',
+                    title: t('sessionInfo.openInSplitDown'),
+                    icon: <Ionicons name="arrow-down-outline" size={16} color={rowActionIconColor} />,
+                });
+            } else if (splitCanvasRowActions.mode === 'reveal') {
+                items.push({
+                    id: 'revealInCurrentSplit',
+                    title: t('sessionInfo.revealInCurrentSplit'),
+                    icon: <Ionicons name="locate-outline" size={16} color={rowActionIconColor} />,
+                });
+            }
             if (canRenameSession) {
                 items.push({
                     id: 'rename',
@@ -614,27 +663,36 @@ export const SessionItem = React.memo(
                 });
             }
             return items;
-        }, [canArchiveSession, canRenameSession, canStopSession, isActiveSession, rowActionIconColor]);
+        }, [canArchiveSession, canRenameSession, canStopSession, isActiveSession, rowActionIconColor, splitCanvasRowActions.mode]);
 
         const handleMoreMenuSelect = React.useCallback((itemId: string) => {
             switch (itemId) {
+                case 'openInSplitRight':
+                    splitCanvasRowActions.openInSplitRight();
+                    break;
+                case 'openInSplitDown':
+                    splitCanvasRowActions.openInSplitDown();
+                    break;
+                case 'revealInCurrentSplit':
+                    splitCanvasRowActions.revealInSplit();
+                    break;
                 case 'rename':
                     handleRenameSession();
                     break;
                 case 'stop':
                     Modal.alert(t('sessionInfo.stopSession'), t('sessionInfo.stopSessionConfirm'), [
                         { text: t('common.cancel'), style: 'cancel' },
-                        { text: t('sessionInfo.stopSession'), style: 'destructive', onPress: performMutation },
+                        { text: t('sessionInfo.stopSession'), style: 'destructive', onPress: performStopMutation },
                     ]);
                     break;
                 case 'archive':
                     Modal.alert(t('sessionInfo.archiveSession'), t('sessionInfo.archiveSessionConfirm'), [
                         { text: t('common.cancel'), style: 'cancel' },
-                        { text: t('sessionInfo.archiveSession'), style: 'destructive', onPress: performMutation },
+                        { text: t('sessionInfo.archiveSession'), style: 'destructive', onPress: performArchiveMutation },
                     ]);
                     break;
             }
-        }, [handleRenameSession, performMutation]);
+        }, [handleRenameSession, performArchiveMutation, performStopMutation, splitCanvasRowActions]);
 
         const contextMenuItems = React.useMemo((): DropdownMenuItem[] => {
             if (!isNativeMobile) return [];
@@ -955,6 +1013,14 @@ export const SessionItem = React.memo(
                 >
                     {showRowActions ? (
                         <View style={styles.rowActionsRow}>
+                            {showSplitCanvasDragHandle ? (
+                                <SessionSplitCanvasDragHandle
+                                    sessionId={resolvedSession.id}
+                                    onOpenInSplitRight={splitCanvasRowActions.openInSplitRight}
+                                    testID={`session-item-split-drag-handle-${resolvedSession.id}`}
+                                    style={styles.rowActionButton}
+                                />
+                            ) : null}
                             {showReorderHandle && reorderHandleGesture ? (
                                 <GestureDetector gesture={reorderHandleGesture}>
                                     <View testID="session-item-reorder-handle" style={styles.rowActionButton}>

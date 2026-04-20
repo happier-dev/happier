@@ -37,7 +37,7 @@ import {
     saveSessionActionDrafts,
     saveSessionReviewCommentsDrafts,
     saveWorkspaceReviewCommentsDrafts,
-} from '../../domains/state/persistence';
+} from '../../domains/state/sessionPersistence';
 import {
     resolveWarmCacheAccountScope,
     peekSessionListWarmCacheEntries,
@@ -76,7 +76,7 @@ import {
     setSessionRepositoryTreeExpandedPathsForState,
     setWorkspaceRepositoryTreeExpandedPathsForState,
 } from './sessions.repositoryTreeExpansion';
-import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 
 type SessionModelMode = NonNullable<Session['modelMode']>;
@@ -329,6 +329,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]> = {};
     let workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]> = {};
     let actionDraftsBySessionId: Record<string, SessionActionDraft[]> = loadSessionActionDrafts();
+    const resolveWorkspaceTargetForSessionInStore = (sessionId: string) =>
+        resolveWorkspaceTargetForSessionFromState(get(), sessionId);
 
     return {
         sessions: {},
@@ -349,14 +351,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return Object.values(state.sessions).filter(s => s.active);
         },
         getSessionRepositoryTreeExpandedPaths: (sessionId: string) => {
-            return getSessionRepositoryTreeExpandedPathsForState(get(), sessionId, resolveWorkspaceTargetForSession);
+            return getSessionRepositoryTreeExpandedPathsForState(get(), sessionId, resolveWorkspaceTargetForSessionInStore);
         },
         setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => set((state) => {
             const nextExpansionState = setSessionRepositoryTreeExpandedPathsForState(
                 state,
                 sessionId,
                 paths,
-                resolveWorkspaceTargetForSession,
+                resolveWorkspaceTargetForSessionInStore,
             );
             sessionRepositoryTreeExpandedPathsBySessionId =
                 nextExpansionState.sessionRepositoryTreeExpandedPathsBySessionId;
@@ -376,7 +378,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const nextExpansionState = clearSessionRepositoryTreeExpandedPathsForState(
                 currentExpansionState,
                 sessionId,
-                resolveWorkspaceTargetForSession,
+                resolveWorkspaceTargetForSessionInStore,
             );
             if (nextExpansionState === currentExpansionState) return state;
             sessionRepositoryTreeExpandedPathsBySessionId =

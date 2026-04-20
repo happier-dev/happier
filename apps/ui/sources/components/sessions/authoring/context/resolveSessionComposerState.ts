@@ -1,10 +1,10 @@
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { SessionAuthoringSnapshot } from '@/sync/domains/sessionAuthoring/sessionAuthoringSnapshot';
 
 export type SessionComposerState = Readonly<{
-    agentId: AgentId;
+    agentId: AgentId | null;
     machineName: string | null;
     permissionMode: PermissionMode;
     modelMode: ModelMode;
@@ -23,7 +23,7 @@ export function resolveSessionComposerState(params: Readonly<{
 }>): SessionComposerState {
     const agentId = isAgentId(params.snapshot.agentId)
         ? params.snapshot.agentId
-        : (params.fallbackAgentId ?? DEFAULT_AGENT_ID);
+        : (params.fallbackAgentId ?? null);
     const machineNameCandidate = params.session.metadata?.displayName
         || params.session.metadata?.host
         || params.session.metadata?.machineId
@@ -35,7 +35,7 @@ export function resolveSessionComposerState(params: Readonly<{
         permissionMode: params.permissionModeOverride
             ?? (params.snapshot.permissionMode ?? 'default') as PermissionMode,
         modelMode: params.modelModeOverride
-            ?? (params.snapshot.modelId ?? getAgentCore(agentId).model.defaultMode) as ModelMode,
+            ?? (params.snapshot.modelId ?? (agentId ? getAgentCore(agentId).model.defaultMode : 'default')) as ModelMode,
         profileId: params.profileIdOverride ?? params.snapshot.profileId ?? null,
         currentPath: params.currentPathOverride ?? params.snapshot.directory,
     };

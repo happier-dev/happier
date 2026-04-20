@@ -396,10 +396,10 @@ vi.mock('@/components/sessions/agentInput', () => ({
 vi.mock('@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog', () => ({
   showDirectSessionTakeoverDialog: showDirectSessionTakeoverDialogSpy,
 }));
-vi.mock('@/voice/sessionBinding/sendVoiceSessionComposerText', () => ({
+vi.mock('@/voice/binding/sendVoiceSessionComposerText', () => ({
   sendVoiceSessionComposerText: (params: any) => sendVoiceSessionComposerTextSpy(params),
 }));
-vi.mock('@/voice/sessionBinding/voiceSessionComposerRouting', () => ({
+vi.mock('@/voice/binding/voiceSessionComposerRouting', () => ({
   resolveVoiceSessionComposerRouting: (params: any) => resolveVoiceSessionComposerRoutingSpy(params),
 }));
 vi.mock('@/components/sessions/agentInput/routing/useSessionRecipientState', () => ({
@@ -606,7 +606,7 @@ describe('SessionView (direct sessions)', () => {
     }, { serverId: 'server-canonical' });
   });
 
-  it('builds the default action executor from the canonical session target helper', async () => {
+  it('builds the default action executor from the local session target helper', async () => {
     await renderSessionView();
 
     expect(createDefaultActionExecutorMock).toHaveBeenCalledWith(
@@ -615,8 +615,7 @@ describe('SessionView (direct sessions)', () => {
       }),
     );
     const resolveServerIdForSessionId = createDefaultActionExecutorMock.mock.calls[0]?.[0]?.resolveServerIdForSessionId;
-    expect(resolveServerIdForSessionId?.('s1')).toBe('server-canonical');
-    expect(resolvePreferredServerIdForSessionIdSpy).toHaveBeenCalledWith('s1');
+    expect(resolveServerIdForSessionId?.('s1')).toBeNull();
   });
 
   it('passes pending user action requests to AgentInput', async () => {
@@ -719,6 +718,29 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
+  it('projects the direct-session provider id into the agent input when no canonical agent signal exists', async () => {
+    const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
+    session.metadata = {
+      machineId: 'machine-1',
+      host: 'happy-host',
+      version: '0.0.0',
+      path: '/tmp',
+      homeDir: '/tmp',
+      directSessionV1: {
+        v: 1,
+        providerId: 'codex',
+        machineId: 'machine-1',
+        remoteSessionId: 'vendor-session-1',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    const agentInput = findAgentInput(screen);
+    expect(agentInput.props.agentType).toBe('codex');
+  });
+
   it('surfaces configured ACP backend titles on the live session agent chip', async () => {
     settingsState.current = {
       acpCatalogSettingsV1: {
@@ -770,7 +792,9 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
 
     const agentInput = findAgentInput(screen);
-    expect(agentInput.props.agentType).toBe('customAcp');
+    // Configured ACP backends are represented as backend targets; the UI keeps the built-in
+    // agent placeholder while surfacing the configured backend title on the chip.
+    expect(agentInput.props.agentType).toBe('claude');
     expect(agentInput.props.agentLabel).toBe('Review Bot');
     expect(resolveSessionViewRuntimeDisplayStateSpy).toHaveBeenCalledWith(expect.objectContaining({
       providerName: 'Review Bot',

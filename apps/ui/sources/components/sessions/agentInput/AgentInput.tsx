@@ -719,7 +719,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         permissionLocationVersion,
     ]);
 
-    const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
+    const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? DEFAULT_AGENT_ID;
     const lastNonEmptySessionModelOptionsRef = React.useRef<readonly ModelOption[] | null>(null);
     React.useEffect(() => {
         lastNonEmptySessionModelOptionsRef.current = null;
@@ -1263,11 +1263,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
+    const effectiveAgentLabel = React.useMemo(() => {
+        if (typeof props.agentLabel === 'string' && props.agentLabel.length > 0) {
+            return props.agentLabel;
+        }
+        return props.agentType ? t(getAgentCore(props.agentType).displayNameKey) : '';
+    }, [props.agentLabel, props.agentType]);
+
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if (!hasInternalAgentPickerOptions || !props.agentType) return [];
         return [{
             id: `engine:${props.agentType}`,
-            label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+            label: effectiveAgentLabel,
             icon: (
                 <AgentIcon
                     agentId={props.agentType}
@@ -1278,8 +1285,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             renderDetailContent: () => renderResolvedEngineDetail('carded'),
         }];
     }, [
+        effectiveAgentLabel,
         hasInternalAgentPickerOptions,
-        props.agentLabel,
         props.agentType,
         renderResolvedEngineDetail,
     ]);
@@ -1389,8 +1396,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         handlePathPress,
         handleResumePress,
     } = useAgentInputCoreControlHandlers({
-        agentType: props.agentType,
-        agentLabel: props.agentLabel,
+        agentLabel: effectiveAgentLabel,
         hasAgentPickerOptions,
         onAgentClick: props.onAgentClick,
         onPermissionModeChange: props.onPermissionModeChange,
@@ -1521,7 +1527,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         profileLabel,
         profileIcon,
         envVarsCount: props.envVarsCount,
-        agentType: props.agentType,
+        agentLabel: resolvedAgentLabel,
         machineName: props.machineName,
         currentPath: props.currentPath,
         resumeSessionId: props.resumeSessionId,
@@ -2020,10 +2026,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     resumeChipAnchorRef={resumeChipAnchorRef}
                                                     onResumeClick={handleResumePress}
                                                     resumeLabelTitle={t('newSession.resume.chipOptional', {
-                                                        agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                        agent: resolvedAgentLabel,
                                                     })}
                                                     resumeLabelOptional={t('newSession.resume.chipOptional', {
-                                                        agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                        agent: resolvedAgentLabel,
                                                     })}
                                                 />
                                             </AgentInputScrollableChipRow>
@@ -2049,10 +2055,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 resumeChipAnchorRef={resumeChipAnchorRef}
                                                 onResumeClick={handleResumePress}
                                                 resumeLabelTitle={t('newSession.resume.chipOptional', {
-                                                    agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                    agent: resolvedAgentLabel,
                                                 })}
                                                 resumeLabelOptional={t('newSession.resume.chipOptional', {
-                                                    agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                    agent: resolvedAgentLabel,
                                                 })}
                                             />
                                         )
@@ -2205,10 +2211,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                         resumeChipAnchorRef={resumeChipAnchorRef}
                                                         onResumeClick={handleResumePress}
                                                         resumeLabelTitle={t('newSession.resume.chipOptional', {
-                                                            agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                            agent: resolvedAgentLabel,
                                                         })}
                                                         resumeLabelOptional={t('newSession.resume.chipOptional', {
-                                                            agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                            agent: resolvedAgentLabel,
                                                         })}
                                                     />
                                                 </AgentInputScrollableChipRow>
@@ -2234,10 +2240,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     resumeChipAnchorRef={resumeChipAnchorRef}
                                                     onResumeClick={handleResumePress}
                                                     resumeLabelTitle={t('newSession.resume.chipOptional', {
-                                                        agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                        agent: resolvedAgentLabel,
                                                     })}
                                                     resumeLabelOptional={t('newSession.resume.chipOptional', {
-                                                        agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                                        agent: resolvedAgentLabel,
                                                     })}
                                                 />
                                             )

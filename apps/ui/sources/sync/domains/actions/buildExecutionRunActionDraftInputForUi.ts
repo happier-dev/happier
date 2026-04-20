@@ -1,4 +1,4 @@
-import type { ActionId, BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { ActionId, BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 import { buildActionDraftInput } from './buildActionDraftInput';
 import { resolveExecutionRunActionDefaultPermissionMode } from './resolveExecutionRunActionDefaultPermissionMode';
@@ -10,7 +10,7 @@ function hasExplicitPermissionMode(extra: Record<string, unknown> | null): boole
 export function buildExecutionRunActionDraftInputForUi(args: Readonly<{
     actionId: ActionId;
     sessionId?: string | null;
-    defaultBackendTarget?: BackendTargetRefV1 | null;
+    defaultBackendTarget?: BackendTargetRefV2Input | null;
     defaultBackendId?: string | null;
     instructions?: string | null;
     extra?: Record<string, unknown> | null;

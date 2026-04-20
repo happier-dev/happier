@@ -2,6 +2,8 @@ import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '
 
 import { HappyError } from '@/utils/errors/errors';
 
+import { isAuthenticationResponseStatus } from './authErrors';
+
 export function shouldReportEndpointFailure(params: { init?: RequestInit; error: unknown }): boolean {
     if (params.init?.signal?.aborted) return false;
     return !(params.error instanceof Error && params.error.name === 'AbortError');
@@ -72,10 +74,26 @@ export function reportEndpointResponseToSupervisor(
     supervisor: ManagedEndpointSupervisor,
     response: Response,
     hadAuth: boolean,
+    scope?: ReturnType<NonNullable<ManagedEndpointSupervisor['captureProbeReportScope']>>,
 ): void {
-    if (hadAuth && (response.status === 401 || response.status === 403)) {
+    if (hadAuth && isAuthenticationResponseStatus(response.status)) {
+        if (supervisor.reportProbeResult) {
+            supervisor.reportProbeResult({
+                status: 'auth_failed',
+                statusCode: response.status,
+                errorMessage: `HTTP ${response.status}`,
+            }, scope);
+            return;
+        }
         supervisor.invalidate();
     } else if (response.status >= 500) {
+        if (supervisor.reportProbeResult) {
+            supervisor.reportProbeResult({
+                status: 'retry_later',
+                errorMessage: `HTTP ${response.status}`,
+            }, scope);
+            return;
+        }
         supervisor.reportFailure({ errorMessage: `HTTP ${response.status}` });
     }
 }

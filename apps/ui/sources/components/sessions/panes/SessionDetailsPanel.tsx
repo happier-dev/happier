@@ -7,7 +7,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { PaneDetailsTabsPanel } from '@/components/appShell/panes/details/PaneDetailsTabsPanel';
+import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
+import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import {
     renderProviderSessionDetailsTab,
     resolveProviderSessionDetailsTabIconName,
@@ -247,52 +248,63 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         backgroundColor: theme.colors.surface,
     };
 
+    const testIds = React.useMemo(() => ({
+        root: resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-panel-root') ?? 'session-details-panel-root',
+        tab: (safeTabKey: string) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-${safeTabKey}`),
+        tabPin: (safeTabKey: string) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-pin-${safeTabKey}`),
+        tabUnpin: (safeTabKey: string) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-unpin-${safeTabKey}`),
+        tabClose: (safeTabKey: string) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-close-${safeTabKey}`),
+    }), [sessionScreenTestIdsEnabled]);
+
+    const renderHeaderActions = React.useCallback(() => (
+        <>
+            {Platform.OS === 'web' ? (
+                <Pressable
+                    onPress={() => setEditorFocusModeEnabled(!editorFocusModeEnabled)}
+                    testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-focus-toggle')}
+                    style={iconButtonStyle}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                        editorFocusModeEnabled
+                            ? t('session.detailsPanel.exitFocusModeA11y')
+                            : t('session.detailsPanel.enterFocusModeA11y')
+                    }
+                >
+                    <Ionicons
+                        name={editorFocusModeEnabled ? 'contract-outline' : 'expand-outline'}
+                        size={18}
+                        color={theme.colors.textSecondary}
+                    />
+                </Pressable>
+            ) : null}
+            <Pressable
+                onPress={requestClose}
+                testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-close')}
+                style={iconButtonStyle}
+                accessibilityRole="button"
+                accessibilityLabel={t('session.detailsPanel.closeA11y')}
+            >
+                <Octicons name="chevron-right" size={18} color={theme.colors.textSecondary} />
+            </Pressable>
+        </>
+    ), [
+        editorFocusModeEnabled,
+        iconButtonStyle,
+        requestClose,
+        sessionScreenTestIdsEnabled,
+        setEditorFocusModeEnabled,
+        theme.colors.textSecondary,
+    ]);
+
     return (
-        <PaneDetailsTabsPanel
+        <DetailsSplitWorkspace
             pane={pane}
             paddingTop={insets.top}
             headerPaddingTop={10}
-            testIds={{
-                root: resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-panel-root') ?? 'session-details-panel-root',
-                tab: (safeTabKey) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-${safeTabKey}`),
-                tabPin: (safeTabKey) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-pin-${safeTabKey}`),
-                tabUnpin: (safeTabKey) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-unpin-${safeTabKey}`),
-                tabClose: (safeTabKey) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-close-${safeTabKey}`),
-            }}
+            testIds={testIds}
             resolveTabIconName={(tab) => resolveProviderSessionDetailsTabIconName(tab)}
             renderTabContent={renderTabContent}
-            renderHeaderActions={() => (
-                <>
-                    {Platform.OS === 'web' ? (
-                        <Pressable
-                            onPress={() => setEditorFocusModeEnabled(!editorFocusModeEnabled)}
-                            testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-focus-toggle')}
-                            style={iconButtonStyle}
-                            accessibilityRole="button"
-                            accessibilityLabel={
-                                editorFocusModeEnabled
-                                    ? t('session.detailsPanel.exitFocusModeA11y')
-                                    : t('session.detailsPanel.enterFocusModeA11y')
-                            }
-                        >
-                            <Ionicons
-                                name={editorFocusModeEnabled ? 'contract-outline' : 'expand-outline'}
-                                size={18}
-                                color={theme.colors.textSecondary}
-                            />
-                        </Pressable>
-                    ) : null}
-                    <Pressable
-                        onPress={requestClose}
-                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-close')}
-                        style={iconButtonStyle}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('session.detailsPanel.closeA11y')}
-                    >
-                        <Octicons name="chevron-right" size={18} color={theme.colors.textSecondary} />
-                    </Pressable>
-                </>
-            )}
+            renderHeaderActions={renderHeaderActions}
         />
     );
 });

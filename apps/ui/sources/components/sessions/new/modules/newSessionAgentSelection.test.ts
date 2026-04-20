@@ -31,11 +31,11 @@ describe('newSessionAgentSelection', () => {
 
     it('keeps unavailable agents selectable when the UI marks them as selectable without CLI detection', () => {
         expect(isAgentSelectableForNewSession({
-            agentId: 'customAcp',
+            agentId: 'codex',
             detectionTimestamp: 1,
-            availabilityById: { customAcp: false },
-            installableDepKeyCountByAgentId: { customAcp: 0 },
-            selectableWithoutCliByAgentId: { customAcp: true },
+            availabilityById: { codex: false },
+            installableDepKeyCountByAgentId: { codex: 0 },
+            selectableWithoutCliByAgentId: { codex: true },
         })).toBe(true);
     });
 
@@ -82,8 +82,8 @@ describe('newSessionAgentSelection', () => {
     it('marks multi-cli profiles as available when at least one supported agent remains selectable', () => {
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [
-                { target: { kind: 'builtInAgent', agentId: 'claude' }, targetKey: 'agent:claude', builtInAgentId: 'claude', family: 'builtInAgent' },
-                { target: { kind: 'builtInAgent', agentId: 'codex' }, targetKey: 'agent:codex', builtInAgentId: 'codex', family: 'builtInAgent' },
+                { backendTarget: { kind: 'backend', backendId: 'claude' }, backendTargetKey: 'backend:claude', builtInAgentId: 'claude', kind: 'builtInAgent' },
+                { backendTarget: { kind: 'backend', backendId: 'codex' }, backendTargetKey: 'backend:codex', builtInAgentId: 'codex', kind: 'builtInAgent' },
             ],
             detectionTimestamp: 1,
             availabilityById: { claude: false, codex: false },
@@ -95,10 +95,10 @@ describe('newSessionAgentSelection', () => {
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [
                 {
-                    target: { kind: 'builtInAgent', agentId: 'codex' },
-                    targetKey: 'agent:codex',
+                    backendTarget: { kind: 'backend', backendId: 'codex' },
+                    backendTargetKey: 'backend:codex',
                     builtInAgentId: 'codex',
-                    family: 'builtInAgent',
+                    kind: 'builtInAgent',
                 },
             ],
             detectionTimestamp: 1,
@@ -112,22 +112,22 @@ describe('newSessionAgentSelection', () => {
 
     it('treats configured ACP backend entries as selectable without built-in CLI detection', () => {
         const entry = {
-            target: { kind: 'configuredAcpBackend', backendId: 'review-bot' } as const,
-            targetKey: 'acpBackend:review-bot',
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' } as const,
+            backendTargetKey: 'backend:review-bot:configured:review-bot',
             builtInAgentId: null,
-            family: 'configuredAcpBackend' as const,
+            kind: 'configuredBackend' as const,
         };
         expect(isBackendEntrySelectableForNewSession({
             entry,
             detectionTimestamp: 1,
-            availabilityById: { customAcp: false },
-            installableDepKeyCountByAgentId: { customAcp: 0 },
+            availabilityById: {},
+            installableDepKeyCountByAgentId: {},
         })).toBe(true);
         expect(getSelectableBackendEntriesForNewSession({
             candidateBackendEntries: [entry],
             detectionTimestamp: 1,
-            availabilityById: { customAcp: false },
-            installableDepKeyCountByAgentId: { customAcp: 0 },
+            availabilityById: {},
+            installableDepKeyCountByAgentId: {},
         })).toEqual([entry]);
     });
 
@@ -135,15 +135,15 @@ describe('newSessionAgentSelection', () => {
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [
                 {
-                    target: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-                    targetKey: 'acpBackend:review-bot',
+                    backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+                    backendTargetKey: 'backend:review-bot:configured:review-bot',
                     builtInAgentId: null,
-                    family: 'configuredAcpBackend',
+                    kind: 'configuredBackend',
                 },
             ],
             detectionTimestamp: 1,
-            availabilityById: { customAcp: false },
-            installableDepKeyCountByAgentId: { customAcp: 0 },
+            availabilityById: {},
+            installableDepKeyCountByAgentId: {},
         })).toEqual({ available: true });
     });
 
@@ -151,24 +151,24 @@ describe('newSessionAgentSelection', () => {
         const next = resolveNextSelectableBackendEntryForNewSession({
             candidateBackendEntries: [
                 {
-                    target: { kind: 'builtInAgent', agentId: 'claude' },
-                    targetKey: 'agent:claude',
+                    backendTarget: { kind: 'backend', backendId: 'claude' },
+                    backendTargetKey: 'backend:claude',
                     builtInAgentId: 'claude',
-                    family: 'builtInAgent',
+                    kind: 'builtInAgent',
                 },
                 {
-                    target: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-                    targetKey: 'acpBackend:review-bot',
+                    backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+                    backendTargetKey: 'backend:review-bot:configured:review-bot',
                     builtInAgentId: null,
-                    family: 'configuredAcpBackend',
+                    kind: 'configuredBackend',
                 },
             ],
-            currentTargetKey: 'agent:claude',
+            currentTargetKey: 'backend:claude',
             detectionTimestamp: 1,
-            availabilityById: { claude: false, customAcp: false },
-            installableDepKeyCountByAgentId: { claude: 0, customAcp: 0 },
+            availabilityById: { claude: false },
+            installableDepKeyCountByAgentId: { claude: 0 },
         });
 
-        expect(next?.target).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+        expect(next?.backendTarget).toEqual({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' });
     });
 });

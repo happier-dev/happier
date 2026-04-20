@@ -14,6 +14,7 @@ let mockSessionModePickerControl: any = null;
 const modalShowMock = vi.fn();
 const modalPromptMock = vi.fn();
 let lastPopoverProps: any = null;
+let lastActionMenuPopoverContentProps: any = null;
 let mockAgentInputActionBarLayout: 'wrap' | 'collapsed' = 'wrap';
 let mockWindowWidth = 800;
 const supportsFreeformModelSelectionState = vi.hoisted(() => ({ value: false }));
@@ -127,10 +128,13 @@ vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => null,
     getAgentCore: () => ({
         displayNameKey: 'agents.codex',
         toolRendering: { hideUnknownToolsByDefault: false },
-        connectedService: { id: 'codex', name: 'Codex' },
+        uiConnectedService: { serviceId: 'openai-codex', label: 'Codex', connectRoute: null },
         flavorAliases: [],
         availability: { experimental: false },
         model: {
@@ -307,6 +311,27 @@ vi.mock('./components/PermissionModePicker', () => ({
     PermissionModePicker: () => null,
 }));
 
+vi.mock('./components/AgentInputActionMenuPopoverContent', () => ({
+    AgentInputActionMenuPopoverContent: (props: any) => {
+        lastActionMenuPopoverContentProps = props;
+        return React.createElement(
+            'View',
+            { testID: 'agent-input-action-menu-overlay' },
+            Array.isArray(props.actionMenuActions)
+                ? props.actionMenuActions.map((action: { id?: string; label?: string; onPress?: () => void }, index: number) => React.createElement(
+                    'Pressable',
+                    {
+                        key: action.id ?? `action-${index}`,
+                        testID: `agent-input-action-menu-action:${action.id ?? index}`,
+                        onPress: action.onPress,
+                    },
+                    action.label ?? action.id ?? null,
+                ))
+                : null,
+        );
+    },
+}));
+
 describe('AgentInput (modelOptionsOverride)', () => {
     beforeEach(() => {
         supportsFreeformModelSelectionState.value = false;
@@ -316,6 +341,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         mockWindowWidth = 800;
         lastModelPickerOverlayProps = null;
         lastPopoverProps = null;
+        lastActionMenuPopoverContentProps = null;
     });
 
     it('prefers modelOptionsOverride over getModelOptionsForSession()', async () => {
@@ -1231,10 +1257,10 @@ describe('AgentInput (modelOptionsOverride)', () => {
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-chip-picker.option:engine:codex')).toBeNull();
+        expect(screen.findByTestId('agent-input-chip-picker.option:engine:codex')).toBeTruthy();
         expect(lastPopoverProps?.anchorRef).toBe(agentChip.props.ref);
-        // When the engine rail is hidden (running sessions), keep the popover narrower.
-        expect(lastPopoverProps?.maxWidthCap).toBe(570);
+        // The live engine detail picker uses the wider rail layout in this branch.
+        expect(lastPopoverProps?.maxWidthCap).toBe(720);
         expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default', 'session-model']);
 
         await act(async () => {
@@ -1317,11 +1343,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
             expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
             expect(lastModelPickerOverlayProps).toBeNull();
+            expect((lastActionMenuPopoverContentProps?.actionMenuActions ?? []).map((action: { id?: string }) => action.id)).toContain('agent');
 
-            const engineAction = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'agents.codex');
-            expect(engineAction).toBeTruthy();
-
-            await pressTestInstanceAsync(engineAction, 'agents.codex pressable');
+            await screen.pressByTestIdAsync('agent-input-action-menu-action:agent');
 
             expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
             expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 
 describe('followUpSpawnedSessionWithServerScope', () => {
     it('attaches a recoverable follow-up payload when active-scope sendMessage fails before the first message send', async () => {
@@ -204,10 +205,143 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         expect(sendMessage).not.toHaveBeenCalled();
     });
 
-    it('sends the active-scope initial message without pre-hydrating the session first', async () => {
+    it('does not send the scoped follow-up when session-by-id hydration returns terminal auth', async () => {
+        const sendSessionMessageWithServerScope = vi.fn(async () => ({ ok: true as const }));
+
+        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
+            resolveContext: async () => ({
+                scope: 'scoped',
+                timeoutMs: 5_000,
+                targetServerId: 'server-b',
+                targetServerUrl: 'https://server-b.example.test',
+                token: 'token-b',
+                encryption: {
+                    decryptEncryptionKey: async () => null,
+                    initializeSessions: async () => {},
+                    getSessionEncryption: () => null,
+                },
+            }),
+            fetchSessionById: async () => ({
+                ok: false,
+                session: null,
+                errorCode: 'unauthorized',
+                httpStatus: 401,
+            }),
+            sendSessionMessageWithServerScope,
+            getStoredSession: () => null,
+            applySessions: () => {},
+        });
+
+        await expect(followUpSpawnedSessionWithServerScope({
+            sessionId: 'sess_target',
+            targetServerId: 'server-b',
+            initialMessageText: 'hello from scoped server',
+        })).rejects.toMatchObject({
+            name: 'HappyError',
+            kind: 'auth',
+            code: 'not_authenticated',
+        });
+
+        expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
+    });
+
+    it('does not send the scoped follow-up when session-by-id hydration throws terminal auth', async () => {
+        const sendSessionMessageWithServerScope = vi.fn(async () => ({ ok: true as const }));
+
+        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
+            resolveContext: async () => ({
+                scope: 'scoped',
+                timeoutMs: 5_000,
+                targetServerId: 'server-b',
+                targetServerUrl: 'https://server-b.example.test',
+                token: 'token-b',
+                encryption: {
+                    decryptEncryptionKey: async () => null,
+                    initializeSessions: async () => {},
+                    getSessionEncryption: () => null,
+                },
+            }),
+            fetchSessionById: async () => {
+                throw createNotAuthenticatedError();
+            },
+            sendSessionMessageWithServerScope,
+            getStoredSession: () => null,
+            applySessions: () => {},
+        });
+
+        await expect(followUpSpawnedSessionWithServerScope({
+            sessionId: 'sess_target',
+            targetServerId: 'server-b',
+            initialMessageText: 'hello from scoped server',
+        })).rejects.toMatchObject({
+            name: 'HappyError',
+            kind: 'auth',
+            code: 'not_authenticated',
+        });
+
+        expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
+    });
+
+    it('hydrates the active-scope session after sending the initial message so navigation can resolve it locally', async () => {
         const refreshSessions = vi.fn(async () => {});
         const sendMessage = vi.fn(async () => {});
-        const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
+        let storedSession: Session | null = null;
+        const ensureSessionVisibleForMessageRoute = vi.fn(async () => {
+            storedSession = {
+                id: 'sess_target',
+                createdAt: 1,
+                updatedAt: 2,
+                seq: 1,
+                active: true,
+                activeAt: 2,
+                encryptionMode: 'plain',
+                metadataVersion: 1,
+                metadata: { path: '/tmp/repo' },
+                agentStateVersion: 1,
+                agentState: null,
+            } as Session;
+        });
+
+        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
+            resolveContext: async () => ({
+                scope: 'active',
+                timeoutMs: 5_000,
+            }),
+            activeSync: {
+                refreshSessions,
+                sendMessage,
+            },
+            ensureSessionVisibleForMessageRoute,
+            getStoredSession: () => storedSession,
+        });
+
+        await expect(followUpSpawnedSessionWithServerScope({
+            sessionId: 'sess_target',
+            targetServerId: 'server-b',
+            initialMessageText: 'hello from active server',
+        })).resolves.toBeUndefined();
+
+        expect(refreshSessions).not.toHaveBeenCalled();
+        expect(sendMessage).toHaveBeenCalledWith(
+            'sess_target',
+            'hello from active server',
+            undefined,
+            undefined,
+            undefined,
+        );
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(
+            'sess_target',
+            { forceRefresh: true, serverId: 'server-b' },
+        );
+    });
+
+    it('does not fail active-scope follow-up after the first message is sent when local hydration still lags behind', async () => {
+        const refreshSessions = vi.fn(async () => {});
+        const sendMessage = vi.fn(async () => {});
+        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) => {});
 
         const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
@@ -223,13 +357,12 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             getStoredSession: () => null,
         });
 
-        await followUpSpawnedSessionWithServerScope({
+        await expect(followUpSpawnedSessionWithServerScope({
             sessionId: 'sess_target',
             initialMessageText: 'hello from active server',
-        });
+        })).resolves.toBeUndefined();
 
         expect(refreshSessions).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
         expect(sendMessage).toHaveBeenCalledWith(
             'sess_target',
             'hello from active server',
@@ -237,6 +370,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             undefined,
             undefined,
         );
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
     });
 
     it('forces active-scope hydration when the stored session already exists but is only partially hydrated', async () => {
@@ -348,7 +482,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         });
 
         expect(refreshSessions).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
         expect(sendMessage).toHaveBeenCalledWith(
             'sess_target',
             'hello from active server',

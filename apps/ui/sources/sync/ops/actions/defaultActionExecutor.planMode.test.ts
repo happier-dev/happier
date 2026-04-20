@@ -39,10 +39,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
   machineRpcWithServerScope: vi.fn(),
 }));
 
-vi.mock('@/voice/activity/voiceActivityController', () => ({
-  voiceActivityController: { clearSession: vi.fn() },
-}));
-
 vi.mock('@/voice/session/voiceSession', () => ({
   voiceSessionManager: { stopSession: vi.fn() },
 }));
@@ -198,12 +194,11 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith({
-      agentId: 'customAcp',
+    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
       backendTargetKey: 'acpBackend:review-bot',
       machineId: 'm1',
       limit: 2,
-    });
+    }));
   });
 
   it('forwards backendTargetKey to session.spawn_new voice-tool routing', async () => {
@@ -218,10 +213,10 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(spawnSessionForVoiceTool).toHaveBeenCalledWith({
+    expect(spawnSessionForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
       backendTargetKey: 'acpBackend:review-bot',
       path: '/tmp/project',
-    });
+    }));
   });
 
   it('forwards backendTargetKey to session.spawn_picker voice-tool routing', async () => {
@@ -236,9 +231,9 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(spawnSessionWithPickerForVoiceTool).toHaveBeenCalledWith({
+    expect(spawnSessionWithPickerForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
       backendTargetKey: 'acpBackend:review-bot',
-    });
+    }));
   });
 
   it('does not publish a session-mode override when starting a planner subagent run', async () => {
@@ -378,5 +373,43 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     expect(next.sessionModeOverrideV1).toEqual(
       expect.objectContaining({ v: 1, modeId: 'default' }),
     );
+  });
+
+  it('resolves session.mode.set controls from canonical agent runtime metadata when flavor is missing', async () => {
+    const { resolveSessionModeActionControl } = await import('./sessionModeActionSupport');
+
+    const control = resolveSessionModeActionControl({
+      metadata: {
+        path: '/tmp/project',
+        host: 'localhost',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 'oc_1',
+            serverBaseUrl: 'http://127.0.0.1:4096/',
+            serverBaseUrlExplicit: true,
+          },
+        },
+        acpSessionModesV1: {
+          v: 1,
+          provider: 'opencode',
+          updatedAt: 1,
+          currentModeId: 'build',
+          availableModes: [
+            { id: 'build', name: 'Build', description: 'Do the work' },
+            { id: 'plan', name: 'Plan', description: 'Think first' },
+          ],
+        },
+      },
+    } as any);
+
+    expect(control).toMatchObject({
+      currentModeId: 'build',
+      currentModeName: 'Build',
+      effectiveModeId: 'build',
+      effectiveModeName: 'Build',
+    });
   });
 });

@@ -144,7 +144,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         });
     });
 
-    it('carries agentRuntimeDescriptorV1 through resume base options when present', () => {
+    it('carries canonical runtimeDescriptorV1 through resume base options and ignores the legacy alias when both are present', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
             session: {
@@ -153,12 +153,20 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                     path: '/tmp',
                     flavor: 'openai',
                     codexSessionId: 'x1',
-                    agentRuntimeDescriptorV1: {
+                    runtimeDescriptorV1: {
                         v: 1,
                         providerId: 'codex',
                         provider: {
                             backendMode: 'appServer',
                             vendorSessionId: 'x1',
+                        },
+                    },
+                    agentRuntimeDescriptorV1: {
+                        v: 1,
+                        providerId: 'codex',
+                        provider: {
+                            backendMode: 'acp',
+                            vendorSessionId: 'legacy-x1',
                         },
                     },
                 },
@@ -170,7 +178,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             resume: 'x1',
-            agentRuntimeDescriptorV1: {
+            runtimeDescriptorV1: {
                 v: 1,
                 providerId: 'codex',
                 provider: {

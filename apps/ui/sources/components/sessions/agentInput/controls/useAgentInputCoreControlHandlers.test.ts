@@ -11,6 +11,10 @@ vi.mock('@/components/ui/theme/haptics', () => ({
 
 vi.mock('@/text', () => createTextModuleMock());
 
+vi.mock('@/agents/registry/compat/customAcp', () => ({
+    resolveAgentLookupCoreConfig: () => ({ displayNameKey: 'agents.codex' }),
+}));
+
 vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({ displayNameKey: 'agents.codex' }),
 }));
@@ -19,6 +23,39 @@ import { useAgentInputSelectionOverlayController } from '../selection/useAgentIn
 import { useAgentInputCoreControlHandlers } from './useAgentInputCoreControlHandlers';
 
 describe('useAgentInputCoreControlHandlers', () => {
+    it('keeps agent selection available when only a resolved agent label is present', async () => {
+        const hook = await renderHook(() => {
+            const controller = useAgentInputSelectionOverlayController({
+                shouldRenderSessionModeChip: true,
+                canChangePermission: true,
+                hasMachinePopover: false,
+                hasPathPopover: false,
+                hasResumePopover: false,
+                hasProfilePopover: true,
+                hasEnvVarsPopover: true,
+                hasAgentPickerOptions: false,
+                extraActionChips: [],
+            });
+            const handlers = useAgentInputCoreControlHandlers({
+                agentLabel: 'Configured backend',
+                hasAgentPickerOptions: false,
+                onAgentClick: vi.fn(),
+                setShowActionMenu: vi.fn(),
+                closeSelectionOverlay: controller.closeSelectionOverlay,
+                toggleSelectionOverlay: controller.toggleSelectionOverlay,
+            });
+            return {
+                ...controller,
+                ...handlers,
+            };
+        });
+
+        expect(hook.getCurrent().hasAgentSelection).toBe(true);
+        expect(hook.getCurrent().resolvedAgentLabel).toBe('Configured backend');
+
+        await hook.unmount();
+    });
+
     it('cycles the session mode chip when the interaction policy resolves to cycle', async () => {
         const onSessionModeChange = vi.fn();
 
@@ -35,7 +72,7 @@ describe('useAgentInputCoreControlHandlers', () => {
                 extraActionChips: [],
             });
             const handlers = useAgentInputCoreControlHandlers({
-                agentType: 'codex' as never,
+                agentLabel: 'Codex',
                 hasAgentPickerOptions: false,
                 sessionModeChipInteraction: {
                     kind: 'cycle',
@@ -77,7 +114,7 @@ describe('useAgentInputCoreControlHandlers', () => {
                 extraActionChips: [],
             });
             const handlers = useAgentInputCoreControlHandlers({
-                agentType: 'codex' as never,
+                agentLabel: 'Codex',
                 hasAgentPickerOptions: false,
                 sessionModeChipInteraction: {
                     kind: 'picker',
@@ -120,7 +157,7 @@ describe('useAgentInputCoreControlHandlers', () => {
                 extraActionChips: [],
             });
             const handlers = useAgentInputCoreControlHandlers({
-                agentType: 'codex' as never,
+                agentLabel: 'Codex',
                 hasAgentPickerOptions: false,
                 machinePopover: {
                     renderContent: () => null,
@@ -165,7 +202,7 @@ describe('useAgentInputCoreControlHandlers', () => {
                 extraActionChips: [],
             });
             const handlers = useAgentInputCoreControlHandlers({
-                agentType: 'codex' as never,
+                agentLabel: 'Codex',
                 hasAgentPickerOptions: false,
                 resumePopover: {
                     renderContent: () => null,
@@ -210,7 +247,7 @@ describe('useAgentInputCoreControlHandlers', () => {
                 extraActionChips: [],
             });
             const handlers = useAgentInputCoreControlHandlers({
-                agentType: 'codex' as never,
+                agentLabel: 'Codex',
                 hasAgentPickerOptions: true,
                 setShowActionMenu: ((next) => {
                     showActionMenu = typeof next === 'function' ? next(showActionMenu) : next;

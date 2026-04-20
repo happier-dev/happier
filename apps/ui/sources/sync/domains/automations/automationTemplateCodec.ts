@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
     AcpConfigOptionOverridesV1Schema,
-    BackendTargetRefSchema,
+    BackendTargetRefV2Schema,
     SessionMcpSelectionV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
 } from '@happier-dev/protocol';
@@ -37,7 +37,7 @@ const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     prompt: z.string().optional(),
     displayText: z.string().optional(),
     agent: z.string().optional(),
-    backendTarget: BackendTargetRefSchema.optional(),
+    backendTarget: BackendTargetRefV2Schema.optional(),
     connectedServices: z.unknown().optional(),
     transcriptStorage: z.enum(['persisted', 'direct']).optional(),
     profileId: z.string().optional(),

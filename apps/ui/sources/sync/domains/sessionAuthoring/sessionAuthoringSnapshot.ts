@@ -1,5 +1,5 @@
 import type {
-    BackendTargetRefV1,
+    BackendTargetRefV2,
     SessionAuthoringCodexBackendMode,
     SessionAuthoringTerminalV1,
     SessionAuthoringValueV1,
@@ -8,7 +8,7 @@ import type {
 export type SessionAuthoringSnapshot = Readonly<{
     directory: string;
     agentId: string | null;
-    backendTarget: BackendTargetRefV1 | null;
+    backendTarget: BackendTargetRefV2 | null;
     transcriptStorage: SessionAuthoringValueV1['transcriptStorage'];
     profileId: SessionAuthoringValueV1['profileId'];
     permissionMode: SessionAuthoringValueV1['permissionMode'];

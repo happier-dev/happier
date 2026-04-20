@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
 
 import { fetchSessionByIdWithServerScope } from './fetchSessionByIdWithServerScope';
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
@@ -49,6 +50,25 @@ function attachRecoverableFollowUpPayload(error: unknown, payload: RecoverableFo
         decoratedError.recoverableFollowUpPayload = payload;
     }
     return decoratedError;
+}
+
+function throwForFailedScopedHydration(result: Awaited<ReturnType<typeof fetchSessionByIdWithServerScope>>): void {
+    if (result.ok) {
+        return;
+    }
+
+    const errorCode = typeof result.errorCode === 'string' ? result.errorCode : '';
+    if (
+        isAuthenticationResponseStatus(result.httpStatus)
+        || errorCode === 'unauthorized'
+        || errorCode === 'forbidden'
+        || errorCode === 'not_authenticated'
+    ) {
+        const status = isAuthenticationResponseStatus(result.httpStatus) ? result.httpStatus : undefined;
+        throw createNotAuthenticatedError(status);
+    }
+
+    throw new Error(errorCode || 'Failed to hydrate created session');
 }
 
 export function readRecoverableFollowUpPayload(error: unknown): RecoverableFollowUpPayload | null {
@@ -182,6 +202,17 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                         params.metaOverrides ?? undefined,
                         params.profileId ? { profileId: params.profileId } : undefined,
                     );
+                    try {
+                        await ensureSessionHydratedForNavigation({
+                            sessionId,
+                            serverId: params.targetServerId ?? null,
+                            getStoredSession,
+                            ensureSessionVisibleForMessageRoute,
+                        });
+                    } catch {
+                        // Best-effort only: after the first message is already committed, do not fail closed if
+                        // local hydration still lags behind.
+                    }
                     return;
                 }
 
@@ -195,7 +226,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                 return;
             }
 
-            await fetchSessionById({
+            const hydrationResult = await fetchSessionById({
                 sessionId,
                 serverId: context.targetServerId,
                 activeCredentials: { token: context.token, secret: '' } satisfies AuthCredentials,
@@ -208,6 +239,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                 getExistingSession: (targetSessionId) => getStoredSession(targetSessionId),
                 log: { log: () => {} },
             });
+            throwForFailedScopedHydration(hydrationResult);
 
             if (trimmedInitialMessage.length > 0) {
                 const result = await sendScopedMessage({

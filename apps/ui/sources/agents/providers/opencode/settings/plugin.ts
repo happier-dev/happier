@@ -52,5 +52,4 @@ export const OPENCODE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
             ],
         },
     ],
-    buildOutgoingMessageMetaExtras: () => ({}),
 };

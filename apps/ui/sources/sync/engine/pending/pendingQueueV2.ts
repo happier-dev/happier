@@ -9,6 +9,7 @@ import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
 import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol';
 import { t } from '@/text';
+import { HappyError } from '@/utils/errors/errors';
 
 type PendingStatus = 'queued' | 'discarded';
 
@@ -112,6 +113,36 @@ function runPendingEnqueueCommitInOrder(sessionId: string, op: () => Promise<voi
     return next;
 }
 
+function createPendingAuthError(status: 401 | 403): HappyError {
+    return new HappyError('Authentication required', false, {
+        status,
+        kind: 'auth',
+        code: 'not_authenticated',
+    });
+}
+
+function readPendingAuthStatus(status: number): 401 | 403 | null {
+    if (status === 401 || status === 403) {
+        return status;
+    }
+    return null;
+}
+
+function throwPendingAuthErrorIfNeeded(status: number): void {
+    const authStatus = readPendingAuthStatus(status);
+    if (authStatus) {
+        throw createPendingAuthError(authStatus);
+    }
+}
+
+function assertPendingResponseOk(response: Response, message: string): void {
+    if (response.ok) {
+        return;
+    }
+    throwPendingAuthErrorIfNeeded(response.status);
+    throw new Error(`${message} (${response.status})`);
+}
+
 function buildPendingDecryptFailureMessage(params: {
     row: Pick<PendingRow, 'localId' | 'createdAt' | 'updatedAt'>;
 }): {
@@ -190,6 +221,7 @@ export async function fetchAndApplyPendingMessagesV2(params: {
 
     const response = await request(`/v2/sessions/${sessionId}/pending?includeDiscarded=1`, { method: 'GET' });
     if (!response.ok) {
+        throwPendingAuthErrorIfNeeded(response.status);
         storage.getState().applyPendingLoaded(sessionId);
         storage.getState().applyDiscardedPendingMessages(sessionId, []);
         return;
@@ -350,7 +382,7 @@ export async function enqueuePendingMessageV2(params: {
                 body: JSON.stringify(writeBody),
             });
             if (!response.ok) {
-                throw new Error(`Failed to enqueue pending message (${response.status})`);
+                assertPendingResponseOk(response, 'Failed to enqueue pending message');
             }
         });
         storage.getState().clearSessionOptimisticThinking(sessionId);
@@ -436,7 +468,7 @@ export async function updatePendingMessageV2(params: {
         body: JSON.stringify(writeBody),
     });
     if (!response.ok) {
-        throw new Error(`Failed to update pending message (${response.status})`);
+        assertPendingResponseOk(response, 'Failed to update pending message');
     }
 
 	    storage.getState().upsertPendingMessage(sessionId, {
@@ -458,7 +490,7 @@ export async function deletePendingMessageV2(params: {
 
     const response = await request(`/v2/sessions/${sessionId}/pending/${pendingId}`, { method: 'DELETE' });
     if (!response.ok) {
-        throw new Error(`Failed to delete pending message (${response.status})`);
+        assertPendingResponseOk(response, 'Failed to delete pending message');
     }
     storage.getState().removePendingMessage(sessionId, pendingId);
 }
@@ -478,7 +510,7 @@ export async function discardPendingMessageV2(params: {
         body: JSON.stringify({ reason }),
     });
     if (!response.ok) {
-        throw new Error(`Failed to discard pending message (${response.status})`);
+        assertPendingResponseOk(response, 'Failed to discard pending message');
     }
     await fetchAndApplyPendingMessagesV2({ sessionId, encryption, request });
 }
@@ -493,7 +525,7 @@ export async function restoreDiscardedPendingMessageV2(params: {
 
     const response = await request(`/v2/sessions/${sessionId}/pending/${pendingId}/restore`, { method: 'POST' });
     if (!response.ok) {
-        throw new Error(`Failed to restore discarded message (${response.status})`);
+        assertPendingResponseOk(response, 'Failed to restore discarded message');
     }
     await fetchAndApplyPendingMessagesV2({ sessionId, encryption, request });
 }
@@ -508,7 +540,7 @@ export async function deleteDiscardedPendingMessageV2(params: {
 
     const response = await request(`/v2/sessions/${sessionId}/pending/${pendingId}`, { method: 'DELETE' });
     if (!response.ok) {
-        throw new Error(`Failed to delete discarded message (${response.status})`);
+        assertPendingResponseOk(response, 'Failed to delete discarded message');
     }
     await fetchAndApplyPendingMessagesV2({ sessionId, encryption, request });
 }
@@ -527,7 +559,7 @@ export async function reorderPendingMessagesV2(params: {
         body: JSON.stringify({ orderedLocalIds }),
     });
     if (!response.ok) {
-        throw new Error(`Failed to reorder pending messages (${response.status})`);
+        assertPendingResponseOk(response, 'Failed to reorder pending messages');
     }
     await fetchAndApplyPendingMessagesV2({ sessionId, encryption, request });
 }

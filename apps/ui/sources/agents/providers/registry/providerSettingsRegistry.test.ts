@@ -5,7 +5,7 @@ import { getAllProviderSettingsDefinitions } from '@happier-dev/agents';
 
 import type { ProviderSettingsBehavior, ProviderSettingsDescriptor, ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
 import { PROVIDER_SETTINGS_DEFAULTS, PROVIDER_SETTINGS_SHAPE } from '@/agents/providers/registry/providerSettingArtifacts';
-import * as providerSettingsRegistry from '@/agents/providers/registry/providerSettingsRegistry';
+import * as providerSettingsRegistry from '@/agents/providers/catalog/providerSettingsCatalog';
 import {
     PROVIDER_SETTINGS_BEHAVIORS,
     PROVIDER_SETTINGS_DESCRIPTORS,
@@ -15,9 +15,10 @@ import {
     getProviderSettingsBehavior,
     getProviderSettingsDescriptor,
     getProviderSettingsPlugin,
-    getProviderSettingsRuntime,
-} from '@/agents/providers/registry/providerSettingsRegistry';
+    resolveProviderSettingsRegistryEntry,
+} from '@/agents/providers/catalog/providerSettingsCatalog';
 import { assertProviderSettingKeysCompatible } from '@/sync/domains/settings/registry/provider/assertProviderSettingKeysCompatible';
+import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCompatAgents';
 
 function makePlugin(overrides: Partial<ProviderSettingsPlugin>): ProviderSettingsPlugin {
     const settings = {
@@ -40,7 +41,6 @@ function makePlugin(overrides: Partial<ProviderSettingsPlugin>): ProviderSetting
                 fields: [{ key: 'foo', kind: 'text', title: { key: 'settingsProviders.targetMachineTitle' } }],
             },
         ],
-        buildOutgoingMessageMetaExtras: () => ({}),
     };
     return { ...base, ...overrides };
 }
@@ -162,11 +162,10 @@ describe('provider settings descriptor/runtime accessors', () => {
 
         expect(behavior).toMatchObject({
             providerId: 'claude',
-            buildOutgoingMessageMetaExtras: expect.any(Function),
         } satisfies Partial<ProviderSettingsBehavior>);
         expect('title' in (behavior ?? {})).toBe(false);
         expect('uiSections' in (behavior ?? {})).toBe(false);
-        expect(getProviderSettingsRuntime('claude')).toBe(behavior);
+        expect('buildOutgoingMessageMetaExtras' in (behavior ?? {})).toBe(false);
     });
 
     it('exports descriptor-only plugin data for all registry entries', () => {
@@ -183,16 +182,48 @@ describe('provider settings descriptor/runtime accessors', () => {
             expect('buildOutgoingMessageMetaExtras' in descriptor).toBe(false);
             expect('ExtraSectionsComponent' in descriptor).toBe(false);
         }
+
+        for (const behavior of PROVIDER_SETTINGS_BEHAVIORS) {
+            expect(behavior).toMatchObject({
+                providerId: expect.any(String),
+            });
+            expect('buildOutgoingMessageMetaExtras' in behavior).toBe(false);
+        }
     });
 
     it('does not expose a separate runtime registry surface alias', () => {
         expect('PROVIDER_SETTINGS_RUNTIMES' in providerSettingsRegistry).toBe(false);
+        expect('getProviderSettingsRuntime' in providerSettingsRegistry).toBe(false);
     });
 });
 
 describe('getProviderSettingsPlugin', () => {
     it('resolves plugins case-insensitively', () => {
         expect(getProviderSettingsPlugin('CLAUDE' as any)).not.toBeNull();
+    });
+
+    it('does not treat legacy compat providers as provider settings plugins', () => {
+        expect(PROVIDER_SETTINGS_PLUGINS.map((plugin) => plugin.providerId)).not.toContain(LEGACY_COMPAT_PRIMARY_AGENT_ID);
+        expect(PROVIDER_SETTINGS_DESCRIPTORS.map((descriptor) => descriptor.providerId)).not.toContain(LEGACY_COMPAT_PRIMARY_AGENT_ID);
+        expect(PROVIDER_SETTINGS_BEHAVIORS.map((behavior) => behavior.providerId)).not.toContain(LEGACY_COMPAT_PRIMARY_AGENT_ID);
+        expect(getProviderSettingsPlugin(LEGACY_COMPAT_PRIMARY_AGENT_ID)).toBeNull();
+        expect(resolveProviderSettingsRegistryEntry(LEGACY_COMPAT_PRIMARY_AGENT_ID)).toEqual({
+            providerId: LEGACY_COMPAT_PRIMARY_AGENT_ID,
+            plugin: null,
+            descriptor: null,
+            behavior: null,
+            registered: false,
+        });
+    });
+
+    it('exposes a stable registry projection for unknown provider ids', () => {
+        expect(resolveProviderSettingsRegistryEntry('acme.review.provider')).toEqual({
+            providerId: 'acme.review.provider',
+            plugin: null,
+            descriptor: null,
+            behavior: null,
+            registered: false,
+        });
     });
 
     it('covers shared provider-settings definitions from @happier-dev/agents', () => {
@@ -212,7 +243,6 @@ describe('getProviderSettingsPlugin', () => {
         for (const descriptor of PROVIDER_SETTINGS_DESCRIPTORS) {
             expect(getProviderSettingsPlugin(descriptor.providerId)).not.toBeNull();
             expect(getProviderSettingsBehavior(descriptor.providerId)).not.toBeNull();
-            expect(getProviderSettingsRuntime(descriptor.providerId)).not.toBeNull();
         }
     });
 

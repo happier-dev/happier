@@ -6,7 +6,7 @@ import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilitie
 import type { Settings } from '@/sync/domains/settings/settings';
 
 export function useResumeCapabilityOptions(opts: {
-    agentId: AgentId;
+    agentId?: AgentId | null;
     machineId: string | null | undefined;
     serverId?: string | null;
     settings: Settings;

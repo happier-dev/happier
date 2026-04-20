@@ -17,6 +17,10 @@ vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsLight: vi.fn(),
 }));
 
+vi.mock('@/agents/registry/compat/customAcp', () => ({
+    resolveAgentLookupCoreConfig: () => ({ displayNameKey: 'agents.codex' }),
+}));
+
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
@@ -48,7 +52,7 @@ describe('buildAgentInputActionMenuActions', () => {
         expect(path?.label).toBe('newSession.selectPathTitle');
     });
 
-    it('keeps stop ahead of machine and path in the collapsed control menu order', () => {
+    it('keeps stop ahead of machine and path in the collapsed control menu order when only a resolved agent label is available', () => {
         const actions = buildAgentInputActionMenuActions({
             actionBarIsCollapsed: true,
             hasAnyActions: true,
@@ -56,7 +60,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Configured backend',
             onAgentClick: () => {},
             onMachineClick: () => {},
             machineName: 'Builder',
@@ -74,6 +78,8 @@ describe('buildAgentInputActionMenuActions', () => {
             'machine',
             'path',
         ]);
+
+        expect(actions.find((action) => action.id === 'agent')?.label).toBe('Configured backend');
     });
 
     it('includes recipient and delivery extra controls in the collapsed control menu ahead of machine and path', () => {
@@ -84,7 +90,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             onMachineClick: () => {},
             machineName: 'Builder',
@@ -130,7 +136,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 attachments: {
@@ -164,7 +170,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             sessionId: 'session-1',
             onFileViewerPress: () => {},
@@ -192,7 +198,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 linkedFiles: {
@@ -226,7 +232,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 reviewComments: {
@@ -260,7 +266,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 connectedServices: {
@@ -294,7 +300,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 storage: {
@@ -328,7 +334,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 shortcuts: [
@@ -371,7 +377,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 mcp: {
@@ -405,7 +411,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
                 automation: {
@@ -439,7 +445,7 @@ describe('buildAgentInputActionMenuActions', () => {
             agentId: 'codex' as any,
             profileLabel: 'Default',
             profileIcon: 'person-outline',
-            agentType: 'codex' as any,
+            agentLabel: 'Codex',
             onAgentClick: () => {},
             sessionModeLabel: 'Build',
             onSessionModeClick: () => {},

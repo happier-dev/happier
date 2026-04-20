@@ -1,8 +1,9 @@
 import {
-    BackendTargetKeySchema,
-    BackendTargetRefSchema,
+    BackendTargetKeyV2Schema,
+    BackendTargetRefV2InputSchema,
     buildSettingArtifacts,
     defineSettingDefinitions,
+    readBackendTargetRefV2,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -21,7 +22,7 @@ const SessionTranscriptStorageModeByTargetKeySchema = z.preprocess((value) => {
 
     const filtered = Object.fromEntries(
         Object.entries(record).flatMap(([targetKey, raw]) => {
-            if (!BackendTargetKeySchema.safeParse(targetKey).success) return [];
+            if (!BackendTargetKeyV2Schema.safeParse(targetKey).success) return [];
             return raw === 'direct' || raw === 'persisted'
                 ? [[targetKey, raw]]
                 : [];
@@ -29,7 +30,15 @@ const SessionTranscriptStorageModeByTargetKeySchema = z.preprocess((value) => {
     ) as Record<string, SessionTranscriptStorageMode>;
 
     return filtered;
-}, z.record(BackendTargetKeySchema, SessionTranscriptStorageModeSchema).default({}));
+}, z.record(BackendTargetKeyV2Schema, SessionTranscriptStorageModeSchema).default({}));
+
+const LastUsedBackendTargetSchema = z.union([
+    BackendTargetRefV2InputSchema,
+    z.null(),
+]).transform((value) => {
+    if (value === null) return null;
+    return readBackendTargetRefV2(value);
+});
 
 export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinitions({
     lastUsedAgent: {
@@ -39,7 +48,7 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
         storageScope: 'local',
     },
     lastUsedBackendTarget: {
-        schema: BackendTargetRefSchema.nullable(),
+        schema: LastUsedBackendTargetSchema,
         default: null,
         description: 'Last selected backend target for new sessions',
         storageScope: 'local',

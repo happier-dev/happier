@@ -7,6 +7,7 @@ import {
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
+import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
 import { saveNewSessionDraft } from '@/sync/domains/state/persistence';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
@@ -14,7 +15,7 @@ import type { NewSessionAutomationDraft } from '@/sync/domains/automations/autom
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
@@ -32,7 +33,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     sessionPrompt: string;
     agentType: AgentId;
-    backendTarget: BackendTargetRefV1 | null;
+    backendTarget: BackendTargetRefV2 | null;
     transcriptStorage: BuildResolvedInputs['transcriptStorage'];
     useProfiles: boolean;
     selectedProfileId: string | null;
@@ -65,7 +66,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const [draftPersistenceEnabled, setDraftPersistenceEnabled] = React.useState(true);
     const draftPersistenceEnabledRef = React.useRef(true);
     const draftPersistenceGenerationRef = React.useRef(0);
-    const draftAgentId = React.useMemo(() => resolvePersistedAgentIdForBackendTarget({
+    const draftAgentId = React.useMemo(() => resolveNewSessionCompatAgentType({
         backendTarget: params.backendTarget,
         persistedAgentId: params.settings.lastUsedAgent,
         selectedBuiltInAgentId: params.agentType,
@@ -143,18 +144,34 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const effectiveAutomationDraft = authoringContext.effectiveAutomationDraft;
     const canCreate = authoringContext.canSubmit;
 
-    const buildCurrentPersistedDraft = React.useCallback(() => buildPersistedNewSessionDraftFromAuthoringDraft({
-        draft: currentAuthoringDraft,
-        machineId: params.selectedMachineId,
-        entryIntent: params.automationRequestedByRoute ? 'automation' : 'session',
-        selectedSecretId: params.selectedSecretId,
-        selectedSecretIdByProfileIdByEnvVarName: params.selectedSecretIdByProfileIdByEnvVarName,
-        sessionOnlySecretValueEncByProfileIdByEnvVarName: params.getSessionOnlySecretValueEncByProfileIdByEnvVarName(),
-        backendNewSessionOptionStateByTargetKey: params.backendNewSessionOptionStateByTargetKey,
-        preferredPersistedAgentId: draftAgentId,
-        updatedAt: Date.now(),
-    }), [
+    const buildCurrentPersistedDraft = React.useCallback(() => {
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft: currentAuthoringDraft,
+            machineId: params.selectedMachineId,
+            entryIntent: params.automationRequestedByRoute ? 'automation' : 'session',
+            selectedSecretId: params.selectedSecretId,
+            selectedSecretIdByProfileIdByEnvVarName: params.selectedSecretIdByProfileIdByEnvVarName,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: params.getSessionOnlySecretValueEncByProfileIdByEnvVarName(),
+            backendNewSessionOptionStateByTargetKey: params.backendNewSessionOptionStateByTargetKey,
+            preferredPersistedAgentId: draftAgentId,
+            updatedAt: Date.now(),
+        });
+
+        return {
+            ...persistedDraft,
+            agentType: resolveNewSessionCompatAgentType({
+                backendTarget: persistedDraft.backendTarget ?? null,
+                persistedAgentId: draftAgentId,
+                selectedBuiltInAgentId: resolvePersistedAgentIdForBackendTarget({
+                    backendTarget: persistedDraft.backendTarget ?? null,
+                    persistedAgentId: persistedDraft.agentType,
+                    selectedBuiltInAgentId: params.agentType,
+                }),
+            }),
+        };
+    }, [
         currentAuthoringDraft,
+        params.agentType,
         params.backendNewSessionOptionStateByTargetKey,
         params.automationRequestedByRoute,
         draftAgentId,

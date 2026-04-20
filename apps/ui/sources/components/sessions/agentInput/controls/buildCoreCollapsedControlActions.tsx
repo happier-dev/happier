@@ -1,8 +1,7 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/catalog/catalog';
-import { getAgentCore } from '@/agents/catalog/catalog';
+import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
@@ -17,7 +16,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     profileLabel: string | null;
     profileIcon: string;
     envVarsCount?: number;
-    agentType?: AgentId;
+    agentLabel?: string | null;
     machineName?: string | null;
     currentPath?: string | null;
     resumeSessionId?: string | null;
@@ -67,10 +66,10 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    if (opts.agentType && opts.onAgentClick) {
+    if (opts.agentLabel && opts.onAgentClick) {
         controlActionsById.engine = [{
             id: 'agent',
-            label: t(getAgentCore(opts.agentId).displayNameKey),
+            label: opts.agentLabel,
             icon: <Octicons name="cpu" size={16} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
@@ -135,7 +134,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     }
 
     if (opts.onResumeClick) {
-        const resumeAgentLabel = t(getAgentCore(opts.agentType ?? opts.agentId).displayNameKey);
+        const resumeAgentLabel = opts.agentLabel ?? t(getAgentCore(opts.agentId).displayNameKey);
         const resumeChipTitle = t('newSession.resume.chipOptional', { agent: resumeAgentLabel });
         controlActionsById.resume = [{
             id: 'resume',

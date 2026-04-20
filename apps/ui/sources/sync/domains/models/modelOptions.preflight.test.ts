@@ -13,6 +13,7 @@ describe('modelOptions preflight', () => {
             agentType: 'claude',
             preflight: {
                 availableModels: [
+                    { id: 'claude-opus-4-7', name: 'Claude Opus 4.7' },
                     { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
                     { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
                     { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
@@ -23,6 +24,7 @@ describe('modelOptions preflight', () => {
 
         expect(out.map((option) => option.value)).toEqual([
             'default',
+            'claude-opus-4-7',
             'claude-opus-4-6',
             'claude-sonnet-4-6',
             'claude-haiku-4-5',
@@ -32,6 +34,16 @@ describe('modelOptions preflight', () => {
 
         // Preflight model lists often omit per-model option metadata; we must preserve catalog
         // options so controls like Claude "Thinking" can still render.
+        expect(out.find((option) => option.value === 'claude-opus-4-7')).toMatchObject({
+            modelOptions: expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'reasoning_effort',
+                    options: expect.arrayContaining([
+                        expect.objectContaining({ value: 'xhigh' }),
+                    ]),
+                }),
+            ]),
+        });
         expect(out.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
             modelOptions: expect.arrayContaining([
                 expect.objectContaining({ id: 'reasoning_effort' }),

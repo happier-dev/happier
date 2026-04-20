@@ -50,10 +50,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: vi.fn(),
 }));
 
-vi.mock('@/voice/activity/voiceActivityController', () => ({
-    voiceActivityController: { clearSession: vi.fn() },
-}));
-
 vi.mock('@/voice/session/voiceSession', () => ({
     voiceSessionManager: { stopSession: vi.fn() },
 }));

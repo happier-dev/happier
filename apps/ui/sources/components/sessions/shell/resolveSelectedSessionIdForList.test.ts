@@ -30,4 +30,12 @@ describe('resolveSelectedSessionIdForList', () => {
             pathname: '/session/folder%2Fsession-id/info',
         })).toBe('folder/session-id');
     });
+
+    it('prefers the focused split-session id over the route pathname when provided', () => {
+        expect(resolveSelectedSessionIdForList({
+            selectable: true,
+            pathname: '/session/route-session/info',
+            focusedSessionId: 'focused-session',
+        } as never)).toBe('focused-session');
+    });
 });

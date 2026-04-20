@@ -1,12 +1,15 @@
-import { buildBackendTargetKey, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-import { AGENT_IDS, type AgentId } from '@/agents/registry/registryCore';
+import {
+    buildProviderUniverseBackendTargetKey,
+    listProviderUniverseIds,
+} from '@/agents/providers/registry/providerUniverse';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 const DEFAULT_SESSION_PERMISSION_MODE_BY_TARGET_KEY: Record<string, PermissionMode> = Object.fromEntries(
-    AGENT_IDS.map((id) => [buildBackendTargetKey({ kind: 'builtInAgent', agentId: id }), 'default']),
+    listProviderUniverseIds().map((id) => [buildProviderUniverseBackendTargetKey(id), 'default']),
 );
 
 function buildPermissionModeAnalyticsProperties(value: unknown): Record<string, string> {
@@ -15,8 +18,8 @@ function buildPermissionModeAnalyticsProperties(value: unknown): Record<string, 
         : {};
 
     return Object.fromEntries(
-        AGENT_IDS.map((agentId) => {
-            const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
+        listProviderUniverseIds().map((agentId) => {
+            const targetKey = buildProviderUniverseBackendTargetKey(agentId);
             const raw = record[targetKey];
             const normalized = typeof raw === 'string' && (PERMISSION_MODES as readonly string[]).includes(raw)
                 ? raw

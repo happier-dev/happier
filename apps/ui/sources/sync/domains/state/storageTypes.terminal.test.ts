@@ -3,6 +3,71 @@ import { describe, it, expect } from 'vitest';
 import { MetadataSchema } from './storageTypes';
 
 describe('MetadataSchema', () => {
+    it('canonicalizes legacy runtime descriptors onto runtimeDescriptorV1 at storage ingress', () => {
+        const parsed = MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            agentRuntimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+                provider: {
+                    backendMode: 'appServer',
+                    vendorSessionId: 'thread-1',
+                },
+            },
+        } as any);
+
+        expect((parsed as any).runtimeDescriptorV1).toEqual({
+            v: 1,
+            providerId: 'codex',
+            provider: {
+                backendMode: 'appServer',
+                vendorSessionId: 'thread-1',
+            },
+        });
+        expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
+    });
+
+    it('rejects malformed canonical runtimeDescriptorV1 metadata', () => {
+        expect(() => MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            runtimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+            },
+        } as any)).toThrow();
+    });
+
+    it('falls back to a valid legacy runtime descriptor when the canonical carrier is malformed', () => {
+        const parsed = MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            runtimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+            },
+            agentRuntimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+                provider: {
+                    backendMode: 'appServer',
+                    vendorSessionId: 'thread-legacy',
+                },
+            },
+        } as any);
+
+        expect((parsed as any).runtimeDescriptorV1).toEqual({
+            v: 1,
+            providerId: 'codex',
+            provider: {
+                backendMode: 'appServer',
+                vendorSessionId: 'thread-legacy',
+            },
+        });
+        expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
+    });
+
     it('should preserve terminal metadata when present', () => {
         const parsed = MetadataSchema.parse({
             path: '/tmp',

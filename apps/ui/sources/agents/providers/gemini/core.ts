@@ -1,5 +1,6 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentConnectedServicesUiConfig } from '@/agents/registry/buildAgentConnectedServicesUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
@@ -11,11 +12,8 @@ export const GEMINI_CORE: AgentCoreConfig = {
     subtitleKey: 'profiles.aiBackend.geminiSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.geminiPermissionMode',
     availability: { experimental: true },
-    connectedService: {
-        id: 'gemini',
-        name: 'Google Gemini',
-        connectRoute: null,
-    },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'gemini' }),
+    uiConnectedService: { serviceId: 'gemini', label: 'Google Gemini', connectRoute: null },
     flavorAliases: ['gemini'],
     cli: buildCatalogProviderCliUiConfig('gemini'),
     permissions: {

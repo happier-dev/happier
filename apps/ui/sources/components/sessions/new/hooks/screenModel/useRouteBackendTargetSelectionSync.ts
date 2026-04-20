@@ -1,16 +1,17 @@
 import React from 'react';
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export function useRouteBackendTargetSelectionSync(params: Readonly<{
-    routeBackendTarget: BackendTargetRefV1 | null;
+    routeBackendTarget: BackendTargetRefV2 | null;
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedBackendTargetKey: string;
-    setBackendTarget: (next: React.SetStateAction<BackendTargetRefV1>) => void;
+    setBackendTarget: (next: React.SetStateAction<BackendTargetRefV2>) => void;
 }>): void {
     const routeBackendTargetKey = React.useMemo(() => {
-        return params.routeBackendTarget ? buildBackendTargetKey(params.routeBackendTarget) : null;
+        return params.routeBackendTarget ? resolveBackendTargetKeyV2(params.routeBackendTarget) : null;
     }, [params.routeBackendTarget]);
 
     const lastAppliedRouteBackendTargetKeyRef = React.useRef<string | null>(null);
@@ -23,7 +24,7 @@ export function useRouteBackendTargetSelectionSync(params: Readonly<{
         if (lastAppliedRouteBackendTargetKeyRef.current === routeBackendTargetKey) {
             return;
         }
-        const matchedRouteEntry = params.resolvedBackendEntries.find((entry) => entry.targetKey === routeBackendTargetKey) ?? null;
+        const matchedRouteEntry = params.resolvedBackendEntries.find((entry) => entry.backendTargetKey === routeBackendTargetKey) ?? null;
         if (!matchedRouteEntry) {
             return;
         }
@@ -31,7 +32,7 @@ export function useRouteBackendTargetSelectionSync(params: Readonly<{
         if (routeBackendTargetKey === params.selectedBackendTargetKey) {
             return;
         }
-        params.setBackendTarget(matchedRouteEntry.target);
+        params.setBackendTarget(matchedRouteEntry.backendTarget);
     }, [
         params.resolvedBackendEntries,
         params.routeBackendTarget,

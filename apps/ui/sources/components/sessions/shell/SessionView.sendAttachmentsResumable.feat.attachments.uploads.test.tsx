@@ -324,7 +324,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
                 supportsVendorResume: true,
                 experimental: true,
             },
-            connectedService: { name: 'Provider' },
+            uiConnectedService: { serviceId: null, label: 'Provider', connectRoute: null },
         }),
         resolveAgentIdFromFlavor: () => 'codex',
         DEFAULT_AGENT_ID: 'codex',
@@ -383,10 +383,15 @@ vi.mock('@/sync/domains/input/slashCommands/executeSessionComposerResolution', (
 vi.mock('@/sync/domains/session/control/submitMode', () => ({
     chooseSubmitMode: () => 'server_pending',
 }));
-vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
-    shouldRenderChatTimelineForSession: () => true,
-    shouldRequestRemoteControlAfterPendingEnqueue: () => false,
-}));
+vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        shouldRenderChatTimelineForSession: () => true,
+        shouldRequestRemoteControl: () => false,
+        shouldRequestRemoteControlAfterPendingEnqueue: () => false,
+    };
+});
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));

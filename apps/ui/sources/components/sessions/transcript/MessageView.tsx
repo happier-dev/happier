@@ -193,7 +193,7 @@ function UserTextBlock(props: {
   const [isMessageHovered, setIsMessageHovered] = React.useState(false);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
-  const isNativeMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+  const usesLongPressMessageContextMenu = false;
   const contextMenuAnchorRef = React.useRef<View>(null);
   const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
   const router = useRouter();
@@ -319,7 +319,7 @@ function UserTextBlock(props: {
   );
 
   const messageContextMenuItems = React.useMemo((): ContextMenuItem[] => {
-    if (!isNativeMobile) return [];
+    if (!usesLongPressMessageContextMenu) return [];
     const items: ContextMenuItem[] = [{ id: 'copy', title: t('common.copy') }];
     if (showForkButton && seq != null) {
       items.push({ id: 'fork', title: t('session.forking.forkFromMessageA11y') });
@@ -332,7 +332,7 @@ function UserTextBlock(props: {
       items.push({ id: 'rollback', title: rollbackTitle });
     }
     return items;
-  }, [isNativeMobile, props.rollbackAction, seq, showForkButton]);
+  }, [props.rollbackAction, seq, showForkButton, usesLongPressMessageContextMenu]);
 
   const handleMessageContextMenuSelect = React.useCallback((itemId: string) => {
     setContextMenuOpen(false);
@@ -449,7 +449,7 @@ function UserTextBlock(props: {
   if (isStructuredOnly) {
     return (
       <Pressable
-        onLongPress={isNativeMobile && messageContextMenuItems.length > 0 ? () => setContextMenuOpen(true) : undefined}
+        onLongPress={usesLongPressMessageContextMenu && messageContextMenuItems.length > 0 ? () => setContextMenuOpen(true) : undefined}
         {...(isWeb
           ? {
               onPointerEnter: () => setIsMessageHovered(true),
@@ -468,7 +468,7 @@ function UserTextBlock(props: {
               <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
             ) : null}
           </View>
-          {!isNativeMobile ? (
+          {!usesLongPressMessageContextMenu ? (
             <View
               {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
               accessibilityElementsHidden={!showCopyButton}
@@ -510,7 +510,7 @@ function UserTextBlock(props: {
             </View>
           ) : null}
         </View>
-        {isNativeMobile && messageContextMenuItems.length > 0 ? (
+        {usesLongPressMessageContextMenu && messageContextMenuItems.length > 0 ? (
           <ContextMenu
           open={contextMenuOpen}
           onOpenChange={setContextMenuOpen}
@@ -529,7 +529,7 @@ function UserTextBlock(props: {
 
   return (
     <Pressable
-      onLongPress={isNativeMobile && messageContextMenuItems.length > 0 ? () => setContextMenuOpen(true) : undefined}
+      onLongPress={usesLongPressMessageContextMenu && messageContextMenuItems.length > 0 ? () => setContextMenuOpen(true) : undefined}
       {...(isWeb
         ? {
             onPointerEnter: () => setIsMessageHovered(true),
@@ -584,7 +584,7 @@ function UserTextBlock(props: {
               <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
             )}
           </View>
-          {!isNativeMobile ? (
+          {!usesLongPressMessageContextMenu ? (
             <View
               {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
               accessibilityElementsHidden={!showCopyButton}
@@ -627,7 +627,7 @@ function UserTextBlock(props: {
           ) : null}
         </View>
       </View>
-      {isNativeMobile && messageContextMenuItems.length > 0 ? (
+      {usesLongPressMessageContextMenu && messageContextMenuItems.length > 0 ? (
         <ContextMenu
           open={contextMenuOpen}
           onOpenChange={setContextMenuOpen}
@@ -658,7 +658,7 @@ function AgentTextBlock(props: {
   const [isMessageHovered, setIsMessageHovered] = React.useState(false);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
-  const isNativeMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+  const usesLongPressMessageContextMenu = false;
   const contextMenuAnchorRef = React.useRef<View>(null);
   const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
   const router = useRouter();
@@ -762,7 +762,7 @@ function AgentTextBlock(props: {
   );
 
   const messageContextMenuItems = React.useMemo((): ContextMenuItem[] => {
-    if (!isNativeMobile) return [];
+    if (!usesLongPressMessageContextMenu) return [];
     const items: ContextMenuItem[] = [{ id: 'copy', title: t('common.copy') }];
     if (showForkButton && seq != null) {
       items.push({ id: 'fork', title: t('session.forking.forkFromMessageA11y') });
@@ -775,7 +775,7 @@ function AgentTextBlock(props: {
       items.push({ id: 'rollback', title: rollbackTitle });
     }
     return items;
-  }, [isNativeMobile, props.rollbackAction, seq, showForkButton]);
+  }, [props.rollbackAction, seq, showForkButton, usesLongPressMessageContextMenu]);
 
   const handleMessageContextMenuSelect = React.useCallback((itemId: string) => {
     setContextMenuOpen(false);
@@ -943,7 +943,7 @@ function AgentTextBlock(props: {
 
   return (
     <Pressable
-      onLongPress={isNativeMobile && messageContextMenuItems.length > 0 ? () => setContextMenuOpen(true) : undefined}
+      onLongPress={usesLongPressMessageContextMenu && messageContextMenuItems.length > 0 ? () => setContextMenuOpen(true) : undefined}
       {...(isWeb
         ? {
             onPointerEnter: () => setIsMessageHovered(true),
@@ -1025,7 +1025,7 @@ function AgentTextBlock(props: {
         {linkedWorkspaceFilesDeferred.length > 0 && !isStructuredOnly ? (
           <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFilesDeferred} />
         ) : null}
-        {!isNativeMobile ? (
+        {!usesLongPressMessageContextMenu ? (
           <View
             {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
             accessibilityElementsHidden={!showCopyButton}
@@ -1067,7 +1067,7 @@ function AgentTextBlock(props: {
           </View>
         ) : null}
       </View>
-      {isNativeMobile && messageContextMenuItems.length > 0 ? (
+      {usesLongPressMessageContextMenu && messageContextMenuItems.length > 0 ? (
         <ContextMenu
           open={contextMenuOpen}
           onOpenChange={setContextMenuOpen}
@@ -1360,6 +1360,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'column',
     flexGrow: 1,
     flexBasis: 0,
+    minWidth: 0,
     maxWidth: layout.maxWidth,
   },
   userMessageContainer: {

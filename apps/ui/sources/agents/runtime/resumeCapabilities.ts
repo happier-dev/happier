@@ -6,11 +6,11 @@
  * - experimental (requires explicit opt-in).
  */
 
-import { buildBackendTargetKey } from '@happier-dev/protocol';
-import { AGENTS_CORE, evaluateVendorResumeEligibility, resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { evaluateVendorResumeEligibility, getAgentResumeConfig, isAgentId, resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 import { deriveAcpBackendIdFromFlavor, isAcpFlavorPrefix } from './acpFlavor';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export type ResumeCapabilityOptions = {
     accountSettings?: Partial<Settings> | null;
@@ -22,7 +22,7 @@ function isConfiguredAcpBackendEnabled(backendId: string, options?: ResumeCapabi
         return true;
     }
 
-    const targetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId });
+    const targetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId, configuredBackendId: backendId });
     return (backendEnabledByTargetKey as Record<string, unknown>)[targetKey] !== false;
 }
 
@@ -56,8 +56,9 @@ export function canAgentResume(agent: string | null | undefined, options?: Resum
 
     const agentId = resolveAgentIdFromFlavor(agent);
     if (!agentId) return false;
+    if (!isAgentId(agentId)) return false;
 
-    const resume = AGENTS_CORE[agentId]?.resume;
+    const resume = getAgentResumeConfig(agentId);
     const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
     if (!field) return false;
 
@@ -99,6 +100,7 @@ export function canResumeSessionWithOptions(metadata: SessionMetadata | null | u
 
     const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
     if (!agentId) return false;
+    if (!isAgentId(agentId)) return false;
 
     return (
         evaluateVendorResumeEligibility({
@@ -127,6 +129,7 @@ export function getAgentVendorResumeId(
 
     const agentId = resolveAgentIdFromFlavor(agent) ?? resolveAgentIdFromSessionMetadata(metadata);
     if (!agentId) return null;
+    if (!isAgentId(agentId)) return null;
 
     const eligibility = evaluateVendorResumeEligibility({
         agentId,

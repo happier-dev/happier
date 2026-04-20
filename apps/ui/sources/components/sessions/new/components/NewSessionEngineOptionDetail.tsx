@@ -1,9 +1,8 @@
 import * as React from 'react';
 
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { getAgentCore } from '@/agents/catalog/catalog';
+import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
@@ -16,7 +15,7 @@ import { computeAcpConfigOptionControlsForProvider } from '@/sync/acp/configOpti
 import { t } from '@/text';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
-    backendTarget: BackendTargetRefV1;
+    backendTarget: BackendTargetRefV2;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
@@ -122,11 +121,12 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         props.onSelectionChange?.(nextSelection);
     }, [props.onSelectionChange]);
 
-    const providerAgentId = React.useMemo(
-        () => resolveProviderAgentIdForBackendTarget(props.backendTarget),
-        [props.backendTarget],
-    );
-    const providerSupportsFreeform = getAgentCore(providerAgentId).model.supportsFreeform === true;
+    const providerSupportsFreeform = React.useMemo(() => {
+        if (props.backendTarget.configuredBackendId) return true;
+        return isAgentId(props.backendTarget.backendId)
+            ? getAgentCore(props.backendTarget.backendId).model.supportsFreeform === true
+            : false;
+    }, [props.backendTarget]);
     const canEnterCustomModel = preflightModels?.supportsFreeform === true || providerSupportsFreeform;
     const effectiveModelLabel = React.useMemo(
         () => resolveEffectiveModelLabel(modelOptions, selectedModelId),
@@ -135,10 +135,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
 
     const configControls = React.useMemo(
         () => computeAcpConfigOptionControlsForProvider({
-            providerId:
-                props.backendTarget.kind === 'configuredAcpBackend'
-                    ? props.backendTarget.backendId
-                    : props.backendTarget.agentId,
+            providerId: props.backendTarget.configuredBackendId ?? props.backendTarget.backendId,
             configOptions,
             overrides: Object.fromEntries(
                 Object.entries(selectedConfigOverrides).map(([optionId, value]) => [optionId, { value }]),
@@ -151,10 +148,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         const selectedModel = modelOptions.find((option) => option.value === selectedModelId) ?? null;
         if (!selectedModel?.modelOptions?.length) return null;
         return computeAcpConfigOptionControlsForProvider({
-            providerId:
-                props.backendTarget.kind === 'configuredAcpBackend'
-                    ? props.backendTarget.backendId
-                    : props.backendTarget.agentId,
+            providerId: props.backendTarget.configuredBackendId ?? props.backendTarget.backendId,
             configOptions: selectedModel.modelOptions,
             overrides: Object.fromEntries(
                 Object.entries(selectedConfigOverrides).map(([optionId, value]) => [optionId, { value }]),

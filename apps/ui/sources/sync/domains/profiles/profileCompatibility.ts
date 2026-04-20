@@ -1,17 +1,18 @@
-import { z } from 'zod';
-
 import {
-    AIBackendProfileSchema as ProtocolAIBackendProfileSchema,
-    type BackendTargetRefV1,
+    convertBackendTargetRefV2ToV1,
     getProfileEnvironmentVariables as getProfileEnvironmentVariablesProtocol,
     isProfileCompatibleWithBackendTarget as isProfileCompatibleWithBackendTargetProtocol,
     isProfileCompatibleWithAgent as isProfileCompatibleWithAgentProtocol,
+    readBackendTargetRefV2,
+    type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
-import type { AgentId } from '@/agents/catalog/catalog';
+import type { AgentId } from '@/agents/registry/registryCore';
 
-export const AIBackendProfileSchema = ProtocolAIBackendProfileSchema;
-
-export type AIBackendProfile = z.infer<typeof AIBackendProfileSchema>;
+export {
+    AIBackendProfileSchema,
+    type AIBackendProfile,
+} from './aiBackendProfileSchema';
+import type { AIBackendProfile } from './aiBackendProfileSchema';
 export type ProfileCompatibilitySummary =
     Pick<AIBackendProfile, 'compatibility' | 'isBuiltIn'>
     & Partial<Pick<AIBackendProfile, 'compatibilityByTargetKey'>>;
@@ -28,9 +29,10 @@ function normalizeCompatibilityProfile(
 
 export function isProfileCompatibleWithBackendTarget(
     profile: ProfileCompatibilitySummary,
-    target: BackendTargetRefV1,
+    target: BackendTargetRefV2Input,
 ): boolean {
-    return isProfileCompatibleWithBackendTargetProtocol(normalizeCompatibilityProfile(profile), target);
+    const normalizedTargetV1 = convertBackendTargetRefV2ToV1(readBackendTargetRefV2(target));
+    return isProfileCompatibleWithBackendTargetProtocol(normalizeCompatibilityProfile(profile), normalizedTargetV1);
 }
 
 export function isProfileCompatibleWithAgent(

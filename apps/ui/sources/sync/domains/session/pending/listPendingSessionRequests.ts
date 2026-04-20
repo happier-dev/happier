@@ -1,6 +1,6 @@
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { storage } from '@/sync/domains/state/storage';
+import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import type { AgentState, Session } from '@/sync/domains/state/storageTypes';
 import { isRequestInterruptedPlaceholder } from './requestInterruptedPlaceholder';
 import {
@@ -206,10 +206,13 @@ function getTranscriptRequestStates(
     session: Session,
     messages?: ReadonlyArray<Message>,
 ): Map<string, TranscriptRequestState> {
-    const transcriptMessages =
-        messages ??
-        readStoredSessionMessages(storage.getState(), session.id) ??
-        [];
+    const transcriptMessages = (() => {
+        if (messages) {
+            return messages;
+        }
+        const storageState = readRegisteredStorageState();
+        return storageState ? (readStoredSessionMessages(storageState, session.id) ?? []) : [];
+    })();
     const states = new Map<string, TranscriptRequestState>();
     collectTranscriptRequestStates(
         transcriptMessages,
