@@ -7,6 +7,10 @@ import { realpathSync } from 'node:fs';
 import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol';
 
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import {
+    OS_USER_FILESYSTEM_ACCESS_POLICY,
+    type FilesystemAccessPolicy,
+} from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 export type ScmExecResult = {
     success: boolean;
@@ -173,13 +177,14 @@ export function runScmCommand(input: {
 
 export function resolveCwd(
     rawCwd: string | undefined,
-    workingDirectory: string
+    workingDirectory: string,
+    accessPolicy: FilesystemAccessPolicy = OS_USER_FILESYSTEM_ACCESS_POLICY,
 ): { ok: true; cwd: string } | { ok: false; error: string } {
     const normalizedWorkingDirectory = resolveTildePath(workingDirectory);
     if (!rawCwd) return { ok: true, cwd: normalizedWorkingDirectory };
 
     const normalizedRawCwd = rawCwd.trim().startsWith('~') ? resolveTildePath(rawCwd) : rawCwd;
-    const validation = validatePath(normalizedRawCwd, normalizedWorkingDirectory);
+    const validation = validatePath(normalizedRawCwd, normalizedWorkingDirectory, undefined, accessPolicy);
     if (!validation.valid || !validation.resolvedPath) {
         return { ok: false, error: validation.error || `Invalid path: ${rawCwd}` };
     }

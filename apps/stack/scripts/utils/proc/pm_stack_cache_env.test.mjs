@@ -157,6 +157,40 @@ async function writeYarnBuildCreatesDistStub({ binDir, outputPath, cliDir }) {
   await writeFile(outputPath, '', 'utf-8');
 }
 
+async function writeYarnForceRepairPkgrollThenBuildStub({ binDir, outputPath, cliDir, pkgrollCliPath }) {
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$*" >> "${OUTPUT_PATH:?}"',
+      'if [ "${1:-}" = "--version" ]; then',
+      '  echo "1.22.22"',
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = "install" ] && [ "${2:-}" = "--force" ]; then',
+      `  cat > ${JSON.stringify(pkgrollCliPath)} <<'EOF'`,
+      '#!/usr/bin/env node',
+      'console.log("pkgroll repaired");',
+      'EOF',
+      '  chmod 755 ' + JSON.stringify(pkgrollCliPath),
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = "build" ]; then',
+      `  mkdir -p ${JSON.stringify(join(cliDir, 'dist'))}`,
+      `  echo "export const built = true;" > ${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))}`,
+      '  exit 0',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8'
+  );
+  await chmod(yarnPath, 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+}
+
 async function writeYarnBuildCreatesPartialDistWithMissingChunkStub({ binDir, outputPath, cliDir }) {
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
@@ -176,6 +210,38 @@ async function writeYarnBuildCreatesPartialDistWithMissingChunkStub({ binDir, ou
       // This should be treated as a build failure by ensureCliBuilt.
       `  echo "import './index-inner.mjs';" > ${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))}`,
       `  echo "import './missing-chunk.mjs';" > ${JSON.stringify(join(cliDir, 'dist', 'index-inner.mjs'))}`,
+      '  exit 0',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8'
+  );
+  await chmod(yarnPath, 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+}
+
+async function writeYarnBuildRefreshesAgentsAndPreservesCliDistStub({ binDir, outputPath, cliDir, agentsDir }) {
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$*" >> "${OUTPUT_PATH:?}"',
+      'if [ "${1:-}" = "--version" ]; then',
+      '  echo "1.22.22"',
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = "-s" ] && [ "${2:-}" = "build" ]; then',
+      `  mkdir -p ${JSON.stringify(join(agentsDir, 'dist', 'sessionControls'))}`,
+      `  echo "export const publish = true;" > ${JSON.stringify(join(agentsDir, 'dist', 'sessionControls', 'publish.js'))}`,
+      `  echo "export const agentsBuilt = true;" > ${JSON.stringify(join(agentsDir, 'dist', 'index.js'))}`,
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = "build" ]; then',
+      `  mkdir -p ${JSON.stringify(join(cliDir, 'dist'))}`,
+      `  echo "export const cliBuilt = true;" > ${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))}`,
       '  exit 0',
       'fi',
       'exit 0',
@@ -793,6 +859,50 @@ test('ensureCliBuilt restores previous dist output when build produces a broken 
   assert.equal(restored, 'export const stable = true;\n');
 });
 
+test('ensureCliBuilt force-refreshes deps once when pkgroll entrypoint is a shell wrapper before building', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-repair-pkgroll-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  const pkgrollCliPath = join(root, 'node_modules', 'pkgroll', 'dist', 'cli.mjs');
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(dirname(pkgrollCliPath), { recursive: true });
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(root, 'package.json'), '{ "name": "repo", "private": true }\n', 'utf-8');
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'ui', 'package.json'), '{ "name": "@happier-dev/ui", "private": true }\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'server', 'package.json'), '{ "name": "@happier-dev/server", "private": true }\n', 'utf-8');
+  await writeFile(join(cliDir, 'package.json'), '{ "name": "@happier-dev/cli", "private": true }\n', 'utf-8');
+  await writeFile(pkgrollCliPath, '#!/bin/sh\nexec node "$0" "$@"\n', 'utf-8');
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+
+  const newer = new Date(Date.now() + 5_000);
+  await utimes(join(root, 'node_modules', '.yarn-integrity'), newer, newer);
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnForceRepairPkgrollThenBuildStub({ binDir, outputPath, cliDir, pkgrollCliPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_CLI_BUILD_MODE: 'always',
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
+
+  const argv = await readFile(outputPath, 'utf-8');
+  assert.match(argv, /\binstall --force --production=false\b/, `expected forced yarn reinstall, got:\n${argv}`);
+  assert.match(argv, /(^|\n)build(\n|$)/, `expected yarn build after repair, got:\n${argv}`);
+  assert.match(await readFile(pkgrollCliPath, 'utf-8'), /pkgroll repaired/);
+  assert.equal(await readFile(join(cliDir, 'dist', 'index.mjs'), 'utf-8'), 'export const built = true;\n');
+});
+
 test('ensureCliBuilt serializes concurrent rebuilds so dist is built once when the git signature still matches', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-lock-'));
   t.after(async () => {
@@ -955,6 +1065,73 @@ test('ensureCliBuilt restores dist from .dist.hstack-backup when previous build 
   assert.equal(recovered, 'export const stable = true;\n');
   const argv = await readFile(outputPath, 'utf-8');
   assert.ok(!argv.includes('build'), `expected no build invocation, got: ${argv}`);
+});
+
+test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cli dist', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-refresh-shared-deps-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  const agentsDir = join(root, 'packages', 'agents');
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(join(cliDir, 'node_modules'), { recursive: true });
+  await mkdir(join(cliDir, 'dist'), { recursive: true });
+  await mkdir(join(agentsDir, 'src'), { recursive: true });
+  await mkdir(join(agentsDir, 'dist', 'sessionControls'), { recursive: true });
+  await writeFile(join(root, 'package.json'), '{ "name": "repo", "private": true }\n', 'utf-8');
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'ui', 'package.json'), '{ "name": "@happier-dev/ui", "private": true }\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'server', 'package.json'), '{ "name": "@happier-dev/server", "private": true }\n', 'utf-8');
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/cli',
+    private: true,
+    dependencies: {
+      '@happier-dev/agents': '0.0.0',
+    },
+  }, null, 2) + '\n', 'utf-8');
+  await writeFile(join(cliDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+  await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export const cached = true;\n', 'utf-8');
+
+  await writeFile(join(agentsDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/agents',
+    version: '0.0.0',
+    type: 'module',
+    scripts: {
+      build: 'yarn build',
+    },
+    main: './dist/index.js',
+    exports: {
+      '.': {
+        default: './dist/index.js',
+      },
+    },
+  }, null, 2) + '\n', 'utf-8');
+  await writeFile(join(agentsDir, 'src', 'index.ts'), 'export const source = true;\n', 'utf-8');
+  await writeFile(
+    join(agentsDir, 'dist', 'index.js'),
+    'import "./sessionControls/publish.js";\nexport const agentsCached = true;\n',
+    'utf-8',
+  );
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnBuildRefreshesAgentsAndPreservesCliDistStub({ binDir, outputPath, cliDir, agentsDir });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_CLI_BUILD_MODE: 'auto',
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
+
+  const argv = await readFile(outputPath, 'utf-8');
+  assert.match(argv, /-s build/);
+  assert.equal(await readFile(join(agentsDir, 'dist', 'sessionControls', 'publish.js'), 'utf-8'), 'export const publish = true;\n');
 });
 
 test('ensureCliBuilt defaults to no rebuild in service mode even when git signature changed', async (t) => {

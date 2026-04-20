@@ -12,4 +12,4 @@ export { ApiSessionClient } from '@/api/session/sessionClient'
 export { logger } from '@/ui/logger'
 export { configuration } from '@/configuration'
 
-export { RawJSONLinesSchema, type RawJSONLines } from '@/backends/claude/types'
+export { RawJSONLinesSchema, type RawJSONLines } from '@/backends/claude/contracts/rawJsonLines'

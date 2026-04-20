@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { SpawnDaemonSessionRequestSchema } from './spawnSessionOptionsContract';
+import {
+  SpawnDaemonSessionRequestSchema,
+  pickDefinedSpawnSessionOptions,
+} from './spawnSessionOptionsContract';
 
 describe('SpawnDaemonSessionRequestSchema', () => {
   it('canonicalizes legacy built-in agent field into backendTarget when backendTarget is missing', () => {
@@ -14,6 +17,15 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       backendId: 'codex',
       sourceKind: 'built_in',
     });
+  });
+
+  it('preserves approvedNewDirectoryCreation in the canonical spawn request', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      approvedNewDirectoryCreation: true,
+    });
+
+    expect(parsed.approvedNewDirectoryCreation).toBe(true);
   });
 
   it('rejects unknown legacy built-in agent field when backendTarget is missing', () => {
@@ -34,11 +46,51 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     ).toThrow();
   });
 
-  it('rejects built-in backendTarget when agentId is customAcp', () => {
+  it('accepts V1 backendTarget carriers and canonicalizes them to the V2 backend transport shape', () => {
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    }).backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'codex',
+      sourceKind: 'built_in',
+    });
+
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+    }).backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
+
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: 'agent:codex',
+    }).backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'codex',
+      sourceKind: 'built_in',
+    });
+
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: 'acpBackend:review-bot',
+    }).backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
+  });
+
+  it('rejects canonical backendTarget values that identify customAcp', () => {
     expect(() =>
       SpawnDaemonSessionRequestSchema.parse({
         directory: '/tmp',
-        backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+        backendTarget: { kind: 'backend', backendId: 'customAcp', sourceKind: 'built_in' },
       }),
     ).toThrow();
   });
@@ -49,6 +101,25 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       backendTarget: {
         kind: 'backend',
         backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+    });
+
+    expect(parsed.backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
+  });
+
+  it('canonicalizes configured ACP backend targets that carry the legacy customAcp family marker', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'customAcp',
         configuredBackendId: 'review-bot',
         sourceKind: 'configured',
       },
@@ -104,6 +175,86 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     expect(parsed.codexBackendMode).toBe('appServer');
   });
 
+  it('preserves canonical runtimeDescriptorV1 from the transport request', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'runtime-thread',
+        },
+      },
+    });
+
+    expect(parsed.runtimeDescriptorV1).toEqual({
+      v: 1,
+      providerId: 'codex',
+      provider: {
+        backendMode: 'appServer',
+        vendorSessionId: 'runtime-thread',
+      },
+    });
+    expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
+  });
+
+  it('prefers runtimeDescriptorV1 over the legacy agentRuntimeDescriptorV1 transport alias', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'canonical-thread',
+        },
+      },
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'acp',
+          vendorSessionId: 'legacy-thread',
+        },
+      },
+    });
+
+    expect(parsed.runtimeDescriptorV1).toEqual({
+      v: 1,
+      providerId: 'codex',
+      provider: {
+        backendMode: 'appServer',
+        vendorSessionId: 'canonical-thread',
+      },
+    });
+    expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
+  });
+
+  it('keeps runtimeDescriptorV1 when picking defined spawn-session options', () => {
+    expect(pickDefinedSpawnSessionOptions({
+      directory: '/tmp',
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'runtime-thread',
+        },
+      },
+    })).toEqual({
+      directory: '/tmp',
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'runtime-thread',
+        },
+      },
+    });
+  });
+
   it('accepts attach metadata identity policy from the transport request', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',
@@ -112,4 +263,5 @@ describe('SpawnDaemonSessionRequestSchema', () => {
 
     expect(parsed.attachMetadataIdentityPolicy).toBe('replace_with_runtime_identity');
   });
+
 });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -134,10 +135,11 @@ process.exit(0);
 }
 
 async function createDaemonFixture(t, { prefix, stackName = 'exp-test', serverPort = 4101 } = {}) {
+  const resolvedServerPort = await reserveUnusedPort(serverPort);
   const fixture = await createStackHappierCliCommandFixture(t, {
     prefix,
     stackName,
-    serverPort,
+    serverPort: resolvedServerPort,
     distIndexScript: buildStubHappyCliScript().trimStart(),
     binHappierScript: "import '../dist/index.mjs';\n",
   });
@@ -145,11 +147,47 @@ async function createDaemonFixture(t, { prefix, stackName = 'exp-test', serverPo
   return {
     storageDir: fixture.storageDir,
     stackName: fixture.stackName,
-    serverPort,
+    serverPort: resolvedServerPort,
     stackCliHome: fixture.stackCliHome,
     baseEnv: fixture.baseEnv,
     writeStackEnv: fixture.writeStackEnv,
   };
+}
+
+async function reserveUnusedPort(preferredPort) {
+  const requested = Number(preferredPort);
+  if (Number.isFinite(requested) && requested > 0) {
+    const claimed = await tryClaimPort(requested);
+    if (claimed) return claimed;
+  }
+  const ephemeral = await tryClaimPort(0);
+  if (!ephemeral) {
+    throw new Error('failed to reserve an unused localhost port for stack daemon integration test');
+  }
+  return ephemeral;
+}
+
+async function tryClaimPort(port) {
+  const server = createServer((_, res) => {
+    res.statusCode = 204;
+    res.end();
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    const claimedPort = typeof address === 'object' && address ? Number(address.port) : NaN;
+    if (!Number.isFinite(claimedPort) || claimedPort <= 0) {
+      return null;
+    }
+    return claimedPort;
+  } catch {
+    return null;
+  } finally {
+    await new Promise((resolve) => server.close(resolve)).catch(() => {});
+  }
 }
 
 async function readLogText(logPath) {
@@ -418,6 +456,43 @@ test('hstack stack daemon <name> status falls back when cli dist entrypoint is m
   assert.ok(
     statusText.includes('Daemon Status'),
     `expected daemon status section in fallback output\n${statusText}`
+  );
+});
+
+test('hstack stack daemon <name> status falls back when cli dist entrypoint import graph is incomplete', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-daemon-status-incomplete-import-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: fixture.baseEnv });
+  assertExitOk(startRes, 'stack daemon start for incomplete-import fallback status');
+
+  const distDir = join(fixture.baseEnv.HAPPIER_STACK_WORKSPACE_DIR, 'happier', 'apps', 'cli', 'dist');
+  await writeFile(join(distDir, 'broken-export.mjs'), 'export const present = true;\n', 'utf-8');
+  await writeFile(
+    join(distDir, 'index.mjs'),
+    "import { missing } from './broken-export.mjs';\nconsole.log(missing);\n",
+    'utf-8',
+  );
+
+  const statusRes = await runHstack(['stack', 'daemon', fixture.stackName, 'status', '--json'], { env: fixture.baseEnv });
+  assertExitOk(statusRes, 'stack daemon status incomplete-import fallback');
+
+  const parsed = JSON.parse(statusRes.stdout.trim());
+  const statusText = String(parsed?.status ?? '');
+  assert.ok(
+    statusText.includes('Fallback status used because CLI dist entrypoint is missing'),
+    `expected fallback marker in daemon status output\n${statusText}`
+  );
+  assert.ok(
+    statusText.includes('Daemon Status'),
+    `expected daemon status section in incomplete-import fallback output\n${statusText}`
   );
 });
 

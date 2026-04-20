@@ -22,6 +22,29 @@ afterEach(() => {
 });
 
 describe('resolveWorkspaceFileDownloadSource', () => {
+    it('allows sources outside the default directory by default', async () => {
+        const workspace = createWorkspace();
+        const externalRoot = createWorkspace();
+        const externalPath = join(externalRoot, 'hello.txt');
+        writeFileSync(externalPath, 'hello\n', 'utf8');
+
+        const result = await resolveWorkspaceFileDownloadSource({
+            workingDirectory: workspace,
+            path: externalPath,
+            asZip: false,
+        });
+
+        expect(result).toMatchObject({
+            success: true,
+            source: {
+                filePath: externalPath,
+                deleteFileOnClose: false,
+                sizeBytes: 6,
+                name: 'hello.txt',
+            },
+        });
+    });
+
     it('returns a direct file source for non-zip downloads', async () => {
         const workspace = createWorkspace();
         writeFileSync(join(workspace, 'hello.txt'), 'hello\n', 'utf8');

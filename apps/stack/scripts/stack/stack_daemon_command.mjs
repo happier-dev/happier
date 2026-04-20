@@ -19,6 +19,67 @@ import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStack
 import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 
+export async function resolveStackDaemonCommandContext({ rootDir, stackName, env, identity, argv = [] }) {
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env });
+  const runtimeSnapshot = runtimeLaunchContext.snapshot;
+  const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
+  const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli', env);
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  const cliEntrypoint = cliLaunchSpec?.entrypoint ?? '';
+  const cliNodeEntrypoint = cliLaunchSpec?.nodeEntrypoint ?? '';
+  const cliCommand = cliLaunchSpec?.command ?? '';
+  const cliCommandArgs = cliLaunchSpec?.args ?? [];
+  const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
+  const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity });
+
+  let runtimePort = null;
+  const runtimePath = (env.HAPPIER_STACK_RUNTIME_STATE_PATH ?? '').toString().trim();
+  if (runtimePath) {
+    const state = await readStackRuntimeStateFile(runtimePath).catch(() => null);
+    const candidate = Number(state?.ports?.server);
+    const serverPid = Number(state?.processes?.serverPid);
+    if (Number.isFinite(candidate) && candidate > 0 && isPidAlive(serverPid)) {
+      runtimePort = candidate;
+    }
+  }
+
+  const serverPort = runtimePort ?? resolveServerPortFromEnv({ env, defaultPort: 3005 });
+  const urls = await resolveServerUrls({ env, serverPort, allowEnable: false });
+  const internalServerUrl = urls.internalServerUrl;
+  const publicServerUrl = urls.publicServerUrl;
+  const envForIdentity = {
+    ...env,
+    HAPPIER_STACK_CLI_IDENTITY: identity,
+    ...(identity !== 'default'
+      ? {
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+        }
+      : {}),
+  };
+  const scopedEnvForIdentity = applyStackActiveServerScopeEnv({
+    env: envForIdentity,
+    stackName,
+    cliIdentity: identity,
+  });
+
+  await mkdir(cliHomeDir, { recursive: true }).catch(() => {});
+
+  return {
+    cliBin,
+    cliEntrypoint,
+    cliNodeEntrypoint,
+    cliCommand,
+    cliCommandArgs,
+    cliHomeDir,
+    runtimePath,
+    internalServerUrl,
+    publicServerUrl,
+    envForIdentity,
+    scopedEnvForIdentity,
+  };
+}
+
 export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) {
   const { flags, kv } = parseArgs(argv);
   const wantsHelpFlag = wantsHelp(argv, { flags });
@@ -66,51 +127,19 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
   const res = await withStackEnv({
     stackName,
     fn: async ({ env }) => {
-      const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env });
-      const runtimeSnapshot = runtimeLaunchContext.snapshot;
-      const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
-      const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli', env);
-      const cliBin = join(cliDir, 'bin', 'happier.mjs');
-      const cliEntrypoint = cliLaunchSpec?.entrypoint ?? '';
-      const cliNodeEntrypoint = cliLaunchSpec?.nodeEntrypoint ?? '';
-      const cliCommand = cliLaunchSpec?.command ?? '';
-      const cliCommandArgs = cliLaunchSpec?.args ?? [];
-      const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
-      const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity });
-
-      // Stack env files don't always include a server port; for running stacks, prefer runtime state.
-      // This avoids accidentally targeting the main stack default (3005) for stacks on other ports.
-      let runtimePort = null;
-      const runtimePath = (env.HAPPIER_STACK_RUNTIME_STATE_PATH ?? '').toString().trim();
-      if (runtimePath) {
-        const state = await readStackRuntimeStateFile(runtimePath).catch(() => null);
-        const candidate = Number(state?.ports?.server);
-        const serverPid = Number(state?.processes?.serverPid);
-        if (Number.isFinite(candidate) && candidate > 0 && isPidAlive(serverPid)) {
-          runtimePort = candidate;
-        }
-      }
-
-      const serverPort = runtimePort ?? resolveServerPortFromEnv({ env, defaultPort: 3005 });
-      const urls = await resolveServerUrls({ env, serverPort, allowEnable: false });
-      const internalServerUrl = urls.internalServerUrl;
-      const publicServerUrl = urls.publicServerUrl;
-      const envForIdentity = {
-        ...env,
-        HAPPIER_STACK_CLI_IDENTITY: identity,
-        ...(identity !== 'default'
-          ? {
-              HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
-              HAPPIER_STACK_AUTO_AUTH_SEED: '0',
-            }
-          : {}),
-      };
-      const scopedEnvForIdentity = applyStackActiveServerScopeEnv({
-        env: envForIdentity,
-        stackName,
-        cliIdentity: identity,
-      });
-      await mkdir(cliHomeDir, { recursive: true }).catch(() => {});
+      const {
+        cliBin,
+        cliEntrypoint,
+        cliNodeEntrypoint,
+        cliCommand,
+        cliCommandArgs,
+        cliHomeDir,
+        runtimePath,
+        internalServerUrl,
+        publicServerUrl,
+        envForIdentity,
+        scopedEnvForIdentity,
+      } = await resolveStackDaemonCommandContext({ rootDir, stackName, env, identity, argv });
 
       if (action === 'start' || action === 'restart') {
         // UX: if this identity is not authenticated yet and we're in a real TTY, offer to run the

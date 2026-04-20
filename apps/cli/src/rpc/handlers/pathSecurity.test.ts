@@ -2,25 +2,30 @@ import { resolve } from 'path';
 import { describe, it, expect } from 'vitest';
 import { validatePath, validateWorkspaceInspectionPath } from './pathSecurity';
 import { mkdirSync, symlinkSync, rmSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, sep } from 'path';
 import { tmpdir } from 'os';
 
 describe('validatePath', () => {
     const workingDir = '/home/user/project';
 
+    function expectResolvedPathSuffix(result: { resolvedPath?: string }, suffixParts: readonly string[]): void {
+        const suffix = `${sep}${suffixParts.join(sep)}`;
+        expect(result.resolvedPath).toEqual(expect.any(String));
+        expect(result.resolvedPath?.endsWith(suffix)).toBe(true);
+    }
+
     it('should allow paths within working directory', () => {
-        expect(validatePath(resolve(workingDir, 'file.txt'), workingDir)).toMatchObject({
-            valid: true,
-            resolvedPath: resolve(workingDir, 'file.txt'),
-        });
-        expect(validatePath('file.txt', workingDir)).toMatchObject({
-            valid: true,
-            resolvedPath: resolve(workingDir, 'file.txt'),
-        });
-        expect(validatePath('./src/file.txt', workingDir)).toMatchObject({
-            valid: true,
-            resolvedPath: resolve(workingDir, 'src', 'file.txt'),
-        });
+        const absolute = validatePath(resolve(workingDir, 'file.txt'), workingDir);
+        expect(absolute.valid).toBe(true);
+        expectResolvedPathSuffix(absolute, ['home', 'user', 'project', 'file.txt']);
+
+        const relative = validatePath('file.txt', workingDir);
+        expect(relative.valid).toBe(true);
+        expectResolvedPathSuffix(relative, ['home', 'user', 'project', 'file.txt']);
+
+        const dotted = validatePath('./src/file.txt', workingDir);
+        expect(dotted.valid).toBe(true);
+        expectResolvedPathSuffix(dotted, ['home', 'user', 'project', 'src', 'file.txt']);
     });
 
     it('should reject paths outside working directory', () => {
@@ -37,10 +42,8 @@ describe('validatePath', () => {
 
     it('normalizes dot segments but still allows resolved in-root paths', () => {
         const result = validatePath('./src/../notes/todo.txt', workingDir);
-        expect(result).toMatchObject({
-            valid: true,
-            resolvedPath: resolve(workingDir, 'notes', 'todo.txt'),
-        });
+        expect(result.valid).toBe(true);
+        expectResolvedPathSuffix(result, ['home', 'user', 'project', 'notes', 'todo.txt']);
     });
 
     it('rejects traversal after normalization when target resolves outside root', () => {
@@ -50,8 +53,13 @@ describe('validatePath', () => {
     });
 
     it('should allow the working directory itself', () => {
-        expect(validatePath('.', workingDir)).toMatchObject({ valid: true, resolvedPath: resolve(workingDir) });
-        expect(validatePath(workingDir, workingDir)).toMatchObject({ valid: true, resolvedPath: resolve(workingDir) });
+        const dot = validatePath('.', workingDir);
+        expect(dot.valid).toBe(true);
+        expectResolvedPathSuffix(dot, ['home', 'user', 'project']);
+
+        const direct = validatePath(workingDir, workingDir);
+        expect(direct.valid).toBe(true);
+        expectResolvedPathSuffix(direct, ['home', 'user', 'project']);
     });
 
     it('allows paths inside additional allowed directories', () => {

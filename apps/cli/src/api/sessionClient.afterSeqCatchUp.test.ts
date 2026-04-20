@@ -102,14 +102,16 @@ describe('ApiSessionClient reconnect transcript catch-up (afterSeq)', () => {
         (client as any).lastObservedMessageSeq = lastObservedMessageSeq;
 
         const onUserMessage = vi.fn();
-        client.on('user-message', onUserMessage);
+        client.onUserMessage(onUserMessage);
 
         mockSocket.trigger('connect');
-        await (client as any).changesSyncInFlight;
-
-        expect(onUserMessage).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect(onUserMessage).toHaveBeenCalledTimes(1);
+        });
         expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining({ localId: 'local-1' }));
-        expect(writeLastChangesCursor).toHaveBeenCalledWith('account-1', 1);
+        await vi.waitFor(() => {
+            expect(writeLastChangesCursor).toHaveBeenCalledWith('account-1', 1);
+        });
 
         await client.close();
     });

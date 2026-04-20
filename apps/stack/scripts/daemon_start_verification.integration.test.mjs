@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import http from 'node:http';
 import { mkdtemp, chmod, mkdir, readFile, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,9 +9,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { checkDaemonState, startLocalDaemonWithAuth } from './daemon.mjs';
-import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { killDetachedProcessGroup } from './testkit/core/spawn_daemon_like_process.mjs';
+import { spawnDetachedInlineNodeTestProcess, spawnDetachedTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
+
+const scriptsDir = dirname(fileURLToPath(import.meta.url));
+const rootDir = dirname(scriptsDir);
 
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -26,12 +31,7 @@ function runNode(args, { cwd, env }) {
 
 function runNodeWithTimeout(args, { cwd, env, timeoutMs }) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, {
-      cwd,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
-    });
+    const proc = spawnDetachedTestProcess(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -401,6 +401,7 @@ test('startLocalDaemonWithAuth keeps TUI alive when daemon start reports an inst
 const args = process.argv.slice(2);
 if (args[0] === 'daemon' && args[1] === 'start') {
   console.error('A background service is already installed for this relay.');
+  console.error('    com.happier.cli.daemon.default (publicdev, default-following) — /Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist');
   console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
   console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
   process.exit(1);
@@ -527,6 +528,714 @@ try {
   }
 });
 
+test('startLocalDaemonWithAuth recovers from installed-service conflict by starting the installed service owner', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('launchctl recovery path is macOS-only');
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-conflict-recover-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+const args = process.argv.slice(2);
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('A background service is already installed for this relay.');
+  console.error('    com.happier.cli.daemon.default (publicdev, default-following) — /Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist');
+  console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
+  console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
+  process.exit(1);
+}
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  process.exit(0);
+}
+if (args[0] === 'daemon' && args[1] === 'status') {
+  process.exit(0);
+}
+process.exit(0);
+`.trimStart(),
+      'utf-8'
+    );
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const fakeBinDir = join(tmp, 'fake-bin');
+    await mkdir(fakeBinDir, { recursive: true });
+    const launchctlLogPath = join(tmp, 'launchctl.log');
+    const launchctlPath = join(fakeBinDir, 'launchctl');
+    const launchctlRunnerPath = join(tmp, 'launchctl-runner.mjs');
+    const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+    await writeFile(
+      launchctlRunnerPath,
+      `
+import { spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+spawnDaemonLikeProcess({
+  cliHomeDir: ${JSON.stringify(cliHomeDir)},
+  internalServerUrl: 'http://127.0.0.1:4301',
+  publicServerUrl: 'http://localhost:4301',
+  statePaths: [${JSON.stringify(statePath)}],
+});
+      `.trimStart(),
+      'utf-8'
+    );
+    await writeFile(
+      launchctlPath,
+      `#!/bin/sh
+printf '%s\\n' "$@" >> ${JSON.stringify(launchctlLogPath)}
+${JSON.stringify(process.execPath)} ${JSON.stringify(launchctlRunnerPath)}
+exit 0
+`,
+      'utf-8'
+    );
+    await chmod(launchctlPath, 0o755);
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl: 'http://127.0.0.1:4301',
+      publicServerUrl: 'http://localhost:4301',
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+        HAPPIER_STACK_STACK: 'dev',
+        HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+        HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+        HAPPIER_STACK_CLI_BUILD: '0',
+        HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '250',
+        HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+        HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+      },
+      stackName: 'dev',
+    });
+
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    assert.equal(typeof state.pid, 'number');
+    assert.ok(state.pid > 0, `expected a live daemon pid, got ${state.pid}`);
+
+    const launchctlLog = await readFile(launchctlLogPath, 'utf-8');
+    assert.match(launchctlLog, /kickstart/);
+    assert.match(launchctlLog, /com\.happier\.cli\.daemon\.default/);
+    killDetachedProcessGroup(state.pid);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth does not bootstrap the installed service plist when the launchctl label is not loaded', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('launchctl recovery path is macOS-only');
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-conflict-bootstrap-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+const args = process.argv.slice(2);
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('A background service is already installed for this relay.');
+  console.error('    com.happier.cli.daemon.default (publicdev, default-following) — /Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist');
+  console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
+  console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
+  process.exit(1);
+}
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  process.exit(0);
+}
+if (args[0] === 'daemon' && args[1] === 'status') {
+  process.exit(0);
+}
+process.exit(0);
+`.trimStart(),
+      'utf-8'
+    );
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const fakeBinDir = join(tmp, 'fake-bin');
+    await mkdir(fakeBinDir, { recursive: true });
+    const launchctlLogPath = join(tmp, 'launchctl-bootstrap.log');
+    const launchctlPath = join(fakeBinDir, 'launchctl');
+    const launchctlRunnerPath = join(tmp, 'launchctl-bootstrap-runner.mjs');
+    const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+    const bootstrapMarkerPath = join(tmp, 'bootstrap-loaded.marker');
+    await writeFile(
+      launchctlRunnerPath,
+      `
+import { writeFileSync } from 'node:fs';
+import { spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+writeFileSync(${JSON.stringify(bootstrapMarkerPath)}, '1\\n', 'utf-8');
+spawnDaemonLikeProcess({
+  cliHomeDir: ${JSON.stringify(cliHomeDir)},
+  internalServerUrl: 'http://127.0.0.1:4301',
+  publicServerUrl: 'http://localhost:4301',
+  statePaths: [${JSON.stringify(statePath)}],
+});
+      `.trimStart(),
+      'utf-8'
+    );
+    await writeFile(
+      launchctlPath,
+      `#!/bin/sh
+printf '%s\\n' "$@" >> ${JSON.stringify(launchctlLogPath)}
+if [ "$1" = "kickstart" ]; then
+  exit 113
+fi
+if [ "$1" = "start" ]; then
+  exit 113
+fi
+if [ "$1" = "bootstrap" ]; then
+  ${JSON.stringify(process.execPath)} ${JSON.stringify(launchctlRunnerPath)}
+  exit 0
+fi
+exit 1
+`,
+      'utf-8'
+    );
+    await chmod(launchctlPath, 0o755);
+
+    await assert.rejects(
+      startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir,
+        internalServerUrl: 'http://127.0.0.1:4301',
+        publicServerUrl: 'http://localhost:4301',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: {
+          ...process.env,
+          PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+          HAPPIER_STACK_STACK: 'dev',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_CLI_BUILD: '0',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '250',
+          HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+          HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+        },
+        stackName: 'dev',
+      }),
+      /installed background service conflict|Failed to start daemon/i,
+    );
+
+    const launchctlLog = await readFile(launchctlLogPath, 'utf-8');
+    assert.match(launchctlLog, /kickstart/);
+    assert.match(launchctlLog, /^start/m);
+    assert.doesNotMatch(launchctlLog, /^enable/m);
+    assert.doesNotMatch(launchctlLog, /^bootstrap/m);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth does not enable a disabled installed service from daemon start recovery', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('launchctl recovery path is macOS-only');
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-conflict-enable-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+const args = process.argv.slice(2);
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('A background service is already installed for this relay.');
+  console.error('    com.happier.cli.daemon.default (publicdev, default-following) — /Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist');
+  console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
+  console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
+  process.exit(1);
+}
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  process.exit(0);
+}
+if (args[0] === 'daemon' && args[1] === 'status') {
+  process.exit(0);
+}
+process.exit(0);
+`.trimStart(),
+      'utf-8'
+    );
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const fakeBinDir = join(tmp, 'fake-bin');
+    await mkdir(fakeBinDir, { recursive: true });
+    const launchctlLogPath = join(tmp, 'launchctl-enable.log');
+    const launchctlPath = join(fakeBinDir, 'launchctl');
+    const launchctlRunnerPath = join(tmp, 'launchctl-enable-runner.mjs');
+    const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+    const enabledMarkerPath = join(tmp, 'launchctl-enabled.marker');
+    await writeFile(
+      launchctlRunnerPath,
+      `
+import { spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+spawnDaemonLikeProcess({
+  cliHomeDir: ${JSON.stringify(cliHomeDir)},
+  internalServerUrl: 'http://127.0.0.1:4301',
+  publicServerUrl: 'http://localhost:4301',
+  statePaths: [${JSON.stringify(statePath)}],
+});
+      `.trimStart(),
+      'utf-8'
+    );
+    await writeFile(
+      launchctlPath,
+      `#!/bin/sh
+printf '%s\\n' "$@" >> ${JSON.stringify(launchctlLogPath)}
+if [ "$1" = "kickstart" ]; then
+  exit 113
+fi
+if [ "$1" = "start" ]; then
+  exit 113
+fi
+if [ "$1" = "enable" ]; then
+  : > ${JSON.stringify(enabledMarkerPath)}
+  exit 0
+fi
+if [ "$1" = "bootstrap" ]; then
+  if [ ! -f ${JSON.stringify(enabledMarkerPath)} ]; then
+    echo "Bootstrap failed: 5: Input/output error" 1>&2
+    exit 5
+  fi
+  ${JSON.stringify(process.execPath)} ${JSON.stringify(launchctlRunnerPath)}
+  exit 0
+fi
+exit 1
+`,
+      'utf-8'
+    );
+    await chmod(launchctlPath, 0o755);
+
+    await assert.rejects(
+      startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir,
+        internalServerUrl: 'http://127.0.0.1:4301',
+        publicServerUrl: 'http://localhost:4301',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: {
+          ...process.env,
+          PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+          HAPPIER_STACK_STACK: 'dev',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_CLI_BUILD: '0',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '250',
+          HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+          HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+        },
+        stackName: 'dev',
+      }),
+      /installed background service conflict|Failed to start daemon/i,
+    );
+
+    const launchctlLog = await readFile(launchctlLogPath, 'utf-8');
+    assert.match(launchctlLog, /kickstart/);
+    assert.match(launchctlLog, /^start/m);
+    assert.doesNotMatch(launchctlLog, /^enable/m);
+    assert.doesNotMatch(launchctlLog, /^bootstrap/m);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth does not repair a stale installed service definition from daemon start recovery', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('launchctl recovery path is macOS-only');
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-conflict-repair-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+    const serviceRepairMarkerPath = join(tmp, 'service-repair.marker');
+    const serviceCommandLogPath = join(tmp, 'service-command.log');
+    const serviceStartRunnerPath = join(tmp, 'service-start-runner.mjs');
+    await writeFile(
+      serviceStartRunnerPath,
+      `
+import { spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+spawnDaemonLikeProcess({
+  cliHomeDir: ${JSON.stringify(cliHomeDir)},
+  internalServerUrl: 'http://127.0.0.1:4301',
+  publicServerUrl: 'http://localhost:4301',
+  statePaths: [${JSON.stringify(statePath)}],
+});
+      `.trimStart(),
+      'utf-8'
+    );
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(serviceCommandLogPath)}, \`\${args.join(' ')} [channel=\${process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL ?? ''}]\\n\`, 'utf-8');
+
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('A background service is already installed for this relay.');
+  console.error('    com.happier.cli.daemon.default (publicdev, default-following) — /Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist');
+  console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
+  console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
+  process.exit(1);
+}
+
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  process.exit(0);
+}
+
+if (args[0] === 'daemon' && args[1] === 'status') {
+  process.exit(0);
+}
+
+if (args[0] === 'service' && args[1] === 'repair' && args.includes('--yes')) {
+  writeFileSync(${JSON.stringify(serviceRepairMarkerPath)}, 'repaired\\n', 'utf-8');
+  process.exit(0);
+}
+
+if (args[0] === 'service' && args[1] === 'start') {
+  if (!existsSync(${JSON.stringify(serviceRepairMarkerPath)})) {
+    process.exit(41);
+  }
+  const child = spawn(process.execPath, [${JSON.stringify(serviceStartRunnerPath)}], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  process.exit(0);
+}
+
+process.exit(0);
+      `.trimStart(),
+      'utf-8'
+    );
+
+    const fakeBinDir = join(tmp, 'fake-bin');
+    await mkdir(fakeBinDir, { recursive: true });
+    const launchctlLogPath = join(tmp, 'launchctl-repair.log');
+    const launchctlPath = join(fakeBinDir, 'launchctl');
+    await writeFile(
+      launchctlPath,
+      `#!/bin/sh
+printf '%s\\n' "$@" >> ${JSON.stringify(launchctlLogPath)}
+exit 113
+`,
+      'utf-8'
+    );
+    await chmod(launchctlPath, 0o755);
+
+    await assert.rejects(
+      startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir,
+        internalServerUrl: 'http://127.0.0.1:4301',
+        publicServerUrl: 'http://localhost:4301',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: {
+          ...process.env,
+          PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+          HAPPIER_STACK_STACK: 'dev',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_CLI_BUILD: '0',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '400',
+          HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+          HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+        },
+        stackName: 'dev',
+      }),
+      /hstack service repair --yes/i,
+    );
+
+    const launchctlLog = await readFile(launchctlLogPath, 'utf-8');
+    assert.match(launchctlLog, /^kickstart/m);
+    assert.match(launchctlLog, /^start/m);
+    assert.doesNotMatch(launchctlLog, /^enable/m);
+    assert.doesNotMatch(launchctlLog, /^bootstrap/m);
+
+    const serviceCommands = await readFile(serviceCommandLogPath, 'utf-8');
+    assert.match(serviceCommands, /^daemon start \[channel=\]$/m);
+    assert.doesNotMatch(serviceCommands, /^service repair --yes/m);
+    assert.doesNotMatch(serviceCommands, /^service start/m);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth diagnoses a launchctl-missing installed service label without repairing it', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('launchctl recovery path is macOS-only');
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-conflict-materialization-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const launchAgentPath = join(tmp, 'Library', 'LaunchAgents', 'com.happier.cli.daemon.default.plist');
+    await mkdir(dirname(launchAgentPath), { recursive: true });
+    await writeFile(launchAgentPath, '<plist version="1.0"></plist>\n', 'utf-8');
+
+    const serviceCommandLogPath = join(tmp, 'service-command.log');
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+import { appendFileSync } from 'node:fs';
+
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(serviceCommandLogPath)}, \`\${args.join(' ')} [channel=\${process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL ?? ''}]\\n\`, 'utf-8');
+
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('A background service is already installed for this relay.');
+  console.error('    com.happier.cli.daemon.default (publicdev, default-following) — ${launchAgentPath}');
+  console.error('Use \`happier service start\` to start the installed background service instead of starting a new relay runtime.');
+  console.error('If you want to start a manual relay runtime, stop or replace the installed background service first.');
+  process.exit(1);
+}
+
+if (args[0] === 'daemon' && (args[1] === 'stop' || args[1] === 'status')) {
+  process.exit(0);
+}
+
+process.exit(0);
+      `.trimStart(),
+      'utf-8'
+    );
+
+    const fakeBinDir = join(tmp, 'fake-bin');
+    await mkdir(fakeBinDir, { recursive: true });
+    const launchctlLogPath = join(tmp, 'launchctl-materialization.log');
+    const launchctlPath = join(fakeBinDir, 'launchctl');
+    await writeFile(
+      launchctlPath,
+      `#!/bin/sh
+printf '%s\\n' "$@" >> ${JSON.stringify(launchctlLogPath)}
+if [ "$1" = "kickstart" ] || [ "$1" = "start" ]; then
+  echo 'Could not find service "com.happier.cli.daemon.default" in domain for user gui: 501' 1>&2
+  exit 113
+fi
+if [ "$1" = "print" ]; then
+  echo 'Could not find service "com.happier.cli.daemon.default" in domain for user gui: 501' 1>&2
+  exit 113
+fi
+exit 1
+`,
+      'utf-8'
+    );
+    await chmod(launchctlPath, 0o755);
+
+    await assert.rejects(
+      startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir,
+        internalServerUrl: 'http://127.0.0.1:4301',
+        publicServerUrl: 'http://localhost:4301',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: {
+          ...process.env,
+          PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+          HAPPIER_STACK_STACK: 'dev',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_CLI_BUILD: '0',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '250',
+          HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+          HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+        },
+        stackName: 'dev',
+      }),
+      /launchd does not currently know label|service repair --yes/i,
+    );
+
+    const launchctlLog = await readFile(launchctlLogPath, 'utf-8');
+    assert.match(launchctlLog, /^kickstart/m);
+    assert.match(launchctlLog, /^start/m);
+    assert.match(launchctlLog, /^print/m);
+    assert.doesNotMatch(launchctlLog, /^enable/m);
+    assert.doesNotMatch(launchctlLog, /^bootstrap/m);
+
+    const serviceCommands = await readFile(serviceCommandLogPath, 'utf-8');
+    assert.match(serviceCommands, /^daemon start \[channel=\]$/m);
+    assert.doesNotMatch(serviceCommands, /^service repair --yes/m);
+    assert.doesNotMatch(serviceCommands, /^service start/m);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth does not repair service-managed owner conflicts reported by daemon ownership preflight', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-owner-conflict-repair-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+    const serviceRepairMarkerPath = join(tmp, 'service-repair.marker');
+    const serviceCommandLogPath = join(tmp, 'service-command.log');
+    const serviceStartRunnerPath = join(tmp, 'service-start-runner.mjs');
+    await writeFile(
+      serviceStartRunnerPath,
+      `
+import { spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+spawnDaemonLikeProcess({
+  cliHomeDir: ${JSON.stringify(cliHomeDir)},
+  internalServerUrl: 'http://127.0.0.1:4301',
+  publicServerUrl: 'http://localhost:4301',
+  statePaths: [${JSON.stringify(statePath)}],
+});
+      `.trimStart(),
+      'utf-8'
+    );
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(serviceCommandLogPath)}, \`\${args.join(' ')} [channel=\${process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL ?? ''}]\\n\`, 'utf-8');
+
+if (args[0] === 'daemon' && args[1] === 'start') {
+  const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+  const logsDir = \`\${home}/logs\`;
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(
+    \`\${logsDir}/\${Date.now()}-pid-\${process.pid}-daemon.log\`,
+    [
+      'The current relay owner is managed by a background service.',
+      '  Current owner: background service',
+      '  Current release channel: stable',
+      '  Current CLI version: 0.2.0',
+      '  Background service label: com.happier.cli.daemon.default',
+      '  Use \`happier service stop\` instead of \`happier daemon stop\`.',
+      '',
+    ].join('\\n'),
+    'utf-8',
+  );
+  console.error('The current relay owner is managed by a background service.');
+  console.error('  Current owner: background service');
+  console.error('  Current release channel: stable');
+  console.error('  Current CLI version: 0.2.0');
+  console.error('  Background service label: com.happier.cli.daemon.default');
+  console.error('  Use \`happier service stop\` instead of \`happier daemon stop\`.');
+  process.exit(1);
+}
+
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  process.exit(0);
+}
+
+if (args[0] === 'daemon' && args[1] === 'status') {
+  process.exit(0);
+}
+
+if (args[0] === 'service' && args[1] === 'repair' && args.includes('--yes')) {
+  writeFileSync(${JSON.stringify(serviceRepairMarkerPath)}, 'repaired\\n', 'utf-8');
+  process.exit(0);
+}
+
+if (args[0] === 'service' && args[1] === 'start') {
+  if (!existsSync(${JSON.stringify(serviceRepairMarkerPath)})) {
+    process.exit(41);
+  }
+  const child = spawn(process.execPath, [${JSON.stringify(serviceStartRunnerPath)}], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  process.exit(0);
+}
+
+process.exit(0);
+      `.trimStart(),
+      'utf-8'
+    );
+
+    await assert.rejects(
+      startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir,
+        internalServerUrl: 'http://127.0.0.1:4301',
+        publicServerUrl: 'http://localhost:4301',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: {
+          ...process.env,
+          HAPPIER_STACK_STACK: 'dev',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_CLI_BUILD: '0',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '400',
+          HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+          HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+        },
+        stackName: 'dev',
+      }),
+      /Use `happier service stop` instead of `happier daemon stop`\./,
+    );
+
+    const serviceCommands = await readFile(serviceCommandLogPath, 'utf-8');
+    assert.match(serviceCommands, /^daemon start \[channel=\]$/m);
+    assert.doesNotMatch(serviceCommands, /^service repair --yes/m);
+    assert.doesNotMatch(serviceCommands, /^service start/m);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('startLocalDaemonWithAuth surfaces already-running daemon in TUI mode', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
@@ -607,6 +1316,245 @@ try {
 
     const res = await runNode([runnerPath], { cwd: tmp, env: process.env });
     assert.match(res.stdout + res.stderr, /\[daemon\] .*already running/i);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth accepts a repaired background-service-owned daemon when stack home matches even without explicit server env vars', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-running-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const cliCommandLogPath = join(tmp, 'cli-command.log');
+
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      `
+import { appendFileSync } from 'node:fs';
+
+appendFileSync(${JSON.stringify(cliCommandLogPath)}, process.argv.slice(2).join(' ') + '\\n', 'utf-8');
+process.exit(0);
+      `.trimStart(),
+      'utf-8',
+    );
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const runnerPath = join(tmp, 'service-owned-runner.mjs');
+    await writeFile(
+      runnerPath,
+      `
+import { spawn } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { startLocalDaemonWithAuth } from ${JSON.stringify(join(rootDir, 'scripts', 'daemon.mjs'))};
+
+const cliHomeDir = ${JSON.stringify(cliHomeDir)};
+const internalServerUrl = 'http://127.0.0.1:4301';
+const publicServerUrl = 'http://localhost:4301';
+
+const dummy = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1e6)'], {
+  env: {
+    ...process.env,
+    HAPPIER_HOME_DIR: cliHomeDir,
+    HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+    HAPPIER_DAEMON_SERVICE_LABEL: 'com.happier.cli.daemon.default',
+  },
+  stdio: ['ignore', 'ignore', 'ignore'],
+  detached: true,
+});
+
+mkdirSync(join(cliHomeDir, 'servers', 'stack_dev__id_default'), { recursive: true });
+writeFileSync(
+  join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json'),
+  JSON.stringify({ pid: dummy.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test' }) + '\\n',
+  'utf-8'
+);
+
+try {
+  await startLocalDaemonWithAuth({
+    cliBin: ${JSON.stringify(cliBin)},
+    cliHomeDir,
+    internalServerUrl,
+    publicServerUrl,
+    isShuttingDown: () => false,
+    forceRestart: false,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CLI_BUILD: '0',
+    },
+    stackName: 'dev',
+    cliIdentity: 'default',
+  });
+} finally {
+  try {
+    process.kill(-dummy.pid, 'SIGKILL');
+  } catch {
+    // ignore
+  }
+}
+      `.trimStart(),
+      'utf-8',
+    );
+
+    const result = await runNode([runnerPath], {
+      cwd: tmp,
+      env: {
+        ...process.env,
+      },
+    });
+
+    assert.equal(result.code, 0, `expected exit 0, got ${result.code}\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+    assert.equal(existsSync(cliCommandLogPath), false, 'expected no daemon stop/start command when the service-owned daemon already matches the stack home');
+    assert.match(result.stdout, /daemon already running for stack home/);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth still restarts a background-service-owned daemon when ps exposes a different server URL', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-service-mismatch-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const cliCommandLogPath = join(tmp, 'cli-command.log');
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    const distEntrypointPath = join(cliDir, 'dist', 'index.mjs');
+    const daemonStatePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+    await writeFile(
+      distEntrypointPath,
+      `
+import { appendFileSync } from 'node:fs';
+import { spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(cliCommandLogPath)}, args.join(' ') + '\\n', 'utf-8');
+
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  process.exit(0);
+}
+
+if (args[0] === 'daemon' && args[1] === 'start') {
+  spawnDaemonLikeProcess({
+    cliHomeDir: ${JSON.stringify(join(tmp, 'stack', 'cli'))},
+    statePaths: [${JSON.stringify(daemonStatePath)}],
+    internalServerUrl: 'http://127.0.0.1:4301',
+    publicServerUrl: 'http://localhost:4301',
+  });
+  process.exit(0);
+}
+
+process.exit(0);
+      `.trimStart(),
+      'utf-8',
+    );
+
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const runnerPath = join(tmp, 'service-owned-mismatch-runner.mjs');
+    await writeFile(
+      runnerPath,
+      `
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { startLocalDaemonWithAuth } from ${JSON.stringify(join(rootDir, 'scripts', 'daemon.mjs'))};
+
+const cliHomeDir = ${JSON.stringify(cliHomeDir)};
+const statePath = ${JSON.stringify(daemonStatePath)};
+const internalServerUrl = 'http://127.0.0.1:4301';
+const publicServerUrl = 'http://localhost:4301';
+
+const existing = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1e6)'], {
+  env: {
+    ...process.env,
+    HAPPIER_HOME_DIR: cliHomeDir,
+    HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+    HAPPIER_DAEMON_SERVICE_LABEL: 'com.happier.cli.daemon.default',
+    HAPPIER_SERVER_URL: 'http://127.0.0.1:9999',
+  },
+  stdio: ['ignore', 'ignore', 'ignore'],
+  detached: true,
+});
+
+mkdirSync(join(cliHomeDir, 'servers', 'stack_dev__id_default'), { recursive: true });
+writeFileSync(
+  statePath,
+  JSON.stringify({ pid: existing.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test' }) + '\\n',
+  'utf-8'
+);
+
+try {
+  await startLocalDaemonWithAuth({
+    cliBin: ${JSON.stringify(cliBin)},
+    cliHomeDir,
+    internalServerUrl,
+    publicServerUrl,
+    isShuttingDown: () => false,
+    forceRestart: false,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CLI_BUILD: '0',
+    },
+    stackName: 'dev',
+    cliIdentity: 'default',
+  });
+
+  const currentState = JSON.parse(readFileSync(statePath, 'utf-8'));
+  assert.notEqual(currentState.pid, existing.pid);
+} finally {
+  try {
+    process.kill(-existing.pid, 'SIGKILL');
+  } catch {
+    // ignore
+  }
+
+  try {
+    const currentState = JSON.parse(readFileSync(statePath, 'utf-8'));
+    if (currentState?.pid && currentState.pid !== existing.pid) {
+      process.kill(-currentState.pid, 'SIGKILL');
+    }
+  } catch {
+    // ignore
+  }
+}
+      `.trimStart(),
+      'utf-8',
+    );
+
+    const result = await runNode([runnerPath], {
+      cwd: tmp,
+      env: {
+        ...process.env,
+      },
+    });
+
+    assert.equal(result.code, 0, `expected exit 0, got ${result.code}\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+    const serviceCommands = await readFile(cliCommandLogPath, 'utf-8');
+    assert.match(serviceCommands, /^daemon stop$/m);
+    assert.match(serviceCommands, /^daemon start$/m);
+    assert.match(result.stderr, /daemon is running but pointed at a different server URL; restarting/);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

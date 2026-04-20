@@ -5,9 +5,9 @@
  * flow for remote/headless machines where loopback callbacks are not practical.
  */
 
-import type { OauthPkceCodes, StartLoopbackOauthPkceFlowOptions } from '@/cloud/loopbackOauthPkce';
-import { startLoopbackOauthPkceFlow } from '@/cloud/loopbackOauthPkce';
-import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
+import type { OauthPkceCodes, StartLoopbackOauthPkceFlowOptions } from './loopbackOauthPkce';
+import { startLoopbackOauthPkceFlow } from './loopbackOauthPkce';
+import { parseOauthRedirectPaste } from './parseOauthRedirectPaste';
 
 export type OauthPkceMode = 'loopback' | 'paste';
 

@@ -155,6 +155,48 @@ describe('createDirectTransferServerLifecycle', () => {
     });
   });
 
+  it('passes the filesystem access policy to the lazy direct peer server', async () => {
+    const accessPolicy = { kind: 'restrictedRoots' as const, roots: ['/allowed'] };
+    const startServer = vi.fn(async () => ({
+      port: 46001,
+      stop: vi.fn(async () => {}),
+      issueImportOpenAuthorizationToken: vi.fn(() => ({
+        authorizationToken: 'unused-import-open-token',
+        expiresAt: 5_000,
+      })),
+      openTrustedImportSession: vi.fn(async () => ({
+        success: true as const,
+        response: {
+          uploadId: 'upload-1',
+          destDisplayPath: 'payload.bin',
+          expectedSizeBytes: 4,
+          chunkSizeBytes: 8,
+          recipientPublicKeyBase64: 'recipient-key',
+          expiresAt: 5_000,
+        },
+      })),
+    }));
+
+    const lifecycle = createDirectTransferServerLifecycle({
+      bindPort: 46001,
+      listenerClasses: ['loopback_http'],
+      accessPolicy,
+      startServer,
+    });
+
+    await lifecycle.prepareImportSession({
+      t: 'session_file_upload_v1',
+      workingDirectory: '/repo',
+      path: 'payload.bin',
+      sizeBytes: 4,
+      overwrite: true,
+    });
+
+    expect(startServer).toHaveBeenCalledWith(expect.objectContaining({
+      accessPolicy,
+    }));
+  });
+
   it('keeps import session preparation successful even if lifecycle observers throw', async () => {
     const stop = vi.fn(async () => {});
     const openTrustedImportSession = vi.fn(async () => ({

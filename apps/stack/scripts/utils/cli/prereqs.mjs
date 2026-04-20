@@ -1,4 +1,5 @@
 import { commandExists } from '../proc/commands.mjs';
+import { resolveLlmToolPrereqSpec } from '../llm/registry.mjs';
 
 function formatMissingTool({ name, why, install }) {
   return [`- ${name}: ${why}`, ...(install?.length ? install.map((l) => `  ${l}`) : [])].join('\n');
@@ -46,13 +47,11 @@ export async function assertCliPrereqs({
   if (codex) {
     const hasCodex = await commandExists('codex');
     if (!hasCodex) {
+      const prereq = resolveLlmToolPrereqSpec('codex');
       missing.push({
-        name: 'codex',
-        why: 'required to run Codex review',
-        install: [
-          'Install Codex CLI and ensure `codex` is on PATH',
-          'If using a managed install, ensure your PATH includes the Codex binary',
-        ],
+        name: prereq?.name ?? 'codex',
+        why: prereq?.why ?? 'required to run Codex review',
+        install: prereq?.install ?? ['Install Codex CLI and ensure `codex` is on PATH'],
       });
     }
   }
@@ -85,10 +84,11 @@ export async function assertCliPrereqs({
   if (claude) {
     const hasClaude = await commandExists('claude');
     if (!hasClaude) {
+      const prereq = resolveLlmToolPrereqSpec('claude');
       missing.push({
-        name: 'claude',
-        why: 'required to run Claude Code review',
-        install: ['Install Claude Code CLI and ensure `claude` is on PATH', 'Then authenticate (if needed) with your Claude setup'],
+        name: prereq?.name ?? 'claude',
+        why: prereq?.why ?? 'required to run Claude Code review',
+        install: prereq?.install ?? ['Install Claude Code CLI and ensure `claude` is on PATH'],
       });
     }
   }

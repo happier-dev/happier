@@ -4,15 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
-function deriveServerIdFromUrl(url: string): string {
-    let h = 2166136261;
-    for (let i = 0; i < url.length; i += 1) {
-        h ^= url.charCodeAt(i);
-        h = Math.imul(h, 16777619);
-    }
-    return `env_${(h >>> 0).toString(16)}`;
-}
-
 describe('changes cursor persistence', () => {
     const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_ACTIVE_SERVER_ID'] as const;
     let envScope = createEnvKeyScope(envKeys);
@@ -55,7 +46,6 @@ describe('changes cursor persistence', () => {
     it('reads and writes cursor using effective active server id from env override', async () => {
         await withTempDir('happy-cli-changes-cursor-override-', async (homeDir) => {
             const serverUrl = 'http://127.0.0.1:12345';
-            const envServerId = deriveServerIdFromUrl(serverUrl);
 
             vi.resetModules();
             envScope.patch({
@@ -64,6 +54,10 @@ describe('changes cursor persistence', () => {
                 HAPPIER_WEBAPP_URL: serverUrl,
                 HAPPIER_ACTIVE_SERVER_ID: undefined,
             });
+
+            const { configuration } = await import('./configuration');
+            const envServerId = configuration.activeServerId;
+            expect(envServerId).not.toBe('cloud');
 
             const settingsPath = join(homeDir, 'settings.json');
             const seed = {

@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 import { resolveWorkspaceFileUploadTarget, type WorkspaceFileUploadTarget } from './resolveWorkspaceFileUploadTarget';
 
@@ -268,12 +269,14 @@ export function resolveConfiguredAttachmentTransferTarget(input: Readonly<{
   config: AttachmentTransferConfig;
   tempUploadRoot: string;
   workingDirectory: string;
+  accessPolicy?: FilesystemAccessPolicy;
 }>): ConfiguredAttachmentTransferTargetResult {
   const target = resolveAttachmentTransferTarget(input.config, input.tempUploadRoot);
   const validation = validatePath(
     target.uploadBasePath,
     input.workingDirectory,
     input.config.uploadLocation === 'workspace' ? undefined : target.additionalAllowedWriteDirs,
+    input.accessPolicy,
   );
   if (!validation.valid) {
     return {

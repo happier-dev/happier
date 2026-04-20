@@ -14,7 +14,7 @@ import { createWorkspaceSyncArtifactsFromManifest } from '@/scm/sourceController
 
 import type { WorkspaceReplicationSourceOffer } from '../transport/createWorkspaceReplicationSourceOffer';
 
-import { createWorkspaceReplicationCasBackedImportArtifacts } from './createWorkspaceReplicationCasBackedImportArtifacts';
+import { createWorkspaceReplicationCasBackedImportArtifacts } from './casBackedImportArtifacts';
 
 export async function applyWorkspaceReplicationPlan(params: Readonly<{
     activeServerDir: string;

@@ -84,4 +84,24 @@ describe('registerBashHandler', () => {
         );
         expect(execMock).not.toHaveBeenCalled();
     });
+
+    it('allows cwd outside the default directory under the os-user filesystem policy', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, '/work/default', { accessPolicy: { kind: 'osUser' } });
+        const handler = handlers.get(RPC_METHODS.BASH);
+        expect(handler).toBeDefined();
+
+        execMock.mockImplementationOnce((_command, _options, callback) => {
+            callback(null, 'ok', '');
+        });
+
+        await expect(handler!({ command: 'pwd', cwd: '/outside/project' })).resolves.toMatchObject({
+            success: true,
+        });
+        expect(execMock).toHaveBeenCalledWith(
+            'pwd',
+            expect.objectContaining({ cwd: '/outside/project' }),
+            expect.any(Function),
+        );
+    });
 });

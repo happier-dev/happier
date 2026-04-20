@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import type { Machine } from '@/api/types';
 import { encodeBase64, encrypt } from '@/api/encryption';
@@ -241,7 +242,10 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         readLastChangesCursor.mockClear();
 
         const client = new ApiMachineClient('token', machine);
-        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+        const clientInternals = client as unknown as {
+            syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
+        };
+        await clientInternals.syncChangesOnConnect({ reason: 'reconnect' });
 
         expect(machine.metadata).toEqual(
             expect.objectContaining({
@@ -250,5 +254,297 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             }),
         );
         expect(writeLastChangesCursor).not.toHaveBeenCalled();
+    });
+
+    it.each([401, 403] as const)('reports /v2/changes auth status %i to the machine supervisor without snapshot fallback', async (status) => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                return {
+                    status,
+                    data: { error: 'not-authenticated' },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        const reportProbeResult = vi.fn();
+        Object.defineProperty(client, 'connectionSupervisor', {
+            configurable: true,
+            value: {
+                getState: () => ({
+                    phase: 'online',
+                    reason: null,
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: Date.now(),
+                    lastDisconnectedAt: null,
+                    lastErrorMessage: null,
+                }),
+                reportProbeResult,
+            },
+        });
+
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+
+        expect(reportProbeResult).toHaveBeenCalledWith({
+            status: 'auth_failed',
+            statusCode: status,
+            errorMessage: expect.any(String),
+        } satisfies ReadinessProbeResult);
+        expect(axiosGet.mock.calls.some(([url]) => String(url).includes('/v1/machines/machine-1'))).toBe(false);
+        expect(writeLastChangesCursor).not.toHaveBeenCalled();
+    });
+
+    it.each([401, 403] as const)('reports profile auth status %i to the machine supervisor before /v2/changes sync', async (status) => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return {
+                    status,
+                    data: { error: 'not-authenticated' },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        const reportProbeResult = vi.fn();
+        Object.defineProperty(client, 'connectionSupervisor', {
+            configurable: true,
+            value: {
+                getState: () => ({
+                    phase: 'online',
+                    reason: null,
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: Date.now(),
+                    lastDisconnectedAt: null,
+                    lastErrorMessage: null,
+                }),
+                reportProbeResult,
+            },
+        });
+
+        const clientInternals = client as unknown as {
+            syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
+        };
+        await clientInternals.syncChangesOnConnect({ reason: 'reconnect' });
+
+        expect(reportProbeResult).toHaveBeenCalledWith({
+            status: 'auth_failed',
+            statusCode: status,
+            errorMessage: expect.any(String),
+        } satisfies ReadinessProbeResult);
+        expect(axiosGet.mock.calls.some(([url]) => String(url).includes('/v2/changes'))).toBe(false);
+        expect(axiosGet.mock.calls.some(([url]) => String(url).includes('/v1/machines/machine-1'))).toBe(false);
+        expect(writeLastChangesCursor).not.toHaveBeenCalled();
+    });
+
+    it.each([401, 403] as const)('throws /v2/changes auth status %i without a machine supervisor instead of snapshot fallback', async (status) => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                return {
+                    status,
+                    data: { error: 'not-authenticated' },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        Object.defineProperty(client, 'connectionSupervisor', {
+            configurable: true,
+            value: null,
+        });
+
+        const clientInternals = client as unknown as {
+            syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
+        };
+        await expect(clientInternals.syncChangesOnConnect({ reason: 'reconnect' })).rejects.toMatchObject({
+            code: 'not_authenticated',
+            response: { status },
+        });
+
+        expect(axiosGet.mock.calls.some(([url]) => String(url).includes('/v1/machines/machine-1'))).toBe(false);
+        expect(writeLastChangesCursor).not.toHaveBeenCalled();
+    });
+
+    it.each([401, 403] as const)('reports machine snapshot refresh auth status %i to the machine supervisor', async (status) => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockResolvedValue({
+            status,
+            data: { error: 'not-authenticated' },
+        });
+        axiosGet.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        const reportProbeResult = vi.fn();
+        Object.defineProperty(client, 'connectionSupervisor', {
+            configurable: true,
+            value: {
+                getState: () => ({
+                    phase: 'online',
+                    reason: null,
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: Date.now(),
+                    lastDisconnectedAt: null,
+                    lastErrorMessage: null,
+                }),
+                reportProbeResult,
+            },
+        });
+
+        const clientInternals = client as unknown as {
+            refreshMachineFromServer: () => Promise<void>;
+        };
+        await clientInternals.refreshMachineFromServer();
+
+        expect(reportProbeResult).toHaveBeenCalledWith({
+            status: 'auth_failed',
+            statusCode: status,
+            errorMessage: expect.any(String),
+        } satisfies ReadinessProbeResult);
+    });
+
+    it('reports retryable machine snapshot refresh failures to the machine supervisor', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockResolvedValue({
+            status: 503,
+            data: { error: 'server-busy' },
+        });
+        axiosGet.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        const reportProbeResult = vi.fn();
+        Object.defineProperty(client, 'connectionSupervisor', {
+            configurable: true,
+            value: {
+                getState: () => ({
+                    phase: 'online',
+                    reason: null,
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: Date.now(),
+                    lastDisconnectedAt: null,
+                    lastErrorMessage: null,
+                }),
+                reportProbeResult,
+            },
+        });
+
+        const clientInternals = client as unknown as {
+            refreshMachineFromServer: () => Promise<void>;
+        };
+        await clientInternals.refreshMachineFromServer();
+
+        expect(reportProbeResult).toHaveBeenCalledWith({
+            status: 'retry_later',
+            errorMessage: expect.any(String),
+        } satisfies ReadinessProbeResult);
+    });
+
+    it('does not request a machine snapshot when the machine supervisor is already auth_failed', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        Object.defineProperty(client, 'connectionSupervisor', {
+            configurable: true,
+            value: {
+                getState: () => ({
+                    phase: 'auth_failed',
+                    reason: 'auth_failed',
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: null,
+                    lastDisconnectedAt: Date.now(),
+                    lastErrorMessage: 'expired token',
+                }),
+                reportProbeResult: vi.fn(),
+            },
+        });
+
+        const clientInternals = client as unknown as {
+            refreshMachineFromServer: () => Promise<void>;
+        };
+        await clientInternals.refreshMachineFromServer();
+
+        expect(axiosGet).not.toHaveBeenCalled();
     });
 });

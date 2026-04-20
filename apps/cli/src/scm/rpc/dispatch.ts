@@ -9,6 +9,10 @@ import type { ScmBackendSelection } from '@/scm/registry';
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
 import { createNonRepositorySnapshot, resolveCwd, resolveTildePath } from '@/scm/runtime';
 import type { ScmBackendContext } from '@/scm/types';
+import {
+    resolveFilesystemAccessPolicy,
+    type FilesystemAccessPolicy,
+} from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 type ScmRequestBase = {
     cwd?: string;
@@ -62,6 +66,7 @@ export function notRepositoryResponse<TResponse extends ScmErrorResponse>(
 export async function runScmRoute<TRequest extends ScmRequestBase, TResponse extends ScmErrorResponse>(input: {
     request: TRequest;
     workingDirectory: string;
+    accessPolicy?: FilesystemAccessPolicy;
     onNonRepository: (args: { cwd: string; workingDirectory: string }) => Promise<TResponse> | TResponse;
     runWithBackend: (args: {
         context: ScmBackendContext;
@@ -71,7 +76,11 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
 }): Promise<TResponse> {
     try {
         const normalizedWorkingDirectory = resolveTildePath(input.workingDirectory);
-        const cwdResult = resolveCwd(input.request.cwd, normalizedWorkingDirectory);
+        const cwdResult = resolveCwd(
+            input.request.cwd,
+            normalizedWorkingDirectory,
+            input.accessPolicy ?? resolveFilesystemAccessPolicy(),
+        );
         if (!cwdResult.ok) {
             return invalidPathResponse<TResponse>(cwdResult.error);
         }

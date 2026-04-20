@@ -5,6 +5,11 @@ export function normalizeDaemonPid(value) {
   return Number.isFinite(pid) && pid > 1 ? pid : null;
 }
 
+function normalizeDaemonDistFingerprint(value) {
+  const fingerprint = String(value ?? '').trim();
+  return fingerprint ? fingerprint : null;
+}
+
 export function observeStackDaemonRuntime(
   { runtimeDaemonPid = null, daemonState = null } = {},
   { isPidAliveImpl = isPidAlive } = {},
@@ -68,6 +73,7 @@ export async function recordStackRuntimeDaemonPid(
   runtimeStatePath,
   daemonPid,
   {
+    daemonDistFingerprint,
     readStackRuntimeStateFileImpl = readStackRuntimeStateFile,
     recordStackRuntimeUpdateImpl = recordStackRuntimeUpdate,
   } = {},
@@ -76,14 +82,35 @@ export async function recordStackRuntimeDaemonPid(
   if (!statePath) return { updated: false, pid: normalizeDaemonPid(daemonPid) };
 
   const desiredPid = normalizeDaemonPid(daemonPid);
+  const shouldUpdateFingerprint = Object.prototype.hasOwnProperty.call(arguments[2] ?? {}, 'daemonDistFingerprint');
+  const desiredFingerprint = shouldUpdateFingerprint
+    ? normalizeDaemonDistFingerprint(daemonDistFingerprint)
+    : undefined;
   const existing = await readStackRuntimeStateFileImpl(statePath).catch(() => null);
   const currentPid = normalizeDaemonPid(existing?.processes?.daemonPid);
-  if (currentPid === desiredPid) {
-    return { updated: false, pid: desiredPid };
+  const currentFingerprint = normalizeDaemonDistFingerprint(existing?.daemon?.distClosureFingerprint);
+  if (
+    currentPid === desiredPid
+    && (!shouldUpdateFingerprint || currentFingerprint === desiredFingerprint)
+  ) {
+    return {
+      updated: false,
+      pid: desiredPid,
+      daemonDistFingerprint: shouldUpdateFingerprint ? desiredFingerprint : currentFingerprint,
+    };
   }
 
-  await recordStackRuntimeUpdateImpl(statePath, { processes: { daemonPid: desiredPid } });
-  return { updated: true, pid: desiredPid };
+  const patch = { processes: { daemonPid: desiredPid } };
+  if (shouldUpdateFingerprint) {
+    patch.daemon = { distClosureFingerprint: desiredFingerprint };
+  }
+
+  await recordStackRuntimeUpdateImpl(statePath, patch);
+  return {
+    updated: true,
+    pid: desiredPid,
+    daemonDistFingerprint: shouldUpdateFingerprint ? desiredFingerprint : currentFingerprint,
+  };
 }
 
 export async function readStackRuntimeStateWithDaemonSync(
@@ -137,6 +164,7 @@ export async function syncStackRuntimeDaemonPidFromDaemonState(
     cliHomeDir = '',
     internalServerUrl = '',
     runtimeDaemonPid = null,
+    daemonDistFingerprint,
     env = process.env,
   } = {},
   {
@@ -163,6 +191,7 @@ export async function syncStackRuntimeDaemonPidFromDaemonState(
     runtimeStatePath,
     observed.running ? observed.pid : null,
     {
+      daemonDistFingerprint: observed.running ? daemonDistFingerprint : null,
       readStackRuntimeStateFileImpl,
       recordStackRuntimeUpdateImpl,
     },
@@ -171,5 +200,6 @@ export async function syncStackRuntimeDaemonPidFromDaemonState(
   return {
     ...observed,
     updated: recorded.updated,
+    daemonDistFingerprint: recorded.daemonDistFingerprint,
   };
 }

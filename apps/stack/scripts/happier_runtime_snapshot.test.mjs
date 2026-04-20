@@ -12,18 +12,19 @@ function stackRootDirFromMeta(metaUrl) {
   return dirname(scriptsDir);
 }
 
-async function createSourceCliFixture(t) {
+async function createSourceCliFixture(t, options = {}) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-cli-fixture-' });
   const repoRoot = join(fixture.root, 'repo');
-  await mkdir(join(repoRoot, 'apps', 'cli', 'dist'), { recursive: true });
+  const entrypointDir = options.entrypointDir ?? 'dist';
+  await mkdir(join(repoRoot, 'apps', 'cli', entrypointDir), { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'server'), { recursive: true });
   await writeFile(join(repoRoot, 'apps', 'cli', 'package.json'), '{ "name": "@happier-dev/cli" }\n', 'utf8');
   await writeFile(join(repoRoot, 'apps', 'ui', 'package.json'), '{ "name": "@happier-dev/app" }\n', 'utf8');
   await writeFile(join(repoRoot, 'apps', 'server', 'package.json'), '{ "name": "@happier-dev/server" }\n', 'utf8');
   await writeFile(
-    join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'),
-    'process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n',
+    join(repoRoot, 'apps', 'cli', entrypointDir, 'index.mjs'),
+    options.cliSource ?? 'process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n',
     'utf8',
   );
   return { repoRoot };
@@ -109,6 +110,131 @@ test('hstack happier forwards snapshot-aware daemon service runtime paths to the
   assert.equal(payload.homeDir, join(fixture.stackDir, 'cli'));
   assert.equal(payload.nodePath, explicitRuntimePath);
   assert.equal(payload.entryPath, join(fixture.stackDir, 'runtime', 'current', 'cli', 'package-dist', 'index.mjs'));
+});
+
+test('hstack happier forwards dist daemon service runtime paths for source checkouts when dist is available', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createSourceCliFixture(t, {
+    entrypointDir: 'dist',
+    cliSource: [
+      'process.stdout.write(JSON.stringify({',
+      '  argvEntryPath: process.argv[1] ?? null,',
+      '}) + "\\n");',
+      '',
+    ].join('\n'),
+  });
+  await mkdir(join(fixture.repoRoot, 'apps', 'cli', 'package-dist'), { recursive: true });
+  await writeFile(
+    join(fixture.repoRoot, 'apps', 'cli', 'package-dist', 'index.mjs'),
+    [
+      'process.stdout.write(JSON.stringify({',
+      "  argvEntryPath: 'package-dist-should-not-run',",
+      '}) + "\\n");',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_REPO_DIR: fixture.repoRoot,
+    HAPPIER_HOME_DIR: join(fixture.repoRoot, '.happy-home'),
+  };
+
+  const res = await runNode([join(rootDir, 'scripts', 'happier.mjs'), 'service', 'install', '--dry-run', '--json'], {
+    cwd: rootDir,
+    env,
+  });
+  assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+
+  const payload = JSON.parse(res.stdout.trim());
+  assert.equal(payload.argvEntryPath, join(fixture.repoRoot, 'apps', 'cli', 'dist', 'index.mjs'));
+});
+
+test('hstack happier falls back to dist when package-dist exists but is incomplete in a source checkout', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createSourceCliFixture(t, {
+    entrypointDir: 'dist',
+    cliSource: [
+      'process.stdout.write(JSON.stringify({',
+      '  argvEntryPath: process.argv[1] ?? null,',
+      '}) + "\\n");',
+      '',
+    ].join('\n'),
+  });
+  await mkdir(join(fixture.repoRoot, 'apps', 'cli', 'package-dist'), { recursive: true });
+  await writeFile(
+    join(fixture.repoRoot, 'apps', 'cli', 'package-dist', 'index.mjs'),
+    "import './missing-package-dist-chunk.mjs';\nexport {};\n",
+    'utf8',
+  );
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_REPO_DIR: fixture.repoRoot,
+    HAPPIER_HOME_DIR: join(fixture.repoRoot, '.happy-home'),
+  };
+
+  const res = await runNode([join(rootDir, 'scripts', 'happier.mjs'), 'service', 'install', '--dry-run', '--json'], {
+    cwd: rootDir,
+    env,
+  });
+  assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+
+  const payload = JSON.parse(res.stdout.trim());
+  assert.equal(payload.argvEntryPath, join(fixture.repoRoot, 'apps', 'cli', 'dist', 'index.mjs'));
+});
+
+test('hstack happier falls back to dist when package-dist has stale sibling chunks in a source checkout', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createSourceCliFixture(t, {
+    entrypointDir: 'dist',
+    cliSource: [
+      'process.stdout.write(JSON.stringify({',
+      '  argvEntryPath: process.argv[1] ?? null,',
+      '  args: process.argv.slice(2),',
+      '}) + "\\n");',
+      '',
+    ].join('\n'),
+  });
+  await mkdir(join(fixture.repoRoot, 'apps', 'cli', 'package-dist'), { recursive: true });
+  await writeFile(
+    join(fixture.repoRoot, 'apps', 'cli', 'package-dist', 'index.mjs'),
+    [
+      'const args = process.argv.slice(2);',
+      "if (args[0] === 'probe-stale-runtime') {",
+      "  const staleCatalogSpecifier = './catalog-stale.mjs';",
+      '  await import(staleCatalogSpecifier);',
+      '}',
+      'process.stdout.write(JSON.stringify({',
+      '  argvEntryPath: process.argv[1] ?? null,',
+      '  args,',
+      '}) + "\\n");',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await writeFile(
+    join(fixture.repoRoot, 'apps', 'cli', 'package-dist', 'catalog-stale.mjs'),
+    "import './geminiRuntimeCore-stale.mjs';\nexport {};\n",
+    'utf8',
+  );
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_REPO_DIR: fixture.repoRoot,
+    HAPPIER_HOME_DIR: join(fixture.repoRoot, '.happy-home'),
+  };
+
+  const res = await runNode([join(rootDir, 'scripts', 'happier.mjs'), 'probe-stale-runtime'], {
+    cwd: rootDir,
+    env,
+  });
+  assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+
+  const payload = JSON.parse(res.stdout.trim());
+  assert.equal(payload.argvEntryPath, join(fixture.repoRoot, 'apps', 'cli', 'dist', 'index.mjs'));
+  assert.deepEqual(payload.args, ['probe-stale-runtime']);
 });
 
 test('hstack happier does not forward --runtime to the wrapped runtime CLI', async (t) => {

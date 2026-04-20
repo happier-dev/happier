@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
 import type { Machine } from './types';
 
 const { configurationMock, mockIo } = vi.hoisted(() => ({
   configurationMock: {
     apiServerUrl: 'http://localhost:3005',
-    socketIoTransports: ['websocket', 'polling'] as string[],
+    socketIoTransports: ['polling', 'websocket'] as string[],
   },
   mockIo: vi.fn<(url: string, opts: Record<string, unknown>) => any>(() => ({
     on: vi.fn(),
@@ -19,6 +20,7 @@ const { configurationMock, mockIo } = vi.hoisted(() => ({
 const registerFileSystemHandlersMock = vi.hoisted(() => vi.fn(() => ({
   transferSessionStore: {},
 })));
+const registerMachineRpcHandlersMock = vi.hoisted(() => vi.fn());
 
 vi.mock('socket.io-client', () => ({
   io: mockIo,
@@ -40,7 +42,7 @@ vi.mock('@/rpc/handlers/registerSessionHandlers', () => ({ registerSessionHandle
 vi.mock('@/rpc/handlers/scm', () => ({ registerScmHandlers: vi.fn() }));
 vi.mock('@/rpc/handlers/fileSystem', () => ({ registerFileSystemHandlers: registerFileSystemHandlersMock }));
 vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', () => ({ registerMachineFileBrowserHandlers: vi.fn() }));
-vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: vi.fn() }));
+vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: registerMachineRpcHandlersMock }));
 vi.mock('./rpc/RpcHandlerManager', () => ({
   RpcHandlerManager: class {
     onSocketConnect() {}
@@ -62,18 +64,19 @@ vi.mock('@/utils/time', () => ({ backoff: async <T>(fn: () => Promise<T>) => awa
 describe('ApiMachineClient transports', () => {
   beforeEach(() => {
     configurationMock.apiServerUrl = 'http://localhost:3005';
-    configurationMock.socketIoTransports = ['websocket', 'polling'];
+    configurationMock.socketIoTransports = ['polling', 'websocket'];
     registerFileSystemHandlersMock.mockReset();
     registerFileSystemHandlersMock.mockReturnValue({ transferSessionStore: {} });
+    registerMachineRpcHandlersMock.mockReset();
     bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
   });
 
   afterEach(() => {
     configurationMock.apiServerUrl = 'http://localhost:3005';
-    configurationMock.socketIoTransports = ['websocket', 'polling'];
+    configurationMock.socketIoTransports = ['polling', 'websocket'];
   });
 
-  it('uses websocket-first transports by default (fallback to polling)', async () => {
+  it('uses polling-first transports by default (upgrade to websocket when available)', async () => {
     const mod = await import('./apiMachine');
 
     const machine: Machine = {
@@ -91,7 +94,7 @@ describe('ApiMachineClient transports', () => {
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates/');
-    expect(opts.transports).toEqual(['websocket', 'polling']);
+    expect(opts.transports).toEqual(['polling', 'websocket']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
   });
@@ -345,6 +348,77 @@ describe('ApiMachineClient transports', () => {
       items: expect.arrayContaining([
         expect.objectContaining({ id: 'a2' }),
       ]),
+    }));
+  });
+
+  it('forwards voice inference workers into machine RPC registration', async () => {
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const voiceInference: VoiceInferenceWorkerHandle = {
+      stop: vi.fn(async () => {}),
+      getStatus: vi.fn(async () => ({
+        serviceState: 'ready' as const,
+        normalization: {
+          inputTransport: 'upload_transfer' as const,
+          strategy: 'daemon_decode' as const,
+          systemFfmpegAllowed: false as const,
+        },
+        models: [],
+      })),
+      listModels: vi.fn(async () => []),
+      getModelsStatus: vi.fn(async () => []),
+      warmModelPack: vi.fn(async () => {}),
+      installModel: vi.fn(async () => ({
+        packId: 'stt-pack',
+        kind: 'stt_sherpa' as const,
+        model: 'sherpa',
+        version: '1',
+        executionSupport: ['daemon' as const],
+        installState: 'installed' as const,
+        progress: null,
+        lastError: null,
+        updatedAtMs: 0,
+      })),
+      removeModel: vi.fn(async () => {}),
+      synthesizeTts: vi.fn(async () => ({
+        requestId: 'tts-1',
+        output: { codec: 'wav', mimeType: 'audio/wav' } as const,
+        filePath: '/tmp/fake.wav',
+        sizeBytes: 4,
+        name: 'fake.wav',
+      })),
+      cancelTts: vi.fn(async () => {}),
+      transcribeAudio: vi.fn(async () => ({
+        requestId: 'stt-1',
+        text: 'hello',
+        language: 'en',
+        modelPackId: 'stt-pack',
+      })),
+      cancelStt: vi.fn(async () => {}),
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.setRPCHandlers({
+      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+      stopSession: async () => true,
+      requestShutdown: () => {},
+      voiceInference,
+    });
+
+    expect(registerMachineRpcHandlersMock).toHaveBeenCalledWith(expect.objectContaining({
+      handlers: expect.objectContaining({
+        voiceInference,
+      }),
     }));
   });
 

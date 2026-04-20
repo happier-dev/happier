@@ -22,6 +22,27 @@ afterEach(() => {
 });
 
 describe('resolveWorkspaceFileUploadTarget', () => {
+    it('allows destinations outside the default directory by default', () => {
+        const workspace = createWorkspace();
+        const externalRoot = createWorkspace();
+        const externalPath = join(externalRoot, 'uploaded.txt');
+
+        expect(
+            resolveWorkspaceFileUploadTarget({
+                workingDirectory: workspace,
+                path: externalPath,
+                sizeBytes: 5,
+                overwrite: false,
+            }),
+        ).toMatchObject({
+            success: true,
+            target: {
+                destPath: externalPath,
+                destDisplayPath: externalPath,
+            },
+        });
+    });
+
     it('returns the resolved workspace destination with validated size and overwrite state', () => {
         const workspace = createWorkspace();
 

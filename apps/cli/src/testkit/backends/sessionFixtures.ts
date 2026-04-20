@@ -30,6 +30,18 @@ export function createMockSession(overrides: RecordLike = {}) {
         encryptionVariant: 'legacy' as const,
     };
 
+    const metadataOverride = overrides.metadata;
+    if (metadataOverride && typeof metadataOverride === 'object' && !Array.isArray(metadataOverride)) {
+        return {
+            ...base,
+            ...overrides,
+            metadata: {
+                ...base.metadata,
+                ...metadataOverride,
+            },
+        };
+    }
+
     return { ...base, ...overrides };
 }
 

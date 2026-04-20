@@ -1,0 +1,107 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+
+import * as tar from 'tar';
+import { describe, expect, it } from 'vitest';
+
+import type { CapabilitiesDescribeResponse, CapabilitiesInvokeResponse } from '@/capabilities/types';
+import { reloadConfiguration } from '@/configuration';
+import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/extensions/testkit/marketplaceCatalog';
+import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/extensions/testkit/samplePackage';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+
+import { createCliCapabilitiesService } from './capabilities';
+
+describe('createCliCapabilitiesService tool.plugins', () => {
+    it('describes and invokes reload through the canonical plugin capability', async () => {
+        const home = await createTempDir('happier-cli-capabilities-plugins-reload-');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+
+        const sourceParent = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-plugin-source-'));
+        const sourceRoot = join(sourceParent, 'sample-plugin');
+        await materializeSamplePluginFixture(sourceRoot);
+        const archivePath = join(home, `${SAMPLE_PLUGIN_ID}.tar.gz`);
+        await tar.c({
+            gzip: true,
+            file: archivePath,
+            cwd: sourceParent,
+            portable: true,
+        }, [basename(sourceRoot)]);
+        const catalogPath = join(home, 'catalog.json');
+        await writeFile(
+            catalogPath,
+            JSON.stringify(createMarketplaceCatalogDocument({
+                sourceUrl: catalogPath,
+                title: 'Curated plugins',
+                description: 'Descriptor-only plugin discovery',
+                entries: [
+                    createMarketplaceCatalogEntry({
+                        pluginId: SAMPLE_PLUGIN_ID,
+                        title: 'Sample Plugin',
+                        description: 'Descriptor-only plugin discovery',
+                        sourceUrl: `${catalogPath}#${SAMPLE_PLUGIN_ID}`,
+                        packageUrl: archivePath,
+                        categories: ['plugins'],
+                    }),
+                ],
+            }), null, 2),
+            'utf8',
+        );
+
+        try {
+            const service = await createCliCapabilitiesService();
+            const described = service.describe() as CapabilitiesDescribeResponse;
+
+            expect(described.capabilities.find((capability) => capability.id === 'tool.plugins')).toMatchObject({
+                methods: expect.objectContaining({
+                    install: expect.any(Object),
+                    update: expect.any(Object),
+                    enable: expect.any(Object),
+                    disable: expect.any(Object),
+                    reload: expect.any(Object),
+                }),
+            });
+
+            const installResult = await service.invoke({
+                id: 'tool.plugins',
+                method: 'install',
+                params: {
+                    sourceUrl: catalogPath,
+                    pluginId: SAMPLE_PLUGIN_ID,
+                },
+            }) as CapabilitiesInvokeResponse;
+
+            expect(installResult.ok).toBe(true);
+            if (!installResult.ok) return;
+
+            const reloaded = await service.invoke({
+                id: 'tool.plugins',
+                method: 'reload',
+                params: {
+                    pluginId: SAMPLE_PLUGIN_ID,
+                },
+            }) as CapabilitiesInvokeResponse;
+
+            expect(reloaded.ok).toBe(true);
+            if (!reloaded.ok) return;
+            expect(reloaded.result).toMatchObject({
+                action: 'reload',
+                pluginId: SAMPLE_PLUGIN_ID,
+                reload: {
+                    ok: expect.any(Boolean),
+                    attemptedGeneration: expect.any(Number),
+                    affectedPluginIds: [SAMPLE_PLUGIN_ID],
+                },
+            });
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await removeTempDir(home);
+            await rm(sourceParent, { recursive: true, force: true });
+        }
+    });
+});

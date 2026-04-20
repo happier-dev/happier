@@ -10,9 +10,9 @@ import {
 } from '@happier-dev/protocol';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
-import type { PromptAssetAdapter } from '@/promptAssets/types';
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
-import { createPromptRegistryAdapterRegistry, type PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import { createPromptRegistryAdapterRegistry, type PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 
 function invalidRequest(error: string) {
   return { ok: false as const, errorCode: 'invalid_request' as const, error };

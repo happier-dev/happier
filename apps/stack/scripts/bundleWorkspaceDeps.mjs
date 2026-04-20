@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ensureWorkspacePackagesBuiltForComponent } from './utils/proc/pm.mjs';
+import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -47,7 +47,7 @@ async function loadCliCommonWorkspacesModule(repoRoot) {
       const stackDir = resolve(repoRoot, 'apps', 'stack');
       await ensureWorkspacePackagesBuiltForComponent(stackDir, { quiet: true, env: process.env });
       if (!existsSync(modulePath)) {
-        execFileSync('yarn', ['-s', 'workspace', '@happier-dev/cli-common', 'build'], {
+        execYarn(['-s', 'workspace', '@happier-dev/cli-common', 'build'], {
           cwd: repoRoot,
           stdio: 'inherit',
         });

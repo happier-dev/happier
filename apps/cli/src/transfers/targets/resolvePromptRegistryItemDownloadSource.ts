@@ -1,7 +1,7 @@
 import type { PromptRegistryFetchItemRequestV1 } from '@happier-dev/protocol';
 
-import type { PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
-import { writePromptRegistryTransferPayload } from '@/promptRegistries/shared/promptRegistryTransferPayload';
+import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
+import { writePromptRegistryTransferPayload } from '@/prompts/registries/shared/promptRegistryTransferPayload';
 
 import type { DownloadTransferSource } from './downloadTransferSource';
 

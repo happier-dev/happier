@@ -3,8 +3,14 @@ import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { createStepPrinter } from './utils/cli/progress.mjs';
-import { AGENT_IDS, getProviderCliRuntimeSpec } from '@happier-dev/agents';
-import { installProviderCli, planProviderCliInstall, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
+import { installProviderCli } from '@happier-dev/cli-common/providers';
+import {
+  assertKnownStackProviderIds,
+  resolveStackProviderIds,
+  resolveStackProviderInstallLabel,
+  resolveStackProviderPlatform,
+  resolveStackProviderRows,
+} from './providers_registry.mjs';
 
 function usageText() {
   return [
@@ -21,47 +27,11 @@ function usageText() {
   ].join('\n');
 }
 
-function splitProviders(raw) {
-  const v = String(raw ?? '').trim();
-  if (!v) return [];
-  return v
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function resolvePlatform() {
-  return resolvePlatformFromNodePlatform(process.platform) ?? 'unsupported';
-}
-
-function planForProvider(providerId) {
-  const platform = resolvePlatform();
-  if (platform === 'unsupported') {
-    return { ok: false, provider: providerId, error: 'Unsupported platform' };
-  }
-  const planned = planProviderCliInstall({ providerId, platform });
-  if (!planned.ok) {
-    return { ok: false, provider: providerId, error: planned.errorMessage };
-  }
-  return { ok: true, provider: providerId, commands: planned.plan.commands };
-}
-
 async function cmdList({ argv }) {
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
-  const platform = resolvePlatform();
-  const rows = AGENT_IDS.map((id) => {
-    const spec = getProviderCliRuntimeSpec(id);
-    const planned = planForProvider(id);
-    return {
-      id: spec.id,
-      title: spec.title,
-      binaries: [spec.binaryName],
-      autoInstall: planned.ok,
-      note: planned.ok ? null : planned.error,
-      platform,
-    };
-  });
+  const platform = resolveStackProviderPlatform();
+  const rows = resolveStackProviderRows();
 
   printResult({
     json,
@@ -86,24 +56,18 @@ async function cmdInstall({ argv }) {
   const inputFromPositional = positionals;
 
   const wanted = [
-    ...splitProviders(inputFromFlag),
-    ...inputFromPositional.flatMap((s) => splitProviders(String(s).trim().toLowerCase())),
+    ...resolveStackProviderIds(inputFromFlag),
+    ...inputFromPositional.flatMap((s) => resolveStackProviderIds(String(s).trim())),
   ];
 
   if (wanted.length === 0) {
     throw new Error('[providers] missing providers. Use --providers=claude,codex or pass ids as positionals.');
   }
 
-  const resolved = wanted.map((id) => {
-    if (!AGENT_IDS.includes(id)) {
-      const e = new Error(`[providers] unknown provider: ${id}`);
-      e.code = 'EUNKNOWN_PROVIDER';
-      throw e;
-    }
-    return id;
-  });
+  assertKnownStackProviderIds(wanted);
+  const resolved = wanted;
 
-  const platform = resolvePlatform();
+  const platform = resolveStackProviderPlatform();
   if (platform === 'unsupported') {
     throw new Error('[providers] unsupported platform');
   }
@@ -141,8 +105,7 @@ async function cmdInstall({ argv }) {
   const steps = createStepPrinter({ enabled: true });
   const results = [];
   for (const providerId of resolved) {
-    const spec = getProviderCliRuntimeSpec(providerId);
-    const label = `Installing ${spec.title || `${providerId} CLI`}`;
+    const label = resolveStackProviderInstallLabel(providerId);
 
     steps.start(label);
     const result = await installProviderCli({ providerId, platform, dryRun, skipIfInstalled, env: process.env });

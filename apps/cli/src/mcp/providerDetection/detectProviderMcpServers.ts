@@ -1,8 +1,9 @@
 import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1, McpDetectedProviderV1 } from '@happier-dev/protocol';
 
+import { detectOpenCodeMcpServers } from '@happier-dev/extensions-opencode';
+
 import { detectClaudeMcpServers } from '@/backends/claude/mcp/detectClaudeMcpServers';
 import { detectCodexMcpServers } from '@/backends/codex/mcp/detectCodexMcpServers';
-import { detectOpenCodeMcpServers } from '@/backends/opencode/mcp/detectOpenCodeMcpServers';
 
 export type DetectProviderMcpServersResult = Readonly<{
   servers: ReadonlyArray<DetectedMcpServerV1>;
@@ -45,7 +46,7 @@ export async function detectProviderMcpServers(params: Readonly<{
   }
 
   if (include('opencode')) {
-    const out = await detectOpenCodeMcpServers({ directory, env });
+    const out = await detectOpenCodeMcpServers({ env });
     servers.push(...out.servers);
     warnings.push(...out.warnings);
   }

@@ -6,7 +6,6 @@ import { logger } from '@/ui/logger';
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
-import { createStartExecutionRunToolHandler } from '@/agent/tools/happierTools/createStartExecutionRunToolHandler';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
@@ -75,6 +74,7 @@ export function createHappierMcpServer(
         await (client.executionRuns?.wait?.(request) ?? sessionScopedRpc('execution.run.wait', request)),
       ),
   };
+  const executionRunStartRpc = async (_sessionId: string, request: unknown) => await executionRuns.start(request);
 
   const harness = createCliActionExecutorHarness(
     {
@@ -116,7 +116,7 @@ export function createHappierMcpServer(
 
         return { ok: true as const, sessionId: normalizedSessionId, title: normalizedTitle };
       },
-      executionRunStart: async (_sessionId, request) => await executionRuns.start(request),
+      executionRunStart: executionRunStartRpc,
       executionRunList: async (_sessionId, request) => await executionRuns.list(request),
       executionRunGet: async (_sessionId, request) => await executionRuns.get(request),
       executionRunSend: async (_sessionId, request) => await executionRuns.send(request),
@@ -189,7 +189,6 @@ export function createHappierMcpServer(
           })));
         },
       }),
-      startExecutionRun: createStartExecutionRunToolHandler({ executor, surface: toolSurface }),
       executeActionByToolName: actionToolBridge.executeActionByToolName,
       resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, client.sessionId),
       isActionEnabled: actionToolBridge.isActionEnabled,

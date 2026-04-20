@@ -1496,7 +1496,14 @@ async function rollbackFailClosedBinaryPromotionWindow(window) {
   }
 }
 
-async function promoteStagedSelfHostRuntimePayload({ stagedRuntime, config, beforeOnPromoted, onPromoted }) {
+async function promoteStagedSelfHostRuntimePayload({
+  stagedRuntime,
+  config,
+  beforePromote,
+  beforeOnPromoted,
+  onPromoted,
+  afterPromoted,
+}) {
   const promotions = [
     {
       stagedDir: stagedRuntime.sqliteMigrationsDir,
@@ -1514,6 +1521,10 @@ async function promoteStagedSelfHostRuntimePayload({ stagedRuntime, config, befo
     const staged = String(stagedDir ?? '').trim();
     return staged && existsSync(staged);
   });
+
+  if (typeof beforePromote === 'function') {
+    await beforePromote();
+  }
 
   const binaryPromotionWindow = await prepareFailClosedBinaryPromotionWindow({
     targetBinaryPath: config.serverBinaryPath,
@@ -1551,6 +1562,9 @@ async function promoteStagedSelfHostRuntimePayload({ stagedRuntime, config, befo
     if (typeof onPromoted === 'function') {
       await onPromoted();
     }
+    if (typeof afterPromoted === 'function') {
+      await afterPromoted();
+    }
     await finalizeFailClosedBinaryPromotionWindow(binaryPromotionWindow);
 
     for (const promotion of promoted) {
@@ -1574,6 +1588,8 @@ export async function installSelfHostBinaryFromBundle({
   pubkeyFile = resolveMinisignPublicKeyText(process.env),
   userAgent = 'happier-self-host-installer',
   beforeBinaryInstall,
+  beforeRuntimePromote,
+  afterPromote,
 } = {}) {
   const resolvedBundle = bundle;
   const name = String(binaryName ?? '').trim();
@@ -1629,6 +1645,7 @@ export async function installSelfHostBinaryFromBundle({
     await promoteStagedSelfHostRuntimePayload({
       stagedRuntime,
       config,
+      beforePromote: beforeRuntimePromote,
       beforeOnPromoted: beforeBinaryInstall,
       onPromoted: async () => installBinaryAtomically({
         sourceBinaryPath: extractedBinary,
@@ -1636,6 +1653,7 @@ export async function installSelfHostBinaryFromBundle({
         previousBinaryPath: config.serverPreviousBinaryPath,
         versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
       }),
+      afterPromoted: afterPromote,
     });
     await pruneVersionedDirectories({
       versionsDir: config.versionsDir,
@@ -1653,6 +1671,8 @@ export async function installSelfHostBinaryFromLocalPath({
   sourceBinaryPath,
   binaryName,
   config,
+  beforeRuntimePromote,
+  afterPromote,
 } = {}) {
   const srcPath = String(sourceBinaryPath ?? '').trim();
   const name = String(binaryName ?? '').trim();
@@ -1682,12 +1702,14 @@ export async function installSelfHostBinaryFromLocalPath({
     await promoteStagedSelfHostRuntimePayload({
       stagedRuntime,
       config,
+      beforePromote: beforeRuntimePromote,
       onPromoted: async () => installBinaryAtomically({
         sourceBinaryPath: srcPath,
         targetBinaryPath: config.serverBinaryPath,
         previousBinaryPath: config.serverPreviousBinaryPath,
         versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
       }),
+      afterPromoted: afterPromote,
     });
     await pruneVersionedDirectories({
       versionsDir: config.versionsDir,
@@ -1701,12 +1723,22 @@ export async function installSelfHostBinaryFromLocalPath({
   }
 }
 
-async function installFromRelease({ product, binaryName, config, explicitBinaryPath = '' }) {
+async function installFromRelease({
+  product,
+  binaryName,
+  config,
+  explicitBinaryPath = '',
+  beforeRuntimePromote,
+  beforeBinaryInstall,
+  afterPromote,
+} = {}) {
   if (explicitBinaryPath) {
     return installSelfHostBinaryFromLocalPath({
       sourceBinaryPath: explicitBinaryPath,
       binaryName,
       config,
+      beforeRuntimePromote,
+      afterPromote,
     });
   }
 
@@ -1740,6 +1772,9 @@ async function installFromRelease({ product, binaryName, config, explicitBinaryP
     config,
     pubkeyFile: resolveMinisignPublicKeyText(process.env),
     userAgent: 'happier-self-host-installer',
+    beforeRuntimePromote,
+    beforeBinaryInstall,
+    afterPromote,
   });
   return { version: result.version || resolved.version || String(release?.tag_name ?? '').replace(/^server-v/, ''), source: result.source };
 }
@@ -1897,6 +1932,225 @@ function buildSelfHostServerServiceSpec({ config, envText }) {
   };
 }
 
+async function stopSelfHostServiceBeforeRuntimePromote({ config }) {
+  const currentEnvText = existsSync(config.configEnvPath)
+    ? await readFile(config.configEnvPath, 'utf-8').catch(() => '')
+    : '';
+  const backend = resolveServiceBackend({ platform: config.platform, mode: config.mode });
+  const definition = buildServiceDefinition({
+    backend,
+    homeDir: homedir(),
+    spec: buildSelfHostServerServiceSpec({ config, envText: currentEnvText }),
+  });
+  const taskName = String(backend).startsWith('schtasks-') ? `Happier\\${config.serviceName}` : '';
+  const plan = planServiceAction({
+    backend,
+    action: 'stop',
+    label: config.serviceName,
+    definitionPath: definition.path,
+    taskName,
+    persistent: true,
+  });
+  await applyServicePlan(plan);
+}
+
+export async function runSelfHostRuntimeMutationWithServiceRecovery({
+  config,
+  mutateRuntime,
+} = {}) {
+  if (typeof mutateRuntime !== 'function') {
+    throw new Error('[self-host] mutateRuntime is required');
+  }
+
+  const previousEnvText = existsSync(config.configEnvPath)
+    ? await readFile(config.configEnvPath, 'utf-8').catch(() => '')
+    : '';
+  const previousEnvExisted = existsSync(config.configEnvPath);
+  const backend = resolveServiceBackend({ platform: config.platform, mode: config.mode });
+  const previousServiceSpec = buildSelfHostServerServiceSpec({ config, envText: previousEnvText });
+  const previousDefinition = buildServiceDefinition({
+    backend,
+    homeDir: homedir(),
+    spec: previousServiceSpec,
+  });
+  const previousDefinitionExisted = existsSync(previousDefinition.path);
+  const previousDefinitionContents = existsSync(previousDefinition.path)
+    ? await readFile(previousDefinition.path, 'utf-8').catch(() => previousDefinition.contents)
+    : previousDefinition.contents;
+
+  try {
+    return await mutateRuntime({
+      beforeRuntimePromote: async () => stopSelfHostServiceBeforeRuntimePromote({ config }),
+    });
+  } catch (error) {
+    if (previousEnvExisted) {
+      await mkdir(dirname(config.configEnvPath), { recursive: true });
+      await writeFile(config.configEnvPath, previousEnvText, 'utf-8');
+    } else {
+      await rm(config.configEnvPath, { force: true }).catch(() => {});
+    }
+    if (previousDefinitionExisted) {
+      await mkdir(dirname(previousDefinition.path), { recursive: true });
+      await writeFile(previousDefinition.path, previousDefinitionContents, 'utf-8');
+    } else {
+      await rm(previousDefinition.path, { force: true }).catch(() => {});
+    }
+    if (previousEnvExisted || previousDefinitionExisted) {
+      await installManagedService({
+        platform: config.platform,
+        mode: config.mode,
+        homeDir: homedir(),
+        spec: previousServiceSpec,
+        persistent: true,
+      }).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+export async function runSelfHostUiWebMutationWithRollback({
+  config,
+  mutateUi,
+} = {}) {
+  if (typeof mutateUi !== 'function') {
+    throw new Error('[self-host] mutateUi is required');
+  }
+
+  const uiCurrentDir = String(config?.uiWebCurrentDir ?? '').trim();
+  const uiVersionsDir = String(config?.uiWebVersionsDir ?? '').trim();
+  const uiProduct = String(config?.uiWebProduct ?? DEFAULTS.uiWebProduct).trim() || DEFAULTS.uiWebProduct;
+  const entryPrefix = `${uiProduct}-`;
+  const previousVersionIds = uiVersionsDir
+    ? await listVersionedDirectoryIdsNewestFirst({
+      versionsDir: uiVersionsDir,
+      entryPrefix,
+    }).catch(() => [])
+    : [];
+  const currentBackupDir = uiCurrentDir && existsSync(uiCurrentDir)
+    ? `${uiCurrentDir}.rollback-${randomUUID()}`
+    : '';
+
+  if (currentBackupDir) {
+    await rename(uiCurrentDir, currentBackupDir);
+  }
+
+  try {
+    const result = await mutateUi();
+    if (currentBackupDir) {
+      await rm(currentBackupDir, { recursive: true, force: true }).catch(() => {});
+    }
+    return result;
+  } catch (error) {
+    if (uiCurrentDir) {
+      await rm(uiCurrentDir, { recursive: true, force: true }).catch(() => {});
+    }
+    if (currentBackupDir && existsSync(currentBackupDir)) {
+      await rename(currentBackupDir, uiCurrentDir).catch(() => {});
+    }
+    if (uiVersionsDir) {
+      const nextVersionIds = await listVersionedDirectoryIdsNewestFirst({
+        versionsDir: uiVersionsDir,
+        entryPrefix,
+      }).catch(() => []);
+      const previousVersionIdSet = new Set(previousVersionIds);
+      for (const versionId of nextVersionIds) {
+        if (previousVersionIdSet.has(versionId)) continue;
+        await rm(join(uiVersionsDir, versionId), { recursive: true, force: true }).catch(() => {});
+      }
+    }
+    if (currentBackupDir) {
+      await rm(currentBackupDir, { recursive: true, force: true }).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function performSelfHostPostPromoteSteps({
+  config,
+  withUi,
+  envOverrides,
+  autoUpdateMode,
+  autoUpdateEnabled,
+  autoUpdateIntervalMinutes,
+  autoUpdateAt,
+  autoUpdateReconcile,
+}) {
+  const uiResult = withUi
+    ? await runSelfHostUiWebMutationWithRollback({
+      config,
+      mutateUi: async () => installUiWebFromRelease({ config }),
+    })
+    : { installed: false, version: null, source: null, reason: 'disabled' };
+  const uiInstalled = Boolean(uiResult?.installed);
+
+  const envText = renderServerEnvFile({
+    port: config.serverPort,
+    host: config.serverHost,
+    dataDir: config.dataDir,
+    filesDir: config.filesDir,
+    dbDir: config.dbDir,
+    uiDir: uiInstalled ? config.uiWebCurrentDir : '',
+    serverBinDir: dirname(config.serverBinaryPath),
+    arch: process.arch,
+    platform: config.platform,
+  });
+  const envTextWithOverrides = envOverrides.length ? applyEnvOverridesToEnvText(envText, envOverrides) : envText;
+  await writeFile(config.configEnvPath, envTextWithOverrides, 'utf-8');
+  const installEnv = parseEnvText(envTextWithOverrides);
+  const healthPort = resolveSelfHostEffectiveServerPort({ config, env: installEnv });
+  if (!parseBoolean(installEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? installEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
+    await applySelfHostSqliteMigrationsAtInstallTime({ env: installEnv }).catch((e) => {
+      throw new Error(`[self-host] failed to apply sqlite migrations at install time: ${String(e?.message ?? e)}`);
+    });
+  }
+
+  const serverShimPath = join(config.binDir, config.serverBinaryName);
+  await mkdir(config.binDir, { recursive: true });
+  await rm(serverShimPath, { force: true });
+  await symlink(config.serverBinaryPath, serverShimPath).catch(async () => {
+    await copyFile(config.serverBinaryPath, serverShimPath);
+    await chmod(serverShimPath, 0o755).catch(() => {});
+  });
+
+  const serviceSpec = buildSelfHostServerServiceSpec({ config, envText: envTextWithOverrides });
+  await installManagedService({
+    platform: config.platform,
+    mode: config.mode,
+    homeDir: homedir(),
+    spec: serviceSpec,
+    persistent: true,
+  });
+
+  const healthy = await restartAndCheckHealth({ config, serviceSpec, port: healthPort });
+  if (!healthy) {
+    throw new Error('[self-host] service failed health checks after install');
+  }
+
+  const autoUpdateResult = autoUpdateMode === 'install'
+    ? await installAutoUpdateJob({
+      config: { ...config, autoUpdateAt },
+      enabled: autoUpdateEnabled,
+      intervalMinutes: autoUpdateIntervalMinutes,
+      at: autoUpdateAt,
+    }).catch((e) => ({
+      installed: false,
+      reason: String(e?.message ?? e),
+    }))
+    : autoUpdateReconcile.action === 'install'
+      ? await installAutoUpdateJob({
+        config: { ...config, autoUpdateAt: autoUpdateReconcile.at },
+        enabled: true,
+        intervalMinutes: autoUpdateReconcile.intervalMinutes,
+        at: autoUpdateReconcile.at,
+      }).catch(() => null)
+      : await uninstallAutoUpdateJob({ config }).catch(() => null);
+
+  return {
+    uiResult,
+    autoUpdateResult,
+  };
+}
+
 async function cmdInstall({ channel, mode, argv, json }) {
   if (mode === 'system' && process.platform !== 'win32') {
     assertRoot();
@@ -1946,70 +2200,35 @@ async function cmdInstall({ channel, mode, argv, json }) {
   await mkdir(config.uiWebRootDir, { recursive: true });
   await mkdir(config.uiWebVersionsDir, { recursive: true });
 
-  const installResult = await installFromRelease({
-    product: 'happier-server',
-    binaryName: config.serverBinaryName,
+  let postPromoteResult = null;
+  const installResult = await runSelfHostRuntimeMutationWithServiceRecovery({
     config,
-    explicitBinaryPath: serverBinaryOverride,
+    mutateRuntime: async ({ beforeRuntimePromote }) => await installFromRelease({
+      product: 'happier-server',
+      binaryName: config.serverBinaryName,
+      config,
+      explicitBinaryPath: serverBinaryOverride,
+      beforeRuntimePromote,
+      afterPromote: async () => {
+        postPromoteResult = await performSelfHostPostPromoteSteps({
+          config,
+          withUi,
+          envOverrides,
+          autoUpdateMode: 'install',
+          autoUpdateEnabled,
+          autoUpdateIntervalMinutes,
+          autoUpdateAt,
+        });
+      },
+    }),
   });
 
-  const uiResult = withUi
-    ? await installUiWebFromRelease({ config })
-    : { installed: false, version: null, source: null, reason: 'disabled' };
+  const uiResult = postPromoteResult?.uiResult ?? { installed: false, version: null, source: null, reason: 'disabled' };
   const uiInstalled = Boolean(uiResult?.installed);
-
-	  const envText = renderServerEnvFile({
-	    port: config.serverPort,
-	    host: config.serverHost,
-	    dataDir: config.dataDir,
-    filesDir: config.filesDir,
-    dbDir: config.dbDir,
-    uiDir: uiInstalled ? config.uiWebCurrentDir : '',
-    serverBinDir: dirname(config.serverBinaryPath),
-    arch: process.arch,
-    platform: config.platform,
-  });
-	  const envTextWithOverrides = envOverrides.length ? applyEnvOverridesToEnvText(envText, envOverrides) : envText;
-	  await writeFile(config.configEnvPath, envTextWithOverrides, 'utf-8');
-	  const installEnv = parseEnvText(envTextWithOverrides);
-	  const healthPort = resolveSelfHostEffectiveServerPort({ config, env: installEnv });
-	  if (!parseBoolean(installEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? installEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
-	    await applySelfHostSqliteMigrationsAtInstallTime({ env: installEnv }).catch((e) => {
-	      throw new Error(`[self-host] failed to apply sqlite migrations at install time: ${String(e?.message ?? e)}`);
-	    });
-	  }
-
-  const serverShimPath = join(config.binDir, config.serverBinaryName);
-  await mkdir(config.binDir, { recursive: true });
-  await rm(serverShimPath, { force: true });
-  await symlink(config.serverBinaryPath, serverShimPath).catch(async () => {
-    await copyFile(config.serverBinaryPath, serverShimPath);
-    await chmod(serverShimPath, 0o755).catch(() => {});
-  });
-
-  const serviceSpec = buildSelfHostServerServiceSpec({ config, envText: envTextWithOverrides });
-	  await installManagedService({
-	    platform: config.platform,
-	    mode: config.mode,
-	    homeDir: homedir(),
-	    spec: serviceSpec,
-	    persistent: true,
-	  });
-
-	  const healthy = await restartAndCheckHealth({ config, serviceSpec, port: healthPort });
-	  if (!healthy) {
-	    throw new Error('[self-host] service failed health checks after install');
-	  }
-
-  const autoUpdateResult = await installAutoUpdateJob({
-    config: { ...config, autoUpdateAt },
-    enabled: autoUpdateEnabled,
-    intervalMinutes: autoUpdateIntervalMinutes,
-    at: autoUpdateAt,
-  }).catch((e) => ({
+  const autoUpdateResult = postPromoteResult?.autoUpdateResult ?? {
     installed: false,
-    reason: String(e?.message ?? e),
-  }));
+    reason: 'missing-post-promote-result',
+  };
 
   const cliResult = await maybeInstallCompanionCli({
     channel,
@@ -2205,71 +2424,28 @@ async function cmdUpdate({ channel, mode, json }) {
   const withUi =
     parseBoolean(process.env.HAPPIER_WITH_UI, true) !== false
     && parseBoolean(process.env.HAPPIER_SELF_HOST_WITH_UI, true) !== false;
-  const installResult = await installFromRelease({
-    product: 'happier-server',
-    binaryName: config.serverBinaryName,
+  let postPromoteResult = null;
+  const installResult = await runSelfHostRuntimeMutationWithServiceRecovery({
     config,
+    mutateRuntime: async ({ beforeRuntimePromote }) => await installFromRelease({
+      product: 'happier-server',
+      binaryName: config.serverBinaryName,
+      config,
+      beforeRuntimePromote,
+      afterPromote: async () => {
+        postPromoteResult = await performSelfHostPostPromoteSteps({
+          config,
+          withUi,
+          envOverrides: [],
+          autoUpdateMode: 'reconcile',
+          autoUpdateReconcile,
+        });
+      },
+    }),
   });
-  const uiResult = withUi
-    ? await installUiWebFromRelease({ config })
-    : { installed: false, version: null, source: null, reason: 'disabled' };
+  const uiResult = postPromoteResult?.uiResult ?? { installed: false, version: null, source: null, reason: 'disabled' };
   const uiInstalled = Boolean(uiResult?.installed);
-
-  const envText = existsSync(config.configEnvPath)
-    ? await readFile(config.configEnvPath, 'utf-8').catch(() => '')
-    : '';
-  const parsedEnv = parseEnvText(envText);
-  const effectivePort = parsePort(parsedEnv.PORT, config.serverPort);
-  const configWithPort = effectivePort === config.serverPort ? config : { ...config, serverPort: effectivePort };
-  const defaultsEnvText = renderServerEnvFile({
-    port: configWithPort.serverPort,
-    host: configWithPort.serverHost,
-    dataDir: configWithPort.dataDir,
-    filesDir: configWithPort.filesDir,
-    dbDir: configWithPort.dbDir,
-    uiDir: uiInstalled ? configWithPort.uiWebCurrentDir : '',
-    serverBinDir: dirname(configWithPort.serverBinaryPath),
-    arch: process.arch,
-    platform: configWithPort.platform,
-  });
-  const nextEnvText = envText ? mergeEnvTextWithDefaults(envText, defaultsEnvText) : defaultsEnvText;
-  await mkdir(configWithPort.configDir, { recursive: true });
-  await writeFile(configWithPort.configEnvPath, nextEnvText, 'utf-8');
-  const nextEnv = parseEnvText(nextEnvText);
-  if (!parseBoolean(nextEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? nextEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
-    await applySelfHostSqliteMigrationsAtInstallTime({ env: nextEnv }).catch((e) => {
-      throw new Error(`[self-host] failed to apply sqlite migrations at update time: ${String(e?.message ?? e)}`);
-    });
-  }
-
-  const serviceSpec = buildSelfHostServerServiceSpec({ config: configWithPort, envText: nextEnvText });
-  await installManagedService({
-    platform: configWithPort.platform,
-    mode: configWithPort.mode,
-    homeDir: homedir(),
-    spec: serviceSpec,
-    persistent: true,
-  }).catch(() => {});
-  const healthy = await restartAndCheckHealth({ config: configWithPort, serviceSpec });
-  if (!healthy) {
-    if (existsSync(config.serverPreviousBinaryPath)) {
-      await copyFile(config.serverPreviousBinaryPath, config.serverBinaryPath);
-      await chmod(config.serverBinaryPath, 0o755).catch(() => {});
-      await restartAndCheckHealth({ config: configWithPort, serviceSpec });
-    }
-    throw new Error('[self-host] update failed health checks and was rolled back to previous binary');
-  }
-
-  if (autoUpdateReconcile.action === 'install') {
-    await installAutoUpdateJob({
-      config: { ...configWithPort, autoUpdateAt: autoUpdateReconcile.at },
-      enabled: true,
-      intervalMinutes: autoUpdateReconcile.intervalMinutes,
-      at: autoUpdateReconcile.at,
-    }).catch(() => {});
-  } else {
-    await uninstallAutoUpdateJob({ config: configWithPort }).catch(() => {});
-  }
+  const autoUpdateResult = postPromoteResult?.autoUpdateResult ?? null;
 
   await writeSelfHostState(config, {
     channel,

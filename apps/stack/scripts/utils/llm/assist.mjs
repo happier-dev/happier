@@ -1,5 +1,6 @@
 import { detectInstalledLlmTools } from './tools.mjs';
 import { buildCodexExecScript, CODEX_PERMISSION_MODES, runCodexExecHere } from './codex_exec.mjs';
+import { findKnownLlmToolSpecById, resolveLlmToolInteractiveLaunchLine } from './registry.mjs';
 import { canLaunchNewTerminal, launchScriptInNewTerminal } from '../ui/terminal_launcher.mjs';
 import { clipboardAvailable, copyTextToClipboard } from '../ui/clipboard.mjs';
 import { isTty, promptSelect, withRl } from '../cli/wizard.mjs';
@@ -19,23 +20,14 @@ function shouldAsk(options) {
   return isTty() && options.length > 1;
 }
 
-function buildInteractiveLaunchScript({ toolCmd, cd, title, promptText }) {
+function buildInteractiveLaunchScript({ toolSpec, cd, title, promptText }) {
   const t = String(title ?? 'hstack (LLM)').trim();
   const cwd = String(cd ?? '').trim();
-  const cmd = String(toolCmd ?? '').trim();
+  const cmd = String(toolSpec?.cmd ?? '').trim();
   const prompt = String(promptText ?? '').trimEnd();
   if (!cwd) throw new Error('[llm] launch: missing cwd');
   if (!cmd) throw new Error('[llm] launch: missing toolCmd');
-
-  const execLine = (() => {
-    // Prefer providing the prompt directly when the CLI supports it.
-    // - Claude Code: `claude "query"` starts an interactive session with an initial prompt.
-    // - OpenCode: `opencode --prompt "..."` starts the TUI with an initial prompt.
-    if (cmd === 'claude') return 'exec command claude "$HS_PROMPT"';
-    if (cmd === 'opencode') return 'exec command opencode --prompt "$HS_PROMPT"';
-    // Fallback: start the tool and ask the user to paste.
-    return `exec command ${JSON.stringify(cmd)}`;
-  })();
+  const execLine = resolveLlmToolInteractiveLaunchLine(toolSpec) || `exec command ${JSON.stringify(cmd)}`;
 
   return [
     '#!/usr/bin/env bash',
@@ -100,9 +92,9 @@ export async function launchLlmAssistant({
       ? tools[0]
       : tools.find((t) => t.id === preferredToolId) ||
         (!isTty()
-          ? tools.find((t) => t.id === 'codex') || tools[0]
+          ? tools.find((t) => t.launchMode === 'codex-exec') || tools[0]
           : await withMaybeRl(async (rl) => {
-              const defaultIndex = Math.max(0, tools.findIndex((t) => t.id === 'codex'));
+              const defaultIndex = Math.max(0, tools.findIndex((t) => t.launchMode === 'codex-exec'));
               const picked = await promptSelect(rl, {
                 title:
                   `${bold('Pick an LLM CLI')}\n` +
@@ -162,7 +154,7 @@ export async function launchLlmAssistant({
   }
 
   // Auto-exec path (Codex only for now).
-  if (chosenTool.id === 'codex') {
+  if (chosenTool.launchMode === 'codex-exec') {
     if (launchMode === 'here') {
       await runCodexExecHere({ cd, permissionMode: permissionMode || defaultPermissionMode, promptText: prompt, env });
       return { ok: true, launched: true, mode: 'here', tool: chosenTool.id, permissionMode, terminalSupport };
@@ -196,23 +188,21 @@ export async function launchLlmAssistant({
     // eslint-disable-next-line no-console
     console.log(dim(`Starting: ${chosenTool.cmd}`));
 
-    if (chosenTool.cmd === 'claude') {
-      // Claude Code supports starting interactive mode with an initial prompt:
-      // `claude "query"`.
-      await run('claude', [prompt], { cwd: cd, env: env ?? process.env, stdio: 'inherit' });
-    } else if (chosenTool.cmd === 'opencode') {
-      // OpenCode supports starting the TUI with an initial prompt:
-      // `opencode --prompt "..."`.
-      await run('opencode', ['--prompt', prompt], { cwd: cd, env: env ?? process.env, stdio: 'inherit' });
+    const toolSpec = findKnownLlmToolSpecById(chosenTool.id);
+    if (!toolSpec) throw new Error(`[llm] launch: unknown tool: ${chosenTool.id}`);
+    if (toolSpec.launchMode === 'prompt-arg') {
+      await run(toolSpec.cmd, [prompt], { cwd: cd, env: env ?? process.env, stdio: 'inherit' });
+    } else if (toolSpec.launchMode === 'prompt-flag') {
+      await run(toolSpec.cmd, ['--prompt', prompt], { cwd: cd, env: env ?? process.env, stdio: 'inherit' });
     } else {
-      await run(chosenTool.cmd, [], { cwd: cd, env: env ?? process.env, stdio: 'inherit' });
+      await run(toolSpec.cmd, [], { cwd: cd, env: env ?? process.env, stdio: 'inherit' });
     }
     return { ok: true, launched: true, mode: 'here', tool: chosenTool.id, permissionMode, terminalSupport };
   }
 
   // new-terminal
   const script = buildInteractiveLaunchScript({
-    toolCmd: chosenTool.cmd,
+    toolSpec: findKnownLlmToolSpecById(chosenTool.id),
     cd,
     title: title || `hstack (${chosenTool.id})`,
     promptText: prompt,

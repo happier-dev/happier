@@ -13,7 +13,8 @@ import {
 import { resolvePromptAssetUploadTarget } from './resolvePromptAssetUploadTarget';
 import { resolveWorkspaceFileUploadTarget } from './resolveWorkspaceFileUploadTarget';
 import type { UploadTransferTarget } from './uploadTransferTarget';
-import type { PromptAssetAdapter } from '@/promptAssets/types';
+import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 type WorkspaceLikeTransferUploadTarget = Extract<
   ReturnType<typeof resolveWorkspaceFileUploadTarget>,
@@ -95,6 +96,7 @@ type ResolveTransferUploadInitTargetFailure = Readonly<{
 
 export function resolveTransferUploadInitTarget(params: Readonly<{
   workingDirectory: string;
+  accessPolicy?: FilesystemAccessPolicy;
   request: PromptAssetUploadInitRequest;
   tempUploadRoot: string;
   additionalAllowedWriteDirs?: readonly string[];
@@ -105,6 +107,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
 
 export function resolveTransferUploadInitTarget(params: Readonly<{
   workingDirectory: string;
+  accessPolicy?: FilesystemAccessPolicy;
   request: NonPromptTransferUploadInitRequest;
   tempUploadRoot: string;
   additionalAllowedWriteDirs?: readonly string[];
@@ -115,6 +118,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
 
 export function resolveTransferUploadInitTarget(params: Readonly<{
   workingDirectory: string;
+  accessPolicy?: FilesystemAccessPolicy;
   request: TransferUploadInitRequest;
   tempUploadRoot: string;
   additionalAllowedWriteDirs?: readonly string[];
@@ -125,6 +129,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
 
 export async function resolveTransferUploadInitTarget(params: Readonly<{
   workingDirectory: string;
+  accessPolicy?: FilesystemAccessPolicy;
   request: TransferUploadInitRequest;
   tempUploadRoot: string;
   additionalAllowedWriteDirs?: readonly string[];
@@ -171,6 +176,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
       config,
       tempUploadRoot: params.tempUploadRoot,
       workingDirectory: attachmentWorkingDirectory,
+      accessPolicy: params.accessPolicy,
     });
     if (!resolvedTarget.success) {
       return { success: false, error: resolvedTarget.error };
@@ -192,6 +198,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
 
     const target = resolveWorkspaceFileUploadTarget({
       workingDirectory: attachmentWorkingDirectory,
+      accessPolicy: params.accessPolicy,
       path,
       sizeBytes: params.request.sizeBytes,
       overwrite: false,
@@ -227,6 +234,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
   const fileRequest = params.request as SessionFileUploadInitRequest;
   const target = resolveWorkspaceFileUploadTarget({
     workingDirectory: params.workingDirectory,
+    accessPolicy: params.accessPolicy,
     path: fileRequest.path,
     sizeBytes: fileRequest.sizeBytes,
     overwrite: fileRequest.overwrite,

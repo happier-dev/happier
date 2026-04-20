@@ -5,6 +5,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { TransferSessionStore } from '../core/transferSessionStore';
 import { resolveWorkspaceFileDownloadSource } from '../targets/resolveWorkspaceFileDownloadSource';
 import { registerDownloadTransferLifecycleHandlers } from './registerDownloadTransferLifecycleHandlers';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 type TransferDownloadInitRequest = Readonly<{
   t: 'session_file_download_v1';
@@ -21,6 +22,7 @@ export function registerTransferDownloadRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
     workingDirectory: string;
+    accessPolicy?: FilesystemAccessPolicy;
     store: TransferSessionStore;
     getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
     sessionRpcTransferMaxBytes?: number | null;
@@ -73,6 +75,7 @@ export function registerTransferDownloadRpcHandlers(
       }
       const source = await resolveWorkspaceFileDownloadSource({
         workingDirectory: deps.workingDirectory,
+        accessPolicy: deps.accessPolicy,
         path: request.path,
         asZip: request.asZip,
         additionalAllowedReadDirs: deps.getAdditionalAllowedReadDirs?.(),

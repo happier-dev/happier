@@ -7,6 +7,7 @@ import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
 
 import { withStackEnv } from './stack_environment.mjs';
+import { ensureStackDaemonPreflight, requiresStackDaemonPreflight } from './stack_happier_daemon_preflight.mjs';
 
 function stripIdentityWrapperArgs(args) {
   const stripped = [];
@@ -86,6 +87,16 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
         stackName,
         cliIdentity: identity || (envForHappy.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
       });
+
+      if (requiresStackDaemonPreflight(childArgs)) {
+        await ensureStackDaemonPreflight({
+          rootDir,
+          stackName,
+          env,
+          argv: passthrough,
+          cliIdentity: identity || 'default',
+        });
+      }
 
       const child = spawn(process.execPath, [join(rootDir, 'scripts', 'happier.mjs'), ...childArgs], {
         cwd: rootDir,

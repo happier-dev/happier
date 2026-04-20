@@ -18,21 +18,21 @@ export function interpretRemoteModeKeypress(
   state: { confirmationMode: RemoteModeConfirmation; actionInProgress: RemoteModeActionInProgress },
   input: string,
   key: { ctrl?: boolean; meta?: boolean; shift?: boolean } = {},
-  opts?: { allowSwitchToLocal?: boolean },
+  opts?: { allowSwitchToTerminal?: boolean },
 ): { action: RemoteModeKeypressAction } {
   if (state.actionInProgress) return { action: 'none' };
 
-  const allowSwitchToLocal = opts?.allowSwitchToLocal !== false;
+  const allowSwitchToTerminal = opts?.allowSwitchToTerminal !== false;
 
   if (key.ctrl && input === 'c') {
     return { action: state.confirmationMode === 'exit' ? 'exit' : 'confirm-exit' };
   }
 
-  if (allowSwitchToLocal && key.ctrl && input === 't') {
+  if (allowSwitchToTerminal && key.ctrl && input === 't') {
     return { action: 'switch' };
   }
 
-  if (allowSwitchToLocal && input === ' ') {
+  if (allowSwitchToTerminal && input === ' ') {
     return { action: state.confirmationMode === 'switch' ? 'switch' : 'confirm-switch' };
   }
 
@@ -47,18 +47,18 @@ export type RemoteControlDisplayProps = {
   providerName: string;
   messageBuffer: MessageBuffer;
   logPath?: string;
-  allowSwitchToLocal?: boolean;
+  allowSwitchToTerminal?: boolean;
   onExit?: () => void | Promise<void>;
-  onSwitchToLocal?: () => void | Promise<void>;
+  onSwitchToTerminal?: () => void | Promise<void>;
 };
 
 export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
   providerName,
   messageBuffer,
   logPath,
-  allowSwitchToLocal,
+  allowSwitchToTerminal,
   onExit,
-  onSwitchToLocal,
+  onSwitchToTerminal,
 }) => {
   const [messages, setMessages] = useState<BufferedMessage[]>([]);
   const [confirmationMode, setConfirmationMode] = useState<RemoteModeConfirmation>(null);
@@ -69,7 +69,7 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
   const terminalWidth = stdout.columns || 80;
   const terminalHeight = stdout.rows || 24;
 
-  const switchEnabled = allowSwitchToLocal === true && typeof onSwitchToLocal === 'function';
+  const switchEnabled = allowSwitchToTerminal === true && typeof onSwitchToTerminal === 'function';
 
   useEffect(() => {
     setMessages(messageBuffer.getMessages());
@@ -115,7 +115,7 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
           { confirmationMode, actionInProgress },
           input,
           key as any,
-          { allowSwitchToLocal: switchEnabled },
+          { allowSwitchToTerminal: switchEnabled },
         );
 
         if (action === 'none') return;
@@ -149,11 +149,11 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
             clearTimeout(actionTimeoutRef.current);
           }
           actionTimeoutRef.current = setTimeout(() => {
-            void onSwitchToLocal?.();
+            void onSwitchToTerminal?.();
           }, 100);
         }
       },
-      [confirmationMode, actionInProgress, switchEnabled, onExit, onSwitchToLocal, setConfirmationWithTimeout, resetConfirmation],
+      [confirmationMode, actionInProgress, switchEnabled, onExit, onSwitchToTerminal, setConfirmationWithTimeout, resetConfirmation],
     ),
   );
 
@@ -204,7 +204,7 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
       >
         <Box flexDirection="column" marginBottom={1}>
           <Text color="gray" bold>
-            {`📡 Remote Mode - ${providerName} Messages`}
+            {`📡 Remote Control - ${providerName} Messages`}
           </Text>
           <Text color="gray" dimColor>
             {'─'.repeat(Math.min(terminalWidth - 4, 60))}
@@ -246,7 +246,7 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
             </Text>
           ) : actionInProgress === 'switching' ? (
             <Text color="gray" bold>
-              Switching to local mode...
+              Switching to terminal mode...
             </Text>
           ) : confirmationMode === 'exit' ? (
             <Text color="red" bold>
@@ -254,11 +254,11 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
             </Text>
           ) : confirmationMode === 'switch' ? (
             <Text color="yellow" bold>
-              ⏸️ Press space again (or Ctrl-T) to switch to local mode
+              ⏸️ Press space again (or Ctrl-T) to switch to terminal mode
             </Text>
           ) : switchEnabled ? (
             <Text color="green" bold>
-              📱 Press space (or Ctrl-T) to switch to local mode • Ctrl-C to exit
+              📱 Press space (or Ctrl-T) to switch to terminal mode • Ctrl-C to exit
             </Text>
           ) : (
             <Text color="green" bold>

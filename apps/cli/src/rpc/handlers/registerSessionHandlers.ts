@@ -5,21 +5,27 @@ import type { Metadata } from '@/api/types';
 import type { CodexBackendMode } from '@happier-dev/agents';
 import {
     AcpConfigOptionOverridesV1,
-    type AgentRuntimeDescriptorV1,
-    BackendTargetRefV1,
+    type RuntimeDescriptorV1,
+    type BackendTargetRefV2,
     type SessionAttachMetadataIdentityPolicy,
     SessionMcpSelectionV1,
     SpawnSessionErrorCode,
 } from '@happier-dev/protocol';
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
-export { resolveCanonicalCodexBackendMode } from './codexBackendMode';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
 import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
+import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
+import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+export {
+    readCanonicalSpawnRuntimeSelection,
+    readSpawnRuntimeDescriptorV1,
+    type CanonicalSpawnRuntimeSelection,
+} from './spawnRuntimeSelection';
 
 /*
  * Spawn Session Options and Result
@@ -59,7 +65,7 @@ export interface SpawnSessionOptions {
      */
     experimentalCodexAcp?: boolean;
     codexBackendMode?: CodexBackendMode;
-    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
     /**
      * Existing Happy session ID to reconnect to (for inactive session resume).
      * When set, the CLI will connect to this session instead of creating a new one.
@@ -95,7 +101,7 @@ export interface SpawnSessionOptions {
     modelUpdatedAt?: number;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     approvedNewDirectoryCreation?: boolean;
-    backendTarget?: BackendTargetRefV1;
+    backendTarget?: BackendTargetRefV2;
     /**
      * Daemon/runtime terminal configuration for the spawned session (non-secret).
      * Preferred over legacy TMUX_* env vars.
@@ -170,14 +176,18 @@ export function registerSessionHandlers(
             localId?: string;
             meta: Record<string, unknown>;
         }) => Promise<void> | void) | null;
+        accessPolicy?: FilesystemAccessPolicy;
     }>,
 ) {
-    registerBashHandler(rpcHandlerManager, workingDirectory);
+    const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
+
+    registerBashHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager);
+    registerDaemonContributionRegistryProjectionHandler(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
-    registerRipgrepHandler(rpcHandlerManager, workingDirectory);
-    registerDifftasticHandler(rpcHandlerManager, workingDirectory);
+    registerRipgrepHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
+    registerDifftasticHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
     registerSessionUserMessageSendHandler(rpcHandlerManager, {
         enqueueSessionUserMessage: opts?.enqueueSessionUserMessage ?? null,
     });

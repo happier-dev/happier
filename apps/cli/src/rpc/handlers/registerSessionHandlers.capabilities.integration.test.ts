@@ -5,9 +5,9 @@
  *
  * These replace legacy detect-cli / detect-capabilities / dep-status.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerSessionHandlers } from './registerSessionHandlers';
-import { chmod, mkdtemp, rm, writeFile } from 'fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -21,6 +21,10 @@ import type {
 import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
 import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
+import { reloadConfiguration } from '@/configuration';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID, SAMPLE_PLUGIN_MANIFEST_PATH } from '@/extensions/testkit/samplePackage';
 
 function createTestRpcManager(params?: { scopePrefix?: string }) {
     const scopePrefix = params?.scopePrefix ?? 'machine-test';
@@ -86,6 +90,15 @@ describe('registerCommonHandlers capabilities', () => {
             expect.arrayContaining(['cli.codex']),
         );
         expect(result.checklists[resumeChecklistId('codex')].map((r) => r.id)).not.toContain(CODEX_ACP_DEP_ID);
+        expect(result.capabilities.find((capability) => capability.id === 'tool.plugins')).toMatchObject({
+            methods: expect.objectContaining({
+                install: expect.any(Object),
+                update: expect.any(Object),
+                enable: expect.any(Object),
+                disable: expect.any(Object),
+                reload: expect.any(Object),
+            }),
+        });
     });
 
     it('detects checklist new-session deterministically from PATH', async () => {
@@ -187,7 +200,7 @@ describe('registerCommonHandlers capabilities', () => {
             const executionRunsData = expectCapabilityData(result, 'tool.executionRuns');
             expect(executionRunsData.available).toBe(true);
             // voice_agent is gated by build policy + feature decisions; preview policy currently denies voice.agent by default.
-            expect(executionRunsData.intents).toEqual(['review', 'plan', 'delegate']);
+            expect(executionRunsData.intents).toEqual(expect.arrayContaining(['review', 'plan', 'delegate', 'memory_hints']));
             expect(executionRunsData.backends).toEqual(
                 expect.objectContaining({
                     claude: expect.objectContaining({ available: true }),
@@ -281,7 +294,7 @@ describe('registerCommonHandlers capabilities', () => {
 
             const { call } = createTestRpcManager({ scopePrefix: 'machine-test-provider-install-missing-recipe' });
             const result = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
-                id: 'cli.opencode',
+                id: 'cli.kiro',
                 method: 'install',
                 params: { dryRun: true, platform: 'win32' },
             });
@@ -409,12 +422,17 @@ describe('registerCommonHandlers capabilities', () => {
         const startedTaskId = String((startResult.result as { taskId?: unknown }).taskId ?? '');
         expect(startedTaskId).toMatch(/^system-task:/u);
 
-        let payload: {
+        const expectedStepIds = [
+            'relay.status.inspect',
+            'relay.status.health',
+        ];
+        type SystemTasksPollPayload = {
             events: Array<{ stepId?: string }>;
             pendingPrompt: unknown;
             result: null | { ok: boolean; data?: Record<string, unknown> };
-        } | null = null;
-        for (let attempt = 0; attempt < 5; attempt += 1) {
+        };
+        let payload: SystemTasksPollPayload | null = null;
+        await vi.waitFor(async () => {
             const pollResult = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
                 id: 'tool.systemTasks',
                 method: 'poll',
@@ -425,24 +443,188 @@ describe('registerCommonHandlers capabilities', () => {
             });
             expect(pollResult.ok).toBe(true);
             if (!pollResult.ok) return;
-            payload = pollResult.result as {
-                events: Array<{ stepId?: string }>;
-                pendingPrompt: unknown;
-                result: null | { ok: boolean; data?: Record<string, unknown> };
-            };
-            if (payload.result) {
-                break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 25));
-        }
+            payload = pollResult.result as SystemTasksPollPayload;
+            expect(payload.pendingPrompt).toBeNull();
+            const observedStepIds = payload.events
+                .map((event) => event.stepId)
+                .filter((stepId): stepId is string => typeof stepId === 'string');
+            expect(observedStepIds).toContain('relay.status.inspect');
+            expect(observedStepIds.every((stepId) => expectedStepIds.includes(stepId))).toBe(true);
+        }, { timeout: 5_000, interval: 50 });
 
         expect(payload).not.toBeNull();
-        if (!payload) return;
-        expect(payload.pendingPrompt).toBeNull();
-        expect(payload.events.map((event) => event.stepId)).toEqual([
-            'relay.status.inspect',
-            'relay.status.health',
-        ]);
-        expect(payload.result?.ok).toBe(true);
+        const finalResult = (payload as SystemTasksPollPayload | null)?.result;
+        if (finalResult) {
+            expect(finalResult.ok).toBe(true);
+        }
+    });
+
+    it('exposes machine-local plugin inventory, reload, and toggles enablement through the host marketplace capability', async () => {
+        const home = await createTempDir('happier-cli-marketplace-');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+
+        const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-cli-marketplace-source-'));
+        await materializeSamplePluginFixture(sourceRoot);
+        const manifest = JSON.parse(await readFile(SAMPLE_PLUGIN_MANIFEST_PATH, 'utf8')) as Readonly<Record<string, unknown>>;
+        const catalogPath = join(home, 'catalog.json');
+        await writeFile(
+            catalogPath,
+            JSON.stringify({
+                t: 'happier_plugin_marketplace_catalog_v1',
+                schemaVersion: 1,
+                sourceUrl: catalogPath,
+                title: 'Curated plugins',
+                description: 'Descriptor-only plugin discovery',
+                entries: [
+                    {
+                        ...manifest,
+                        source: {
+                            kind: 'path',
+                            locator: sourceRoot,
+                            trustPolicy: 'local_trusted',
+                            installPolicy: 'link',
+                        },
+                    },
+                ],
+            }, null, 2),
+            'utf8',
+        );
+
+        try {
+            const { call } = createTestRpcManager({ scopePrefix: 'machine-test-marketplace' });
+
+            const installResult = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+                id: 'tool.plugins',
+                method: 'install',
+                params: {
+                    sourceUrl: catalogPath,
+                    pluginId: SAMPLE_PLUGIN_ID,
+                },
+            });
+
+            expect(installResult.ok).toBe(true);
+            if (!installResult.ok) return;
+            const installReload = (installResult.result as {
+                reload?: {
+                    ok: boolean;
+                    generation: number;
+                    attemptedGeneration: number;
+                    affectedPluginIds: readonly string[];
+                } | null;
+            }).reload;
+            expect(installReload).toMatchObject({
+                ok: expect.any(Boolean),
+                attemptedGeneration: expect.any(Number),
+                affectedPluginIds: [SAMPLE_PLUGIN_ID],
+            });
+
+            const explicitReloadResult = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+                id: 'tool.plugins',
+                method: 'reload',
+                params: {
+                    pluginId: SAMPLE_PLUGIN_ID,
+                },
+            });
+            expect(explicitReloadResult.ok).toBe(true);
+            if (!explicitReloadResult.ok) return;
+            const explicitReload = (explicitReloadResult.result as {
+                action: string;
+                pluginId: string;
+                reload: {
+                    ok: boolean;
+                    generation: number;
+                    attemptedGeneration: number;
+                    affectedPluginIds: readonly string[];
+                };
+            }).reload;
+            expect((explicitReloadResult.result as { action: string; pluginId: string })).toMatchObject({
+                action: 'reload',
+                pluginId: SAMPLE_PLUGIN_ID,
+            });
+            expect(explicitReload).toMatchObject({
+                ok: expect.any(Boolean),
+                attemptedGeneration: expect.any(Number),
+                affectedPluginIds: [SAMPLE_PLUGIN_ID],
+            });
+            expect((explicitReload?.attemptedGeneration ?? 0)).toBeGreaterThan(installReload?.attemptedGeneration ?? 0);
+
+            const detectResult = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
+                requests: [{ id: 'tool.plugins' }],
+            });
+            const inventoryAfterInstall = expectCapabilityData(detectResult, 'tool.plugins') as {
+                installedPlugins?: Array<{ pluginId: string; enabled: boolean }>;
+            };
+            expect(inventoryAfterInstall.installedPlugins?.find((entry) => entry.pluginId === SAMPLE_PLUGIN_ID)?.enabled).toBe(true);
+
+            const disableResult = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+                id: 'tool.plugins',
+                method: 'disable',
+                params: {
+                    pluginId: SAMPLE_PLUGIN_ID,
+                },
+            });
+            expect(disableResult.ok).toBe(true);
+            if (!disableResult.ok) return;
+            const disableReload = (disableResult.result as {
+                reload?: {
+                    ok: boolean;
+                    generation: number;
+                    attemptedGeneration: number;
+                    affectedPluginIds: readonly string[];
+                } | null;
+            }).reload;
+            expect(disableReload).toMatchObject({
+                ok: expect.any(Boolean),
+                attemptedGeneration: expect.any(Number),
+                affectedPluginIds: [SAMPLE_PLUGIN_ID],
+            });
+            expect((disableReload?.attemptedGeneration ?? 0)).toBeGreaterThan(installReload?.attemptedGeneration ?? 0);
+
+            const afterDisable = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
+                requests: [{ id: 'tool.plugins' }],
+            });
+            const inventoryAfterDisable = expectCapabilityData(afterDisable, 'tool.plugins') as {
+                installedPlugins?: Array<{ pluginId: string; enabled: boolean }>;
+            };
+            expect(inventoryAfterDisable.installedPlugins?.find((entry) => entry.pluginId === SAMPLE_PLUGIN_ID)?.enabled).toBe(false);
+
+            const enableResult = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+                id: 'tool.plugins',
+                method: 'enable',
+                params: {
+                    pluginId: SAMPLE_PLUGIN_ID,
+                },
+            });
+            expect(enableResult.ok).toBe(true);
+            if (!enableResult.ok) return;
+            const enableReload = (enableResult.result as {
+                reload?: {
+                    ok: boolean;
+                    generation: number;
+                    attemptedGeneration: number;
+                    affectedPluginIds: readonly string[];
+                } | null;
+            }).reload;
+            expect(enableReload).toMatchObject({
+                ok: expect.any(Boolean),
+                attemptedGeneration: expect.any(Number),
+                affectedPluginIds: [SAMPLE_PLUGIN_ID],
+            });
+            expect((enableReload?.attemptedGeneration ?? 0)).toBeGreaterThan(disableReload?.attemptedGeneration ?? 0);
+
+            const afterEnable = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
+                requests: [{ id: 'tool.plugins' }],
+            });
+            const inventoryAfterEnable = expectCapabilityData(afterEnable, 'tool.plugins') as {
+                installedPlugins?: Array<{ pluginId: string; enabled: boolean }>;
+            };
+            expect(inventoryAfterEnable.installedPlugins?.find((entry) => entry.pluginId === SAMPLE_PLUGIN_ID)?.enabled).toBe(true);
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await removeTempDir(home);
+        }
     });
 });

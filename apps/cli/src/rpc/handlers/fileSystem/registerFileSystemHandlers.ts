@@ -10,6 +10,10 @@ import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createT
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
 import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
+import {
+  OS_USER_FILESYSTEM_ACCESS_POLICY,
+  type FilesystemAccessPolicy,
+} from './accessPolicy/filesystemAccessPolicy';
 
 function normalizeAllowedDirectories(getDirectories?: () => ReadonlyArray<string>): string[] {
   const value = getDirectories?.() ?? [];
@@ -26,6 +30,7 @@ export function registerFileSystemHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   workingDirectory: string,
   opts?: Readonly<{
+    accessPolicy?: FilesystemAccessPolicy;
     getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
   }>,
@@ -34,6 +39,7 @@ export function registerFileSystemHandlers(
 }> {
   const getAdditionalAllowedReadDirs = opts?.getAdditionalAllowedReadDirs;
   const getAdditionalAllowedWriteDirs = opts?.getAdditionalAllowedWriteDirs;
+  const accessPolicy = opts?.accessPolicy ?? OS_USER_FILESYSTEM_ACCESS_POLICY;
   const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
   const resolveReadDirs = (): string[] => mergeAllowedDirectories(
     normalizeAllowedDirectories(getAdditionalAllowedReadDirs),
@@ -46,18 +52,31 @@ export function registerFileSystemHandlers(
 
   registerReadFileHandler(rpcHandlerManager, {
     workingDirectory,
+    accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
   });
-  registerWriteFileHandler(rpcHandlerManager, { workingDirectory });
+  registerWriteFileHandler(rpcHandlerManager, {
+    workingDirectory,
+    accessPolicy,
+    getAdditionalAllowedWriteDirs: resolveWriteDirs,
+  });
   registerDirectoryHandlers(rpcHandlerManager, {
     workingDirectory,
+    accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
+    getAdditionalAllowedWriteDirs: resolveWriteDirs,
   });
-  registerPathMutationHandlers(rpcHandlerManager, { workingDirectory });
+  registerPathMutationHandlers(rpcHandlerManager, {
+    workingDirectory,
+    accessPolicy,
+    getAdditionalAllowedReadDirs: resolveReadDirs,
+    getAdditionalAllowedWriteDirs: resolveWriteDirs,
+  });
   const transferSessionStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
 
   registerTransferUploadRpcHandlers(rpcHandlerManager, {
     workingDirectory,
+    accessPolicy,
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
     store: transferSessionStore,
     sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes(),
@@ -67,6 +86,7 @@ export function registerFileSystemHandlers(
   });
   registerTransferDownloadRpcHandlers(rpcHandlerManager, {
     workingDirectory,
+    accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
     store: transferSessionStore,
     sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes(),

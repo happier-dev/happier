@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile, rm, stat } from 'node:fs/promises';
+import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
@@ -125,5 +126,89 @@ describe('updateSettings', () => {
     expect(updated.onboardingCompleted).toBe(true);
     expect(existsSync(configuration.settingsFile)).toBe(true);
     expect(existsSync(`${configuration.settingsFile}.lock`)).toBe(false);
+  });
+
+  it('breaks a settings lock left behind by a dead pid owner before the stale timeout elapses', async () => {
+    const { configuration } = await import('@/configuration');
+    const { updateSettings } = await import('@/persistence');
+
+    const helper = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+      stdio: 'ignore',
+    });
+    const helperPid = helper.pid;
+    expect(typeof helperPid).toBe('number');
+
+    await new Promise<void>((resolve, reject) => {
+      helper.once('exit', () => resolve());
+      helper.once('error', reject);
+    });
+
+    const lockFile = `${configuration.settingsFile}.lock`;
+    await writeFile(lockFile, `${helperPid}\n`, 'utf8');
+
+    const startedAt = Date.now();
+    const updated = await updateSettings((current) => ({
+      ...current,
+      onboardingCompleted: true,
+    }));
+
+    expect(updated.onboardingCompleted).toBe(true);
+    expect(existsSync(lockFile)).toBe(false);
+    // Runtime speed here is not a product contract; keep this as a loose hang guard.
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+  });
+
+  it('breaks a settings lock whose live owner pid no longer belongs to a Happier process', async () => {
+    const { configuration } = await import('@/configuration');
+    const { updateSettings } = await import('@/persistence');
+
+    const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    });
+    const helperPid = helper.pid;
+    expect(typeof helperPid).toBe('number');
+
+    const lockFile = `${configuration.settingsFile}.lock`;
+    await writeFile(lockFile, `${helperPid}\n`, 'utf8');
+
+    try {
+      const startedAt = Date.now();
+      const updated = await updateSettings((current) => ({
+        ...current,
+        onboardingCompleted: true,
+      }));
+
+      expect(updated.onboardingCompleted).toBe(true);
+      expect(existsSync(lockFile)).toBe(false);
+      // Runtime speed here is not a product contract; keep this as a loose hang guard.
+      expect(Date.now() - startedAt).toBeLessThan(10_000);
+    } finally {
+      helper.kill('SIGTERM');
+      await new Promise<void>((resolve) => {
+        helper.once('exit', () => resolve());
+      });
+    }
+  });
+
+  it('breaks an empty settings lock left behind before the owner pid was written', async () => {
+    const { configuration } = await import('@/configuration');
+    const { updateSettings } = await import('@/persistence');
+
+    const lockFile = `${configuration.settingsFile}.lock`;
+    await writeFile(lockFile, '', 'utf8');
+
+    const staleTime = new Date(Date.now() - 5_000);
+    await utimes(lockFile, staleTime, staleTime);
+
+    const startedAt = Date.now();
+    const updated = await updateSettings((current) => ({
+      ...current,
+      onboardingCompleted: true,
+    }));
+
+    expect(updated.onboardingCompleted).toBe(true);
+    expect(existsSync(lockFile)).toBe(false);
+    // Runtime speed here is not a product contract; keep this as a loose hang guard.
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
   });
 });

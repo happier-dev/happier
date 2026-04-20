@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   normalizeOpenCodeServerBaseUrl,
   readOpenCodeExplicitServerBaseUrl,
+  OPENCODE_PROVIDER_SETTINGS_DEFINITION,
 } from './opencode.js';
 
 describe('OpenCode provider settings normalization', () => {
@@ -23,5 +24,15 @@ describe('OpenCode provider settings normalization', () => {
   it('rejects urls that embed credentials', () => {
     expect(normalizeOpenCodeServerBaseUrl('https://user:pass@example.com:4096')).toBeNull();
     expect(readOpenCodeExplicitServerBaseUrl('https://user:pass@example.com:4096', true)).toBeNull();
+  });
+});
+
+describe('OPENCODE_PROVIDER_SETTINGS_DEFINITION', () => {
+  it('stays descriptor-only and does not carry message-meta shaping', () => {
+    expect(OPENCODE_PROVIDER_SETTINGS_DEFINITION).toMatchObject({
+      providerId: 'opencode',
+      fields: expect.any(Object),
+    });
+    expect('buildOutgoingMessageMetaExtras' in OPENCODE_PROVIDER_SETTINGS_DEFINITION).toBe(false);
   });
 });

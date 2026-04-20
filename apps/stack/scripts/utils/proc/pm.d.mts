@@ -11,3 +11,11 @@ export function ensureWorkspacePackagesBuiltForComponent(
     env?: NodeJS.ProcessEnv;
   },
 ): Promise<WorkspaceBuildResult>;
+
+export function isCliDistBuildLockActive(
+  lockPath: string,
+  options?: {
+    staleAfterMs?: number;
+    nowMs?: number;
+  },
+): boolean;

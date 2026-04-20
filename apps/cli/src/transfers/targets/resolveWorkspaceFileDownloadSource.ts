@@ -5,6 +5,10 @@ import { basename, join } from 'path';
 
 import { configuration } from '@/configuration';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import {
+    OS_USER_FILESYSTEM_ACCESS_POLICY,
+    type FilesystemAccessPolicy,
+} from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 import type { DownloadTransferSource } from './downloadTransferSource';
 import { buildZipArchive } from '../download/buildZipArchive';
@@ -27,6 +31,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
     workingDirectory: string;
     path: unknown;
     asZip: unknown;
+    accessPolicy?: FilesystemAccessPolicy;
     additionalAllowedReadDirs?: readonly string[];
     sessionRpcTransferMaxBytes?: number | null;
 }>): Promise<WorkspaceFileDownloadSourceResult> {
@@ -36,7 +41,12 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
         return { success: false, error: 'Missing path' };
     }
 
-    const validation = validatePath(path, input.workingDirectory, input.additionalAllowedReadDirs);
+    const validation = validatePath(
+        path,
+        input.workingDirectory,
+        input.additionalAllowedReadDirs,
+        input.accessPolicy ?? OS_USER_FILESYSTEM_ACCESS_POLICY,
+    );
     if (!validation.valid || !validation.resolvedPath) {
         return { success: false, error: validation.error ?? 'Access denied' };
     }

@@ -4,7 +4,7 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 
 import { startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
@@ -122,6 +122,88 @@ process.exit(0);
     binHappierScript: 'process.exit(42);\n',
   });
   return join(cliBinDir, 'happier.mjs');
+}
+
+async function writeStubHappyCliPackageDistOnly({ cliDir }) {
+  const packageDistScript = `
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) process.exit(2);
+const state = join(home, 'daemon.state.json');
+
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+
+if (sub === 'stop') {
+  if (existsSync(state)) {
+    try {
+      const pid = Number(JSON.parse(readFileSync(state, 'utf-8')).pid);
+      if (Number.isFinite(pid) && pid > 1) {
+        try { process.kill(pid, 'SIGTERM'); } catch {}
+      }
+    } catch {}
+    try { rmSync(state); } catch {}
+  }
+  process.exit(0);
+}
+
+if (sub === 'start') {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  child.unref();
+  writeFileSync(state, JSON.stringify({ pid: child.pid, httpPort: 0, startTime: new Date().toISOString() }), 'utf-8');
+  process.exit(0);
+}
+
+if (sub === 'status') {
+  let ok = false;
+  if (existsSync(state)) {
+    try {
+      const pid = Number(JSON.parse(readFileSync(state, 'utf-8')).pid);
+      if (Number.isFinite(pid) && pid > 1) {
+        try { process.kill(pid, 0); ok = true; } catch {}
+      }
+    } catch {}
+  }
+  console.log(ok ? 'daemon: running' : 'daemon: stopped');
+  process.exit(0);
+}
+
+process.exit(0);
+`;
+  const monoRoot = join(cliDir, '..', '..');
+  const { cliDir: createdCliDir, cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
+    packageJsonContent: '{}\n',
+    binHappierScript: 'process.exit(42);\n',
+  });
+  await mkdir(join(createdCliDir, 'package-dist'), { recursive: true });
+  await writeFile(join(createdCliDir, 'package-dist', 'index.mjs'), packageDistScript.trimStart(), 'utf-8');
+  return join(cliBinDir, 'happier.mjs');
+}
+
+async function writeStubHappyCliWithBrokenPackageDist({ cliDir }) {
+  const cliBin = await writeStubHappyCli({ cliDir });
+  await mkdir(join(cliDir, 'package-dist'), { recursive: true });
+  await writeFile(
+    join(cliDir, 'package-dist', 'index.mjs'),
+    "import './missing-package-dist-chunk.mjs';\nexport {};\n",
+    'utf-8',
+  );
+  return cliBin;
+}
+
+async function writeStubHappyCliWithWorkingDistAndPackageDist({ cliDir }) {
+  const cliBin = await writeStubHappyCli({ cliDir });
+  await mkdir(join(cliDir, 'package-dist'), { recursive: true });
+  await writeFile(
+    join(cliDir, 'package-dist', 'index.mjs'),
+    'process.exit(86);\n',
+    'utf-8',
+  );
+  return cliBin;
 }
 
 async function writeRuntimeSnapshotHappyCli({ snapshotDir }) {
@@ -369,6 +451,8 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
 
     const env = buildDaemonDistGuardEnv({
       HAPPIER_STACK_CLI_BUILD: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1500',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     });
 
     // If startLocalDaemonWithAuth tries to rebuild, this will fail because package.json has no build script.
@@ -380,6 +464,300 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
       isShuttingDown: () => false,
       forceRestart: true,
       env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+    });
+
+    assert.ok(true);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth waits for a concurrent cli dist build without queueing for the same lock', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-dist-lock-wait-'));
+  let lockHolder = null;
+  try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCli({ cliDir });
+    const distScript = await readFile(join(cliDir, 'dist', 'index.mjs'), 'utf-8');
+    await rm(join(cliDir, 'dist'), { recursive: true, force: true });
+    await mkdir(join(tmp, 'apps', 'ui'), { recursive: true });
+    await mkdir(join(tmp, 'apps', 'server'), { recursive: true });
+    await writeFile(join(tmp, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(tmp, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+    await mkdir(join(cliDir, 'node_modules'), { recursive: true });
+    await writeFile(join(cliDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+    await writeFile(join(cliDir, 'yarn.lock'), '# yarn\n', 'utf-8');
+    await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    lockHolder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    const lockPath = join(tmp, '.project', 'tmp', 'cli-dist-build.lock');
+    await mkdir(join(tmp, '.project', 'tmp'), { recursive: true });
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: lockHolder.pid,
+        createdAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+      }),
+      'utf-8',
+    );
+
+    setTimeout(async () => {
+      try {
+        await mkdir(join(cliDir, 'dist'), { recursive: true });
+        await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript, 'utf-8');
+      } catch {
+        // Best-effort: the test assertions below surface any failure.
+      }
+    }, 100);
+
+    const env = buildDaemonDistGuardEnv({
+      HAPPIER_STACK_CLI_BUILD: '1',
+    });
+
+    await Promise.race([
+      startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir,
+        internalServerUrl,
+        publicServerUrl,
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env,
+        stackName: 'dev',
+        cliIdentity: 'default',
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('timed out waiting for daemon start while a concurrent cli dist build lock was active'));
+        }, 2_500);
+      }),
+    ]);
+
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+    });
+
+    assert.ok(true);
+  } finally {
+    if (lockHolder && lockHolder.exitCode == null) {
+      lockHolder.kill('SIGTERM');
+    }
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth restarts a running source dist daemon after a sibling dist chunk is rebuilt', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-stale-source-dist-'));
+  try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCli({ cliDir });
+    const siblingChunkPath = join(cliDir, 'dist', 'runtime-chunk.mjs');
+    await writeFile(siblingChunkPath, 'export const build = "v1";\n', 'utf-8');
+    await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
+    runGit(['init'], tmp);
+    runGit(['config', 'user.email', 'test@example.com'], tmp);
+    runGit(['config', 'user.name', 'Test User'], tmp);
+    runGit(['add', '.'], tmp);
+    runGit(['commit', '-m', 'init'], tmp);
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    const stackStorageDir = join(tmp, 'stack-storage');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+    const statePath = join(cliHomeDir, 'daemon.state.json');
+    const runtimeStatePath = join(stackStorageDir, 'dev', 'stack.runtime.json');
+
+    const env = buildDaemonDistGuardEnv({
+      HAPPIER_STACK_CLI_BUILD: '1',
+      HAPPIER_STACK_STORAGE_DIR: stackStorageDir,
+    });
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      runtimeStatePath,
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+    const firstPid = await readDaemonPid(statePath);
+    const runtimeStateAfterFirstStart = JSON.parse(await readFile(runtimeStatePath, 'utf-8'));
+    assert.match(
+      String(runtimeStateAfterFirstStart?.daemon?.distClosureFingerprint ?? ''),
+      /^[a-f0-9]{16}$/,
+      'expected stack.runtime.json to persist the daemon dist closure fingerprint after the first start',
+    );
+
+    await writeFile(siblingChunkPath, 'export const build = "v2";\n', 'utf-8');
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      runtimeStatePath,
+      isShuttingDown: () => false,
+      forceRestart: false,
+      env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+    const secondPid = await readDaemonPid(statePath);
+
+    assert.ok(Number.isFinite(firstPid) && firstPid > 0);
+    assert.ok(Number.isFinite(secondPid) && secondPid > 0);
+    assert.notEqual(secondPid, firstPid);
+
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+      env,
+    });
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth prefers package-dist/index.mjs when source dist is absent', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-package-dist-guard-'));
+  try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCliPackageDistOnly({ cliDir });
+    await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
+    runGit(['init'], tmp);
+    runGit(['config', 'user.email', 'test@example.com'], tmp);
+    runGit(['config', 'user.name', 'Test User'], tmp);
+    runGit(['add', '.'], tmp);
+    runGit(['commit', '-m', 'init'], tmp);
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env: buildDaemonDistGuardEnv({
+        HAPPIER_STACK_CLI_BUILD: '0',
+      }),
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+    });
+
+    assert.ok(true);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth prefers dist/index.mjs over package-dist/index.mjs when both exist in a source checkout', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-dist-preferred-'));
+  try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCliWithWorkingDistAndPackageDist({ cliDir });
+    await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
+    runGit(['init'], tmp);
+    runGit(['config', 'user.email', 'test@example.com'], tmp);
+    runGit(['config', 'user.name', 'Test User'], tmp);
+    runGit(['add', '.'], tmp);
+    runGit(['commit', '-m', 'init'], tmp);
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env: buildDaemonDistGuardEnv({
+        HAPPIER_STACK_CLI_BUILD: '0',
+      }),
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+    });
+
+    assert.ok(true);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth falls back to dist when package-dist exists but is incomplete', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-package-dist-incomplete-'));
+  try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCliWithBrokenPackageDist({ cliDir });
+    await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
+    runGit(['init'], tmp);
+    runGit(['config', 'user.email', 'test@example.com'], tmp);
+    runGit(['config', 'user.name', 'Test User'], tmp);
+    runGit(['add', '.'], tmp);
+    runGit(['commit', '-m', 'init'], tmp);
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env: buildDaemonDistGuardEnv({
+        HAPPIER_STACK_CLI_BUILD: '0',
+      }),
       stackName: 'dev',
       cliIdentity: 'default',
     });

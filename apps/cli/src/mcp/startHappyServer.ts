@@ -8,7 +8,7 @@ import type { RpcHandlerManagerLike } from "@/api/rpc/types";
 import type { Metadata } from "@/api/types";
 import { configuration } from "@/configuration";
 import type { Credentials } from '@/persistence';
-import type { ExecutionRunServiceResult } from "@/session/services/executionRuns";
+import type { ExecutionRunServiceResult, WaitForExecutionRunResult } from "@/session/services/executionRuns";
 
 export type HappyMcpExecutionRunService = Readonly<{
     start: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
@@ -17,7 +17,7 @@ export type HappyMcpExecutionRunService = Readonly<{
     send: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
     stop: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
     action: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
-    wait?: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+    wait?: (request: unknown) => Promise<ExecutionRunServiceResult<unknown> | WaitForExecutionRunResult>;
 }>;
 
 export type HappyMcpSessionClient = {

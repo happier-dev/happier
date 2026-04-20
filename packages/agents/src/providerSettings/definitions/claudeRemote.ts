@@ -38,20 +38,6 @@ function normalizeClaudeRemoteDebugCategories(raw: unknown): ClaudeRemoteDebugCa
   return out;
 }
 
-function mapLegacyClaudeSettingSourcesToV2(value: string): ClaudeSettingSourceV2[] | null {
-  if (value === 'none') return [];
-  if (value === 'project') return ['project'];
-  if (value === 'user_project') return ['user', 'project'];
-  return null;
-}
-
-function tryMapSettingSourcesV2ToLegacy(value: readonly ClaudeSettingSourceV2[]): 'project' | 'user_project' | 'none' | null {
-  if (value.length === 0) return 'none';
-  if (value.length === 1 && value[0] === 'project') return 'project';
-  if (value.length === 2 && value[0] === 'user' && value[1] === 'project') return 'user_project';
-  return null;
-}
-
 export function isValidClaudeRemoteAdvancedOptionsJson(raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return true;
@@ -222,56 +208,7 @@ export function buildClaudeRemoteProviderSettingsShape(_zod: typeof z) {
   return CLAUDE_REMOTE_PROVIDER_ARTIFACTS.shape;
 }
 
-export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-  const readBoolean = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): boolean => {
-    const value = settings[key as string];
-    return typeof value === 'boolean' ? value : Boolean(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
-  };
-
-  const readNumber = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): number => {
-    const value = settings[key as string];
-    return typeof value === 'number' ? value : Number(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
-  };
-
-  const normalizedV2 = normalizeClaudeSettingSourcesV2(settings.claudeRemoteSettingSourcesV2);
-  const normalizedLegacy =
-    typeof settings.claudeRemoteSettingSources === 'string'
-      ? (mapLegacyClaudeSettingSourcesToV2(settings.claudeRemoteSettingSources) ? settings.claudeRemoteSettingSources : null)
-      : null;
-  const effectiveV2 =
-    normalizedV2 !== null
-      ? normalizedV2
-      : normalizedLegacy
-        ? (mapLegacyClaudeSettingSourcesToV2(normalizedLegacy)
-          ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[])
-        : CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[];
-  const legacyFromV2 = tryMapSettingSourcesV2ToLegacy(effectiveV2);
-
-  const debugCategories =
-    normalizeClaudeRemoteDebugCategories(settings.claudeRemoteDebugCategories)
-    ?? (CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDebugCategories as readonly ClaudeRemoteDebugCategory[]);
-
-  return {
-    claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
-    claudeRemoteSettingSourcesV2: effectiveV2,
-    ...(legacyFromV2 ? { claudeRemoteSettingSources: legacyFromV2 } : {}),
-    claudeCodeExperimentalAgentTeamsEnabled: readBoolean('claudeCodeExperimentalAgentTeamsEnabled'),
-    claudeLocalPermissionBridgeEnabled: readBoolean('claudeLocalPermissionBridgeEnabled'),
-    claudeLocalPermissionBridgeWaitIndefinitely: readBoolean('claudeLocalPermissionBridgeWaitIndefinitely'),
-    claudeLocalPermissionBridgeTimeoutSeconds: readNumber('claudeLocalPermissionBridgeTimeoutSeconds'),
-    claudeRemoteEnableFileCheckpointing: readBoolean('claudeRemoteEnableFileCheckpointing'),
-    claudeRemoteMaxThinkingTokens: typeof settings.claudeRemoteMaxThinkingTokens === 'number' ? settings.claudeRemoteMaxThinkingTokens : null,
-    claudeRemoteDisableTodos: readBoolean('claudeRemoteDisableTodos'),
-    claudeRemoteStrictMcpServerConfig: readBoolean('claudeRemoteStrictMcpServerConfig'),
-    claudeRemoteDebugEnabled: readBoolean('claudeRemoteDebugEnabled'),
-    claudeRemoteVerboseEnabled: readBoolean('claudeRemoteVerboseEnabled'),
-    claudeRemoteDebugCategories: debugCategories,
-    claudeRemoteAdvancedOptionsJson: normalizeClaudeRemoteAdvancedOptionsJson(settings.claudeRemoteAdvancedOptionsJson),
-  };
-}
-
 export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION: ProviderSettingsDefinition = Object.freeze({
   providerId: 'claude',
   fields: CLAUDE_REMOTE_PROVIDER_ARTIFACTS.definitions,
-  buildOutgoingMessageMetaExtras: ({ settings }) => buildClaudeRemoteOutgoingMessageMetaExtras(settings),
 });

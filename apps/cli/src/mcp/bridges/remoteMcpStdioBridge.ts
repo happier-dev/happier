@@ -19,6 +19,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { z } from 'zod';
 
+import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { isSafeTmpMcpConfigFilePath } from '@/mcp/runtime/isSafeTmpMcpConfigFilePath';
 
 const REMOTE_BRIDGE_CONFIG_PREFIX = 'happier-mcp-remote-bridge';
@@ -107,7 +108,7 @@ async function main(): Promise<void> {
       } as any,
       (async (argsOrExtra: unknown, extra?: unknown) => {
         const toolArgs = parseArgsValue(argsOrExtra) ?? parseArgsValue(extra);
-        return await remoteClient.callTool({ name, arguments: toolArgs });
+        return await callMcpToolWithResolvedTimeout({ client: remoteClient, toolName: name, args: toolArgs });
       }) as any,
     );
   }

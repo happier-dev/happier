@@ -7,9 +7,9 @@ import {
   type PromptAssetMutationResponseV1,
 } from '@happier-dev/protocol';
 
-import type { PromptAssetAdapter } from '@/promptAssets/types';
+import type { PromptAssetAdapter } from '@/prompts/assets/types';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 
 function invalidRequest(error: string): Exclude<PromptAssetMutationResponseV1, { ok: true }> {
   return { ok: false, errorCode: 'invalid_request', error };

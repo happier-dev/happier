@@ -2,8 +2,9 @@ import { logger } from '@/ui/logger';
 import { exec, ExecOptions, spawn, SpawnOptions } from 'child_process';
 import { promisify } from 'util';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
 
 const execAsync = promisify(exec);
 
@@ -104,7 +105,12 @@ async function executeArgvRequest(
     });
 }
 
-export function registerBashHandler(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
+export function registerBashHandler(
+    rpcHandlerManager: RpcHandlerRegistrar,
+    workingDirectory: string,
+    opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy }>,
+): void {
+    const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
     // Shell command handler - executes commands in the default shell
     rpcHandlerManager.registerHandler<BashRequest, BashResponse>(RPC_METHODS.BASH, async (data) => {
         logger.debug('Shell command request:', data.command);
@@ -117,11 +123,15 @@ export function registerBashHandler(rpcHandlerManager: RpcHandlerRegistrar, work
             if (data.cwd === '/') {
                 cwd = undefined;
             } else {
-                const validation = validatePath(data.cwd, workingDirectory);
+                const validation = authorizeFilesystemPath({
+                    targetPath: data.cwd,
+                    defaultDirectory: workingDirectory,
+                    accessPolicy,
+                });
                 if (!validation.valid) {
                     return { success: false, error: validation.error };
                 }
-                cwd = validation.resolvedPath!;
+                cwd = validation.resolvedPath;
             }
         }
 

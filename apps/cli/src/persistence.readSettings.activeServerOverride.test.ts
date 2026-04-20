@@ -5,16 +5,6 @@ import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
-function deriveServerIdFromUrl(url: string): string {
-  // Mirror apps/cli/src/configuration.ts deriveServerIdFromUrl.
-  let h = 2166136261;
-  for (let i = 0; i < url.length; i += 1) {
-    h ^= url.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return `env_${(h >>> 0).toString(16)}`;
-}
-
 describe('readSettings (active server override)', () => {
   const envKeys = [
     'HAPPIER_HOME_DIR',
@@ -39,7 +29,6 @@ describe('readSettings (active server override)', () => {
         HAPPIER_WEBAPP_URL: serverUrl,
         HAPPIER_ACTIVE_SERVER_ID: undefined,
       });
-      const envServerId = deriveServerIdFromUrl(serverUrl);
       writeFileSync(
         join(homeDir, 'settings.json'),
         JSON.stringify(
@@ -59,7 +48,7 @@ describe('readSettings (active server override)', () => {
               },
             },
             machineIdByServerId: {
-              [envServerId]: 'machine-env',
+              env_placeholder: 'machine-env',
             },
             machineIdConfirmedByServerByServerId: {},
             lastChangesCursorByServerIdByAccountId: {},
@@ -71,7 +60,17 @@ describe('readSettings (active server override)', () => {
       );
 
       vi.resetModules();
-      const { readSettings } = await import('./persistence');
+      const [{ configuration }, { readSettings }] = await Promise.all([
+        import('./configuration'),
+        import('./persistence'),
+      ]);
+      const envServerId = configuration.activeServerId;
+      expect(envServerId).not.toBe('cloud');
+
+      const raw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
+      raw.machineIdByServerId = { [envServerId]: 'machine-env' };
+      writeFileSync(join(homeDir, 'settings.json'), JSON.stringify(raw, null, 2), 'utf8');
+
       const settings = await readSettings();
       expect(settings.machineId).toBe('machine-env');
     });
@@ -86,7 +85,6 @@ describe('readSettings (active server override)', () => {
         HAPPIER_WEBAPP_URL: serverUrl,
         HAPPIER_ACTIVE_SERVER_ID: undefined,
       });
-      const envServerId = deriveServerIdFromUrl(serverUrl);
       const settingsPath = join(homeDir, 'settings.json');
       writeFileSync(
         settingsPath,
@@ -108,11 +106,11 @@ describe('readSettings (active server override)', () => {
             },
             machineIdByServerId: {
               cloud: 'machine-cloud',
-              [envServerId]: 'machine-env',
+              env_placeholder: 'machine-env',
             },
             machineIdConfirmedByServerByServerId: {
               cloud: true,
-              [envServerId]: true,
+              env_placeholder: true,
             },
             lastChangesCursorByServerIdByAccountId: {},
           },
@@ -123,6 +121,21 @@ describe('readSettings (active server override)', () => {
       );
 
       vi.resetModules();
+      const { configuration } = await import('./configuration');
+      const envServerId = configuration.activeServerId;
+      expect(envServerId).not.toBe('cloud');
+
+      const seeded = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      seeded.machineIdByServerId = {
+        cloud: 'machine-cloud',
+        [envServerId]: 'machine-env',
+      };
+      seeded.machineIdConfirmedByServerByServerId = {
+        cloud: true,
+        [envServerId]: true,
+      };
+      writeFileSync(settingsPath, JSON.stringify(seeded, null, 2), 'utf8');
+
       const { clearMachineId } = await import('./persistence');
       await clearMachineId();
 

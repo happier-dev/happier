@@ -5,13 +5,11 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
-
-import { hasBundledWorkspacePackagesHealthy } from '@happier-dev/cli-common/workspaces'
 
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 
@@ -47,24 +45,61 @@ function resolveSharedDepsLockPath(projectRoot: string): string {
   return join(tmpdir(), `happier-cli-vitest-shared-deps-lock-${hash}`)
 }
 
-function resolveBundledProtocolDistMarkers(projectRoot: string): string[] {
-  const protocolDistDir = join(projectRoot, 'node_modules', '@happier-dev', 'protocol', 'dist')
+function readJson(path: string): unknown {
+  return JSON.parse(readFileSync(path, 'utf8'))
+}
+
+function resolveBundledProtocolPackageDir(projectRoot: string): string {
+  return join(projectRoot, 'node_modules', '@happier-dev', 'protocol')
+}
+
+function resolveProtocolSourcePackageJsonPath(projectRoot: string): string {
+  return resolve(projectRoot, '..', '..', 'packages', 'protocol', 'package.json')
+}
+
+function resolveExternalProtocolRuntimeDependencyNames(projectRoot: string): string[] {
+  const packageJsonPath = resolveProtocolSourcePackageJsonPath(projectRoot)
+  if (!existsSync(packageJsonPath)) return []
+
+  const packageJson = readJson(packageJsonPath) as {
+    dependencies?: Record<string, string>
+    optionalDependencies?: Record<string, string>
+  }
+  const externalDependencyNames = new Set<string>()
+
+  for (const fields of [packageJson.dependencies, packageJson.optionalDependencies]) {
+    if (!fields) continue
+    for (const dependencyName of Object.keys(fields)) {
+      if (dependencyName.startsWith('@happier-dev/')) continue
+      externalDependencyNames.add(dependencyName)
+    }
+  }
+
+  return [...externalDependencyNames]
+}
+
+function resolveBundledProtocolReadyMarkers(projectRoot: string): string[] {
+  const protocolPackageDir = resolveBundledProtocolPackageDir(projectRoot)
+  const protocolDistDir = join(protocolPackageDir, 'dist')
+  const runtimeDependencyMarkers = resolveExternalProtocolRuntimeDependencyNames(projectRoot).map((dependencyName) =>
+    join(protocolPackageDir, 'node_modules', ...dependencyName.split('/'), 'package.json'),
+  )
+
   return [
     join(protocolDistDir, 'sessionFork.js'),
     join(protocolDistDir, 'features', 'payload', 'isRecord.js'),
+    ...runtimeDependencyMarkers,
   ]
 }
 
 async function ensureSharedDepsBuiltOnce(projectRoot: string): Promise<void> {
-  const markers = resolveBundledProtocolDistMarkers(projectRoot)
+  const markers = resolveBundledProtocolReadyMarkers(projectRoot)
   await ensureBuildArtifactsReadyOnce({
     lockPath: resolveSharedDepsLockPath(projectRoot),
     markerPaths: markers,
     lockLabel: 'CLI shared deps build',
-    isReady: () => hasBundledWorkspacePackagesHealthy({
-      repoRoot: projectRoot,
-      hostPackageDir: projectRoot,
-    }),
+    // The shared-deps build already validates the full workspace bundle set. For test setup,
+    // we only need a concrete completion signal that is stable under concurrent rebuilds.
     runBuild: () => {
       const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn'
       const buildResult = spawnSync(yarnCommand, ['-s', 'build:shared'], {

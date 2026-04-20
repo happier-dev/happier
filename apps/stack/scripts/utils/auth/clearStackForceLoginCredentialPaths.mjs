@@ -7,7 +7,17 @@ export async function clearStackForceLoginCredentialPaths({
   env = process.env,
 }) {
   const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
-  const attemptedPaths = [...new Set(resolved.paths.map((path) => String(path ?? '').trim()).filter(Boolean))];
+  const preserveSettingsBackedServerScopedPath = Boolean(resolved.settingsServerId);
+  const attemptedPaths = [
+    ...new Set(
+      [
+        ...(preserveSettingsBackedServerScopedPath ? resolved.aliasServerScopedPaths : [resolved.serverScopedPath, ...resolved.aliasServerScopedPaths]),
+        resolved.legacyPath,
+      ]
+        .map((path) => String(path ?? '').trim())
+        .filter(Boolean),
+    ),
+  ];
   const removedPaths = [];
 
   for (const path of attemptedPaths) {

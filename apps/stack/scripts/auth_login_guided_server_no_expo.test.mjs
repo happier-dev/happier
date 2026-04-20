@@ -885,6 +885,238 @@ test('hstack auth login --force fails closed when credential validation cannot r
   }
 });
 
+test('hstack auth login --force retries transient credential validation request errors before continuing with post-auth daemon start', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    let profileRequests = 0;
+    try {
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'dev-auth-validation-request-error-retry',
+        runtimeSnapshot: true,
+        includeSourceCli: false,
+        rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
+        rootContentType: 'text/html',
+        runtimeCliScript: '#!/bin/sh\nexit 0\n',
+        successfulLoginWritesCredentials: true,
+        onProfileRequest: ({ req, res }) => {
+          profileRequests += 1;
+          if (profileRequests === 1) {
+            req.socket.destroy();
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ account: { id: 'acct_test' } }));
+        },
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+
+    const markerPath = join(fixture.tmp, 'post-auth-daemon-validation-request-error-retry.marker');
+    const registerPath = await writeOrchestratedAuthStubLoader({
+      dir: fixture.tmp,
+      markerPath,
+    });
+
+    const res = await runNodeCapture(
+      [
+        '--import',
+        registerPath,
+        authScriptPath(rootDir),
+        'login',
+        '--force',
+        '--method',
+        'web',
+        '--webapp=stack',
+        '--no-open',
+      ],
+      {
+        cwd: rootDir,
+        env: {
+          ...fixture.env,
+          HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_ATTEMPTS: '3',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_RETRY_DELAY_MS: '1',
+        },
+        input: '\n\n',
+      },
+    );
+
+    assert.equal(res.code, 0, `expected exit 0 after transient request-error retry\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.ok(
+      existsSync(markerPath),
+      `expected post-auth daemon start after transient request-error retry\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+    assert.equal(profileRequests, 2, `expected one retry after transient request error, got ${profileRequests} profile requests`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login --force retries a transient 401 credential validation response before continuing with post-auth daemon start', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    let profileRequests = 0;
+    try {
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'dev-auth-validation-401-retry',
+        runtimeSnapshot: true,
+        includeSourceCli: false,
+        rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
+        rootContentType: 'text/html',
+        runtimeCliScript: '#!/bin/sh\nexit 0\n',
+        successfulLoginWritesCredentials: true,
+        onProfileRequest: ({ res }) => {
+          profileRequests += 1;
+          if (profileRequests === 1) {
+            res.statusCode = 401;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'token not ready yet', code: 'invalid-token' }));
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ account: { id: 'acct_test' } }));
+        },
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+
+    const markerPath = join(fixture.tmp, 'post-auth-daemon-validation-401-retry.marker');
+    const registerPath = await writeOrchestratedAuthStubLoader({
+      dir: fixture.tmp,
+      markerPath,
+    });
+
+    const res = await runNodeCapture(
+      [
+        '--import',
+        registerPath,
+        authScriptPath(rootDir),
+        'login',
+        '--force',
+        '--method',
+        'web',
+        '--webapp=stack',
+        '--no-open',
+      ],
+      {
+        cwd: rootDir,
+        env: {
+          ...fixture.env,
+          HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_ATTEMPTS: '3',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_RETRY_DELAY_MS: '1',
+        },
+        input: '\n\n',
+      },
+    );
+
+    assert.equal(res.code, 0, `expected exit 0 after transient 401 retry\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.ok(
+      existsSync(markerPath),
+      `expected post-auth daemon start after transient 401 retry\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+    assert.equal(profileRequests, 2, `expected one retry after transient 401, got ${profileRequests} profile requests`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login --force retries a transient 503 credential validation response before continuing with post-auth daemon start', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    let profileRequests = 0;
+    try {
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'dev-auth-validation-503-retry',
+        runtimeSnapshot: true,
+        includeSourceCli: false,
+        rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
+        rootContentType: 'text/html',
+        runtimeCliScript: '#!/bin/sh\nexit 0\n',
+        successfulLoginWritesCredentials: true,
+        onProfileRequest: ({ res }) => {
+          profileRequests += 1;
+          if (profileRequests === 1) {
+            res.statusCode = 503;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'server warming' }));
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ account: { id: 'acct_test' } }));
+        },
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+
+    const markerPath = join(fixture.tmp, 'post-auth-daemon-validation-503-retry.marker');
+    const registerPath = await writeOrchestratedAuthStubLoader({
+      dir: fixture.tmp,
+      markerPath,
+    });
+
+    const res = await runNodeCapture(
+      [
+        '--import',
+        registerPath,
+        authScriptPath(rootDir),
+        'login',
+        '--force',
+        '--method',
+        'web',
+        '--webapp=stack',
+        '--no-open',
+      ],
+      {
+        cwd: rootDir,
+        env: {
+          ...fixture.env,
+          HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_ATTEMPTS: '3',
+          HAPPIER_STACK_AUTH_CREDENTIAL_VALIDATION_RETRY_DELAY_MS: '1',
+        },
+        input: '\n\n',
+      },
+    );
+
+    assert.equal(res.code, 0, `expected exit 0 after transient 503 retry\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.ok(
+      existsSync(markerPath),
+      `expected post-auth daemon start after transient 503 retry\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+    assert.equal(profileRequests, 2, `expected one retry after transient 503, got ${profileRequests} profile requests`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
 test('hstack auth login suggests runtime-backed start when a runtime-backed stack is already starting but unhealthy', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);

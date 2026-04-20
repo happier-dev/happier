@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PromptRegistryFetchedItemV1Schema } from '@happier-dev/protocol';
 
-import type { PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { reloadConfiguration } from '@/configuration';
 
 describe('resolvePromptRegistryItemDownloadSource', () => {

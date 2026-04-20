@@ -86,3 +86,20 @@ test('getDaemonEnv preserves an explicit startup source over service mode', asyn
 
   assert.equal(env.HAPPIER_DAEMON_STARTUP_SOURCE, 'self-restart');
 });
+
+test('getDaemonEnv preserves an explicit daemon service label', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-service-label-'));
+
+  const env = getDaemonEnv({
+    baseEnv: {
+      HAPPIER_DAEMON_SERVICE_LABEL: 'happier-daemon.preview.example.service',
+    },
+    cliHomeDir: dir,
+    internalServerUrl: 'http://127.0.0.1:3009',
+    publicServerUrl: 'http://127.0.0.1:3009',
+    stackName: 'main',
+    cliIdentity: 'default',
+  });
+
+  assert.equal(env.HAPPIER_DAEMON_SERVICE_LABEL, 'happier-daemon.preview.example.service');
+});

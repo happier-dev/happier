@@ -8,6 +8,7 @@ import {
   DirectSessionTakeoverPersistRequestSchema,
   DirectSessionTakeoverRequestSchema,
   DirectSessionsCandidatesListRequestSchema,
+  type DirectSessionsProviderId,
   DirectTranscriptPageRequestSchema,
   DirectTranscriptReadAfterRequestSchema,
   normalizeCodexBackendMode,
@@ -26,7 +27,7 @@ import {
 
 import { readCredentials } from '@/persistence';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
-import { getDirectSessionProviderOps } from '@/backends/catalog';
+import type { DirectSessionProviderOps } from '@/session/directSessions/providerOps';
 import { logger } from '@/ui/logger';
 
 import { importDirectSessionTranscript } from '@/api/directSessions/import/importDirectSessionTranscript';
@@ -40,6 +41,7 @@ import { loadLinkedDirectSession } from '@/api/directSessions/takeover/loadLinke
 import { resolveDirectTakeoverSpawnOptions } from '@/api/directSessions/takeover/resolveDirectTakeoverSpawnOptions';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
@@ -130,6 +132,14 @@ function resolveDirectSessionAttachLeaseTtlMs(requestedTtlMs: number | undefined
     ? Math.trunc(requestedTtlMs)
     : defaultTtlMs;
   return Math.max(1_000, Math.min(15 * 60_000, candidate));
+}
+
+async function getDirectSessionProviderOps(providerId: DirectSessionsProviderId): Promise<DirectSessionProviderOps> {
+  const providerOps = (await resolveBackendExecutionSurfaces(providerId)).directSessions;
+  if (!providerOps) {
+    throw new Error(`Missing direct-session provider ops for ${providerId}`);
+  }
+  return providerOps;
 }
 
 function isPidAlive(pid: number): boolean {
@@ -349,29 +359,28 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, async (raw: unknown) => {
     const parsed = DirectSessionsCandidatesListRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionsCandidatesListResponse;
-    const validatedSource = await validateDirectMachineSource({
-      providerId: parsed.data.providerId,
-      source: parsed.data.source,
-      env: process.env,
-    });
-    if (!validatedSource.ok) {
-      return err('invalid_request', validatedSource.error) satisfies DirectSessionsCandidatesListResponse;
-    }
-    const { providerId, cursor, searchTerm } = parsed.data;
-    const source = validatedSource.source;
-
-    const limit = parsed.data.limit ?? resolveDefaultCandidatesLimit();
     try {
+      const validatedSource = await validateDirectMachineSource({
+        providerId: parsed.data.providerId,
+        source: parsed.data.source,
+        env: process.env,
+      });
+      if (!validatedSource.ok) {
+        return err('invalid_request', validatedSource.error) satisfies DirectSessionsCandidatesListResponse;
+      }
+      const { providerId, cursor, searchTerm } = parsed.data;
+      const source = validatedSource.source;
+      const limit = parsed.data.limit ?? resolveDefaultCandidatesLimit();
       const res = await (await getDirectSessionProviderOps(providerId)).listCandidates({ source, cursor, limit, searchTerm });
       return { ok: true, candidates: res.candidates, nextCursor: res.nextCursor } satisfies DirectSessionsCandidatesListResponse;
-	    } catch (error) {
-	      return internalErrorResponse(
-	        'direct_sessions_candidates_list',
-	        error,
-	        'direct_sessions_candidates_list_failed',
-	      ) satisfies DirectSessionsCandidatesListResponse;
-	    }
-	  });
+    } catch (error) {
+      return internalErrorResponse(
+        'direct_sessions_candidates_list',
+        error,
+        'direct_sessions_candidates_list_failed',
+      ) satisfies DirectSessionsCandidatesListResponse;
+    }
+  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE, async (raw: unknown) => {
     const parsed = DirectSessionLinkEnsureRequestSchema.safeParse(raw);
@@ -398,7 +407,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         providerId: parsed.data.providerId,
         remoteSessionId: parsed.data.remoteSessionId,
         codexBackendMode,
-        runtimeDescriptor: parsed.data.runtimeDescriptor,
+        runtimeDescriptor: parsed.data.runtimeDescriptorV1,
         titleHint: parsed.data.titleHint,
         directoryHint: parsed.data.directoryHint,
         source: validatedSource.source,

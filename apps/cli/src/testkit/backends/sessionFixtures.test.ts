@@ -17,6 +17,21 @@ describe('session fixtures', () => {
         expect(mockSession.metadata).toEqual(createTestMetadata());
     });
 
+    it('merges partial mock-session metadata overrides onto canonical defaults', async () => {
+        const mod = await import('./sessionFixtures');
+        const mockSession = mod.createMockSession({
+            metadata: {
+                path: '/tmp/override',
+            },
+        });
+
+        expect(mockSession.metadata).toEqual(
+            createTestMetadata({
+                path: '/tmp/override',
+            }),
+        );
+    });
+
     it('creates plaintext session fixtures with canonical metadata defaults', async () => {
         const mod = await import('./sessionFixtures');
         const session = mod.createPlainSessionFixture();

@@ -11,10 +11,10 @@ const {
     createManagedConnectionSupervisorMock,
     harness,
 } = vi.hoisted(() => {
-    const configurationMock = {
-        apiServerUrl: 'http://localhost:3005',
-        socketIoTransports: ['websocket', 'polling'] as string[],
-    };
+	    const configurationMock = {
+	        apiServerUrl: 'http://localhost:3005',
+	        socketIoTransports: ['polling', 'websocket'] as string[],
+	    };
 
     type State = {
         phase: 'idle' | 'connecting' | 'online' | 'offline' | 'auth_failed' | 'shutting_down';

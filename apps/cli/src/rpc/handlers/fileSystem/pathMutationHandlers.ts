@@ -7,6 +7,7 @@ import { logger } from '@/ui/logger';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { validatePath } from '../pathSecurity';
+import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';
 
 type StatFileRequest = Readonly<{ path: string }>;
 type StatFileResponse =
@@ -47,13 +48,18 @@ function isRootPath(resolvedPath: string, workingDirectory: string): boolean {
 
 export function registerPathMutationHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
-  deps: Readonly<{ workingDirectory: string }>,
+  deps: Readonly<{
+    workingDirectory: string;
+    accessPolicy: FilesystemAccessPolicy;
+    getAdditionalAllowedReadDirs: () => ReadonlyArray<string>;
+    getAdditionalAllowedWriteDirs: () => ReadonlyArray<string>;
+  }>,
 ): void {
   rpcHandlerManager.registerHandler<StatFileRequest, StatFileResponse>(RPC_METHODS.STAT_FILE, async (data) => {
     const path = typeof data?.path === 'string' ? data.path : '';
     logger.debug('Stat file request:', path);
 
-    const validation = validatePath(path, deps.workingDirectory);
+    const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs(), deps.accessPolicy);
     if (!validation.valid || !validation.resolvedPath) {
       return { success: false, error: validation.error ?? 'Access denied' };
     }
@@ -83,8 +89,8 @@ export function registerPathMutationHandlers(
     const overwrite = Boolean(data?.overwrite);
     logger.debug('Rename path request:', from, '->', to);
 
-    const fromValidation = validatePath(from, deps.workingDirectory);
-    const toValidation = validatePath(to, deps.workingDirectory);
+    const fromValidation = validatePath(from, deps.workingDirectory, deps.getAdditionalAllowedWriteDirs(), deps.accessPolicy);
+    const toValidation = validatePath(to, deps.workingDirectory, deps.getAdditionalAllowedWriteDirs(), deps.accessPolicy);
     if (!fromValidation.valid || !fromValidation.resolvedPath) {
       return { success: false, error: fromValidation.error ?? 'Access denied' };
     }
@@ -121,7 +127,7 @@ export function registerPathMutationHandlers(
     const recursive = Boolean(data?.recursive);
     logger.debug('Delete path request:', path, 'recursive:', recursive);
 
-    const validation = validatePath(path, deps.workingDirectory);
+    const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedWriteDirs(), deps.accessPolicy);
     if (!validation.valid || !validation.resolvedPath) {
       return { success: false, error: validation.error ?? 'Access denied' };
     }

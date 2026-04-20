@@ -83,7 +83,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 30_000 }));
   });
 
-  it('forwards backendTarget to probeAgentModelsBestEffort for cli.customAcp', async () => {
+  it('forwards backendTarget to probeAgentModelsBestEffort for cli.configuredAcp', async () => {
     vi.resetModules();
 
     const probeSpy = vi.fn(async (_params: any) => ({
@@ -115,7 +115,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
 
     const backendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' } as const;
     await call(RPC_METHODS.CAPABILITIES_INVOKE, {
-      id: 'cli.customAcp',
+      id: 'cli.configuredAcp',
       method: 'probeModels',
       params: { cwd: '/tmp/happier-probe-cwd', backendTarget },
     });

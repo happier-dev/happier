@@ -34,4 +34,3 @@ export function resolveProfileForAgent(params: Readonly<{
 
   throw new Error(`Profile "${profile.name}" (${profile.id}) is not compatible with ${params.agentId}. Supported agents: ${supportedList}.${hint}`);
 }
-

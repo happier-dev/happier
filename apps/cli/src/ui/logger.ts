@@ -7,11 +7,12 @@
 
 import chalk from 'chalk'
 import { appendFileSync } from 'fs'
-import { configuration } from '@/configuration'
+import { configuration } from '../configuration'
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { inspect } from 'node:util'
-import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '@/utils/writeConsoleBestEffort'
+import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '../utils/writeConsoleBestEffort'
 // Note: readDaemonState is imported lazily inside listDaemonLogFiles() to avoid
 // circular dependency: logger.ts ↔ persistence.ts
 
@@ -41,10 +42,21 @@ function createTimestampForLogEntry(date: Date = new Date()): string {
   })
 }
 
+function resolveLogsDir(): string {
+  const configuredLogsDir = typeof configuration.logsDir === 'string' ? configuration.logsDir.trim() : ''
+  if (configuredLogsDir.length > 0) {
+    return configuredLogsDir
+  }
+
+  const configuredHappyHomeDir = typeof configuration.happyHomeDir === 'string' ? configuration.happyHomeDir.trim() : ''
+  const happyHomeDir = configuredHappyHomeDir.length > 0 ? configuredHappyHomeDir : join(homedir(), '.happier')
+  return join(happyHomeDir, 'logs')
+}
+
 function getSessionLogPath(): string {
   const timestamp = createTimestampForFilename()
   const filename = configuration.isDaemonProcess ? `${timestamp}-daemon.log` : `${timestamp}.log`
-  return join(configuration.logsDir, filename)
+  return join(resolveLogsDir(), filename)
 }
 
 class Logger {
@@ -293,7 +305,7 @@ export type LogFileInfo = {
  */
 export async function listDaemonLogFiles(limit: number = 50): Promise<LogFileInfo[]> {
   try {
-    const logsDir = configuration.logsDir;
+    const logsDir = resolveLogsDir();
     if (!existsSync(logsDir)) {
       return [];
     }

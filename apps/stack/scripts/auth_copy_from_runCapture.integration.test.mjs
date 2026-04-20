@@ -57,6 +57,9 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
 
   await mkStackEnv('dev-auth');
   await mkStackEnv('dev');
+  await mkdir(join(storageDir, 'dev-auth', 'cli'), { recursive: true });
+  await writeFile(join(storageDir, 'dev-auth', 'cli', 'access.key'), 'seed-token\n', 'utf-8');
+  await writeFile(join(storageDir, 'dev-auth', 'cli', 'settings.json'), JSON.stringify({ machineId: 'seed-machine' }) + '\n', 'utf-8');
 
   const env = {
     ...process.env,
@@ -68,7 +71,7 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
     HAPPIER_STACK_ENV_FILE: join(storageDir, 'dev', 'env'),
   };
 
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', 'dev-auth'], { cwd: rootDir, env });
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', 'dev-auth', '--offline-ok'], { cwd: rootDir, env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(
     !res.stdout.includes('runCapture is not defined') && !res.stderr.includes('runCapture is not defined'),
@@ -77,6 +80,79 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
   assert.ok(
     !res.stdout.includes('spawn yarn ENOENT') && !res.stderr.includes('spawn yarn ENOENT'),
     `expected yarn to be resolvable in light migrations step\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
+});
+
+test('hstack stack auth copy-from fails closed when the source stack has no reusable auth material', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-copy-from-empty-source-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+  const homeDir = join(tmp, 'home');
+  const storageDir = join(tmp, 'storage');
+  const workspaceDir = join(tmp, 'workspace');
+  const nvmDir = join(tmp, 'nvm');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(storageDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(nvmDir, { recursive: true });
+
+  const binDir = join(tmp, 'bin');
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
+  await chmod(yarnPath, 0o755);
+
+  const repoRoot = dirname(dirname(rootDir));
+  const sourceStack = 'dev-auth';
+  const targetStack = 'dev';
+  const sourceCliHome = join(storageDir, sourceStack, 'cli');
+  const targetCliHome = join(storageDir, targetStack, 'cli');
+
+  const mkStackEnv = async (name, cliHomeDir) => {
+    const baseDir = join(storageDir, name);
+    const dataDir = join(baseDir, 'server-light');
+    await mkdir(baseDir, { recursive: true });
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(
+      join(baseDir, 'env'),
+      [
+        `HAPPIER_STACK_STACK=${name}`,
+        `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
+        `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+        `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
+        `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
+        `HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`,
+        `HAPPIER_SERVER_LIGHT_DB_DIR=${join(dataDir, 'pglite')}`,
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+  };
+
+  await mkStackEnv(sourceStack, sourceCliHome);
+  await mkStackEnv(targetStack, targetCliHome);
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_STACK: targetStack,
+    HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
+  };
+
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack, '--offline-ok'], { cwd: rootDir, env });
+  assert.notEqual(res.code, 0, `expected copy-from to fail when source auth is empty\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.match(
+    `${res.stdout}\n${res.stderr}`,
+    /source stack "dev-auth" has no reusable auth material|no reusable auth material/i,
+    `expected empty source auth failure\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
   );
 });
 

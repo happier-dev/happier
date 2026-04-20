@@ -67,6 +67,35 @@ async function writeYarnWorkspaceBuildStub({ binDir, outputPath, delaySecondsByP
   await writeFile(outputPath, '', 'utf-8');
 }
 
+async function writeYarnWorkspaceBuildViaTscStub({ binDir, outputPath }) {
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env node',
+      "const { appendFileSync, existsSync, mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      "const { spawnSync } = require('node:child_process');",
+      'const args = process.argv.slice(2);',
+      'appendFileSync(process.env.OUTPUT_PATH, `${process.cwd()} :: ${args.join(" ")}\\n`, "utf-8");',
+      'if (args.includes("--version")) {',
+      '  console.log("1.22.22");',
+      '  process.exit(0);',
+      '}',
+      'if (args[0] === "-s" && args[1] === "build") {',
+      '  const result = spawnSync("tsc", ["-p", "tsconfig.json"], { cwd: process.cwd(), env: process.env, stdio: "inherit" });',
+      '  if (result.error) throw result.error;',
+      '  process.exit(result.status ?? 0);',
+      '}',
+      'process.exit(0);',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await chmod(yarnPath, 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+}
+
 function applyEnvOverrides(t, vars) {
   const previous = {};
   for (const key of Object.keys(vars)) {
@@ -247,6 +276,82 @@ test('ensureWorkspacePackagesBuiltForComponent walks the full internal workspace
   assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8')), true);
   assert.equal(Boolean(await readFile(join(agentsDir, 'dist', 'index.js'), 'utf-8')), true);
   assert.equal(Boolean(await readFile(join(cliCommonDir, 'dist', 'index.js'), 'utf-8')), true);
+});
+
+test('ensureWorkspacePackagesBuiltForComponent resolves TypeScript bin shims when repo root node_modules/.bin is missing', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-tsc-shim-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'package.json'), { name: 'repo', private: true });
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(join(protocolDir, 'dist'), { recursive: true });
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: {
+      '.': { default: './dist/index.js', types: './dist/index.d.ts' },
+    },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeJson(join(protocolDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist' } });
+
+  const repoTypescriptDir = join(root, 'node_modules', 'typescript');
+  await mkdir(join(repoTypescriptDir, 'bin'), { recursive: true });
+  await writeJson(join(repoTypescriptDir, 'package.json'), {
+    name: 'typescript',
+    version: '5.9.3',
+    bin: {
+      tsc: './bin/tsc.js',
+    },
+  });
+  await writeFile(
+    join(repoTypescriptDir, 'bin', 'tsc.js'),
+    [
+      '#!/usr/bin/env node',
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      'mkdirSync(join(process.cwd(), "dist"), { recursive: true });',
+      'writeFileSync(join(process.cwd(), "dist", "index.js"), "export const ok = true;\\n", "utf-8");',
+      'writeFileSync(join(process.cwd(), "dist", "index.d.ts"), "export declare const ok: boolean;\\n", "utf-8");',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await chmod(join(repoTypescriptDir, 'bin', 'tsc.js'), 0o755);
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnWorkspaceBuildViaTscStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+
+  const out = await readFile(outputPath, 'utf-8');
+  assert.match(out, /packages\/protocol :: -s build/);
+  assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8')), true);
 });
 
 test('ensureWorkspacePackagesBuiltForComponent does not run concurrent builds for the same workspace package', async (t) => {

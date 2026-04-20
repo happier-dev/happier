@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ApiSessionClient } from './session/sessionClient';
-import type { RawJSONLines } from '@/backends/claude/types';
+import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 import {
@@ -12,6 +13,7 @@ import {
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { createMockSession, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { HttpStatusError } from './client/httpStatusError';
 
 // Use vi.hoisted to ensure mock function is available when vi.mock factory runs
 const { mockIo } = vi.hoisted(() => ({
@@ -59,18 +61,28 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
         } | null = null;
 
         return {
-        start: async () => {
-            params.onStateChange?.({ phase: 'connecting' });
-            transport = params.createTransport() as typeof transport;
-            params.onStateChange?.({ phase: 'online' });
-            await params.onConnected?.();
-        },
-        stop: async () => {
-            await transport?.disconnect?.();
-            await transport?.destroy?.();
-            params.onStateChange?.({ phase: 'offline' });
-        },
-    };
+            getState: () => ({
+                phase: 'online',
+                reason: null,
+                attempt: 0,
+                nextRetryAt: null,
+                lastConnectedAt: Date.now(),
+                lastDisconnectedAt: null,
+                lastErrorMessage: null,
+            }),
+            reportProbeResult: vi.fn(),
+            start: async () => {
+                params.onStateChange?.({ phase: 'connecting' });
+                transport = params.createTransport() as typeof transport;
+                params.onStateChange?.({ phase: 'online' });
+                await params.onConnected?.();
+            },
+            stop: async () => {
+                await transport?.disconnect?.();
+                await transport?.destroy?.();
+                params.onStateChange?.({ phase: 'offline' });
+            },
+        };
     },
 }));
 
@@ -439,6 +451,23 @@ describe('ApiSessionClient connection handling', () => {
         createdClients.push(client);
         return client;
     };
+    const overrideSessionSupervisor = (client: ApiSessionClient, reportProbeResult: ReturnType<typeof vi.fn>): void => {
+        Object.defineProperty(client, 'sessionConnectionSupervisor', {
+            configurable: true,
+            value: {
+                getState: () => ({
+                    phase: 'online',
+                    reason: null,
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: Date.now(),
+                    lastDisconnectedAt: null,
+                    lastErrorMessage: null,
+                }),
+                reportProbeResult,
+            },
+        });
+    };
 
     beforeEach(() => {
         envScope = createEnvKeyScope([
@@ -491,17 +520,24 @@ describe('ApiSessionClient connection handling', () => {
         const getSpy = vi
             .spyOn(axios, 'get')
             .mockRejectedValueOnce(new Error('temporary failure'))
-            .mockResolvedValueOnce({ data: { id: 'acc-1' } });
+            .mockResolvedValueOnce({ status: 200, data: { id: 'acc-1' } })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    changes: [],
+                    nextCursor: 0,
+                },
+            });
 
         const client = createClient('token', mockSession);
 
-        const first = await (client as any).getAccountId();
-        expect(first).toBeNull();
+        await (client as any).recoveryRuntime.syncChangesOnConnect({ reason: 'connect' });
+        await (client as any).recoveryRuntime.syncChangesOnConnect({ reason: 'connect' });
 
-        const second = await (client as any).getAccountId();
-        expect(second).toBe('acc-1');
-
-        expect(getSpy).toHaveBeenCalledTimes(2);
+        const accountProfileCalls = getSpy.mock.calls.filter(
+            ([url]) => String(url).includes('/v1/account/profile'),
+        );
+        expect(accountProfileCalls).toHaveLength(2);
     });
 
     it('exposes last observed transcript seq for fork/resume heuristics', () => {
@@ -886,6 +922,64 @@ describe('ApiSessionClient connection handling', () => {
         }
     });
 
+    it.each([401, 403] as const)('reports session snapshot refresh auth status %i to the session supervisor', async (status) => {
+        const snapshotSync = await import('./session/snapshotSync');
+        const authError = new HttpStatusError(status, 'expired token');
+        const reportProbeResult = vi.fn();
+        const client = createClient('fake-token', mockSession);
+        overrideSessionSupervisor(client, reportProbeResult);
+        const fetchSpy = vi
+            .spyOn(snapshotSync, 'fetchSessionSnapshotUpdateFromServer')
+            .mockRejectedValueOnce(authError);
+
+        try {
+            const clientInternals = client as unknown as {
+                syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+            };
+            await clientInternals.syncSessionSnapshotFromServer({ reason: 'connect' });
+
+            expect(reportProbeResult).toHaveBeenCalledWith({
+                status: 'auth_failed',
+                statusCode: status,
+                errorMessage: 'expired token',
+            } satisfies ReadinessProbeResult);
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('does not request a session snapshot when the session supervisor is already auth_failed', async () => {
+        const snapshotSync = await import('./session/snapshotSync');
+        const client = createClient('fake-token', mockSession);
+        const fetchSpy = vi.spyOn(snapshotSync, 'fetchSessionSnapshotUpdateFromServer');
+        Object.defineProperty(client, 'sessionConnectionSupervisor', {
+            configurable: true,
+            value: {
+                getState: () => ({
+                    phase: 'auth_failed',
+                    reason: 'auth_failed',
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: null,
+                    lastDisconnectedAt: Date.now(),
+                    lastErrorMessage: 'expired token',
+                }),
+                reportProbeResult: vi.fn(),
+            },
+        });
+
+        try {
+            const clientInternals = client as unknown as {
+                syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+            };
+            await clientInternals.syncSessionSnapshotFromServer({ reason: 'connect' });
+
+            expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
     it('ensureMetadataSnapshot waits for a decrypted snapshot when starting with metadataVersion=-1', async () => {
         const snapshotSync = await import('./session/snapshotSync');
 
@@ -992,7 +1086,7 @@ describe('ApiSessionClient connection handling', () => {
             createdAt: 1234,
         });
 
-        (client as any).handleUpdate(update, { source: 'session-scoped' });
+        (client as any).updateRuntime.handleUpdate(update, { source: 'session-scoped' });
 
         expect(received.length).toBe(1);
         expect(received[0]).toMatchObject({
@@ -1030,7 +1124,7 @@ describe('ApiSessionClient connection handling', () => {
             },
         };
 
-        (client as any).handleUpdate(update, { source: 'session-scoped' });
+        (client as any).updateRuntime.handleUpdate(update, { source: 'session-scoped' });
 
         expect(received.length).toBe(1);
         expect(received[0]).toMatchObject({
@@ -1045,7 +1139,7 @@ describe('ApiSessionClient connection handling', () => {
         envScope.patch({ HAPPIER_DAEMON_INITIAL_PROMPT: '  run nightly health check  ' });
 
         const client = createClient('fake-token', mockSession);
-        const sendUserTextMessageSpy = vi.spyOn(client, 'sendUserTextMessage');
+        const enqueueSessionUserMessageSpy = vi.spyOn((client as any).transcriptApi, 'enqueueSessionUserMessage');
         const onUserMessage = vi.fn();
 
         client.onUserMessage(onUserMessage);
@@ -1062,10 +1156,10 @@ describe('ApiSessionClient connection handling', () => {
                 }),
             }),
         );
-        expect(sendUserTextMessageSpy).toHaveBeenCalledTimes(1);
-        expect(sendUserTextMessageSpy).toHaveBeenCalledWith(
-            'run nightly health check',
+        expect(enqueueSessionUserMessageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueSessionUserMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
+                text: 'run nightly health check',
                 meta: {
                     source: 'daemon-initial-prompt',
                     sentFrom: 'cli',
@@ -1390,6 +1484,40 @@ describe('ApiSessionClient connection handling', () => {
         getSpy.mockRestore();
     });
 
+    it('reports ACP import transcript auth failures to the session supervisor', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const authError = new HttpStatusError(401, 'expired token');
+        const reportProbeResult = vi.fn();
+        const client = createClient('fake-token', mockSession);
+        overrideSessionSupervisor(client, reportProbeResult);
+        vi.spyOn(axios, 'get').mockRejectedValueOnce(authError);
+
+        await expect(client.fetchRecentTranscriptTextItemsForAcpImport({ take: 10 })).rejects.toBe(authError);
+        expect(reportProbeResult).toHaveBeenCalledWith({
+            status: 'auth_failed',
+            statusCode: 401,
+            errorMessage: 'expired token',
+        });
+    });
+
+    it('reports permission intent transcript auth failures to the session supervisor', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const authError = new HttpStatusError(403, 'forbidden');
+        const reportProbeResult = vi.fn();
+        const client = createClient('fake-token', mockSession);
+        overrideSessionSupervisor(client, reportProbeResult);
+        vi.spyOn(axios, 'get').mockRejectedValueOnce(authError);
+
+        await expect(client.fetchLatestUserPermissionIntentFromTranscript({ take: 10 })).rejects.toBe(authError);
+        expect(reportProbeResult).toHaveBeenCalledWith({
+            status: 'auth_failed',
+            statusCode: 403,
+            errorMessage: 'forbidden',
+        });
+    });
+
     it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', async () => {
         connectSessionSocket();
         const client = createClient('fake-token', mockSession);
@@ -1410,6 +1538,72 @@ describe('ApiSessionClient connection handling', () => {
         expect(decrypted.content.data).toMatchObject({
             type: 'permission-request',
             toolName: 'TodoWrite',
+        });
+    });
+
+    it('mirrors execution-run ACP permission requests into agentState with the response target intact', async () => {
+        connectSessionSocket();
+        mockSocket.timeout = vi.fn().mockReturnThis();
+        mockSocket.emitWithAck = vi.fn(async (event: string, payload: unknown) => {
+            if (event === 'update-state') {
+                const request = payload as { agentState?: string };
+                return {
+                    result: 'success',
+                    version: mockSession.agentStateVersion + 1,
+                    agentState: request.agentState ?? null,
+                };
+            }
+            return { ok: true, id: 'm1', seq: 1, localId: 'l1' };
+        });
+        const client = createClient('fake-token', mockSession);
+
+        client.sendAgentMessage('claude', {
+            type: 'permission-request',
+            permissionId: 'perm-1',
+            toolName: 'write',
+            description: 'write',
+            options: {
+                input: {
+                    filepath: '/tmp/outside.txt',
+                },
+                executionRun: {
+                    responseTarget: {
+                        kind: 'execution_run_host_bridge',
+                        sessionId: 'sess_1',
+                        runId: 'run-1',
+                        callId: 'call-1',
+                        sidechainId: 'sidechain-1',
+                        backendId: 'claude',
+                        runtimeKind: 'sdk',
+                        providerRequestId: 'perm-1',
+                    },
+                },
+            },
+        });
+
+        await flushClientQueue(client);
+
+        await vi.waitFor(() => {
+            expect(client.getAgentStateSnapshot()?.requests?.['perm-1']).toMatchObject({
+                tool: 'Write',
+                arguments: {
+                    input: {
+                        filepath: '/tmp/outside.txt',
+                    },
+                    executionRun: {
+                        responseTarget: {
+                            kind: 'execution_run_host_bridge',
+                            sessionId: 'sess_1',
+                            runId: 'run-1',
+                            callId: 'call-1',
+                            sidechainId: 'sidechain-1',
+                            backendId: 'claude',
+                            runtimeKind: 'sdk',
+                            providerRequestId: 'perm-1',
+                        },
+                    },
+                },
+            });
         });
     });
 

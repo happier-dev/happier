@@ -119,16 +119,19 @@ describe('ApiSessionClient tool tracing', () => {
     it('records Claude tool_use/tool_result blocks when tool tracing is enabled', async () => {
         await withToolTraceFile('happy-tool-trace-claude-', async (filePath) => {
             const client = new ApiSessionClient('fake-token', mockSession);
-            client.sendClaudeSessionMessage({
-                type: 'assistant',
-                uuid: 'uuid-1',
-                message: {
-                    content: [
-                        { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/etc/hosts' } },
-                        { type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' },
-                    ],
-                },
-            } as any);
+            client.sendProviderMessage({
+                provider: 'claude',
+                body: {
+                    type: 'assistant',
+                    uuid: 'uuid-1',
+                    message: {
+                        content: [
+                            { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/etc/hosts' } },
+                            { type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' },
+                        ],
+                    },
+                } as any,
+            });
 
             const raw = readFileSync(filePath, 'utf8');
             const lines = raw.trim().split('\n');
@@ -156,13 +159,16 @@ describe('ApiSessionClient tool tracing', () => {
         await withToolTraceFile('happy-tool-trace-claude-user-tool-result-', async (filePath) => {
             const session = createMockSession({ id: 'test-session-id-user-tool-result' });
             const client = new ApiSessionClient('fake-token', session);
-            client.sendClaudeSessionMessage({
-                type: 'user',
-                uuid: 'uuid-2',
-                message: {
-                    content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }],
-                },
-            } as any);
+            client.sendProviderMessage({
+                provider: 'claude',
+                body: {
+                    type: 'user',
+                    uuid: 'uuid-2',
+                    message: {
+                        content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }],
+                    },
+                } as any,
+            });
 
             const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
             const lines = raw.trim().length > 0 ? raw.trim().split('\n') : [];
@@ -185,11 +191,14 @@ describe('ApiSessionClient tool tracing', () => {
     it('does not record Claude user text messages when tool tracing is enabled', async () => {
         await withToolTraceFile('happy-tool-trace-claude-', async (filePath) => {
             const client = new ApiSessionClient('fake-token', mockSession);
-            client.sendClaudeSessionMessage({
-                type: 'user',
-                uuid: 'uuid-2',
-                message: { content: 'hello' },
-            } as any);
+            client.sendProviderMessage({
+                provider: 'claude',
+                body: {
+                    type: 'user',
+                    uuid: 'uuid-2',
+                    message: { content: 'hello' },
+                } as any,
+            });
 
             expect(existsSync(filePath)).toBe(false);
         });

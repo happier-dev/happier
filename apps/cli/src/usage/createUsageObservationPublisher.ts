@@ -2,6 +2,7 @@ import axios from 'axios';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { normalizeBaseUrl } from '@/diagnostics/httpClient';
+import { isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
 
 import {
     buildLegacyUsageReportFromUsageObservation,
@@ -16,18 +17,6 @@ type PostJsonResult = Readonly<{ ok: true }>;
 
 function isUnsupportedHttpStatus(status: number | null | undefined): boolean {
     return status === 404 || status === 405 || status === 501;
-}
-
-function isAuthHttpStatus(status: number | null | undefined): boolean {
-    return status === 401 || status === 403;
-}
-
-function extractErrorStatus(error: unknown): number | null {
-    if (axios.isAxiosError(error)) {
-        return typeof error.response?.status === 'number' ? error.response.status : null;
-    }
-    const response = typeof error === 'object' && error !== null ? (error as { response?: { status?: unknown } }).response : null;
-    return typeof response?.status === 'number' ? response.status : null;
 }
 
 function resolveUsageAnalyticsIngestPath(snapshot: Extract<CliServerFeaturesSnapshot, { status: 'ready' }>): string | null {
@@ -156,7 +145,7 @@ export function createUsageObservationPublisher(params: Readonly<{
                     });
                     return;
                 } catch (error) {
-                    const status = extractErrorStatus(error);
+                    const status = readHttpStatus(error);
                     if (isUnsupportedHttpStatus(status)) {
                         mode = 'legacy';
                         ingestPath = null;
@@ -167,7 +156,7 @@ export function createUsageObservationPublisher(params: Readonly<{
                         return;
                     }
 
-                    if (isAuthHttpStatus(status)) {
+                    if (isAuthenticationStatus(status)) {
                         const refreshedToken = (await params.resolveToken?.())?.trim() ?? null;
                         if (refreshedToken && refreshedToken.length > 0) {
                             currentToken = refreshedToken;
@@ -180,7 +169,7 @@ export function createUsageObservationPublisher(params: Readonly<{
                                 });
                                 return;
                             } catch (retryError) {
-                                const retryStatus = extractErrorStatus(retryError);
+                                const retryStatus = readHttpStatus(retryError);
                                 if (isUnsupportedHttpStatus(retryStatus)) {
                                     mode = 'legacy';
                                     ingestPath = null;

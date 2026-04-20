@@ -48,6 +48,7 @@ import {
   findExistingStackCredentialPath,
   resolveStackCredentialPaths,
 } from './utils/auth/credentials_paths.mjs';
+import { resolveReusableAuthSeedSource } from './utils/auth/sources.mjs';
 import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
 import { fileHasContent } from './utils/fs/file_has_content.mjs';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
@@ -122,7 +123,7 @@ async function validateAuthTokenAgainstServerWithRetries({
       credentialPath,
       internalServerUrl,
     });
-    if (lastValidation.valid !== null || lastValidation.code === 'missing-token') {
+    if (!shouldRetryAuthTokenValidation(lastValidation) || lastValidation.code === 'missing-token') {
       return lastValidation;
     }
     if (attempt < attempts - 1 && retryDelayMs > 0) {
@@ -139,6 +140,19 @@ async function validateAuthTokenAgainstServerWithRetries({
       error: null,
     }
   );
+}
+
+function shouldRetryAuthTokenValidation(validation) {
+  if (!validation || validation.code === 'missing-token') {
+    return false;
+  }
+  if (validation.valid === null) {
+    return true;
+  }
+  if (validation.status === 401) {
+    return true;
+  }
+  return typeof validation.status === 'number' && validation.status >= 500;
 }
 
 // NOTE: common fs helpers live in scripts/utils/fs/ops.mjs
@@ -283,7 +297,13 @@ function authLoginSuggestion(stackName) {
 
 function authCopyFromSeedSuggestion(stackName) {
   if (stackName === 'main') return null;
-  const from = resolveAuthSeedFromEnv(process.env);
+  const requestedSeed = resolveAuthSeedFromEnv(process.env);
+  const { seed: from } = resolveReusableAuthSeedSource({
+    env: process.env,
+    requestedSeed,
+    excludeStackNames: [stackName],
+  });
+  if (!from) return null;
   return `hstack stack auth ${stackName} copy-from ${from}`;
 }
 
@@ -1220,6 +1240,11 @@ async function cmdCopyFrom({ argv, json }) {
   const sourceCredentialPath =
     findExistingStackCredentialPath({ cliHomeDir: sourceCli, serverUrl: sourceInternalServerUrl, env: sourceEnvScoped }) ||
     findAnyCredentialPathInCliHome({ cliHomeDir: sourceCli });
+  if (!sourceCredentialPath) {
+    throw new Error(
+      `[auth] source stack "${fromStackName}" has no reusable auth material (missing access.key). Re-auth the source stack and retry.`
+    );
+  }
   const targetEnv = process.env;
   const targetScopeEnv = { ...targetEnv };
   delete targetScopeEnv.HAPPIER_STACK_DISABLE_STABLE_SCOPE;

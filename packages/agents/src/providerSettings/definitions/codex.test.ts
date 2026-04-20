@@ -4,38 +4,27 @@ import {
   isCodexVendorResumeBackendEnabled,
   resolveCodexRuntimeBackendMode,
   resolveCodexSpawnExtrasFromSettings,
-} from './codex.js';
+} from '../../runtime/preferences/codex.js';
+import { CODEX_PROVIDER_SETTINGS_DEFINITION } from './codex.js';
 
 describe('resolveCodexRuntimeBackendMode', () => {
-  it('prefers explicit canonical backend modes over the legacy ACP flag and fallback mode', () => {
+  it('prefers explicit canonical backend modes over the fallback mode', () => {
     expect(resolveCodexRuntimeBackendMode({
       codexBackendMode: 'appServer',
-      experimentalCodexAcp: true,
       defaultBackendMode: 'mcp',
     })).toBe('appServer');
   });
 
-  it('falls back to the legacy ACP flag only when neither canonical mode nor a default mode is present', () => {
-    expect(resolveCodexRuntimeBackendMode({
-      experimentalCodexAcp: true,
-    })).toBe('acp');
-    expect(resolveCodexRuntimeBackendMode({
-      experimentalCodexAcp: true,
-      defaultBackendMode: 'mcp',
-    })).toBe('mcp');
-  });
-
-  it('uses the provided fallback backend mode when neither canonical mode nor legacy flag is set', () => {
+  it('uses the provided fallback backend mode when no canonical mode is set', () => {
     expect(resolveCodexRuntimeBackendMode({ defaultBackendMode: 'mcp' })).toBe('mcp');
     expect(resolveCodexRuntimeBackendMode({ defaultBackendMode: 'acp' })).toBe('acp');
   });
 });
 
 describe('resolveCodexSpawnExtrasFromSettings', () => {
-  it('keeps ACP on the canonical backend mode path and exposes the legacy flag only as compatibility fallback', () => {
+  it('keeps ACP on the canonical backend mode path without re-emitting the legacy flag', () => {
     expect(resolveCodexSpawnExtrasFromSettings({ codexBackendMode: 'acp' })).toEqual({
       codexBackendMode: 'acp',
-      experimentalCodexAcp: true,
     });
   });
 
@@ -51,12 +40,28 @@ describe('resolveCodexSpawnExtrasFromSettings', () => {
   it('maps the legacy mcp_resume setting onto canonical ACP extras even when persisted with whitespace', () => {
     expect(resolveCodexSpawnExtrasFromSettings({ codexBackendMode: '  mcp_resume  ' })).toEqual({
       codexBackendMode: 'acp',
-      experimentalCodexAcp: true,
+    });
+  });
+
+  it('maps the legacy experimentalCodexAcp setting onto canonical ACP extras at the settings ingress only', () => {
+    expect(resolveCodexSpawnExtrasFromSettings({ experimentalCodexAcp: true })).toEqual({
+      codexBackendMode: 'acp',
     });
   });
 
   it('returns no spawn extras when no canonical backend mode is configured', () => {
     expect(resolveCodexSpawnExtrasFromSettings({})).toEqual({});
+  });
+});
+
+describe('CODEX_PROVIDER_SETTINGS_DEFINITION', () => {
+  it('stays descriptor-only and does not carry runtime preference behavior', () => {
+    expect(CODEX_PROVIDER_SETTINGS_DEFINITION).toMatchObject({
+      providerId: 'codex',
+      fields: expect.any(Object),
+    });
+    expect('resolveSpawnExtras' in CODEX_PROVIDER_SETTINGS_DEFINITION).toBe(false);
+    expect('buildOutgoingMessageMetaExtras' in CODEX_PROVIDER_SETTINGS_DEFINITION).toBe(false);
   });
 });
 
@@ -67,7 +72,7 @@ describe('isCodexVendorResumeBackendEnabled', () => {
     expect(isCodexVendorResumeBackendEnabled({ codexBackendMode: 'mcp' })).toBe(false);
   });
 
-  it('keeps the legacy acp compatibility fallback for callers without codexBackendMode', () => {
+  it('keeps the legacy acp compatibility fallback at settings ingress only', () => {
     expect(isCodexVendorResumeBackendEnabled({ experimentalCodexAcp: true })).toBe(true);
     expect(isCodexVendorResumeBackendEnabled({ experimentalCodexAcp: false })).toBe(false);
   });

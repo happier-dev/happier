@@ -9,21 +9,22 @@ import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir 
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { configuration } from '@/configuration'
-import { resolveDaemonStateCandidatePaths } from '@/daemon/ownership/daemonOwnershipPaths';
+import { configuration } from './configuration';
+import { resolveDaemonStateCandidatePaths } from './daemon/ownership/daemonOwnershipPaths';
 import {
   DaemonPublicReleaseChannelLabelSchema,
   DaemonStartupSourceSchema,
   type DaemonStartupSource,
-} from '@/daemon/ownership/daemonOwnershipMetadata';
-import { sanitizeServerIdForFilesystem } from '@/server/serverId';
-import { isLocalishServerUrl } from '@/server/serverUrlClassification';
+} from './daemon/ownership/daemonOwnershipMetadata';
+import { sanitizeServerIdForFilesystem } from './server/serverId';
+import { isLocalishServerUrl } from './server/serverUrlClassification';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import * as z from 'zod';
-import { decodeBase64, encodeBase64 } from '@/api/encryption';
-import { logger } from '@/ui/logger';
-import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
-import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
+import { decodeBase64, encodeBase64 } from './api/encryption';
+import { logger } from './ui/logger';
+import { resolveMachineIdForServerFromSettings } from './daemon/resolveMachineIdForServerFromSettings';
+import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from './utils/fs/writeJsonAtomicSync';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -455,10 +456,13 @@ export async function writeSettings(settings: Settings): Promise<void> {
 export async function updateSettings(
   updater: (current: Settings) => Settings | Promise<Settings>
 ): Promise<Settings> {
+  const { findHappyProcessByPid } = await import('@/daemon/doctor');
+
   // Timing constants
   const LOCK_RETRY_INTERVAL_MS = 100;  // How long to wait between lock attempts
   const MAX_LOCK_ATTEMPTS = 50;        // Maximum number of attempts (5 seconds total)
   const STALE_LOCK_TIMEOUT_MS = 10000; // Consider lock stale after 10 seconds
+  const EMPTY_LOCK_GRACE_MS = 1000;    // Break empty locks quickly when a process dies before writing its pid
 
   await ensureHappyHomeDirExists();
 
@@ -467,11 +471,30 @@ export async function updateSettings(
   let fileHandle;
   let attempts = 0;
 
+  const parseSettingsLockOwnerPid = (raw: string): number | null => {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+    return parsed;
+  };
+
+  const isSettingsLockOwnerAlive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      return nodeError?.code === 'EPERM';
+    }
+  };
+
   // Acquire exclusive lock with retries
   while (attempts < MAX_LOCK_ATTEMPTS) {
     try {
       // Prefer the string flag form for Windows Bun-compiled binaries, which mis-handle numeric O_EXCL flags.
       fileHandle = await open(lockFile, 'wx', 0o600);
+      await fileHandle.writeFile(`${process.pid}\n`, 'utf8');
       break;
     } catch (err: any) {
       if (err.code === 'ENOENT') {
@@ -484,9 +507,28 @@ export async function updateSettings(
         attempts++;
         await new Promise(resolve => setTimeout(resolve, LOCK_RETRY_INTERVAL_MS));
 
-        // Check for stale lock
         try {
+          const lockContents = await readFile(lockFile, 'utf8');
+          const ownerPid = parseSettingsLockOwnerPid(lockContents);
+          if (ownerPid !== null) {
+            if (!isSettingsLockOwnerAlive(ownerPid)) {
+              await unlink(lockFile).catch(() => { });
+              continue;
+            }
+
+            const ownerProcess = await findHappyProcessByPid(ownerPid).catch(() => null);
+            if (!ownerProcess) {
+              await unlink(lockFile).catch(() => { });
+              continue;
+            }
+          }
+
           const stats = await stat(lockFile);
+          if (lockContents.trim().length === 0 && Date.now() - stats.mtimeMs > EMPTY_LOCK_GRACE_MS) {
+            await unlink(lockFile).catch(() => { });
+            continue;
+          }
+
           if (Date.now() - stats.mtimeMs > STALE_LOCK_TIMEOUT_MS) {
             await unlink(lockFile).catch(() => { });
           }
@@ -695,10 +737,45 @@ export async function writeLastChangesCursor(accountId: string, cursor: number):
  */
 async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPersistedState | null> {
   try {
+    const settings = await readSettings().catch(() => defaultSettings);
+    const activeServerId = sanitizeServerIdForFilesystem(
+      configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
+      'cloud',
+    );
+    const currentServerComparableKey = (() => {
+      const raw = String(configuration.publicServerUrl || configuration.serverUrl || '').trim();
+      if (!raw) return null;
+      try {
+        return createServerUrlComparableKey(raw);
+      } catch {
+        return null;
+      }
+    })();
+    const allowedServerIds = new Set<string>();
+    if (activeServerId) {
+      allowedServerIds.add(activeServerId);
+    }
+    const servers = settings.servers && typeof settings.servers === 'object' ? settings.servers : {};
+    if (currentServerComparableKey) {
+      for (const [serverId, profile] of Object.entries(servers)) {
+        if (!profile || typeof profile !== 'object' || Array.isArray(profile)) continue;
+        const profileServerUrl = String((profile as { serverUrl?: unknown }).serverUrl ?? '').trim();
+        if (!profileServerUrl) continue;
+        try {
+          if (createServerUrlComparableKey(profileServerUrl) === currentServerComparableKey) {
+            allowedServerIds.add(serverId);
+          }
+        } catch {
+          // Ignore malformed persisted server URLs during fallback discovery.
+        }
+      }
+    }
+
     const dirents = await readdir(configuration.serversDir, { withFileTypes: true });
     const candidates: DaemonLocallyPersistedState[] = [];
     for (const dirent of dirents) {
       if (!dirent.isDirectory()) continue;
+      if (allowedServerIds.size > 0 && !allowedServerIds.has(dirent.name)) continue;
       for (const candidatePath of resolveDaemonStateCandidatePaths({
         serverDir: join(configuration.serversDir, dirent.name),
         preferredRing: configuration.publicReleaseRing,

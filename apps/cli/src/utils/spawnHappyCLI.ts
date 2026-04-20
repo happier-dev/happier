@@ -101,6 +101,22 @@ function resolveDevTsxFallbackEntrypoint(entrypoint: string): string {
   return join(projectPath(), 'src', 'index.ts');
 }
 
+function normalizePathSeparators(pathLike: string): string {
+  return String(pathLike ?? '').replaceAll('\\', '/');
+}
+
+function resolveCurrentProcessSourceEntrypoint(): string | null {
+  const scriptPath = String(process.argv[1] ?? '').trim();
+  if (!scriptPath || !existsSync(scriptPath)) return null;
+  const normalized = normalizePathSeparators(scriptPath);
+  if (!normalized.endsWith('/src/index.ts')) return null;
+  return scriptPath;
+}
+
+function resolveTsconfigPathForSourceEntrypoint(entrypoint: string): string {
+  return join(dirname(dirname(entrypoint)), 'tsconfig.json');
+}
+
 export function resolveCliTsxTsconfigPath(): string {
   // The TSX loader resolves TS path aliases (`@/...`) using the tsconfig it finds.
   // Daemon-spawned subprocesses intentionally run in arbitrary `cwd`s, so TSX may
@@ -245,6 +261,69 @@ function readInheritedNodeLaunchFlags(): string[] {
   return [...inherited];
 }
 
+function readInheritedNodeSourceRuntimeFlags(): string[] {
+  const inherited: string[] = [];
+  for (let index = 0; index < process.execArgv.length; index += 1) {
+    const arg = process.execArgv[index];
+    if (!arg) continue;
+    if (arg === '--preserve-symlinks' || arg === '--preserve-symlinks-main') {
+      inherited.push(arg);
+      continue;
+    }
+    if (arg === '--import' || arg === '--loader') {
+      const value = process.execArgv[index + 1];
+      if (typeof value === 'string' && value.length > 0) {
+        inherited.push(arg, value);
+        index += 1;
+      }
+      continue;
+    }
+    if (
+      arg.startsWith('--import=')
+      || arg.startsWith('--loader=')
+    ) {
+      inherited.push(arg);
+    }
+  }
+  return inherited;
+}
+
+function buildCurrentProcessSourceInvocation(args: string[]): HappyCliSubprocessInvocation | null {
+  if (typeof process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string' && process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0) {
+    return null;
+  }
+
+  const sourceEntrypoint = resolveCurrentProcessSourceEntrypoint();
+  if (!sourceEntrypoint) return null;
+
+  const inheritedRuntimeFlags = readInheritedNodeSourceRuntimeFlags();
+  const sourceTsconfigPath = resolveTsconfigPathForSourceEntrypoint(sourceEntrypoint);
+  const runtimeFlags = inheritedRuntimeFlags.length > 0
+    ? inheritedRuntimeFlags
+    : (() => {
+      const tsxHook = resolveTsxImportHookPath();
+      if (!tsxHook) {
+        return null;
+      }
+      return ['--import', tsxHook];
+    })();
+  if (!runtimeFlags) return null;
+
+  return {
+    runtime: 'node',
+    argv: [
+      ...runtimeFlags,
+      '--no-warnings',
+      '--no-deprecation',
+      sourceEntrypoint,
+      ...args,
+    ],
+    env: {
+      TSX_TSCONFIG_PATH: sourceTsconfigPath,
+    },
+  };
+}
+
 function buildDevTsxSubprocessInvocation(args: string[], entrypoint: string): HappyCliSubprocessInvocation | null {
   const tsxEntrypoint = resolveDevTsxFallbackEntrypoint(entrypoint);
   if (!existsSync(tsxEntrypoint)) return null;
@@ -262,8 +341,13 @@ function buildDevTsxSubprocessInvocation(args: string[], entrypoint: string): Ha
 }
 
 export function buildHappyCliSubprocessInvocation(args: string[]): HappyCliSubprocessInvocation {
-  const entrypoint = resolveSubprocessEntrypoint();
   const runtime = getSubprocessRuntime();
+  if (runtime === 'node') {
+    const currentProcessSourceInvocation = buildCurrentProcessSourceInvocation(args);
+    if (currentProcessSourceInvocation) return currentProcessSourceInvocation;
+  }
+
+  const entrypoint = resolveSubprocessEntrypoint();
 
   if (runtime === 'node' && shouldPreferDevTsxSubprocess()) {
     const tsxInvocation = buildDevTsxSubprocessInvocation(args, entrypoint);

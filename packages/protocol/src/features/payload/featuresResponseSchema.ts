@@ -15,6 +15,28 @@ function coerceFeaturesResponsePayload(raw: unknown): unknown {
     next.capabilities = {};
   }
 
+  // Robustness: missing voice enabled bits must be treated as disabled rather than invalidating the payload.
+  if (isRecord(next.features)) {
+    const features = { ...(next.features as Record<string, unknown>) };
+    const voice = features.voice;
+    if (isRecord(voice)) {
+      const coercedVoice: Record<string, unknown> = { ...voice };
+      if (typeof coercedVoice.enabled !== 'boolean') {
+        coercedVoice.enabled = false;
+      }
+      const happierVoice = coercedVoice.happierVoice;
+      if (isRecord(happierVoice)) {
+        const coercedHappierVoice: Record<string, unknown> = { ...happierVoice };
+        if (typeof coercedHappierVoice.enabled !== 'boolean') {
+          coercedHappierVoice.enabled = false;
+        }
+        coercedVoice.happierVoice = coercedHappierVoice;
+      }
+      features.voice = coercedVoice;
+      next.features = features;
+    }
+  }
+
   return {
     ...next,
     capabilities: {
@@ -36,4 +58,3 @@ export type FeaturesResponse = Readonly<{
   features: FeatureGates;
   capabilities: Capabilities;
 }>;
-

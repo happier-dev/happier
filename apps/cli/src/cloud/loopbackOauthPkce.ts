@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 
-import { findAvailableLoopbackPort, isLoopbackPortAvailable } from '@/cloud/loopbackPort';
-import { generatePkceCodes } from '@/cloud/pkce';
+import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
+import { generatePkceCodes } from './pkce';
 
 export type OauthPkceCodes = {
   verifier: string;

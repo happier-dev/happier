@@ -7,15 +7,9 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ProviderSettingsDefinition } from '../types.js';
-import {
-  isCodexVendorResumeBackendEnabled,
-  resolveCodexRuntimeBackendMode,
-  resolveCodexSpawnExtrasFromSettings,
-} from '../../providers/codex/providerSettingsRuntime.js';
 
 export type CodexBackendMode = CanonicalCodexBackendMode;
 export const normalizeCodexBackendMode = normalizeCanonicalCodexBackendMode;
-export { isCodexVendorResumeBackendEnabled, resolveCodexRuntimeBackendMode, resolveCodexSpawnExtrasFromSettings };
 
 export const CODEX_PROVIDER_FIELDS = {
   codexBackendMode: {
@@ -41,6 +35,4 @@ export function buildCodexProviderSettingsShape(_zod: typeof z) {
 export const CODEX_PROVIDER_SETTINGS_DEFINITION: ProviderSettingsDefinition = Object.freeze({
   providerId: 'codex',
   fields: CODEX_PROVIDER_ARTIFACTS.definitions,
-  buildOutgoingMessageMetaExtras: () => ({}),
-  resolveSpawnExtras: ({ settings }) => resolveCodexSpawnExtrasFromSettings(settings),
 });

@@ -1,8 +1,9 @@
 import { logger } from '@/ui/logger';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { run as runDifftastic } from '@/integrations/difftastic/index';
-import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
 
 interface DifftasticRequest {
     args: string[];
@@ -17,16 +18,25 @@ interface DifftasticResponse {
     error?: string;
 }
 
-export function registerDifftasticHandler(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
+export function registerDifftasticHandler(
+    rpcHandlerManager: RpcHandlerRegistrar,
+    workingDirectory: string,
+    opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy }>,
+): void {
+    const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
     // Difftastic handler - raw interface to difftastic
     rpcHandlerManager.registerHandler<DifftasticRequest, DifftasticResponse>(RPC_METHODS.DIFFTASTIC, async (data) => {
         logger.debug('Difftastic request with args:', data.args, 'cwd:', data.cwd);
 
         let cwd = workingDirectory;
         if (data.cwd) {
-            const validation = validatePath(data.cwd, workingDirectory);
+            const validation = authorizeFilesystemPath({
+                targetPath: data.cwd,
+                defaultDirectory: workingDirectory,
+                accessPolicy,
+            });
             if (!validation.valid) return { success: false, error: validation.error };
-            cwd = validation.resolvedPath!;
+            cwd = validation.resolvedPath;
         }
 
         try {

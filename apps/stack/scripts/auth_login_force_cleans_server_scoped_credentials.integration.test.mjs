@@ -17,6 +17,11 @@ async function startHealthServer({ port }) {
       res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
       return;
     }
+    if (req.method === 'GET' && req.url === '/v1/account/profile') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ account: { id: 'acct_test' } }));
+      return;
+    }
     res.writeHead(404, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'not-found' }));
   });
@@ -32,6 +37,9 @@ async function startHealthServer({ port }) {
 }
 
 async function writeRuntimeCliSnapshot({ fixture, snapshotId, script }) {
+  const normalizedBody = String(script ?? '').startsWith('#!')
+    ? String(script).replace(/^#![^\n]*\n?/, '')
+    : String(script ?? '');
   await writeRuntimeSnapshotLayout({
     stackDir: join(fixture.storageDir, fixture.stackName),
     snapshotId,
@@ -44,7 +52,15 @@ async function writeRuntimeCliSnapshot({ fixture, snapshotId, script }) {
       artifactFingerprint: `srv-${snapshotId}`,
     },
     daemon: {
-      content: script,
+      content: [
+        '#!/bin/sh',
+        'set -eu',
+        normalizedBody,
+        'if [ -n "${HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH-}" ]; then',
+        '  mkdir -p "$(dirname "$HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH")"',
+        '  printf "%s\\n" "${HAPPIER_TEST_AUTH_SUCCESS_TOKEN-test-token}" > "$HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH"',
+        'fi',
+      ].join('\n'),
       artifactFingerprint: `cli-${snapshotId}`,
       nodeEntrypoint: 'cli/package-dist/index.mjs',
       nodeContent: 'export {};\n',
@@ -64,7 +80,7 @@ async function writeCredential(path, token) {
   );
 }
 
-test('hstack stack auth login --force clears stale stack credential aliases before invoking core login', async () => {
+test('hstack stack auth login --force clears stale stack credential aliases while preserving the active credential slot', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);
   const stackName = 'dev';
   let server = null;
@@ -163,6 +179,8 @@ PY
           TEST_LEGACY_PATH: paths.legacyPath,
           TEST_UNRELATED_CREDENTIAL_PATH: unrelatedCredentialPath,
           TEST_CAPTURE_PATH: capturePath,
+          HAPPIER_TEST_AUTH_SUCCESS_CREDENTIAL_PATH: paths.serverScopedPath,
+          HAPPIER_TEST_AUTH_SUCCESS_TOKEN: 'token-fresh',
         },
       },
     );
@@ -174,7 +192,7 @@ PY
     );
     const observed = JSON.parse(await readFile(capturePath, 'utf-8'));
     assert.deepEqual(observed, {
-      serverScopedPath: false,
+      serverScopedPath: true,
       stableAliasPath: false,
       urlHashServerScopedPath: false,
       hostPortServerScopedPath: false,

@@ -8,20 +8,22 @@ type Deps = Readonly<{
 }>;
 
 /**
- * Machine/daemon RPC handlers (filesystem + SCM) need a stable working directory root.
+ * Machine/daemon RPC handlers need a stable default directory for relative paths.
  *
- * We default to the user's home directory so multi-repo workflows work even when the daemon
- * is started from an arbitrary cwd.
- *
- * Override via `HAPPIER_MACHINE_RPC_WORKING_DIRECTORY` for tighter or custom scoping.
+ * Filesystem authorization is resolved separately by the filesystem access policy. Do not use
+ * `HAPPIER_MACHINE_RPC_WORKING_DIRECTORY` here; that env var is an explicit restriction policy,
+ * not the default relative-path base.
  */
 export function resolveMachineRpcWorkingDirectory(overrides?: Partial<Deps>): string {
   const env = overrides?.env ?? process.env;
-  const homedir = overrides?.homedir ?? osHomedir;
   const cwd = overrides?.cwd ?? process.cwd;
+  const fallbackHomedir = overrides?.homedir ?? osHomedir;
 
-  const explicit = String(env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY ?? '').trim();
-  const candidates = [explicit || null, homedir(), cwd()];
+  const envHomeRaw = process.platform === 'win32'
+    ? (env.USERPROFILE || env.HOME)
+    : env.HOME;
+  const envHomeDir = typeof envHomeRaw === 'string' ? envHomeRaw.trim() : '';
+  const candidates = [envHomeDir || fallbackHomedir(), cwd()];
 
   for (const candidate of candidates) {
     if (!candidate) continue;

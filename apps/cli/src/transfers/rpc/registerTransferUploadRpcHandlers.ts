@@ -6,6 +6,7 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { TransferSessionStore } from '../core/transferSessionStore';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { TransferPathAllowanceRegistry } from '../targets/createTransferPathAllowanceRegistry';
 import {
   resolveTransferUploadInitTarget,
@@ -26,6 +27,7 @@ export function registerTransferUploadRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
     workingDirectory: string;
+    accessPolicy?: FilesystemAccessPolicy;
     store: TransferSessionStore;
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
     sessionRpcTransferMaxBytes?: number | null;
@@ -63,6 +65,7 @@ export function registerTransferUploadRpcHandlers(
 
       const resolved = await resolveTransferUploadInitTarget({
         workingDirectory: deps.workingDirectory,
+        accessPolicy: deps.accessPolicy,
         request: uploadRequest,
         tempUploadRoot,
         additionalAllowedWriteDirs: deps.getAdditionalAllowedWriteDirs?.(),

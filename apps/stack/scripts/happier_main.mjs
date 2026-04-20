@@ -12,9 +12,10 @@ import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_ser
 import { resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { applyStackActiveServerScopeEnv, buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { resolvePreferredStackServerIdFromCliSettings } from './utils/auth/credentials_paths.mjs';
-import { readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
+import { readCliDistIntegrity, resolveCliDistEntrypointFromBin } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { ensureStackDaemonPreflight, requiresStackDaemonPreflight } from './stack/stack_happier_daemon_preflight.mjs';
 import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers/managedJavaScriptRuntime';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
@@ -256,10 +257,10 @@ function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, 
 }
 
 function resolveCliEntrypoint(cliDir) {
-  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-  const distIntegrity = readCliDistIntegrity(distEntrypoint);
-  if (distIntegrity.ok) {
-    return { kind: 'dist', nodeArgs: [distEntrypoint], distEntrypoint };
+  const packagedEntrypoint = resolveCliDistEntrypointFromBin(join(cliDir, 'bin', 'happier.mjs'));
+  const packagedIntegrity = readCliDistIntegrity(packagedEntrypoint);
+  if (packagedIntegrity.ok) {
+    return { kind: 'dist', nodeArgs: [packagedEntrypoint], distEntrypoint: packagedEntrypoint };
   }
 
   const srcEntrypoint = join(cliDir, 'src', 'index.ts');
@@ -275,7 +276,7 @@ function resolveCliEntrypoint(cliDir) {
     return {
       kind: 'tsx',
       nodeArgs: ['--import', tsxLoaderPath, srcEntrypoint],
-      distEntrypoint,
+      distEntrypoint: packagedEntrypoint,
       tsconfigPath: join(cliDir, 'tsconfig.json'),
     };
   } catch {
@@ -331,8 +332,8 @@ async function main() {
     return;
   }
   if (!resolvedCli) {
-    const expectedDistEntrypoint = join(cliDir, 'dist', 'index.mjs');
-    console.error(`[happier] missing CLI build at: ${expectedDistEntrypoint}`);
+    const expectedPackagedEntrypoint = resolveCliDistEntrypointFromBin(join(cliDir, 'bin', 'happier.mjs'));
+    console.error(`[happier] missing CLI build at: ${expectedPackagedEntrypoint}`);
     console.error('Run: hstack bootstrap');
     process.exit(1);
   }
@@ -450,6 +451,16 @@ async function main() {
   }
 
   const forwardedArgv = stripHstackHappierWrapperFlags(argv);
+  if (isStackScopedInvocation && requiresStackDaemonPreflight(forwardedArgv)) {
+    const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
+    await ensureStackDaemonPreflight({
+      rootDir,
+      stackName,
+      env: process.env,
+      argv,
+      cliIdentity,
+    });
+  }
   const res =
     resolvedCli.kind === 'runtime'
       ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...forwardedArgv], {

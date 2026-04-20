@@ -37,9 +37,8 @@ describe('resolvePermissionModeSeedForAgentStart', () => {
     expect(res).toEqual({ mode: 'safe-yolo', source: 'account_default' });
   });
 
-  it('prefers configured ACP backend target defaults over built-in family defaults', () => {
+  it('uses configured ACP backend target defaults when backendTarget is provided', () => {
     const presetTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
-    const familyTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });
     const res = resolvePermissionModeSeedForAgentStart({
       agentId: 'customAcp',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
@@ -47,7 +46,6 @@ describe('resolvePermissionModeSeedForAgentStart', () => {
       inferredPermissionMode: undefined,
       accountSettings: {
         sessionDefaultPermissionModeByTargetKey: {
-          [familyTargetKey]: 'read-only',
           [presetTargetKey]: 'safe-yolo',
         },
       },

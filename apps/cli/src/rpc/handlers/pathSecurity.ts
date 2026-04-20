@@ -1,6 +1,9 @@
 import { realpathSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 
+import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
+
 export interface PathValidationResult {
     valid: boolean;
     error?: string;
@@ -65,7 +68,17 @@ export function validatePath(
     targetPath: string,
     workingDirectory: string,
     additionalAllowedDirs?: ReadonlyArray<string>,
+    accessPolicy?: FilesystemAccessPolicy,
 ): PathValidationResult {
+    if (accessPolicy) {
+        return authorizeFilesystemPath({
+            targetPath,
+            defaultDirectory: workingDirectory,
+            accessPolicy,
+            additionalAllowedDirs,
+        });
+    }
+
     if (!workingDirectory || typeof workingDirectory !== 'string') {
         return { valid: false, error: 'Access denied: Invalid working directory' };
     }

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
+import { isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 
 export function createLoopbackReadinessProbe(params: Readonly<{
@@ -38,7 +39,7 @@ export function createLoopbackReadinessProbe(params: Readonly<{
         },
       });
 
-      if (authResponse.status === 401 || authResponse.status === 403) {
+      if (isAuthenticationStatus(authResponse.status)) {
         return {
           status: 'auth_failed',
           statusCode: authResponse.status,

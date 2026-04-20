@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest } from 'node:http';
+import { mkdtemp, chmod, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -8,18 +11,21 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { Metadata } from '@/api/types';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 import { reloadConfiguration } from '@/configuration';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer';
+import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 
 const env = process.env;
 
-function createStaticBackend(responseText: string): AgentBackend {
+function createStaticBackend(responseText: string): AgentBackend & ExecutionRunHostRuntime {
   const handlers = new Set<(msg: any) => void>();
   let fullText = '';
 
-  return {
+  const backend: AgentBackend = {
     async startSession() {
       return { sessionId: 'child_sess_1' };
     },
@@ -35,6 +41,7 @@ function createStaticBackend(responseText: string): AgentBackend {
       handlers.clear();
     },
   };
+  return Object.assign({}, backend, createExecutionRunHostRuntimeFromAgentBackend(backend));
 }
 
 function parseMcpJsonText(result: any): any {
@@ -51,6 +58,31 @@ function isTextResourceContentEntry(
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
   const record = entry as Record<string, unknown>;
   return typeof record.uri === 'string' && typeof record.text === 'string';
+}
+
+async function createFakeCodeRabbitReviewCommand(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-cmd-'));
+  const scriptPath = join(dir, 'coderabbit-fake.mjs');
+  await writeFile(
+    scriptPath,
+    [
+      '#!/usr/bin/env node',
+      "process.stdout.write([",
+      "  'File: src/foo.ts',",
+      "  'Line: 10 to 12',",
+      "  'Type: Bug',",
+      "  'Comment:',",
+      "  'Null deref risk when value is missing.',",
+      "  '',",
+      "  'Prompt for AI Agent:',",
+      "  'Add a guard and unit test.',",
+      "  '============================================================================',",
+      "].join('\\n'));",
+    ].join('\n'),
+    'utf8',
+  );
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
 }
 
 async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 3_000): Promise<T> {
@@ -164,6 +196,24 @@ describe('startHappyServer (MCP integration)', () => {
   });
 
   it('exposes execution_run_* tools and can start/get/action a review run over HTTP transport', async () => {
+    const prevReviewLimit = process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
+    const prevReviewCmd = process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
+    const remote = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-remote-'));
+    const workspace = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-workspace-'));
+    runGit(remote, ['init', '--bare', '--initial-branch=main']);
+    runGit(workspace, ['init', '--initial-branch=main']);
+    await writeFile(join(workspace, 'a.txt'), 'base\n', 'utf8');
+    runGit(workspace, ['config', 'user.email', 'test@example.com']);
+    runGit(workspace, ['config', 'user.name', 'Test User']);
+    runGit(workspace, ['add', 'a.txt']);
+    runGit(workspace, ['commit', '-m', 'base']);
+    runGit(workspace, ['remote', 'add', 'origin', remote]);
+    runGit(workspace, ['push', '-u', 'origin', 'main']);
+    await writeFile(join(workspace, 'a.txt'), 'base\nfeature\n', 'utf8');
+    runGit(workspace, ['add', 'a.txt']);
+    runGit(workspace, ['commit', '-m', 'feature']);
+    process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = '5000';
+    process.env.HAPPIER_CODERABBIT_REVIEW_CMD = await createFakeCodeRabbitReviewCommand();
     const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
 
     const rpcHandlerManager = new RpcHandlerManager({
@@ -239,11 +289,12 @@ describe('startHappyServer (MCP integration)', () => {
       const startedRaw = await client.callTool({
         name: 'execution_run_start',
         arguments: {
+          sessionId: fakeClient.sessionId,
           intent: 'review',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           instructions: 'Review.',
           permissionMode: 'read_only',
-          retentionPolicy: 'ephemeral',
+          retentionPolicy: 'resumable',
           runClass: 'bounded',
           ioMode: 'request_response',
         },
@@ -251,26 +302,28 @@ describe('startHappyServer (MCP integration)', () => {
       const started = parseMcpJsonText(startedRaw);
       expect(String(started.runId)).toMatch(/^run_/);
 
+      const startedRunId = started.runId;
+
       const gotNoStructuredRaw = await client.callTool({
         name: 'execution_run_get',
-        arguments: { runId: started.runId },
+        arguments: { runId: startedRunId },
       });
       const gotNoStructured = parseMcpJsonText(gotNoStructuredRaw);
-      expect(gotNoStructured.run?.runId).toBe(started.runId);
+      expect(gotNoStructured.run?.runId).toBe(startedRunId);
       expect(gotNoStructured.structuredMeta).toBeUndefined();
 
       const gotStructuredRaw = await client.callTool({
         name: 'execution_run_get',
-        arguments: { runId: started.runId, includeStructured: true },
+        arguments: { runId: startedRunId, includeStructured: true },
       });
       const gotStructured = parseMcpJsonText(gotStructuredRaw);
       expect(gotStructured.structuredMeta?.kind).toBe('review_findings.v2');
-      expect(gotStructured.structuredMeta?.payload?.runRef?.runId).toBe(started.runId);
+      expect(gotStructured.structuredMeta?.payload?.runRef?.runId).toBe(startedRunId);
 
       const actionRaw = await client.callTool({
         name: 'execution_run_action',
         arguments: {
-          runId: started.runId,
+          runId: startedRunId,
           actionId: 'review.triage',
           input: { findings: [{ id: 'f1', status: 'accept' }] },
         },
@@ -284,6 +337,10 @@ describe('startHappyServer (MCP integration)', () => {
     } finally {
       await (client as any)?.close?.();
       server.stop();
+      if (prevReviewLimit === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
+      else process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = prevReviewLimit;
+      if (prevReviewCmd === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
+      else process.env.HAPPIER_CODERABBIT_REVIEW_CMD = prevReviewCmd;
     }
   });
 
@@ -365,11 +422,12 @@ describe('startHappyServer (MCP integration)', () => {
       const resultRaw = await client.callTool({
         name: 'execution_run_start',
         arguments: {
+          sessionId: fakeClient.sessionId,
           intent: 'review',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           instructions: 'Review.',
           permissionMode: 'read_only',
-          retentionPolicy: 'ephemeral',
+          retentionPolicy: 'resumable',
           runClass: 'bounded',
           ioMode: 'request_response',
         },

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApiSessionClient } from './session/sessionClient';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
 import { createMockSession } from '@/testkit/backends/sessionFixtures';
+import { HttpStatusError } from './client/httpStatusError';
 import {
     bindApiSessionSocketPairMock,
     createApiSessionSocketStub,
@@ -19,13 +20,21 @@ vi.mock('socket.io-client', () => ({
 
 describe('ApiSessionClient pending queue materialization', () => {
     let mockSession: any;
+    let previousEnableV2Changes: string | undefined;
 
     beforeEach(() => {
+        previousEnableV2Changes = process.env.HAPPY_ENABLE_V2_CHANGES;
+        process.env.HAPPY_ENABLE_V2_CHANGES = 'false';
         mockSession = createMockSession();
         mockIo.mockReset();
     });
 
     afterEach(() => {
+        if (typeof previousEnableV2Changes === 'string') {
+            process.env.HAPPY_ENABLE_V2_CHANGES = previousEnableV2Changes;
+        } else {
+            delete process.env.HAPPY_ENABLE_V2_CHANGES;
+        }
         vi.restoreAllMocks();
     });
 
@@ -43,7 +52,7 @@ describe('ApiSessionClient pending queue materialization', () => {
 
         bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
 
-        const client = new ApiSessionClient('fake-token', { ...mockSession, metadata: {} });
+        const client = new ApiSessionClient('fake-token', mockSession);
         const popped = await client.popPendingMessage();
 
         expect(popped).toBe(true);
@@ -64,7 +73,7 @@ describe('ApiSessionClient pending queue materialization', () => {
 
         bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
 
-        const client = new ApiSessionClient('fake-token', { ...mockSession, metadata: {} });
+        const client = new ApiSessionClient('fake-token', mockSession);
         const onUserMessage = vi.fn();
         client.onUserMessage(onUserMessage);
 
@@ -119,7 +128,7 @@ describe('ApiSessionClient pending queue materialization', () => {
         const axios = axiosMod.default as any;
         const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({ data: { ok: true, didMaterialize: false } });
 
-        const client = new ApiSessionClient('fake-token', { ...mockSession, metadata: {} });
+        const client = new ApiSessionClient('fake-token', mockSession);
         const popped = await client.popPendingMessage();
 
         expect(popped).toBe(false);
@@ -144,7 +153,7 @@ describe('ApiSessionClient pending queue materialization', () => {
         const axios = axiosMod.default as any;
         const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({ data: { ok: true, didMaterialize: false } });
 
-        const client = new ApiSessionClient('fake-token', { ...mockSession, metadata: {} });
+        const client = new ApiSessionClient('fake-token', mockSession);
         const popped = await client.popPendingMessage();
 
         expect(popped).toBe(false);
@@ -159,13 +168,127 @@ describe('ApiSessionClient pending queue materialization', () => {
         });
     });
 
+    it('popPendingMessage rethrows terminal auth failures from the HTTP fallback instead of collapsing them to false', async () => {
+        const sessionSocket = createApiSessionSocketStub({
+            connected: true,
+            emitWithAck: async () => {
+                throw new Error('timeout');
+            },
+        });
+        const userSocket = createApiSessionSocketStub();
+
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
+
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        vi.spyOn(axios, 'post').mockRejectedValueOnce(new HttpStatusError(401, 'Authentication failed'));
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        await expect(client.popPendingMessage()).rejects.toMatchObject({
+            name: 'HttpStatusError',
+            response: { status: 401 },
+        });
+    });
+
+    it('reports terminal auth failures from socket pending materialization into the session supervisor state', async () => {
+        const sessionSocket = createApiSessionSocketStub({
+            connected: true,
+            emitWithAck: async () => {
+                throw new HttpStatusError(401, 'Authentication failed');
+            },
+        });
+        const userSocket = createApiSessionSocketStub();
+
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
+
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({ data: { ok: true, didMaterialize: false } });
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        await vi.waitFor(() => {
+            expect((client as any).currentConnectionState.phase).toBe('online');
+        });
+
+        await expect(client.popPendingMessage()).rejects.toMatchObject({
+            name: 'HttpStatusError',
+            response: { status: 401 },
+        });
+        expect(postSpy).not.toHaveBeenCalled();
+
+        await vi.waitFor(() => {
+            expect((client as any).currentConnectionState.phase).toBe('auth_failed');
+        });
+    });
+
+    it('reports retryable HTTP materialization failures into the session supervisor state', async () => {
+        const sessionSocket = createApiSessionSocketStub({
+            connected: true,
+            emitWithAck: async () => {
+                throw new Error('timeout');
+            },
+        });
+        const userSocket = createApiSessionSocketStub();
+
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
+
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        vi.spyOn(axios, 'post').mockRejectedValueOnce(new HttpStatusError(503, 'Server busy'));
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        await vi.waitFor(() => {
+            expect((client as any).currentConnectionState.phase).toBe('online');
+        });
+
+        await expect(client.popPendingMessage()).resolves.toBe(false);
+
+        await vi.waitFor(() => {
+            expect((client as any).currentConnectionState).toMatchObject({
+                phase: 'offline',
+                reason: 'probe_failed',
+                lastErrorMessage: 'Server busy',
+            });
+        });
+    });
+
+    it('popPendingMessage fails fast when the session supervisor is already auth_failed', async () => {
+        const sessionSocket = createApiSessionSocketStub({ connected: false });
+        const userSocket = createApiSessionSocketStub();
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
+
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const postSpy = vi.spyOn(axios, 'post');
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        const supervisor = (client as any).sessionConnectionSupervisor;
+        const probeScope = supervisor?.captureProbeReportScope?.();
+        supervisor?.reportProbeResult?.({
+            status: 'auth_failed',
+            statusCode: 401,
+            errorMessage: 'expired token',
+        }, probeScope);
+
+        await vi.waitFor(() => {
+            expect((client as any).currentConnectionState.phase).toBe('auth_failed');
+        });
+
+        await expect(client.popPendingMessage()).rejects.toMatchObject({
+            name: 'HttpStatusError',
+            response: { status: 401 },
+        });
+        expect(postSpy).not.toHaveBeenCalled();
+    });
+
     it('waitForMetadataUpdate resolves when pending-changed update arrives', async () => {
         const sessionSocket = createApiSessionSocketStub({ connected: true });
         const userSocket = createApiSessionSocketStub();
 
         bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
 
-        const client = new ApiSessionClient('fake-token', { ...mockSession, metadata: {} });
+        const client = new ApiSessionClient('fake-token', mockSession);
         const waitPromise = client.waitForMetadataUpdate();
 
         const updateHandler = userSocket.getHandler('update');

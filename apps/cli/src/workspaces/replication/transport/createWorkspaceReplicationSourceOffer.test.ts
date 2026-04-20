@@ -17,7 +17,7 @@ describe('createWorkspaceReplicationSourceOffer', () => {
       } = await import('../cas/workspaceReplicationCasStore');
       const {
         createWorkspaceReplicationBlobPackPayloadSource,
-      } = await import('./createWorkspaceReplicationBlobPackPayloadSource');
+      } = await import('./blobPackPayloadSource');
       const {
         createWorkspaceReplicationSourceOfferFromManifest,
       } = await import('./createWorkspaceReplicationSourceOffer');

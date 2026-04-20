@@ -1,18 +1,18 @@
 import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
-  AgentRuntimeDescriptorV1Schema,
+  RuntimeDescriptorV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
-  normalizeBackendTargetRefV2InputToV2,
-  BackendTargetRefV2Schema,
+  type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 
 import { PERMISSION_MODES } from '@/api/types';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
-import { resolveCanonicalCodexBackendMode } from './registerSessionHandlers';
+import { normalizeDaemonBackendTargetV2Input } from '@/daemon/backendTargetRouting';
 
 import type { SpawnSessionOptions } from './registerSessionHandlers';
+import { readCanonicalSpawnRuntimeSelectionFromCompatIngress } from './spawnRuntimeSelection';
 
 function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
   if (values.length === 0) {
@@ -22,26 +22,16 @@ function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T
 }
 
 export const SpawnSessionPermissionModeSchema = z.enum(asNonEmptyStringTuple(PERMISSION_MODES));
-const RESOLVABLE_BUILT_IN_AGENT_IDS = (CATALOG_AGENT_IDS as readonly CatalogAgentId[]).filter(
-  (agentId): agentId is CatalogAgentId => agentId !== 'customAcp',
-);
+const RESOLVABLE_BUILT_IN_AGENT_IDS = CATALOG_AGENT_IDS as readonly CatalogAgentId[];
 function parseSpawnBackendTargetCandidate(value: unknown): CanonicalSpawnBackendTarget | null {
-  try {
-    const normalizedValue = normalizeBackendTargetRefV2InputToV2(value);
-    const parsedBackendTarget = BackendTargetRefV2Schema.safeParse(normalizedValue);
-    if (!parsedBackendTarget.success) {
-      return null;
-    }
-
-    const backendTarget = parsedBackendTarget.data;
-    if (!isSupportedSpawnBackendTarget(backendTarget)) {
-      return null;
-    }
-
-    return backendTarget;
-  } catch {
+  const backendTarget = normalizeDaemonBackendTargetV2Input(value);
+  if (!backendTarget) {
     return null;
   }
+  if (!isSupportedSpawnBackendTarget(backendTarget)) {
+    return null;
+  }
+  return backendTarget;
 }
 
 function isSupportedSpawnBackendTarget(backendTarget: CanonicalSpawnBackendTarget): boolean {
@@ -60,7 +50,14 @@ function isKnownCatalogAgentId(value: string): value is CatalogAgentId {
   return (RESOLVABLE_BUILT_IN_AGENT_IDS as readonly string[]).includes(value);
 }
 
-type CanonicalSpawnBackendTarget = z.infer<typeof BackendTargetRefV2Schema>;
+type CanonicalSpawnBackendTarget = BackendTargetRefV2;
+
+export type SpawnDaemonSessionRequest = Omit<
+  SpawnSessionOptions,
+  'experimentalCodexAcp' | 'backendTarget'
+> & {
+  backendTarget?: BackendTargetRefV2;
+};
 
 export function canonicalizeSpawnBackendTargetFromTransportInput(params: Readonly<{
   backendTarget?: unknown;
@@ -99,8 +96,29 @@ export const SpawnSessionTerminalSchema = z.object({
   }).optional(),
 });
 
-const SpawnDaemonSessionRequestCompatSchema = z.object({
+function canonicalizeSpawnDaemonSessionRequestIngress(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const request = value as Record<string, unknown>;
+  const { runtimeDescriptorV1 } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+    runtimeDescriptorV1: request.runtimeDescriptorV1,
+    legacyAgentRuntimeDescriptorV1: request.agentRuntimeDescriptorV1,
+  });
+  const { agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1, ...rest } = request;
+
+  return runtimeDescriptorV1
+    ? {
+      ...rest,
+      runtimeDescriptorV1,
+    }
+    : rest;
+}
+
+const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaemonSessionRequestIngress, z.object({
   directory: z.string(),
+  approvedNewDirectoryCreation: z.boolean().optional(),
   machineId: z.string().trim().min(1).optional(),
   spawnNonce: z.string().trim().min(1).optional(),
   initialPrompt: z.string().optional(),
@@ -110,7 +128,7 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
   resume: z.string().trim().min(1).optional(),
   experimentalCodexAcp: z.boolean().optional(),
   codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
-  agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
   permissionMode: SpawnSessionPermissionModeSchema.optional(),
   permissionModeUpdatedAt: z.number().int().optional(),
   agentModeId: z.string().trim().min(1).optional(),
@@ -128,13 +146,14 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
   connectedServices: z.unknown().optional(),
   mcpSelection: SessionMcpSelectionV1Schema.optional(),
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
-});
+}));
 
-export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSchema.transform((request) => {
+export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSchema.transform((request, ctx) => {
   const {
     experimentalCodexAcp: _experimentalCodexAcp,
     codexBackendMode,
     agent,
+    approvedNewDirectoryCreation,
     ...rest
   } = request;
   const canonicalBackendTarget = rest.backendTarget !== undefined
@@ -146,37 +165,30 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
     }).backendTarget;
   const hasBackendTargetInput = rest.backendTarget !== undefined || Boolean(typeof agent === 'string' && agent.trim().length > 0);
   if (hasBackendTargetInput && !canonicalBackendTarget) {
-    throw new z.ZodError([
-      {
-        code: 'custom',
-        message: 'Unknown backend target',
-        path: ['backendTarget'],
-      },
-    ]);
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Unknown backend target',
+      path: ['backendTarget'],
+    });
+    return z.NEVER;
   }
-  if (canonicalBackendTarget && !isSupportedSpawnBackendTarget(canonicalBackendTarget)) {
-    throw new z.ZodError([
-      {
-        code: 'custom',
-        message: 'Unknown backend target',
-        path: ['backendTarget'],
-      },
-    ]);
-  }
-  const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+  const {
+    codexBackendMode: canonicalCodexBackendMode,
+    runtimeDescriptorV1,
+  } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
     codexBackendMode,
     experimentalCodexAcp: _experimentalCodexAcp,
-    agentRuntimeDescriptorV1: request.agentRuntimeDescriptorV1,
+    runtimeDescriptorV1: request.runtimeDescriptorV1,
   });
 
   return {
     ...rest,
+    ...(approvedNewDirectoryCreation !== undefined ? { approvedNewDirectoryCreation } : {}),
     ...(canonicalBackendTarget ? { backendTarget: canonicalBackendTarget } : {}),
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
   };
-});
-
-export type SpawnDaemonSessionRequest = z.infer<typeof SpawnDaemonSessionRequestSchema>;
+}) as z.ZodType<SpawnDaemonSessionRequest>;
 
 const SPAWN_SESSION_OPTION_KEYS = [
   'machineId',
@@ -186,7 +198,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'sessionId',
   'resume',
   'codexBackendMode',
-  'agentRuntimeDescriptorV1',
+  'runtimeDescriptorV1',
   'existingSessionId',
   'attachMetadataIdentityPolicy',
   'permissionMode',

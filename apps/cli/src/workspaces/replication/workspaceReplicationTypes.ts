@@ -31,7 +31,7 @@ type CreateWorkspaceReplicationSourceOffer =
 type ScanWorkspaceManifestIntoCas = typeof import('./scan/scanWorkspaceManifestIntoCas').scanWorkspaceManifestIntoCas;
 
 type ExecuteWorkspaceReplicationJobWithLocalRuntime =
-    typeof import('./orchestration/executeWorkspaceReplicationJobWithLocalRuntime').executeWorkspaceReplicationJobWithLocalRuntime;
+    typeof import('./orchestration/jobExecution/localRuntime').executeWorkspaceReplicationJobWithLocalRuntime;
 
 type CreateWorkspaceReplicationSourceOfferStore =
     typeof import('./transport/workspaceReplicationSourceOfferStore').createWorkspaceReplicationSourceOfferStore;

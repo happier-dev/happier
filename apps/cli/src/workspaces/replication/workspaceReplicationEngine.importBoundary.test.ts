@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const ENGINE_SURFACE_FILES = [
-    './createWorkspaceReplicationEngine.ts',
+    './engine.ts',
     './workspaceReplicationEngine.ts',
     './workspaceReplicationTypes.ts',
     './workspaceReplicationError.ts',

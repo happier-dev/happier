@@ -95,6 +95,29 @@ describe('feature decision engine', () => {
     expect(out.blockerCode).toBe('dependency_unknown');
   });
 
+  it('disables voice.daemonInference when voice.agent is disabled', () => {
+    const base = enabled('voice.daemonInference');
+    const out = applyFeatureDependencies({
+      featureId: 'voice.daemonInference',
+      baseDecision: base,
+      resolveDependencyDecision: (dep) => {
+        if (dep === 'voice.agent') {
+          return {
+            ...enabled('voice.agent'),
+            state: 'disabled',
+            blockedBy: 'local_policy',
+            blockerCode: 'flag_disabled',
+          };
+        }
+        return enabled(dep);
+      },
+    });
+
+    expect(out.state).toBe('disabled');
+    expect(out.blockedBy).toBe('dependency');
+    expect(out.blockerCode).toBe('dependency_disabled');
+  });
+
   it('keeps base decision when feature is already disabled', () => {
     const base = evaluateFeatureDecisionBase({
       featureId: 'voice.agent',

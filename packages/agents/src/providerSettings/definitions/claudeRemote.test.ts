@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildClaudeRemoteOutgoingMessageMetaExtras,
-  CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
-} from './claudeRemote.js';
+} from '../../runtime/messageMeta/claudeRemote.js';
+import { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS } from './claudeRemote.js';
+import { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION } from './claudeRemote.js';
 
 describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
   it('uses canonical provider defaults when the persisted settings object omits fields', () => {
@@ -53,5 +54,15 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
     expect(extras.claudeRemoteVerboseEnabled).toBe(true);
     // Normalized, stable order, invalid dropped.
     expect(extras.claudeRemoteDebugCategories).toEqual(['api', 'mcp', 'file']);
+  });
+});
+
+describe('CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION', () => {
+  it('stays descriptor-only and does not carry outgoing message-meta shaping', () => {
+    expect(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION).toMatchObject({
+      providerId: 'claude',
+      fields: expect.any(Object),
+    });
+    expect('buildOutgoingMessageMetaExtras' in CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION).toBe(false);
   });
 });

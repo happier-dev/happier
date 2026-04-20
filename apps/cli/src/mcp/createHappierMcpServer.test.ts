@@ -342,17 +342,23 @@ describe('createHappierMcpServer', () => {
     expect(updateMetadata).toHaveBeenCalledTimes(1);
   });
 
-  it('routes execution_run_start through the action executor (so approvals/enablement apply)', async () => {
-    const execute = vi.fn(async () => ({ ok: true, result: { ok: true } }));
-    const captured: { deps?: any } = {};
-
-    vi.doMock('@/session/actions/createCliActionExecutorHarness', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/session/actions/createCliActionExecutorHarness')>();
-      return {
-        ...actual,
-        createCliActionExecutorHarness: () => ({ executor: { execute } }),
-      };
+  it('routes execution_run_start through the shared action executor path', async () => {
+    const invokeLocal = vi.fn(async (method: string, params: unknown) => {
+      if (method === 'execution.run.start' || method === 'execution.run.send') {
+        return {
+          runId: 'run_1',
+          callId: 'call_1',
+          sidechainId: 'side_1',
+          request: params,
+        };
+      }
+      return {};
     });
+    const captured: { deps?: any } = {};
+    const executorExecute = vi.fn(async (actionId: string, input: unknown, ctx: unknown) => ({
+      ok: true,
+      result: { actionId, input, ctx },
+    }));
 
     vi.doMock('@/mcp/server/registerHappierMcpBuiltInTools', async (importOriginal) => {
       const actual = await importOriginal<typeof import('@/mcp/server/registerHappierMcpBuiltInTools')>();
@@ -364,12 +370,19 @@ describe('createHappierMcpServer', () => {
         },
       };
     });
+    vi.doMock('@/session/actions/createCliActionExecutorHarness', () => ({
+      createCliActionExecutorHarness: () => ({
+        executor: {
+          execute: executorExecute,
+        },
+      }),
+    }));
 
     const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
     createHappierMcpServer(
       {
         sessionId: 'sess_execution_run_start_1',
-        rpcHandlerManager: { invokeLocal: async () => ({}) },
+        rpcHandlerManager: { invokeLocal },
         sendClaudeSessionMessage: () => {},
         updateMetadata: () => {},
       } as any,
@@ -377,11 +390,26 @@ describe('createHappierMcpServer', () => {
     );
 
     expect(captured.deps).toBeDefined();
-    await captured.deps.startExecutionRun('sess_execution_run_start_1', { intent: 'plan' });
-    expect(execute).toHaveBeenCalledWith(
-      'execution.run.start',
-      { intent: 'plan' },
-      { surface: 'session_agent', defaultSessionId: 'sess_execution_run_start_1' },
-    );
+    await captured.deps.executeActionByToolName('execution_run_start', {
+      intent: 'plan',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      instructions: 'Plan.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    expect(executorExecute).toHaveBeenCalledWith('execution.run.start', expect.objectContaining({
+      intent: 'plan',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      instructions: 'Plan.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    }), expect.objectContaining({
+      surface: 'session_agent',
+    }));
+    expect(invokeLocal).not.toHaveBeenCalled();
   });
 });

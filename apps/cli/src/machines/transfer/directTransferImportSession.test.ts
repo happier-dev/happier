@@ -6,13 +6,41 @@ import { join, resolve } from 'node:path';
 import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 
 afterEach(() => {
   // No shared state.
 });
 
 describe('direct transfer import session manager', () => {
+  it('applies the manager filesystem access policy to workspace file uploads', async () => {
+    const allowedRoot = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-allowed-'));
+    const deniedRoot = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-denied-'));
+
+    try {
+      const manager = createDirectTransferImportSessionManager({
+        ttlMs: 10_000,
+        accessPolicy: { kind: 'restrictedRoots', roots: [allowedRoot] },
+      });
+
+      const open = await manager.openTrustedImportSession({
+        workingDirectory: deniedRoot,
+        t: 'session_file_upload_v1',
+        path: 'payload.txt',
+        sizeBytes: 5,
+        overwrite: true,
+      });
+
+      expect(open).toEqual({
+        success: false,
+        error: expect.stringContaining('Access denied'),
+      });
+    } finally {
+      await rm(allowedRoot, { recursive: true, force: true }).catch(() => undefined);
+      await rm(deniedRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('resolves workspace-backed attachment uploads through the attachment target semantics instead of writing to the raw request path', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-attachment-'));
     const pathAllowanceRegistry = createTransferPathAllowanceRegistry();

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { PromptAssetDiscoverResponseV1Schema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 
 import { registerMachineRpcHandlers } from './rpcHandlers';
 
@@ -78,8 +78,6 @@ describe('rpcHandlers (prompt assets)', () => {
         'claude.command',
         'gemini.skill',
         'copilot.skill',
-        'opencode.command',
-        'opencode.skill',
       ]));
 
       const discovered = await discover({

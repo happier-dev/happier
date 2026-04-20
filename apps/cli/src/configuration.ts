@@ -5,38 +5,26 @@
  * Environment files should be loaded using Node's --env-file flag
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { chmodSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from '@/server/serverId'
-import { isLocalishServerUrl } from '@/server/serverUrlClassification'
-import { normalizeCliArgv } from '@/cli/parseArgs'
+import { normalizeCliArgv } from './cli/parseArgs'
 import {
   inferPublicReleaseRingIdFromEnvAndArgv,
-} from '@/cli/runtime/publicReleaseChannel'
-import { CANONICAL_DAEMON_STATE_BASENAME } from '@/daemon/ownership/daemonOwnershipPaths'
-import { createServerUrlComparableKey } from '@happier-dev/protocol'
+} from './cli/runtime/publicReleaseChannel'
+import { CANONICAL_DAEMON_STATE_BASENAME } from './daemon/ownership/daemonOwnershipPaths'
+import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId'
 import packageJson from '../package.json'
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
+import { resolveIntEnvWithBounds } from './configuration/resolveIntEnvWithBounds'
+import { resolveCliHappyHomeDir } from './configuration/resolveCliHappyHomeDir'
+import {
+  readActiveServerFromSettingsFile,
+  resolveServerSelection,
+} from './configuration/serverSelection'
 
-/**
- * Parse an environment variable as an integer and clamp it within optional bounds.
- *
- * - Reads `process.env[envVar]`, trims, and parses as base-10 integer.
- * - If the parsed value is finite and >= `opts.min` (default 1), it is accepted.
- * - If `opts.max` is specified, the value is clamped to that upper bound.
- * - Otherwise the `opts.default` value is returned.
- */
-function resolveIntEnvWithBounds(
-  envVar: string,
-  opts: { min?: number; max?: number; default: number },
-): number {
-  const raw = String(process.env[envVar] ?? '').trim()
-  const parsed = Number.parseInt(raw, 10)
-  const min = opts.min ?? 1
-  if (!Number.isFinite(parsed) || parsed < min) return opts.default
-  return opts.max != null ? Math.min(parsed, opts.max) : parsed
-}
+export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 100_000_000;
+export const DEFAULT_EXECUTION_RUN_WAIT_MCP_TIMEOUT_GRACE_MS = 60_000;
+const MAX_SAFE_NODE_TIMEOUT_MS = 2_147_000_000;
 
 /**
  * Workspace replication job status heartbeat interval.
@@ -128,6 +116,9 @@ class Configuration {
 
   // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
   public readonly mcpSseKeepAliveIntervalMs: number | null
+  // MCP client request timeouts for tool calls proxied by Happier-owned bridges.
+  public readonly mcpToolCallTimeoutMs: number
+  public readonly mcpExecutionRunWaitTimeoutGraceMs: number
 
   // Transcript lookup / recovery (fallback path when socket ACK/broadcast is missed).
   public readonly transcriptLookupRequestTimeoutMs: number
@@ -228,13 +219,7 @@ class Configuration {
     this.publicReleaseRing = inferPublicReleaseRingIdFromEnvAndArgv({ env: process.env, argv: process.argv })
 
     // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
-    if (process.env.HAPPIER_HOME_DIR) {
-      // Expand ~ to home directory if present
-      const expandedPath = process.env.HAPPIER_HOME_DIR.replace(/^~/, homedir())
-      this.happyHomeDir = expandedPath
-    } else {
-      this.happyHomeDir = join(homedir(), '.happier')
-    }
+    this.happyHomeDir = resolveCliHappyHomeDir(process.env)
 
     this.logsDir = join(this.happyHomeDir, 'logs')
     this.settingsFile = join(this.happyHomeDir, 'settings.json')
@@ -409,9 +394,12 @@ class Configuration {
       return out.length > 0 ? out : null;
     })();
 
+    // Default to polling-first so Socket.IO can reliably upgrade to websocket when the reverse proxy supports it.
+    // This avoids "websocket-first" failure modes where some proxies/CDNs break the upgrade path and do not cleanly
+    // fall back, which can leave machines appearing offline even though HTTP polling is functional.
     this.socketIoTransports =
       parsedSocketTransports
-      ?? (this.socketForceWebsocketOnly ? ['websocket'] : ['websocket', 'polling']);
+      ?? (this.socketForceWebsocketOnly ? ['websocket'] : ['polling', 'websocket']);
 
     // Defaults chosen to balance UI responsiveness and background traffic:
     // - thinking: ~2s so UI connecting mid-turn sees 'thinking' quickly
@@ -444,6 +432,19 @@ class Configuration {
     // Set to 0 to disable (not recommended).
     this.mcpSseKeepAliveIntervalMs =
       mcpKeepAliveRaw === '0' ? null : (Number.isFinite(mcpKeepAliveMs) && mcpKeepAliveMs >= 10 ? mcpKeepAliveMs : 15_000);
+    this.mcpToolCallTimeoutMs = resolveIntEnvWithBounds('HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS', {
+      min: 1,
+      max: MAX_SAFE_NODE_TIMEOUT_MS,
+      default: DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+    });
+    this.mcpExecutionRunWaitTimeoutGraceMs = resolveIntEnvWithBounds(
+      'HAPPIER_MCP_EXECUTION_RUN_WAIT_TIMEOUT_GRACE_MS',
+      {
+        min: 0,
+        max: MAX_SAFE_NODE_TIMEOUT_MS,
+        default: DEFAULT_EXECUTION_RUN_WAIT_MCP_TIMEOUT_GRACE_MS,
+      },
+    );
 
     const parseCsvNumberList = (raw: string, opts: { min: number; max: number }): number[] | null => {
       const value = raw.trim();
@@ -788,217 +789,6 @@ class Configuration {
       }
     }
   }
-}
-
-type PersistedServerProfile = Readonly<{
-  id: string;
-  serverUrl: string;
-  localServerUrl?: string;
-  webappUrl: string;
-}>;
-
-type PersistedServerSettings = Readonly<{
-  activeServerId: string;
-  servers: Record<string, PersistedServerProfile>;
-}>;
-
-function readActiveServerFromSettingsFile(path: string): PersistedServerSettings | null {
-  try {
-    if (!existsSync(path)) return null;
-    const raw = JSON.parse(readFileSync(path, 'utf8'));
-    if (!raw || typeof raw !== 'object') return null;
-    const schemaVersion = Number((raw as any).schemaVersion ?? 0);
-    if (!Number.isFinite(schemaVersion) || schemaVersion < 5) return null;
-    const activeServerId = sanitizeServerIdForFilesystem((raw as any).activeServerId ?? '', '');
-    const serversRaw = (raw as any).servers;
-    if (!activeServerId || !serversRaw || typeof serversRaw !== 'object') return null;
-        const servers: Record<string, PersistedServerProfile> = {};
-        const normalizeUrl = (value: unknown): string => String(value ?? '').trim().replace(/\/+$/, '');
-        for (const [id, v] of Object.entries(serversRaw as Record<string, any>)) {
-          const sid = sanitizeServerIdForFilesystem((v as any)?.id ?? id, '');
-          const serverUrlRaw = normalizeUrl((v as any)?.serverUrl);
-          const legacyPublicServerUrl = normalizeUrl((v as any)?.publicServerUrl);
-      const localServerUrlRaw = normalizeUrl((v as any)?.localServerUrl);
-      const webappUrl = normalizeUrl((v as any)?.webappUrl);
-      if (!sid || !serverUrlRaw || !webappUrl) continue;
-
-      const serverUrl =
-        legacyPublicServerUrl && legacyPublicServerUrl !== serverUrlRaw
-          ? legacyPublicServerUrl
-          : serverUrlRaw;
-
-          const localServerUrl =
-            localServerUrlRaw
-              ? localServerUrlRaw
-              : (legacyPublicServerUrl && legacyPublicServerUrl !== serverUrlRaw && isLocalishServerUrl(serverUrlRaw) ? serverUrlRaw : '');
-
-          servers[sid] = {
-            id: sid,
-            serverUrl,
-        ...(localServerUrl ? { localServerUrl } : {}),
-        webappUrl,
-      };
-    }
-    if (!servers[activeServerId]) return null;
-    return { activeServerId, servers };
-  } catch {
-    return null;
-  }
-}
-
-function deriveServerIdFromUrl(url: string): string {
-  // Deterministic, filesystem-safe id for ad-hoc server URLs (used when env overrides are set).
-  // Not cryptographic; intended only for local directory names.
-  const comparableKey = safeCreateComparableServerUrlKey(url)
-  const value = comparableKey || url
-  let h = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    h ^= value.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return `env_${(h >>> 0).toString(16)}`;
-}
-
-function normalizeServerUrl(url: string): string {
-  return String(url ?? '').trim().replace(/\/+$/, '');
-}
-
-function safeCreateComparableServerUrlKey(url: string | null | undefined): string {
-  const value = String(url ?? '').trim();
-  if (!value) return '';
-  try {
-    return createServerUrlComparableKey(value);
-  } catch {
-    return '';
-  }
-}
-
-function resolveServerSelection(params: Readonly<{
-  envServerUrl: string | null;
-  envLocalServerUrl: string | null;
-  envPublicServerUrl: string | null;
-  envWebappUrl: string | null;
-  envActiveServerId: string | null;
-  persisted: PersistedServerSettings | null;
-  serversDir: string;
-}>): Readonly<{ activeServerId: string; serverUrl: string; apiServerUrl: string; webappUrl: string }> {
-  const DEFAULT_SERVER_URL = 'https://api.happier.dev';
-  const DEFAULT_WEBAPP_URL = 'https://app.happier.dev';
-  const resolveActiveServerId = (fallbackId: string): string =>
-    sanitizeServerIdForFilesystem(params.envActiveServerId ?? fallbackId, 'cloud');
-
-  const normalizeUrl = (value: string | null): string | null => {
-    const out = normalizeServerUrl(value ?? '');
-    return out ? out : null;
-  };
-
-  // Env override semantics (compat):
-  // - If HAPPIER_PUBLIC_SERVER_URL is set: treat it as canonical serverUrl and use HAPPIER_LOCAL_SERVER_URL/HAPPIER_SERVER_URL for apiServerUrl.
-  // - Else: treat HAPPIER_SERVER_URL as canonical serverUrl (legacy), and use HAPPIER_LOCAL_SERVER_URL as apiServerUrl override if provided.
-  const envCanonicalServerUrl = normalizeUrl(params.envPublicServerUrl) ?? normalizeUrl(params.envServerUrl);
-  if (envCanonicalServerUrl) {
-    const envPublicServerUrl = normalizeUrl(params.envPublicServerUrl);
-    const envLocalServerUrl = normalizeUrl(params.envLocalServerUrl);
-    const ignoreStaleLocalOverride =
-      !envPublicServerUrl &&
-      isLocalishServerUrl(envCanonicalServerUrl) &&
-      !!envLocalServerUrl &&
-      normalizeServerUrl(envLocalServerUrl) !== normalizeServerUrl(envCanonicalServerUrl);
-    const envApiServerUrl =
-      (ignoreStaleLocalOverride ? null : envLocalServerUrl)
-      ?? (envPublicServerUrl ? normalizeUrl(params.envServerUrl) : null)
-      ?? envCanonicalServerUrl;
-
-    const persistedMatch = params.persisted
-      ? (() => {
-          const hasAccessKeyForServerId = (id: string): boolean => {
-            try {
-              return existsSync(join(params.serversDir, id, 'access.key'));
-            } catch {
-              return false;
-            }
-          };
-
-          const matchesUrl = (server: Readonly<{ serverUrl: string; localServerUrl?: string | null }>, url: string): boolean => {
-            const targetComparableKey = safeCreateComparableServerUrlKey(url);
-            const serverComparableKey = safeCreateComparableServerUrlKey(server.serverUrl);
-            if (targetComparableKey && serverComparableKey && targetComparableKey === serverComparableKey) return true;
-            if (normalizeServerUrl(server.serverUrl) === url) return true;
-            const local = normalizeServerUrl(server.localServerUrl ?? '');
-            if (local && local === url) return true;
-            const localComparableKey = safeCreateComparableServerUrlKey(server.localServerUrl ?? '');
-            return Boolean(targetComparableKey && localComparableKey && targetComparableKey === localComparableKey);
-          };
-
-          const persistedActive = params.persisted.servers[params.persisted.activeServerId] ?? null;
-          const findMatch = (url: string): Readonly<{ id: string; serverUrl: string; localServerUrl?: string | null; webappUrl: string }> | null =>
-            Object.values(params.persisted!.servers).find((s) => matchesUrl(s, url)) ?? null;
-
-          const canonicalMatch =
-            (persistedActive && matchesUrl(persistedActive, envCanonicalServerUrl) ? persistedActive : null)
-            ?? findMatch(envCanonicalServerUrl);
-
-          if (envApiServerUrl && envApiServerUrl !== envCanonicalServerUrl) {
-            const apiMatch =
-              (persistedActive && matchesUrl(persistedActive, envApiServerUrl) ? persistedActive : null)
-              ?? findMatch(envApiServerUrl);
-
-            if (canonicalMatch && apiMatch && canonicalMatch.id !== apiMatch.id) {
-              const canonicalHasAccessKey = hasAccessKeyForServerId(canonicalMatch.id);
-              const apiHasAccessKey = hasAccessKeyForServerId(apiMatch.id);
-              if (apiHasAccessKey && !canonicalHasAccessKey) return apiMatch;
-              if (canonicalHasAccessKey && !apiHasAccessKey) return canonicalMatch;
-              return canonicalMatch;
-            }
-
-            return canonicalMatch ?? apiMatch;
-          }
-
-          return canonicalMatch;
-        })()
-      : null;
-
-    let webappUrl = params.envWebappUrl;
-    if (!webappUrl) {
-      if (persistedMatch?.webappUrl) {
-        webappUrl = persistedMatch.webappUrl;
-      } else if (envCanonicalServerUrl === DEFAULT_SERVER_URL) {
-        webappUrl = DEFAULT_WEBAPP_URL;
-      } else {
-        try {
-          webappUrl = new URL(envCanonicalServerUrl).origin;
-        } catch {
-          webappUrl = DEFAULT_WEBAPP_URL;
-        }
-      }
-    }
-    const activeServerId = sanitizeServerIdForFilesystem(
-      persistedMatch?.id ?? (params.envActiveServerId ?? deriveServerIdFromUrl(envCanonicalServerUrl)),
-      'cloud',
-    );
-    return { activeServerId, serverUrl: envCanonicalServerUrl, apiServerUrl: envApiServerUrl, webappUrl };
-  }
-
-  if (params.persisted) {
-    const active = params.persisted.servers[params.persisted.activeServerId];
-    if (active) {
-      const canonical = normalizeServerUrl(active.serverUrl);
-      const apiServerUrl = normalizeServerUrl(active.localServerUrl ?? '') || canonical;
-      return {
-        activeServerId: resolveActiveServerId(active.id),
-        serverUrl: canonical,
-        apiServerUrl,
-        webappUrl: active.webappUrl,
-      };
-    }
-  }
-
-  return {
-    activeServerId: resolveActiveServerId('cloud'),
-    serverUrl: DEFAULT_SERVER_URL,
-    apiServerUrl: DEFAULT_SERVER_URL,
-    webappUrl: DEFAULT_WEBAPP_URL,
-  };
 }
 
 export let configuration: Configuration = new Configuration()

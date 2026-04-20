@@ -4,7 +4,7 @@ import {
   type PromptRegistryFetchItemRequestV1,
 } from '@happier-dev/protocol';
 
-import type { PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { type TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/resolvePromptRegistryItemDownloadSource';
 

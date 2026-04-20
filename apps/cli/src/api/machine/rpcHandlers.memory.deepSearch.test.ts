@@ -52,6 +52,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
           modelId: null,
           runtimeState: 'unavailable' as const,
           usingFallback: false,
+          lastError: null,
         }),
         getSettings: () => ({
           v: 1,
@@ -167,6 +168,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
           modelId: 'Xenova/all-MiniLM-L6-v2',
           runtimeState: 'unavailable' as const,
           usingFallback: false,
+          lastError: null,
         }),
         getSettings: () => ({
           v: 1,

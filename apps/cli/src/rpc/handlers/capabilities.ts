@@ -21,17 +21,43 @@ import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsPro
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { readCredentials } from '@/persistence';
+import { configuration } from '@/configuration';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
 import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
-import { BackendTargetRefSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { BackendTargetRefSchema, type BackendTargetRefV1, type CapabilityId } from '@happier-dev/protocol';
 import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/runtime/managedTools/invokeProviderCliInstall';
+import { primeResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { installMarketplacePlugin as installMarketplacePluginFromCatalog } from '@/extensions/marketplace/catalog';
+import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry } from '@/extensions/catalog/installed';
+import { setInstalledPluginEnabled } from '@/extensions/store/enabled';
+import { pluginReloadController } from '@/extensions/reload/singleton';
+import type { PluginReloadResult } from '@/extensions/reload/controller';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
+
+function buildCapabilityId(kind: 'cli' | 'tool' | 'dep', suffix: string): CapabilityId {
+    // `CapabilityId` is intentionally a namespaced string type (`cli.${string}` / etc). TS does not
+    // infer template-literal types for dynamic template strings, so we assert at this boundary.
+    return `${kind}.${suffix}` as CapabilityId;
+}
 
 function titleCase(value: string): string {
     if (!value) return value;
     return `${value[0].toUpperCase()}${value.slice(1)}`;
+}
+
+const CONFIGURED_ACP_CLI_CAPABILITY_ID = 'configuredAcp';
+
+function resolvePublicCliCapabilityAgentId(agentId: string): string {
+    // `customAcp` is legacy/compat only. Expose a stable capability id that does not
+    // leak the legacy sentinel into active runtime selection surfaces.
+    return agentId === 'customAcp' ? CONFIGURED_ACP_CLI_CAPABILITY_ID : agentId;
+}
+
+function resolvePublicCliCapabilityTitle(agentId: string): string {
+    if (agentId === 'customAcp') return 'Configured ACP CLI';
+    return `${titleCase(agentId)} CLI`;
 }
 
 async function resolveProbeBackendContext(params?: Record<string, unknown>): Promise<{
@@ -138,12 +164,153 @@ async function invokeProviderCliInstall(
     return { ok: true, result: { plan: result.plan, alreadyInstalled: result.alreadyInstalled, logPath: result.logPath ?? null } };
 }
 
+function mapPluginDiagnosticsToInvokeError(diagnostics: readonly { code: string; message: string }[]): Readonly<{ message: string; code?: string }> {
+    const firstDiagnostic = diagnostics[0];
+    if (!firstDiagnostic) {
+        return {
+            message: 'Plugin operation failed',
+            code: 'plugin_operation_failed',
+        };
+    }
+    return {
+        message: diagnostics.map((diagnostic) => diagnostic.message).join('\n'),
+        code: firstDiagnostic.code,
+    };
+}
+
+function resolveMarketplaceActionMethod(method: string): 'install' | 'update' | 'enable' | 'disable' | 'reload' | null {
+    if (method === 'install' || method === 'update' || method === 'enable' || method === 'disable' || method === 'reload') {
+        return method;
+    }
+    return null;
+}
+
+async function reloadPluginIfNeeded(pluginId: string, shouldReload: boolean): Promise<PluginReloadResult | null> {
+    if (!shouldReload) {
+        return null;
+    }
+    return await pluginReloadController.reload({ pluginId });
+}
+
+async function invokePluginMarketplaceAction(method: string, params?: Record<string, unknown>): Promise<CapabilitiesInvokeResponse> {
+    const action = resolveMarketplaceActionMethod(method);
+    if (!action) {
+        return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
+    }
+
+    if (action === 'reload') {
+        const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
+        const reload = await pluginReloadController.reload(pluginId ? { pluginId } : undefined);
+        const entry = pluginId
+            ? await readInstalledPluginCatalogEntry({
+                pluginId,
+                happyHomeDir: configuration.happyHomeDir,
+            })
+            : null;
+        return {
+            ok: true,
+            result: {
+                action,
+                pluginId: pluginId || null,
+                entry,
+                reload,
+            },
+        };
+    }
+
+    if (action === 'enable' || action === 'disable') {
+        const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
+        if (!pluginId) {
+            return { ok: false, error: { message: 'pluginId is required', code: 'plugin-not-found' } };
+        }
+
+        const toggled = await setInstalledPluginEnabled({
+            happyHomeDir: configuration.happyHomeDir,
+            pluginId,
+            enabled: action === 'enable',
+        });
+        if (!toggled.ok) {
+            return { ok: false, error: { message: toggled.errorMessage, code: toggled.errorCode } };
+        }
+
+        const entry = await readInstalledPluginCatalogEntry({
+            pluginId,
+            happyHomeDir: configuration.happyHomeDir,
+        });
+        const reload = await reloadPluginIfNeeded(pluginId, toggled.changed);
+        return {
+            ok: true,
+            result: {
+                action,
+                pluginId,
+                entry,
+                reload,
+            },
+        };
+    }
+
+    const sourceUrl = typeof params?.sourceUrl === 'string' ? params.sourceUrl.trim() : '';
+    const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
+    if (!sourceUrl || !pluginId) {
+        return { ok: false, error: { message: 'sourceUrl and pluginId are required', code: 'plugin_source_missing' } };
+    }
+
+    const existingEntry = await readInstalledPluginCatalogEntry({
+        pluginId,
+        happyHomeDir: configuration.happyHomeDir,
+    });
+    const existingEnabled = existingEntry?.enabled ?? true;
+    const isDryRun = params?.dryRun === true;
+    const installResult = await installMarketplacePluginFromCatalog({
+        sourceUrl,
+        pluginId,
+        happyHomeDir: configuration.happyHomeDir,
+        skipIfInstalled: action === 'install',
+        dryRun: isDryRun,
+    });
+
+    if (!installResult.ok) {
+        return { ok: false, error: mapPluginDiagnosticsToInvokeError(installResult.diagnostics) };
+    }
+
+    if (action === 'update' && existingEntry && existingEnabled === false && !isDryRun) {
+        const disableResult = await setInstalledPluginEnabled({
+            happyHomeDir: configuration.happyHomeDir,
+            pluginId,
+            enabled: false,
+        });
+        if (!disableResult.ok) {
+            return { ok: false, error: { message: disableResult.errorMessage, code: disableResult.errorCode } };
+        }
+    }
+
+    const entry = await readInstalledPluginCatalogEntry({
+        pluginId,
+        happyHomeDir: configuration.happyHomeDir,
+    });
+    const reload = await reloadPluginIfNeeded(
+        pluginId,
+        !isDryRun && (action === 'update' || !installResult.alreadyInstalled),
+    );
+    return {
+        ok: true,
+        result: {
+            action,
+            alreadyInstalled: installResult.alreadyInstalled,
+            pluginId,
+            entry,
+            reload,
+        },
+    };
+}
+
 function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capability {
+    const publicAgentId = resolvePublicCliCapabilityAgentId(agentId);
     return {
         descriptor: {
-            id: `cli.${agentId}`,
+            id: buildCapabilityId('cli', publicAgentId),
             kind: 'cli',
-            title: `${titleCase(agentId)} CLI`,
+            title: resolvePublicCliCapabilityTitle(agentId),
             methods: {
                 install: { title: 'Install' },
                 probeModels: { title: 'Probe models' },
@@ -209,6 +376,28 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
             }
             return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
         },
+    };
+}
+
+function createPluginMarketplaceCapability(): Capability {
+    return {
+        descriptor: {
+            id: 'tool.plugins',
+            kind: 'tool',
+            title: 'Plugins',
+            methods: {
+                install: { title: 'Install' },
+                update: { title: 'Update' },
+                enable: { title: 'Enable' },
+                disable: { title: 'Disable' },
+                reload: { title: 'Reload' },
+            },
+        },
+        detect: async () => {
+            const installedPlugins = await readInstalledPluginCatalog({ happyHomeDir: configuration.happyHomeDir });
+            return { installedPlugins };
+        },
+        invoke: async ({ method, params }) => invokePluginMarketplaceAction(method, params),
     };
 }
 
@@ -289,45 +478,48 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     };
 }
 
+export async function createCliCapabilitiesService(): Promise<ReturnType<typeof createCapabilitiesService>> {
+    await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }).catch(() => undefined);
+
+    const cliCapabilities = await Promise.all(
+        (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
+            if (entry.getCliCapabilityOverride) {
+                const override = await entry.getCliCapabilityOverride();
+                return augmentCliCapabilityWithProbeModels(override, entry.id);
+            }
+            return createGenericCliCapability(entry.id);
+        }),
+    );
+
+    const extraCapabilitiesNested = await Promise.all(
+        (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
+            if (!entry.getCapabilities) return [];
+            return [...(await entry.getCapabilities())];
+        }),
+    );
+    const extraCapabilities: Capability[] = extraCapabilitiesNested.flat();
+
+    return createCapabilitiesService({
+        capabilities: [
+            ...cliCapabilities,
+            ...extraCapabilities,
+            tmuxCapability,
+            windowsTerminalCapability,
+            createPluginMarketplaceCapability(),
+            executionRunsCapability,
+            systemTasksCapability,
+        ],
+        checklists,
+        buildContext: buildDetectContext,
+    });
+}
+
 export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegistrar): void {
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
 
-    const createService = async (): Promise<ReturnType<typeof createCapabilitiesService>> => {
-        const cliCapabilities = await Promise.all(
-            (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
-                if (entry.getCliCapabilityOverride) {
-                    const override = await entry.getCliCapabilityOverride();
-                    return augmentCliCapabilityWithProbeModels(override, entry.id);
-                }
-                return createGenericCliCapability(entry.id);
-            }),
-        );
-
-        const extraCapabilitiesNested = await Promise.all(
-            (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
-                if (!entry.getCapabilities) return [];
-                return [...(await entry.getCapabilities())];
-            }),
-        );
-        const extraCapabilities: Capability[] = extraCapabilitiesNested.flat();
-
-        return createCapabilitiesService({
-            capabilities: [
-                ...cliCapabilities,
-                ...extraCapabilities,
-                tmuxCapability,
-                windowsTerminalCapability,
-                executionRunsCapability,
-                systemTasksCapability,
-            ],
-            checklists,
-            buildContext: buildDetectContext,
-        });
-    };
-
     const getService = (): Promise<ReturnType<typeof createCapabilitiesService>> => {
         if (servicePromise) return servicePromise;
-        const pending = createService().catch((error) => {
+        const pending = createCliCapabilitiesService().catch((error) => {
             if (servicePromise === pending) {
                 servicePromise = null;
             }

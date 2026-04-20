@@ -5,7 +5,13 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('readDaemonState', () => {
-    const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_PUBLIC_RELEASE_CHANNEL'] as const;
+    const envKeys = [
+        'HAPPIER_HOME_DIR',
+        'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+        'HAPPIER_SERVER_URL',
+        'HAPPIER_WEBAPP_URL',
+    ] as const;
     let envScope = createEnvKeyScope(envKeys);
 
     afterEach(() => {
@@ -147,7 +153,7 @@ describe('readDaemonState', () => {
         });
     });
 
-    it('falls back to any daemon state file under servers/ when the active server daemon state path is missing', async () => {
+    it('falls back to a daemon state file under another server dir only when it matches the active server selection', async () => {
         await withTempDir('happier-cli-daemon-state-fallback-', async (homeDir) => {
             const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: number | NodeJS.Signals) => {
                 if (signal === 0 && pid === 456) return true;
@@ -157,10 +163,46 @@ describe('readDaemonState', () => {
             }) as typeof process.kill);
 
             try {
+                writeFileSync(
+                    join(homeDir, 'settings.json'),
+                    JSON.stringify(
+                        {
+                            schemaVersion: 6,
+                            onboardingCompleted: false,
+                            activeServerId: 'localhost-53288',
+                            servers: {
+                                'localhost-53288': {
+                                    id: 'localhost-53288',
+                                    name: 'Current',
+                                    serverUrl: 'http://127.0.0.1:53288',
+                                    webappUrl: 'http://127.0.0.1:53288',
+                                    createdAt: 0,
+                                    updatedAt: 0,
+                                    lastUsedAt: 0,
+                                },
+                                'stack_test__id_default': {
+                                    id: 'stack_test__id_default',
+                                    name: 'Legacy alias',
+                                    serverUrl: 'http://127.0.0.1:53288',
+                                    webappUrl: 'http://127.0.0.1:53288',
+                                    createdAt: 0,
+                                    updatedAt: 0,
+                                    lastUsedAt: 0,
+                                },
+                            },
+                        },
+                        null,
+                        2,
+                    ),
+                    'utf-8',
+                );
+
                 vi.resetModules();
                 envScope.patch({
                     HAPPIER_HOME_DIR: homeDir,
                     HAPPIER_ACTIVE_SERVER_ID: 'localhost-53288',
+                    HAPPIER_SERVER_URL: 'http://127.0.0.1:53288',
+                    HAPPIER_WEBAPP_URL: 'http://127.0.0.1:53288',
                 });
 
                 const [{ configuration }, { readDaemonState }] = await Promise.all([
@@ -220,6 +262,87 @@ describe('readDaemonState', () => {
         });
     });
 
+    it('does not fall back to a live daemon state file from a different configured server', async () => {
+        await withTempDir('happier-cli-daemon-state-cross-server-', async (homeDir) => {
+            const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: number | NodeJS.Signals) => {
+                if (signal === 0 && pid === 654) return true;
+                const error = new Error('ESRCH') as NodeJS.ErrnoException;
+                error.code = 'ESRCH';
+                throw error;
+            }) as typeof process.kill);
+
+            try {
+                writeFileSync(
+                    join(homeDir, 'settings.json'),
+                    JSON.stringify(
+                        {
+                            schemaVersion: 6,
+                            onboardingCompleted: false,
+                            activeServerId: '127.0.0.1-3005',
+                            servers: {
+                                '127.0.0.1-3005': {
+                                    id: '127.0.0.1-3005',
+                                    name: 'Current',
+                                    serverUrl: 'http://127.0.0.1:3005',
+                                    webappUrl: 'http://127.0.0.1:3005',
+                                    createdAt: 0,
+                                    updatedAt: 0,
+                                    lastUsedAt: 0,
+                                },
+                                '127.0.0.1-4325': {
+                                    id: '127.0.0.1-4325',
+                                    name: 'Other',
+                                    serverUrl: 'http://127.0.0.1:4325',
+                                    webappUrl: 'http://127.0.0.1:4325',
+                                    createdAt: 0,
+                                    updatedAt: 0,
+                                    lastUsedAt: 0,
+                                },
+                            },
+                        },
+                        null,
+                        2,
+                    ),
+                    'utf-8',
+                );
+
+                vi.resetModules();
+                envScope.patch({
+                    HAPPIER_HOME_DIR: homeDir,
+                    HAPPIER_ACTIVE_SERVER_ID: '127.0.0.1-3005',
+                    HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
+                    HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3005',
+                });
+
+                const [{ readDaemonState }] = await Promise.all([
+                    import('./persistence'),
+                ]);
+
+                const fallbackPath = join(homeDir, 'servers', '127.0.0.1-4325', 'daemon.state.json');
+                mkdirSync(dirname(fallbackPath), { recursive: true });
+                writeFileSync(
+                    fallbackPath,
+                    JSON.stringify(
+                        {
+                            pid: 654,
+                            httpPort: 5173,
+                            startedAt: Date.now(),
+                            startedWithCliVersion: '0.0.0-test',
+                            controlToken: 'token-654',
+                        },
+                        null,
+                        2,
+                    ),
+                    'utf-8',
+                );
+
+                await expect(readDaemonState()).resolves.toBeNull();
+            } finally {
+                killSpy.mockRestore();
+            }
+        });
+    });
+
     it('accepts legacy startTime fields and normalizes to startedAt', async () => {
         await withTempDir('happier-cli-daemon-state-legacy-', async (homeDir) => {
             vi.resetModules();
@@ -254,7 +377,13 @@ describe('readDaemonState', () => {
 });
 
 describe('daemon state canonicalization', () => {
-    const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_PUBLIC_RELEASE_CHANNEL'] as const;
+    const envKeys = [
+        'HAPPIER_HOME_DIR',
+        'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+        'HAPPIER_SERVER_URL',
+        'HAPPIER_WEBAPP_URL',
+    ] as const;
     let envScope = createEnvKeyScope(envKeys);
 
     afterEach(() => {

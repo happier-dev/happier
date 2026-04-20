@@ -1,8 +1,14 @@
 import { z } from 'zod';
 
 export const VoiceCapabilitiesSchema = z.object({
-  configured: z.boolean(),
-  provider: z.enum(['elevenlabs']).nullable(),
+  configured: z.preprocess(
+    (value) => (typeof value === 'boolean' ? value : undefined),
+    z.boolean().optional().default(false),
+  ),
+  provider: z.preprocess(
+    (value) => (value === 'elevenlabs' ? value : null),
+    z.enum(['elevenlabs']).nullable(),
+  ),
   /**
    * Whether the server operator/environment is attempting to enable Happier Voice.
    * This is diagnostic-only (not a feature gate); actual enablement is still represented via `features.voice.*.enabled`.

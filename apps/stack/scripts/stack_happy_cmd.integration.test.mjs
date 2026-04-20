@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
+import { killDetachedProcessGroup } from './testkit/core/spawn_daemon_like_process.mjs';
 import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
 import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
 
@@ -279,6 +280,101 @@ test('hstack stack happier <name> uses stack.runtime.json ports when env file do
   assert.equal(out.serverUrl, 'http://127.0.0.1:4777');
 });
 
+test('hstack stack happier <name> session create preflights the stack daemon before invoking the CLI command', async (t) => {
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'happier-stack-stack-happy-daemon-preflight-',
+    stackName: 'exp-test',
+    serverPort: 4999,
+    distIndexScript: `
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { killDetachedProcessGroup, spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) {
+  console.error('missing HAPPIER_HOME_DIR');
+  process.exit(2);
+}
+
+const stateDir = join(home, 'servers', 'stack_exp-test__id_default');
+const statePath = join(stateDir, 'daemon.state.json');
+const logPath = join(home, 'passthrough-daemon.log');
+const append = (line) => writeFileSync(logPath, line + '\\n', { flag: 'a' });
+
+if (args[0] === 'daemon' && args[1] === 'start') {
+  spawnDaemonLikeProcess({
+    cliHomeDir: home,
+    internalServerUrl: String(process.env.HAPPIER_SERVER_URL || ''),
+    publicServerUrl: String(process.env.HAPPIER_WEBAPP_URL || ''),
+    statePaths: [statePath],
+  });
+  append('daemon-start');
+  process.exit(0);
+}
+
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  append('daemon-stop');
+  if (existsSync(statePath)) {
+    try {
+      const pid = Number(JSON.parse(readFileSync(statePath, 'utf-8')).pid);
+      killDetachedProcessGroup(pid);
+    } catch {}
+  }
+  process.exit(0);
+}
+
+if (args[0] === 'daemon' && args[1] === 'status') {
+  append('daemon-status');
+  process.exit(0);
+}
+
+if (args[0] === 'session' && args[1] === 'create') {
+  append('session-create');
+  if (!existsSync(statePath)) {
+    console.error(JSON.stringify({ ok: false, error: 'No daemon running, no state file found' }));
+    process.exit(1);
+  }
+  console.log(JSON.stringify({ ok: true, sessionId: 'session-preflight-ok', state: JSON.parse(readFileSync(statePath, 'utf-8')) }));
+  process.exit(0);
+}
+
+console.log(JSON.stringify({ ok: true, args }));
+`,
+  });
+
+  await mkdir(fixture.stackCliHome, { recursive: true });
+  await writeFile(join(fixture.stackCliHome, 'access.key'), 'dummy\n', 'utf-8');
+  await writeFile(join(fixture.stackCliHome, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+  const statePath = join(fixture.stackCliHome, 'servers', 'stack_exp-test__id_default', 'daemon.state.json');
+  t.after(async () => {
+    try {
+      const state = JSON.parse(await readFile(statePath, 'utf-8'));
+      killDetachedProcessGroup(Number(state?.pid));
+    } catch {
+      // ignore cleanup failures when the daemon never started
+    }
+  });
+
+  const res = await runNodeCapture(
+    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName, 'session', 'create', '--json'],
+    {
+      cwd: rootDir,
+      env: fixture.baseEnv,
+    },
+  );
+
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim().split('\n').filter(Boolean).at(-1));
+  assert.equal(out.ok, true);
+  assert.equal(out.sessionId, 'session-preflight-ok');
+
+  const logText = await readFile(join(fixture.stackCliHome, 'passthrough-daemon.log'), 'utf-8');
+  assert.match(logText, /daemon-start/);
+  assert.match(logText, /session-create/);
+});
+
 test('hstack stack happier <name> forwards wrapper runtime flags to happier.mjs', async (t) => {
   const fixture = await createRuntimeSnapshotFixture(t, {
     stackName: 'runtime-wrapper-passthrough',
@@ -329,6 +425,164 @@ test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports whe
   assert.equal(out.stack, fixture.stackName);
   assert.equal(out.serverUrl, 'http://127.0.0.1:4888');
   assert.equal(out.webappUrl, 'http://localhost:4888');
+});
+
+test('hstack happier (HAPPIER_STACK_STACK set) session create preflights the stack daemon before invoking the CLI command', async (t) => {
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'happier-stack-happy-daemon-preflight-env-',
+    stackName: 'exp-test',
+    serverPort: 4899,
+    distIndexScript: `
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { killDetachedProcessGroup, spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) {
+  console.error('missing HAPPIER_HOME_DIR');
+  process.exit(2);
+}
+
+const stateDir = join(home, 'servers', 'stack_exp-test__id_default');
+const statePath = join(stateDir, 'daemon.state.json');
+const logPath = join(home, 'passthrough-daemon-env.log');
+const append = (line) => writeFileSync(logPath, line + '\\n', { flag: 'a' });
+
+if (args[0] === 'daemon' && args[1] === 'start') {
+  spawnDaemonLikeProcess({
+    cliHomeDir: home,
+    internalServerUrl: String(process.env.HAPPIER_SERVER_URL || ''),
+    publicServerUrl: String(process.env.HAPPIER_WEBAPP_URL || ''),
+    statePaths: [statePath],
+  });
+  append('daemon-start');
+  process.exit(0);
+}
+
+if (args[0] === 'daemon' && args[1] === 'stop') {
+  append('daemon-stop');
+  if (existsSync(statePath)) {
+    try {
+      const pid = Number(JSON.parse(readFileSync(statePath, 'utf-8')).pid);
+      killDetachedProcessGroup(pid);
+    } catch {}
+  }
+  process.exit(0);
+}
+
+if (args[0] === 'daemon' && args[1] === 'status') {
+  append('daemon-status');
+  process.exit(0);
+}
+
+if (args[0] === 'session' && args[1] === 'create') {
+  append('session-create');
+  if (!existsSync(statePath)) {
+    console.error(JSON.stringify({ ok: false, error: 'No daemon running, no state file found' }));
+    process.exit(1);
+  }
+  console.log(JSON.stringify({ ok: true, sessionId: 'session-preflight-env-ok', state: JSON.parse(readFileSync(statePath, 'utf-8')) }));
+  process.exit(0);
+}
+
+console.log(JSON.stringify({ ok: true, args }));
+`,
+  });
+
+  await mkdir(fixture.stackCliHome, { recursive: true });
+  await writeFile(join(fixture.stackCliHome, 'access.key'), 'dummy\n', 'utf-8');
+  await writeFile(join(fixture.stackCliHome, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+  const statePath = join(fixture.stackCliHome, 'servers', 'stack_exp-test__id_default', 'daemon.state.json');
+  t.after(async () => {
+    try {
+      const state = JSON.parse(await readFile(statePath, 'utf-8'));
+      killDetachedProcessGroup(Number(state?.pid));
+    } catch {
+      // ignore cleanup failures when the daemon never started
+    }
+  });
+
+  const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'happier', 'session', 'create', '--json'], {
+    cwd: rootDir,
+    env: {
+      ...fixture.baseEnv,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+    },
+  });
+
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim().split('\n').filter(Boolean).at(-1));
+  assert.equal(out.ok, true);
+  assert.equal(out.sessionId, 'session-preflight-env-ok');
+
+  const logText = await readFile(join(fixture.stackCliHome, 'passthrough-daemon-env.log'), 'utf-8');
+  assert.match(logText, /daemon-start/);
+  assert.match(logText, /session-create/);
+});
+
+test('hstack happier (HAPPIER_STACK_STACK set) session create --help skips stack daemon preflight', async (t) => {
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'happier-stack-happy-daemon-help-env-',
+    stackName: 'exp-test',
+    serverPort: 4901,
+    distIndexScript: `
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) {
+  console.error('missing HAPPIER_HOME_DIR');
+  process.exit(2);
+}
+
+const stateDir = join(home, 'servers', 'stack_exp-test__id_default');
+const statePath = join(stateDir, 'daemon.state.json');
+const logPath = join(home, 'passthrough-daemon-help-env.log');
+const append = (line) => writeFileSync(logPath, line + '\\n', { flag: 'a' });
+
+if (args[0] === 'daemon' && args[1] === 'start') {
+  append('daemon-start');
+  process.exit(0);
+}
+
+if (args[0] === 'session' && args[1] === 'create' && (args.includes('--help') || args.includes('-h'))) {
+  append('session-create-help');
+  if (existsSync(statePath)) {
+    append('unexpected-daemon-state');
+  }
+  console.log('SESSION CREATE HELP');
+  process.exit(0);
+}
+
+console.log(JSON.stringify({ ok: true, args }));
+`,
+  });
+
+  await mkdir(fixture.stackCliHome, { recursive: true });
+  await writeFile(join(fixture.stackCliHome, 'access.key'), 'dummy\n', 'utf-8');
+  await writeFile(join(fixture.stackCliHome, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+  const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'happier', 'session', 'create', '--help'], {
+    cwd: rootDir,
+    env: {
+      ...fixture.baseEnv,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+    },
+  });
+
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.match(res.stdout, /SESSION CREATE HELP/);
+
+  const logPath = join(fixture.stackCliHome, 'passthrough-daemon-help-env.log');
+  const logText = existsSync(logPath) ? await readFile(logPath, 'utf-8') : '';
+  assert.match(logText, /session-create-help/);
+  assert.doesNotMatch(logText, /daemon-start/);
+  assert.doesNotMatch(logText, /unexpected-daemon-state/);
 });
 
 test('hstack happier prefers the matching stack server profile id over the stable scope id', async (t) => {
@@ -413,7 +667,7 @@ test('hstack <stack> happier ... shorthand runs CLI under that stack env', async
   assert.equal(out.serverUrl, 'http://127.0.0.1:4101');
 });
 
-test('hstack stack happier <name> does not print wrapper stack traces on CLI failure', async (t) => {
+test('hstack stack happier <name> surfaces concise wrapper failure without node internals when daemon preflight fails', async (t) => {
   const fixture = await createHappyStackFixture(t, {
     prefix: 'happy-stacks-stack-happy-fail-',
     stubType: 'failing',
@@ -427,8 +681,8 @@ test('hstack stack happier <name> does not print wrapper stack traces on CLI fai
   });
   assert.equal(res.code, 1, `expected exit 1, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(res.stderr.includes('stub failure'), `expected stderr to include stub failure, got:\n${res.stderr}`);
+  assert.ok(res.stderr.includes('[stack] failed: Failed to start daemon'), `expected concise wrapper failure, got:\n${res.stderr}`);
   assert.ok(!res.stderr.includes('[happier] failed:'), `expected no [happier] failed stack trace, got:\n${res.stderr}`);
-  assert.ok(!res.stderr.includes('[stack] failed:'), `expected no [stack] failed stack trace, got:\n${res.stderr}`);
   assert.ok(!res.stderr.includes('node:internal'), `expected no node:internal stack trace, got:\n${res.stderr}`);
 });
 

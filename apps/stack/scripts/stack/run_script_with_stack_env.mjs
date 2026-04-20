@@ -307,6 +307,11 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
       const isStartLike = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs';
       const wantsRestart = args.includes('--restart');
       const wantsJson = args.includes('--json');
+      if (isStartLike && background && wantsJson) {
+        // Dry-run JSON must never allocate ports, write runtime state, or wait for readiness.
+        await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
+        return;
+      }
       const { baseDir } = resolveStackEnvPath(stackName, env);
       const expectedUiDir = getComponentDir(rootDir, 'happier-ui', env);
 

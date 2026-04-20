@@ -2,7 +2,7 @@ import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { ScmSourceControllerWorkspaceTransferMetadata } from './workspaceTransfer';
 import type { WorkspaceExportBlobProvider } from './workspaceExportStaging/stageWorkspaceEntries';
-import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from './workspaceExportPackaging/buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries';
+import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from './workspaceExportPackaging/artifacts/fromTransferEntries';
 import type { WorkspaceExportTransferEntry } from './workspaceExportPackaging/workspaceExportTransferEntry';
 
 export type ScmSourceControllerWorkspaceExportArtifacts = Readonly<{

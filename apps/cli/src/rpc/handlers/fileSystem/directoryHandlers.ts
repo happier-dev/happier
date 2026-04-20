@@ -7,6 +7,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { listDirectoryEntries } from './directoryListing/listDirectoryEntries';
 import { validatePath } from '../pathSecurity';
+import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';
 
 type CreateDirectoryRequest = Readonly<{ path: string }>;
 
@@ -46,7 +47,9 @@ export function registerDirectoryHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
     workingDirectory: string;
+    accessPolicy: FilesystemAccessPolicy;
     getAdditionalAllowedReadDirs: () => ReadonlyArray<string>;
+    getAdditionalAllowedWriteDirs: () => ReadonlyArray<string>;
   }>,
 ): void {
   rpcHandlerManager.registerHandler<CreateDirectoryRequest, CreateDirectoryResponse>(
@@ -55,7 +58,7 @@ export function registerDirectoryHandlers(
       const path = typeof data?.path === 'string' ? data.path : '';
       logger.debug('Create directory request:', path);
 
-      const validation = validatePath(path, deps.workingDirectory);
+      const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedWriteDirs(), deps.accessPolicy);
       if (!validation.valid || !validation.resolvedPath) {
         return { success: false, error: validation.error ?? 'Access denied' };
       }
@@ -76,7 +79,7 @@ export function registerDirectoryHandlers(
       const path = typeof data?.path === 'string' ? data.path : '';
       logger.debug('List directory request:', path);
 
-      const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs());
+      const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs(), deps.accessPolicy);
       if (!validation.valid || !validation.resolvedPath) {
         return { success: false, error: validation.error ?? 'Access denied' };
       }
@@ -110,7 +113,7 @@ export function registerDirectoryHandlers(
       const maxDepth = typeof data?.maxDepth === 'number' ? data.maxDepth : Number(data?.maxDepth ?? 0);
       logger.debug('Get directory tree request:', path, 'maxDepth:', maxDepth);
 
-      const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs());
+      const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs(), deps.accessPolicy);
       if (!validation.valid || !validation.resolvedPath) {
         return { success: false, error: validation.error ?? 'Access denied' };
       }

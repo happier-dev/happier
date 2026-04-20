@@ -1,6 +1,6 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import type { AgentBackend } from '@/agent/core/AgentBackend';
 import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 
 import { BackendTargetRefSchema, EphemeralTaskRunRequestSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -18,7 +18,7 @@ export function registerEphemeralTaskHandlers(
   rpc: RpcHandlerRegistrar,
   ctx: Readonly<{
     workingDirectory: string;
-    createBackend: (opts: { backendId: string; permissionMode: string; backendTarget?: BackendTargetRefV1 }) => AgentBackend;
+    createBackend: (opts: { backendId: string; permissionMode: string; backendTarget?: BackendTargetRefV1 }) => ExecutionRunHostRuntime;
     budgetRegistry?: ExecutionBudgetRegistry;
   }>,
 ): void {

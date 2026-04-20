@@ -2,11 +2,10 @@ import {
   buildBackendTargetKey,
   type BackendTargetRefV1,
 } from '@happier-dev/protocol';
-import type { AgentId } from '@happier-dev/agents';
-import { resolvePermissionModeGroupForAgent } from '@happier-dev/agents';
+import { AGENT_IDS, resolvePermissionModeGroupForAgent, type AgentId } from '@happier-dev/agents';
 
 import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 
 export type PermissionModeSeedSource = 'explicit' | 'inferred' | 'account_default' | 'fallback';
 
@@ -24,14 +23,22 @@ function clampPermissionModeForAgent(agentId: AgentId, mode: PermissionMode): Pe
   return mode;
 }
 
-export function normalizePermissionModeForAgentStart(opts: { agentId: AgentId; value: unknown }): PermissionMode | null {
+function isBuiltInAgentId(agentId: string): agentId is AgentId {
+  return (AGENT_IDS as readonly string[]).includes(agentId);
+}
+
+function clampPermissionModeForAgentStart(agentId: string, mode: PermissionMode): PermissionMode {
+  return isBuiltInAgentId(agentId) ? clampPermissionModeForAgent(agentId, mode) : mode;
+}
+
+export function normalizePermissionModeForAgentStart(opts: { agentId: string; value: unknown }): PermissionMode | null {
   const normalized = normalizePermissionModeToIntent(opts.value);
   if (!normalized) return null;
-  return clampPermissionModeForAgent(opts.agentId, normalized);
+  return clampPermissionModeForAgentStart(opts.agentId, normalized);
 }
 
 export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
-  agentId: AgentId;
+  agentId: string;
   backendTarget?: BackendTargetRefV1;
   accountSettings: unknown;
 }): PermissionMode | null {
@@ -45,12 +52,14 @@ export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
   const preferredTarget = opts.backendTarget
     ?? ({ kind: 'builtInAgent', agentId: opts.agentId } as const satisfies BackendTargetRefV1);
   const candidate = map?.[buildBackendTargetKey(preferredTarget)]
-    ?? map?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: opts.agentId })];
+    ?? (isBuiltInAgentId(opts.agentId)
+      ? map?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: opts.agentId })]
+      : undefined);
   return normalizePermissionModeForAgentStart({ agentId: opts.agentId, value: candidate });
 }
 
 export function resolvePermissionModeSeedForAgentStart(opts: {
-  agentId: AgentId;
+  agentId: string;
   backendTarget?: BackendTargetRefV1;
   explicitPermissionMode: unknown;
   inferredPermissionMode?: unknown;

@@ -19,6 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 export type DirectTransferImportOpenRequest = Readonly<{
   workingDirectory: string;
@@ -112,6 +113,7 @@ function fingerprintImportOpenAuthorizationScope(input: DirectTransferImportOpen
 export function createDirectTransferImportSessionManager(params?: Readonly<{
   ttlMs?: number;
   chunkSizeBytes?: number;
+  accessPolicy?: FilesystemAccessPolicy;
   onActiveSessionCountChanged?: (count: number) => void;
   onActivity?: () => void;
   attachmentUpload?: Readonly<{
@@ -211,6 +213,7 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     store.cleanupExpiredBestEffort();
     const resolvedTarget = await resolveTransferUploadInitTarget({
       workingDirectory: input.workingDirectory,
+      accessPolicy: params?.accessPolicy,
       request: input,
       tempUploadRoot: attachmentTempUploadRoot,
       additionalAllowedWriteDirs: input.additionalAllowedWriteDirs,

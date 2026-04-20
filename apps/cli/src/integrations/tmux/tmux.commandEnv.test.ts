@@ -18,6 +18,24 @@ vi.mock('child_process', () => ({
 }));
 
 describe('TmuxUtilities tmux subprocess environment', () => {
+    it('can be imported when configuration is partially mocked without logsDir', async () => {
+        vi.resetModules();
+        vi.doMock('@/configuration', () => ({
+            configuration: {
+                happyHomeDir: '/tmp/happier-home',
+                isDaemonProcess: false,
+            },
+        }));
+
+        try {
+            const { TmuxUtilities } = await import('@/integrations/tmux');
+            expect(TmuxUtilities).toBeTypeOf('function');
+        } finally {
+            vi.doUnmock('@/configuration');
+            vi.resetModules();
+        }
+    });
+
     beforeEach(() => {
         spawnMock.mockReset();
         spawnMock.mockImplementation((command: string, args: readonly string[], options: SpawnOptions) => {

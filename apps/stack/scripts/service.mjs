@@ -147,7 +147,7 @@ export async function resolveStackAutostartProgramArgs({ rootDir, mode, systemUs
   return [process.execPath, resolveInstalledPath(rootDir, 'bin/hstack.mjs'), 'start', '--restart'];
 }
 
-export async function installService({ mode = 'user', systemUser = null } = {}) {
+export async function installService({ mode = 'user', systemUser = null, quiet = false } = {}) {
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     throw new Error(
       '[local] service install is disabled in sandbox mode.\n' +
@@ -211,18 +211,18 @@ export async function installService({ mode = 'user', systemUser = null } = {}) 
   });
 
   if (process.platform === 'win32') {
-    console.log(`${green('✓')} service installed ${dim('(Windows scheduled task)')}`);
+    if (!quiet) console.log(`${green('✓')} service installed ${dim('(Windows scheduled task)')}`);
     return;
   }
   if (process.platform === 'darwin') {
-    console.log(`${green('✓')} service installed ${dim('(macOS launchd)')}`);
+    if (!quiet) console.log(`${green('✓')} service installed ${dim('(macOS launchd)')}`);
     return;
   }
   if (mode === 'system') {
-    console.log(`${green('✓')} service installed ${dim('(Linux systemd system)')}`);
+    if (!quiet) console.log(`${green('✓')} service installed ${dim('(Linux systemd system)')}`);
     return;
   }
-  console.log(`${green('✓')} service installed ${dim('(Linux systemd --user)')}`);
+  if (!quiet) console.log(`${green('✓')} service installed ${dim('(Linux systemd --user)')}`);
 }
 
 export async function uninstallService({ mode = 'user' } = {}) {
@@ -318,7 +318,7 @@ async function launchctlTry(args) {
 async function restartLaunchAgentBestEffort() {
   const { plistPath, label } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
-    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hstack service:install (or hstack bootstrap -- --autostart)`);
+    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hstack service repair --yes (or hstack service:install).`);
   }
   const uid = getUid();
   if (uid == null) {
@@ -331,7 +331,7 @@ async function restartLaunchAgentBestEffort() {
 async function startLaunchAgent({ persistent }) {
   const { plistPath } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
-    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hstack service:install (or hstack bootstrap -- --autostart)`);
+    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hstack service repair --yes (or hstack service:install).`);
   }
 
   const { label } = getDefaultAutostartPaths();
@@ -683,6 +683,7 @@ async function main() {
     ['install', 'hstack service install [--json]'],
     ['uninstall', 'hstack service uninstall [--json]'],
     ['status', 'hstack service status [--json]'],
+    ['repair', 'hstack service repair --yes [--json]'],
     ['start', 'hstack service start [--auth-now] [-- <auth login args...>] [--json]'],
     ['stop', 'hstack service stop [--json]'],
     ['restart', 'hstack service restart [--auth-now] [-- <auth login args...>] [--json]'],
@@ -707,13 +708,14 @@ async function main() {
   if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['install', 'uninstall', 'status', 'start', 'stop', 'restart', 'enable', 'disable', 'logs', 'tail'] },
+      data: { commands: ['install', 'uninstall', 'status', 'repair', 'start', 'stop', 'restart', 'enable', 'disable', 'logs', 'tail'] },
       text: [
         banner('service', { subtitle: 'Autostart service management (launchd/systemd).' }),
         '',
         sectionTitle('usage:'),
         `  ${cyan('hstack service')} install|uninstall [--mode=system|user] [--system-user=<name>] [--json]`,
         `  ${cyan('hstack service')} status [--mode=system|user] [--json]`,
+        `  ${cyan('hstack service')} repair --yes [--mode=system|user] [--system-user=<name>] [--json]`,
         `  ${cyan('hstack service')} start|stop|restart [--mode=system|user] [--auth-now] [-- <auth login args...>] [--json]`,
         `  ${cyan('hstack service')} enable|disable [--mode=system|user] [--auth-now] [-- <auth login args...>] [--json]`,
         `  ${cyan('hstack service')} logs [--mode=system|user] [--json]`,
@@ -733,6 +735,16 @@ async function main() {
       await installService({ mode, systemUser });
       if (json) printResult({ json, data: { ok: true, action: 'install' } });
       return;
+    case 'repair': {
+      const yes = helpScopeArgv.includes('--yes') || String(process.env.HAPPIER_NONINTERACTIVE ?? '').trim() === '1';
+      if (!yes) {
+        throw new Error('[local] service repair requires --yes because it rewrites the OS service definition.');
+      }
+      await installService({ mode, systemUser, quiet: true });
+      if (json) printResult({ json, data: { ok: true, action: 'repair' } });
+      else console.log(`${green('✓')} service repaired`);
+      return;
+    }
     case 'uninstall':
       await uninstallService({ mode });
       if (json) printResult({ json, data: { ok: true, action: 'uninstall' } });

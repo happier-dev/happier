@@ -1,6 +1,6 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 
-import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
+import { normalizeBaseUrl, withAbortTimeout } from '../diagnostics/httpClient';
 import { parseServerFeatures } from './serverFeaturesParse';
 
 export type CliServerFeaturesSnapshot =

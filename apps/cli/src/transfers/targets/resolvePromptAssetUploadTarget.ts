@@ -4,10 +4,12 @@ import {
   PromptAssetMutationResponseV1Schema,
   PromptAssetWriteRequestSchema,
   type PromptAssetMutationResponseV1,
+  type PromptAssetWriteBundleRequest,
+  type PromptAssetWriteRequest,
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import type { PromptAssetAdapter } from '@/promptAssets/types';
+import type { PromptAssetAdapter } from '@/prompts/assets/types';
 
 import type { UploadTransferTarget } from './uploadTransferTarget';
 
@@ -33,6 +35,12 @@ function internalPromptAssetWriteResponse(error: string): PromptAssetMutationRes
     errorCode: 'internal_error',
     error,
   });
+}
+
+function isPromptAssetWriteBundleRequest(
+  request: PromptAssetWriteRequest,
+): request is PromptAssetWriteBundleRequest {
+  return Object.prototype.hasOwnProperty.call(request, 'bundleBody');
 }
 
 export function resolvePromptAssetUploadTarget(input: Readonly<{
@@ -107,9 +115,10 @@ export function resolvePromptAssetUploadTarget(input: Readonly<{
         }
 
         try {
-          const result = 'bundleBody' in parsed.data
-            ? await adapter.writeBundle(parsed.data)
-            : await adapter.writeDoc(parsed.data);
+          const writeRequest = parsed.data;
+          const result = isPromptAssetWriteBundleRequest(writeRequest)
+            ? await adapter.writeBundle(writeRequest)
+            : await adapter.writeDoc(writeRequest);
 
           return {
             success: true,

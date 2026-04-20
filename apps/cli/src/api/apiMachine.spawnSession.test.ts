@@ -33,18 +33,20 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     const rpc = (client as any).rpcHandlerManager;
     const params = {
       directory: '/tmp',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       terminal: { mode: 'tmux', tmux: { sessionName: 'happy', isolated: true } },
     };
     const encrypted = encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, params));
 
     await rpc.handleRequest({
-      method: `${machine.id}:spawn-happy-session`,
+      method: `${machine.id}:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
       params: encrypted,
     });
 
     expect(captured).toEqual(
       expect.objectContaining({
         directory: '/tmp',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         terminal: { mode: 'tmux', tmux: { sessionName: 'happy', isolated: true } },
       }),
     );
@@ -78,7 +80,7 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
       type: 'resume-session',
       sessionId: 'happy-session-1',
       directory: '/tmp',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       resume: 'codex-session-123',
       codexBackendMode: 'appServer',
       experimentalCodexAcp: true,
@@ -91,14 +93,14 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     const encrypted = encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, params));
 
     await rpc.handleRequest({
-      method: `${machine.id}:spawn-happy-session`,
+      method: `${machine.id}:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
       params: encrypted,
     });
 
     expect(captured).toEqual(
       expect.objectContaining({
         directory: '/tmp',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         existingSessionId: 'happy-session-1',
         resume: 'codex-session-123',
         codexBackendMode: 'appServer',
@@ -138,7 +140,7 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     const rpc = (client as any).rpcHandlerManager;
     const params = {
       directory: '/tmp',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       agentModeId: 'plan',
       agentModeUpdatedAt: 321,
       codexBackendMode: 'appServer',
@@ -146,14 +148,14 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     const encrypted = encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, params));
 
     await rpc.handleRequest({
-      method: `${machine.id}:spawn-happy-session`,
+      method: `${machine.id}:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
       params: encrypted,
     });
 
     expect(captured).toEqual(
       expect.objectContaining({
         directory: '/tmp',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         agentModeId: 'plan',
         agentModeUpdatedAt: 321,
         codexBackendMode: 'appServer',

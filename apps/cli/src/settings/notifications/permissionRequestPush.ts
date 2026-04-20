@@ -8,7 +8,7 @@ import type { PermissionMode } from '@/api/types';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 import type { AgentRequestKind } from '@/agent/permissions/requestKind';
-import { dispatchActivityNotificationAsync } from '@/activity/notifications/dispatchActivityNotification';
+import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import { logger } from '@/ui/logger';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 

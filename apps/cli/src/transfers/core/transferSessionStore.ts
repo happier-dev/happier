@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { mkdir, open, rm, stat } from 'fs/promises';
+import { chmod, mkdir, open, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 
@@ -39,6 +39,7 @@ type DownloadSession = {
 
 export type TransferSessionStoreDeps = Readonly<{
   ttlMs: number;
+  tempRoot?: string | null;
 }>;
 
 export class TransferSessionStore {
@@ -49,11 +50,19 @@ export class TransferSessionStore {
 
   constructor(deps: TransferSessionStoreDeps) {
     this.ttlMs = Math.max(1000, Math.floor(deps.ttlMs));
-    this.tempRoot = join(tmpdir(), 'happier', 'file-transfers', randomUUID());
+    const overrideTempRoot = typeof deps.tempRoot === 'string' && deps.tempRoot.trim().length > 0
+      ? deps.tempRoot.trim()
+      : null;
+    const baseTempRoot = overrideTempRoot ?? join(tmpdir(), 'happier', 'file-transfers');
+    this.tempRoot = join(baseTempRoot, randomUUID());
   }
 
   async ensureTempRoot(): Promise<void> {
-    await mkdir(this.tempRoot, { recursive: true });
+    await mkdir(this.tempRoot, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') {
+      // Best effort: keep transfer temp dirs private. Parent traversal also matters, but this is a useful default.
+      await chmod(this.tempRoot, 0o700).catch(() => undefined);
+    }
   }
 
   cleanupExpiredBestEffort(now = Date.now()): void {

@@ -11,6 +11,7 @@ import {
 import type { DirectTransferImportOpenRequest } from './directTransferImportSession';
 import type { TransferPayloadFileResult } from './transferPayloadFileSink';
 import type { TransferPayloadSource } from './transferPayloadSource';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 export type DirectTransferListenerClass =
   | 'loopback_http'
@@ -137,6 +138,7 @@ function appendTailscaleServeEndpointCandidates(params: Readonly<{
 export function createDirectTransferServerLifecycle(params: Readonly<{
   bindPort: number;
   bindHost?: string;
+  accessPolicy?: FilesystemAccessPolicy;
   listenerClasses: readonly DirectTransferListenerClass[];
   advertisedHosts?: readonly string[];
   idleStopMs?: number;
@@ -246,6 +248,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
           ? { bindHost: params.bindHost }
           : {}),
         resolveOnDemandTransfer: async (input) => registry?.resolveOnDemandTransferOnOpen(input) ?? null,
+        accessPolicy: params.accessPolicy,
         ...(params.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
         onImportSessionCountChanged: (count) => {
           activeImportSessionCount = count;

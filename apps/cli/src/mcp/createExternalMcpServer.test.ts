@@ -76,10 +76,10 @@ describe('createExternalMcpServer', () => {
     expect(capturedSurface).toBe('mcp');
   });
 
-  it('passes through approval_request_created for execution.run.start tool calls', async () => {
+  it('passes through approval_request_created for execution_run_start tool calls via the shared action executor', async () => {
     vi.resetModules();
 
-    let capturedStartExecutionRun: unknown = null;
+    let capturedExecuteActionByToolName: unknown = null;
 
     vi.doMock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
       McpServer: class FakeMcpServer {
@@ -94,7 +94,7 @@ describe('createExternalMcpServer', () => {
 
     vi.doMock('@/mcp/server/registerHappierMcpBuiltInTools', () => ({
       registerHappierMcpBuiltInTools: (_server: any, params: any) => {
-        capturedStartExecutionRun = params?.deps?.startExecutionRun ?? null;
+        capturedExecuteActionByToolName = params?.deps?.executeActionByToolName ?? null;
         return { toolNames: [] };
       },
     }));
@@ -122,24 +122,25 @@ describe('createExternalMcpServer', () => {
       },
     });
 
-    expect(typeof capturedStartExecutionRun).toBe('function');
+    expect(typeof capturedExecuteActionByToolName).toBe('function');
 
-    if (!capturedStartExecutionRun) {
-      throw new Error('expected startExecutionRun to be registered');
+    if (!capturedExecuteActionByToolName) {
+      throw new Error('expected executeActionByToolName to be registered');
     }
 
-    if (!isStartExecutionRun(capturedStartExecutionRun)) {
-      throw new Error('expected startExecutionRun to be callable');
+    if (typeof capturedExecuteActionByToolName !== 'function') {
+      throw new Error('expected executeActionByToolName to be callable');
     }
 
-    const res = await capturedStartExecutionRun('sess-1', {
+    const res = await capturedExecuteActionByToolName('execution_run_start', {
       intent: 'review',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
-    });
+      instructions: 'Review.',
+    }, 'sess-1');
 
     expect(res).toEqual({
       ok: true,

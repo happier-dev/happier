@@ -12,6 +12,8 @@ import { coerceHappyMonorepoRootFromPath, getDefaultAutostartPaths, getHappyStac
 import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.mjs';
 import { expandHome } from '../paths/canonical_home.mjs';
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
+import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
+export { isCliDistBuildLockActive } from './cliDistBuildLock.mjs';
 
 function sha256Hex(s) {
   return createHash('sha256').update(String(s ?? ''), 'utf-8').digest('hex');
@@ -285,6 +287,63 @@ async function getComponentPm(dir, env = process.env) {
   throw new Error(`[local] yarn is required for component at ${dir}. Install it via Corepack: \`corepack enable\``);
 }
 
+function resolveComponentInstallDir(componentDir) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
+  if (!monorepoRoot) {
+    return componentDir;
+  }
+  const rootPkgJson = join(monorepoRoot, 'package.json');
+  return existsSync(rootPkgJson) ? monorepoRoot : componentDir;
+}
+
+function classifyScriptEntrypointSource(text) {
+  const prefix = String(text ?? '').slice(0, 64);
+  if (/^#!\/bin\/sh\b/.test(prefix) || /^@echo off\b/i.test(prefix)) {
+    return 'shell-wrapper';
+  }
+  return 'node-module';
+}
+
+async function readScriptEntrypointKind(path) {
+  if (!(await pathExists(path))) {
+    return 'missing';
+  }
+  const source = await readFile(path, 'utf-8');
+  return classifyScriptEntrypointSource(source);
+}
+
+async function repairCorruptedCliPkgrollInstallIfNeeded(cliDir, { quiet = false, env }) {
+  const installDir = resolveComponentInstallDir(cliDir);
+  const pkgrollCliPath = join(installDir, 'node_modules', 'pkgroll', 'dist', 'cli.mjs');
+  if ((await readScriptEntrypointKind(pkgrollCliPath)) !== 'shell-wrapper') {
+    return false;
+  }
+
+  const pm = await getComponentPm(installDir, env);
+  const stdio = quiet ? 'ignore' : 'inherit';
+  const repairArgs = pm.name === 'yarn' ? ['install', '--force', '--production=false'] : ['install', '--force'];
+
+  if (pm.name === 'yarn') {
+    await ensureYarnReady({ dir: installDir, env, quiet });
+  }
+
+  if (!quiet) {
+    // eslint-disable-next-line no-console
+    console.log(`[local] repairing corrupted pkgroll install at ${pkgrollCliPath}...`);
+  }
+  await run(pm.cmd, repairArgs, { cwd: installDir, stdio, env });
+
+  if ((await readScriptEntrypointKind(pkgrollCliPath)) !== 'node-module') {
+    throw new Error(
+      `[local] forced dependency refresh did not repair pkgroll at ${pkgrollCliPath}.\n` +
+        `Fix: run the install manually and inspect the package manager output:\n` +
+        `  cd "${installDir}" && ${pm.cmd} ${repairArgs.join(' ')}`
+    );
+  }
+
+  return true;
+}
+
 function prependPathEntry(env, entry) {
   const candidate = String(entry ?? '').trim();
   if (!candidate) return env;
@@ -294,6 +353,18 @@ function prependPathEntry(env, entry) {
     .map((value) => String(value ?? '').trim())
     .filter(Boolean);
   env.PATH = [candidate, ...current.filter((value) => value !== candidate)].join(delimiter);
+  return env;
+}
+
+function appendPathEntry(env, entry) {
+  const candidate = String(entry ?? '').trim();
+  if (!candidate) return env;
+  const delimiter = process.platform === 'win32' ? ';' : ':';
+  const current = String(env.PATH ?? '')
+    .split(delimiter)
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+  env.PATH = [...current.filter((value) => value !== candidate), candidate].join(delimiter);
   return env;
 }
 
@@ -342,9 +413,14 @@ async function preparePmEnv(dir, envIn = process.env) {
     // stack-managed dependency refreshes depend on local Redis build prerequisites.
     env.REDISMS_DISABLE_POSTINSTALL = '1';
   }
+  appendPathEntry(env, dirname(process.execPath));
   const preferredNodeBinDir = await resolvePreferredNodeBinDir(dir, env);
   if (preferredNodeBinDir) {
     prependPathEntry(env, preferredNodeBinDir);
+  }
+  const workspaceToolBinDirs = await resolveWorkspaceToolBinDirs(dir);
+  for (const workspaceToolBinDir of workspaceToolBinDirs.reverse()) {
+    prependPathEntry(env, workspaceToolBinDir);
   }
   const componentTsconfigPath = join(dir, 'tsconfig.json');
   if (existsSync(componentTsconfigPath)) {
@@ -538,12 +614,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     return;
   }
 
-  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
-  const installDir = (() => {
-    if (!monorepoRoot) return componentDir;
-    const rootPkgJson = join(monorepoRoot, 'package.json');
-    return existsSync(rootPkgJson) ? monorepoRoot : componentDir;
-  })();
+  const installDir = resolveComponentInstallDir(componentDir);
 
   const installPkgJson = join(installDir, 'package.json');
   const nodeModules = join(installDir, 'node_modules');
@@ -871,6 +942,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { q
 
 export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: envIn = process.env } = {}) {
   await ensureDepsInstalled(cliDir, 'happier-cli', { quiet, env: envIn });
+  await ensureWorkspacePackagesBuiltForComponent(cliDir, { quiet, env: envIn });
   const repoRoot = coerceHappyMonorepoRootFromPath(cliDir);
   const lockPath = repoRoot
     ? join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock')
@@ -937,6 +1009,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
       console.log('[local] building happier-cli...');
     }
     const env = await preparePmEnv(cliDir, envIn);
+    await repairCorruptedCliPkgrollInstallIfNeeded(cliDir, { quiet, env });
     const pm = await getComponentPm(cliDir, env);
     const hadDistBeforeBuild = await pathExists(distDir);
     if (hadDistBeforeBuild) {

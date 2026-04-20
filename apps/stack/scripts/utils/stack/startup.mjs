@@ -1,5 +1,5 @@
 import { run, runCapture } from '../proc/proc.mjs';
-import { ensureDepsInstalled, pmExecBin } from '../proc/pm.mjs';
+import { ensureDepsInstalled } from '../proc/pm.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -288,7 +288,10 @@ export async function ensureHappyServerSchemaReady({ serverDir, env }) {
       throw e;
     }
     // If tables are missing, try migrations (safe for postgres). Then re-probe.
-    await pmExecBin({ dir: serverDir, bin: 'prisma', args: ['migrate', 'deploy'], env });
+    await run(process.execPath, ['./scripts/runTsx.mjs', '--tsconfig', './tsconfig.json', './scripts/migrate.full.deploy.ts'], {
+      cwd: serverDir,
+      env,
+    });
     const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env });
     return { ok: true, migrated: true, accountCount };
   }

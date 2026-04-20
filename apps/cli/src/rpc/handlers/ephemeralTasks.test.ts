@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentBackend';
+import type {
+  ExecutionRunHostRuntime,
+  ExecutionRunHostRuntimeMessageHandler,
+} from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
@@ -19,37 +23,48 @@ async function run(cmd: string, args: readonly string[], cwd: string): Promise<v
   await execFileAsync(cmd, [...args], { cwd });
 }
 
-function createStaticBackend(responseText: string, capture: { lastPrompt: string }): AgentBackend {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
+function createStaticRuntime(responseText: string, capture: { lastPrompt: string }): ExecutionRunHostRuntime {
+  let handler: ExecutionRunHostRuntimeMessageHandler | null = null;
+  const sessionId = 'child_session_1';
   return {
-    async startSession() {
+    async readResumeSupport() {
+      return false;
+    },
+    async provisionSession() {
       return { sessionId };
     },
-    async sendPrompt(_sessionId: SessionId, prompt: string) {
+    async sendPrompt(_sessionId: string, prompt: string) {
       capture.lastPrompt = prompt;
       handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
     },
-    async cancel(_sessionId: SessionId) {},
-    onMessage(next) {
+    async cancel(_sessionId: string) {},
+    subscribeMessages(next) {
       handler = next;
+      return () => {
+        if (handler === next) {
+          handler = null;
+        }
+      };
     },
     async dispose() {},
-    async waitForResponseComplete() {},
+    async waitForTurnCompletion() {},
   };
 }
 
-function createDelayedBackend(responseText: string, delayMs: number): AgentBackend {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
+function createDelayedRuntime(responseText: string, delayMs: number): ExecutionRunHostRuntime {
+  let handler: ExecutionRunHostRuntimeMessageHandler | null = null;
+  const sessionId = 'child_session_1';
   let timer: ReturnType<typeof setTimeout> | null = null;
   let done: Promise<void> | null = null;
   let resolveDone: (() => void) | null = null;
   return {
-    async startSession() {
+    async readResumeSupport() {
+      return false;
+    },
+    async provisionSession() {
       return { sessionId };
     },
-    async sendPrompt(_sessionId: SessionId, prompt: string) {
+    async sendPrompt(_sessionId: string, prompt: string) {
       done = new Promise((resolve) => {
         resolveDone = resolve;
         timer = setTimeout(() => {
@@ -58,15 +73,20 @@ function createDelayedBackend(responseText: string, delayMs: number): AgentBacke
         }, delayMs);
       });
     },
-    async cancel(_sessionId: SessionId) {
+    async cancel(_sessionId: string) {
       if (timer) clearTimeout(timer);
       resolveDone?.();
     },
-    onMessage(next) {
+    subscribeMessages(next) {
       handler = next;
+      return () => {
+        if (handler === next) {
+          handler = null;
+        }
+      };
     },
     async dispose() {},
-    async waitForResponseComplete() {
+    async waitForTurnCompletion() {
       await (done ?? Promise.resolve());
     },
   };
@@ -108,7 +128,7 @@ describe('ephemeral.task.run session RPC handler', () => {
             createBackend: (opts: { backendId: string; permissionMode: string; backendTarget?: unknown }) => {
               createdBackendOpts.push(opts);
               return (
-              createStaticBackend(
+              createStaticRuntime(
                 JSON.stringify({
                   title: 'feat: update a',
                   body: 'Explain change',
@@ -134,7 +154,7 @@ describe('ephemeral.task.run session RPC handler', () => {
       expect(res.result?.title).toBe('feat: update a');
       expect(createdBackendOpts).toEqual([
         {
-          backendId: 'customAcp',
+          backendId: 'review-bot',
           permissionMode: 'no_tools',
           backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
         },
@@ -157,7 +177,7 @@ describe('ephemeral.task.run session RPC handler', () => {
           registerEphemeralTaskHandlers(rpc, {
             workingDirectory: repoDir,
             createBackend: (_opts: { backendId: string; permissionMode: string }) =>
-              createStaticBackend(
+              createStaticRuntime(
                 JSON.stringify({
                   title: 'feat: patch change',
                   body: '',
@@ -195,7 +215,7 @@ describe('ephemeral.task.run session RPC handler', () => {
           registerEphemeralTaskHandlers(rpc, {
             workingDirectory: repoDir,
             createBackend: (_opts: { backendId: string; permissionMode: string }) =>
-              createStaticBackend(
+              createStaticRuntime(
                 JSON.stringify({
                   title: 'feat: scoped',
                   body: '',
@@ -234,7 +254,7 @@ describe('ephemeral.task.run session RPC handler', () => {
             workingDirectory: repoDir,
             budgetRegistry,
             createBackend: () =>
-              createDelayedBackend(
+              createDelayedRuntime(
                 JSON.stringify({ title: 'feat: slow', body: '', message: 'feat: slow' }),
                 200,
               ),

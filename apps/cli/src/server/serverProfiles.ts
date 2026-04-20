@@ -4,7 +4,78 @@ import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import { configuration } from '@/configuration';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { existsSync } from 'node:fs';
+import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+
+function normalizeServerUrlForEnvId(url: string): string {
+  return String(url ?? '').trim().replace(/\/+$/, '');
+}
+
+function deriveEnvServerIdFromUrl(url: string): string {
+  // Mirror `deriveServerIdFromUrl` in `apps/cli/src/configuration.ts` (for env-overridden servers).
+  const raw = normalizeServerUrlForEnvId(url);
+  if (!raw) return 'env_0';
+  const value = (() => {
+    try {
+      const comparableKey = createServerUrlComparableKey(raw);
+      return comparableKey || raw;
+    } catch {
+      return raw;
+    }
+  })();
+  let h = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `env_${(h >>> 0).toString(16)}`;
+}
+
+function deriveLegacyEnvServerIdFromUrl(url: string): string {
+  // Preview baseline (<4913c1e53) used the raw URL string (after trailing slash normalization) as the hash input.
+  const raw = normalizeServerUrlForEnvId(url);
+  if (!raw) return 'env_0';
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i += 1) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `env_${(h >>> 0).toString(16)}`;
+}
+
+async function maybeCopyAccessKeyFromDerivedUrlId(params: Readonly<{
+  targetServerId: string;
+  serverUrl: string;
+  localServerUrl?: string;
+}>): Promise<void> {
+  const serversDir = configuration.serversDir;
+  const targetDir = join(serversDir, params.targetServerId);
+  const targetKeyPath = join(targetDir, 'access.key');
+  if (existsSync(targetKeyPath)) return;
+
+  const candidates = [
+    params.serverUrl,
+    params.localServerUrl ?? '',
+  ]
+    .map((value) => normalizeServerUrlForEnvId(value))
+    .filter(Boolean)
+    .flatMap((value) => [deriveEnvServerIdFromUrl(value), deriveLegacyEnvServerIdFromUrl(value)])
+    .filter((value) => value !== params.targetServerId);
+
+  for (const candidateId of candidates) {
+    const sourceKeyPath = join(serversDir, candidateId, 'access.key');
+    if (!existsSync(sourceKeyPath)) continue;
+    try {
+      await mkdir(targetDir, { recursive: true, mode: 0o700 });
+      await copyFile(sourceKeyPath, targetKeyPath);
+      await chmod(targetKeyPath, 0o600).catch(() => {});
+      return;
+    } catch {
+      // Best-effort migration; the normal auth/login flow can recreate this.
+      return;
+    }
+  }
+}
 
 export type ServerProfile = Readonly<{
   id: string;
@@ -171,7 +242,13 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
       },
     };
   });
-  return await getActiveServerProfile();
+  const active = await getActiveServerProfile();
+  await maybeCopyAccessKeyFromDerivedUrlId({
+    targetServerId: active.id,
+    serverUrl: active.serverUrl,
+    ...(active.localServerUrl ? { localServerUrl: active.localServerUrl } : {}),
+  });
+  return active;
 }
 
 export async function addServerProfile(opts: Readonly<{
@@ -226,6 +303,11 @@ export async function addServerProfile(opts: Readonly<{
   });
 
   if (shouldUse) {
+    await maybeCopyAccessKeyFromDerivedUrlId({
+      targetServerId: id,
+      serverUrl,
+      ...(localServerUrl ? { localServerUrl } : {}),
+    });
     return await getActiveServerProfile();
   }
   const profiles = await listServerProfiles();
@@ -320,6 +402,11 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
   }
 
   if (shouldUse) {
+    await maybeCopyAccessKeyFromDerivedUrlId({
+      targetServerId: resolvedId,
+      serverUrl,
+      ...(localServerUrl ? { localServerUrl } : {}),
+    });
     return await getActiveServerProfile();
   }
   return await getServerProfile(resolvedId);

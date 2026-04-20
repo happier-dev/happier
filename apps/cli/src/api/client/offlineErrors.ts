@@ -1,27 +1,8 @@
-import axios from 'axios';
-
-import { connectionState, isNetworkError } from '@/api/offline/serverConnectionErrors';
-
-function readBootstrapErrorStatus(error: unknown): number | null {
-  if (axios.isAxiosError(error)) {
-    return typeof error.response?.status === 'number' ? error.response.status : null;
-  }
-
-  if (error && typeof error === 'object' && 'response' in error) {
-    const status = (error as { response?: { status?: unknown } }).response?.status;
-    return typeof status === 'number' ? status : null;
-  }
-
-  return null;
-}
+import { readHttpStatus } from '@/api/client/httpStatusError';
+import { connectionState, isNetworkError, readNormalizedErrorCode } from '@/api/offline/serverConnectionErrors';
 
 function readBootstrapNetworkErrorCode(error: unknown): string | null {
-  if (!error || typeof error !== 'object' || !('code' in error)) {
-    return null;
-  }
-
-  const code = (error as { code?: unknown }).code;
-  return typeof code === 'string' ? code : null;
+  return readNormalizedErrorCode(error);
 }
 
 function markOfflineBootstrapFailure(params: Readonly<{
@@ -61,7 +42,7 @@ function shouldTreatBootstrapErrorAsOffline(params: Readonly<{
     return true;
   }
 
-  const status = readBootstrapErrorStatus(params.error);
+  const status = readHttpStatus(params.error);
   if (status === null) {
     return false;
   }

@@ -21,6 +21,8 @@ import { registerFileSystemHandlers } from './fileSystem';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolve } from 'path';
 
+const restrictedWorkDirPolicy = { kind: 'restrictedRoots', roots: ['/work/dir'] } as const;
+
 type Handler = (data: unknown) => Promise<unknown> | unknown;
 
 function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHandler: (method: string, handler: Handler) => void } {
@@ -34,10 +36,30 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
 }
 
 describe('registerFileSystemHandlers', () => {
-  it('rejects traversal-style paths for read and write', async () => {
+  it('allows absolute writes outside the default directory by default', async () => {
     vi.clearAllMocks();
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir');
+
+    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
+    if (!write) throw new Error('expected write handler');
+
+    const writeResult = await write({
+      path: '/tmp/happier-outside-root/file.bin',
+      content: Buffer.from('x').toString('base64'),
+      expectedHash: null,
+    });
+
+    expect(writeResult).toMatchObject({ success: true });
+    expect(writeFile).toHaveBeenCalledWith(resolve('/tmp/happier-outside-root/file.bin'), expect.any(Buffer));
+  });
+
+  it('rejects traversal-style paths for read and write', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      accessPolicy: restrictedWorkDirPolicy,
+    });
 
     const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
     const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
@@ -66,6 +88,7 @@ describe('registerFileSystemHandlers', () => {
     vi.clearAllMocks();
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      accessPolicy: restrictedWorkDirPolicy,
       getAdditionalAllowedReadDirs: () => ['/tmp/allowed'],
     });
 

@@ -39,6 +39,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['voice', 'execution.runs'],
     representation: 'client',
   },
+  'voice.daemonInference': {
+    description: 'Daemon-local voice inference surfaces (requires voice.agent substrate).',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['voice.agent'],
+    representation: 'client',
+  },
   connectedServices: {
     description: 'Connected services token sink and subscription/OAuth surfaces.',
     defaultFailMode: 'fail_closed',

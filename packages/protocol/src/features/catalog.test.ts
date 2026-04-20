@@ -73,6 +73,10 @@ describe('feature catalog', () => {
     expect(isFeatureId('voice.agent')).toBe(true);
   });
 
+  it('includes daemon voice inference feature id', () => {
+    expect(isFeatureId('voice.daemonInference')).toBe(true);
+  });
+
   it('includes happier voice feature id', () => {
     expect(isFeatureId('voice.happierVoice')).toBe(true);
   });

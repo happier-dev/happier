@@ -9,4 +9,10 @@ describe('rpcHandlers bundle stability', () => {
 
     expect(text).not.toMatch(/import\([^)]*hydrateReplayDialogFromForkChain/);
   });
+
+  it('can import the machine rpc handler module without stale backend leaf paths', async () => {
+    const mod = await import('./rpcHandlers');
+
+    expect(typeof mod.registerMachineRpcHandlers).toBe('function');
+  });
 });

@@ -29,6 +29,9 @@ export function registerHappierMcpResources(
     isActionEnabled?: (id: ActionId) => boolean;
   }>,
 ): void {
+  // B8 closure note:
+  // Resource publication is derived from first-party action specs.
+  // Plugin-contributed MCP resource catalogs remain intentionally deferred for this wave.
   const isActionEnabled = opts?.isActionEnabled ?? ((_id: ActionId) => true);
   const surface = opts?.surface ?? 'session_agent';
 

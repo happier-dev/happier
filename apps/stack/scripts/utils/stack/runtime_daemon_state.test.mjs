@@ -49,7 +49,7 @@ test('getObservedStackDaemon treats dead runtime daemon pid as stopped when daem
   assert.equal(observed.status, 'stopped');
 });
 
-test('syncStackRuntimeDaemonPidFromDaemonState records the live daemon pid without disturbing sibling process metadata', async (t) => {
+test('syncStackRuntimeDaemonPidFromDaemonState records the live daemon pid and dist fingerprint without disturbing sibling process metadata', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-runtime-daemon-state-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -66,6 +66,9 @@ test('syncStackRuntimeDaemonPidFromDaemonState records the live daemon pid witho
         serverPid: 1234,
         daemonPid: 111,
       },
+      daemon: {
+        distClosureFingerprint: 'fingerprint-before',
+      },
     }) + '\n',
     'utf-8',
   );
@@ -75,6 +78,7 @@ test('syncStackRuntimeDaemonPidFromDaemonState records the live daemon pid witho
       runtimeStatePath,
       cliHomeDir: join(root, 'cli'),
       internalServerUrl: 'http://127.0.0.1:3009',
+      daemonDistFingerprint: 'fingerprint-after',
       env: {},
     },
     {
@@ -88,6 +92,7 @@ test('syncStackRuntimeDaemonPidFromDaemonState records the live daemon pid witho
   const runtime = JSON.parse(await readFile(runtimeStatePath, 'utf-8'));
   assert.equal(runtime?.processes?.serverPid, 1234);
   assert.equal(runtime?.processes?.daemonPid, 222);
+  assert.equal(runtime?.daemon?.distClosureFingerprint, 'fingerprint-after');
 });
 
 test('syncStackRuntimeDaemonPidFromDaemonState clears stale runtime daemon pid when daemon is stopped', async (t) => {
@@ -105,6 +110,9 @@ test('syncStackRuntimeDaemonPidFromDaemonState clears stale runtime daemon pid w
       stackName: 'dev',
       processes: {
         daemonPid: 999,
+      },
+      daemon: {
+        distClosureFingerprint: 'fingerprint-before',
       },
     }) + '\n',
     'utf-8',
@@ -127,6 +135,7 @@ test('syncStackRuntimeDaemonPidFromDaemonState clears stale runtime daemon pid w
 
   const runtime = JSON.parse(await readFile(runtimeStatePath, 'utf-8'));
   assert.equal(runtime?.processes?.daemonPid, null);
+  assert.equal(runtime?.daemon?.distClosureFingerprint, null);
 });
 
 test('recordStackRuntimeDaemonPid clears daemon pid when requested explicitly', async (t) => {

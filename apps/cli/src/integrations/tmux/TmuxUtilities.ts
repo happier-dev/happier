@@ -1,7 +1,5 @@
 import { spawn, type SpawnOptions } from 'child_process';
 
-import { logger } from '@/ui/logger';
-
 import {
   buildPosixShellCommand,
   isTmuxWindowIndexConflict,
@@ -25,6 +23,22 @@ import {
   type TmuxSessionInfo,
   type TmuxWindowOperation,
 } from './types';
+
+function logTmuxDebug(message: string, ...args: unknown[]): void {
+  void import('@/ui/logger')
+    .then(({ logger }) => {
+      logger.debug(message, ...args);
+    })
+    .catch(() => undefined);
+}
+
+function logTmuxWarn(message: string, ...args: unknown[]): void {
+  void import('@/ui/logger')
+    .then(({ logger }) => {
+      logger.warn(message, ...args);
+    })
+    .catch(() => undefined);
+}
 
 export interface TmuxSpawnOptions extends Omit<SpawnOptions, 'env'> {
   /** Target tmux session name */
@@ -85,7 +99,7 @@ export class TmuxUtilities {
         pane,
       };
     } catch (error) {
-      logger.debug('[TMUX] Failed to parse TMUX environment variable:', error);
+      logTmuxDebug('[TMUX] Failed to parse TMUX environment variable:', error);
     }
 
     return null;
@@ -156,7 +170,7 @@ export class TmuxUtilities {
         command: cmd,
       };
     } catch (error) {
-      logger.debug('[TMUX] Command execution failed:', error);
+      logTmuxDebug('[TMUX] Command execution failed:', error);
       return null;
     }
   }
@@ -268,7 +282,7 @@ export class TmuxUtilities {
   ): Promise<boolean> {
     const tmuxCmd = WIN_OPS[operation];
     if (!tmuxCmd) {
-      logger.debug(`[TMUX] Unknown operation: ${operation}`);
+      logTmuxDebug(`[TMUX] Unknown operation: ${operation}`);
       return false;
     }
 
@@ -337,7 +351,7 @@ export class TmuxUtilities {
   async sendKeys(keys: string | TmuxControlSequence, session?: string, window?: string, pane?: string): Promise<boolean> {
     // Validate input
     if (!keys || typeof keys !== 'string') {
-      logger.debug('[TMUX] Invalid keys provided to sendKeys');
+      logTmuxDebug('[TMUX] Invalid keys provided to sendKeys');
       return false;
     }
 
@@ -362,7 +376,7 @@ export class TmuxUtilities {
     pane?: string,
   ): Promise<boolean> {
     if (!Array.isArray(keys) || keys.length === 0) {
-      logger.debug('[TMUX] Invalid keys array provided to sendMultipleKeys');
+      logTmuxDebug('[TMUX] Invalid keys array provided to sendMultipleKeys');
       return false;
     }
 
@@ -503,13 +517,13 @@ export class TmuxUtilities {
         for (const [key, value] of Object.entries(env)) {
           // Skip undefined/null values with warning
           if (value === undefined || value === null) {
-            logger.warn(`[TMUX] Skipping undefined/null environment variable: ${key}`);
+            logTmuxWarn(`[TMUX] Skipping undefined/null environment variable: ${key}`);
             continue;
           }
 
           // Validate variable name (tmux accepts standard env var names)
           if (!/^[A-Z_][A-Z0-9_]*$/i.test(key)) {
-            logger.warn(`[TMUX] Skipping invalid environment variable name: ${key}`);
+            logTmuxWarn(`[TMUX] Skipping invalid environment variable name: ${key}`);
             continue;
           }
 
@@ -517,7 +531,7 @@ export class TmuxUtilities {
           // Do NOT quote or escape values intended for shell parsing.
           createWindowArgs.push('-e', `${key}=${value}`);
         }
-        logger.debug(`[TMUX] Setting ${Object.keys(env).length} environment variables in tmux window`);
+        logTmuxDebug(`[TMUX] Setting ${Object.keys(env).length} environment variables in tmux window`);
       }
 
       // Add the command to run in the window (runs immediately when window is created)
@@ -587,7 +601,7 @@ export class TmuxUtilities {
           createWindowArgsForAttempt = withExplicitTargetWindowIndex(createWindowArgs, `${sessionName}:${nextIndex}`);
         }
 
-        logger.debug(`[TMUX] new-window failed with window index conflict; retrying (attempt ${attempt}/${maxAttempts})`);
+        logTmuxDebug(`[TMUX] new-window failed with window index conflict; retrying (attempt ${attempt}/${maxAttempts})`);
         if (retryDelayMs > 0) {
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         }
@@ -611,7 +625,7 @@ export class TmuxUtilities {
         throw new Error(`Failed to extract PID from tmux output: ${panePidText}`);
       }
 
-      logger.debug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
+      logTmuxDebug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
 
       // Return tmux session info and PID
       const sessionIdentifier: TmuxSessionIdentifier = {
@@ -627,7 +641,7 @@ export class TmuxUtilities {
         pid: panePid,
       };
     } catch (error) {
-      logger.debug('[TMUX] Failed to spawn in tmux:', error);
+      logTmuxDebug('[TMUX] Failed to spawn in tmux:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -645,9 +659,9 @@ export class TmuxUtilities {
       return info;
     } catch (error) {
       if (error instanceof TmuxSessionIdentifierError) {
-        logger.debug(`[TMUX] Invalid session identifier: ${error.message}`);
+        logTmuxDebug(`[TMUX] Invalid session identifier: ${error.message}`);
       } else {
-        logger.debug('[TMUX] Error getting session info:', error);
+        logTmuxDebug('[TMUX] Error getting session info:', error);
       }
       return null;
     }
@@ -667,9 +681,9 @@ export class TmuxUtilities {
       return result !== null && result.returncode === 0;
     } catch (error) {
       if (error instanceof TmuxSessionIdentifierError) {
-        logger.debug(`[TMUX] Invalid window identifier: ${error.message}`);
+        logTmuxDebug(`[TMUX] Invalid window identifier: ${error.message}`);
       } else {
-        logger.debug('[TMUX] Error killing window:', error);
+        logTmuxDebug('[TMUX] Error killing window:', error);
       }
       return false;
     }

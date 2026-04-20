@@ -1,5 +1,5 @@
 import open from 'open';
-import { logger } from '@/ui/logger';
+import { logger } from './logger';
 
 /**
  * Attempts to open a URL in the default browser

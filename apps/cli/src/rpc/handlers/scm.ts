@@ -52,14 +52,24 @@ import {
     notRepositoryResponse,
     runScmRoute,
 } from '@/scm/rpc/dispatch';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
-export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
+export function registerScmHandlers(
+    rpcHandlerManager: RpcHandlerRegistrar,
+    workingDirectory: string,
+    deps?: Readonly<{ accessPolicy?: FilesystemAccessPolicy }>,
+): void {
+    const routeBase = {
+        workingDirectory,
+        accessPolicy: deps?.accessPolicy,
+    } as const;
+
     rpcHandlerManager.registerHandler<ScmBackendDescribeRequest, ScmBackendDescribeResponse>(
         RPC_METHODS.SCM_BACKEND_DESCRIBE,
         async (request) =>
             runScmRoute<ScmBackendDescribeRequest, ScmBackendDescribeResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => ({ success: true, isRepo: false }),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.describeBackend({ context, request }),
@@ -71,7 +81,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmStatusSnapshotRequest, ScmStatusSnapshotResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async ({ cwd }) =>
                     createNonRepositoryScmSnapshotResponse({
                         workingDirectory,
@@ -87,7 +97,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmDiffFileRequest, ScmDiffFileResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmDiffFileResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.diffFile({ context, request }),
@@ -99,7 +109,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmDiffCommitRequest, ScmDiffCommitResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmDiffCommitResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.diffCommit({ context, request }),
@@ -111,7 +121,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmChangeApplyRequest, ScmChangeApplyResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmChangeApplyResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.changeInclude({ context, request }),
@@ -123,7 +133,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmChangeApplyRequest, ScmChangeApplyResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmChangeApplyResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.changeExclude({ context, request }),
@@ -135,7 +145,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmChangeDiscardRequest, ScmChangeDiscardResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmChangeDiscardResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.changeDiscard({ context, request }),
@@ -147,7 +157,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmCommitCreateRequest, ScmCommitCreateResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmCommitCreateResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.commitCreate({ context, request }),
@@ -159,7 +169,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmLogListRequest, ScmLogListResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmLogListResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.logList({ context, request }),
@@ -171,7 +181,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmBranchListRequest, ScmBranchListResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchListResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.branchList({ context, request }),
@@ -183,7 +193,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmBranchCreateRequest, ScmBranchCreateResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchCreateResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.branchCreate({ context, request }),
@@ -195,7 +205,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmBranchCheckoutRequest, ScmBranchCheckoutResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchCheckoutResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.branchCheckout({ context, request }),
@@ -207,7 +217,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmWorktreeCreateRequest, ScmWorktreeCreateResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmWorktreeCreateResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.worktreeCreate({ context, request }),
@@ -219,7 +229,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmWorktreeRemoveRequest, ScmWorktreeRemoveResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmWorktreeRemoveResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.worktreeRemove({ context, request }),
@@ -231,7 +241,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmWorktreePruneRequest, ScmWorktreePruneResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmWorktreePruneResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.worktreePrune({ context, request }),
@@ -243,7 +253,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmCommitBackoutRequest, ScmCommitBackoutResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmCommitBackoutResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.commitBackout({ context, request }),
@@ -255,7 +265,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.remoteFetch({ context, request }),
@@ -267,7 +277,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.remotePush({ context, request }),
@@ -279,7 +289,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.remotePull({ context, request }),
@@ -291,7 +301,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmRemotePublishRequest, ScmRemotePublishResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemotePublishResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.remotePublish({ context, request }),
@@ -303,7 +313,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmStashListRequest, ScmStashListResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashListResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.stashList({ context, request }),
@@ -315,7 +325,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmStashDropRequest, ScmStashDropResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashDropResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.stashDrop({ context, request }),
@@ -327,7 +337,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmStashPopRequest, ScmStashPopResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashPopResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.stashPop({ context, request }),
@@ -339,7 +349,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmStashApplyRequest, ScmStashApplyResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashApplyResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.stashApply({ context, request }),
@@ -351,7 +361,7 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
         async (request) =>
             runScmRoute<ScmStashShowRequest, ScmStashShowResponse>({
                 request,
-                workingDirectory,
+                ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashShowResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.stashShow({ context, request }),

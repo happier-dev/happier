@@ -1,6 +1,6 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import type { AgentBackend } from '@/agent/core/AgentBackend';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { BackendTargetRefV1, ExecutionRunPublicState } from '@happier-dev/protocol';
 
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -22,20 +22,17 @@ import {
 import { ExecutionRunManager } from '@/agent/executionRuns/runtime/ExecutionRunManager';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import {
-  isSafePermissionModeForIntent,
   resolveExecutionRunPolicy,
+  resolveExecutionRunIntentPolicy,
   resolveExecutionRunStartBoundedTimeoutMs,
+  validateExecutionRunStartIntentPolicy,
 } from '@/agent/executionRuns/policy/executionRunPolicy';
 import { VoiceAgentError } from '@/agent/voice/agent/VoiceAgentManager';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
 import { applyExecutionRunListRequest } from '@/session/services/applyExecutionRunListRequest';
-import { preflightCodeRabbitReviewScope } from '@/agent/reviews/engines/coderabbit/preflightCodeRabbitReviewScope';
-import { readCodeRabbitReviewConfigFromEnv } from '@/agent/reviews/engines/coderabbit/readCodeRabbitReviewConfig';
-import { readCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
-import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 
 function invalidParams(): { ok: false; error: string; errorCode: string } {
   return { ok: false, error: 'Invalid params', errorCode: 'execution_run_invalid_action_input' };
@@ -68,7 +65,7 @@ export function registerExecutionRunHandlers(
       modelId?: string;
       accountSettings?: Readonly<Record<string, unknown>> | null;
       start?: any;
-    }) => AgentBackend;
+    }) => ExecutionRunHostRuntime;
     sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
     streamedTranscriptSession?: Readonly<{
       sendAgentMessageEphemeral?: (
@@ -98,6 +95,7 @@ export function registerExecutionRunHandlers(
     }>;
     budgetRegistry?: ExecutionBudgetRegistry;
     onExecutionRunPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
+    onExecutionRunVoiceAgentWelcomed?: (run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>;
     resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
   }>,
 ): void {
@@ -123,6 +121,7 @@ export function registerExecutionRunHandlers(
     streamedTranscriptSession: ctx.streamedTranscriptSession,
     transcriptWriter: ctx.transcriptWriter,
     onPublicStateUpdated: ctx.onExecutionRunPublicStateUpdated,
+    onVoiceAgentWelcomed: ctx.onExecutionRunVoiceAgentWelcomed,
     boundedTimeoutMs: policy.boundedTimeoutMs ?? undefined,
     maxTurns: policy.maxTurns ?? undefined,
     budgetRegistry: ctx.budgetRegistry,
@@ -142,22 +141,28 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
-    if (parsed.data.intent === 'voice_agent') {
+    const intentPolicy = resolveExecutionRunIntentPolicy(parsed.data.intent);
+    if (intentPolicy.requiredFeatureId) {
+      const featureId = intentPolicy.requiredFeatureId;
       const serverSnapshot = ctx.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot;
-      let voiceDecision = resolveCliFeatureDecision({ featureId: 'voice', env: process.env, serverSnapshot });
+      let featureDecision = resolveCliFeatureDecision({ featureId, env: process.env, serverSnapshot });
 
       if (
-        voiceDecision.state === 'unknown'
-        && voiceDecision.blockedBy === 'server'
+        featureDecision.state === 'unknown'
+        && featureDecision.blockedBy === 'server'
         && ctx.serverUrl
       ) {
         cachedServerSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: ctx.serverUrl });
         const nextSnapshot = ctx.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot;
-        voiceDecision = resolveCliFeatureDecision({ featureId: 'voice', env: process.env, serverSnapshot: nextSnapshot });
+        featureDecision = resolveCliFeatureDecision({ featureId, env: process.env, serverSnapshot: nextSnapshot });
       }
 
-      if (voiceDecision.state !== 'enabled') {
-        return { ok: false, error: 'Voice feature disabled', errorCode: 'execution_run_not_allowed' };
+      if (featureDecision.state !== 'enabled') {
+        return {
+          ok: false,
+          error: featureId === 'voice' ? 'Voice feature disabled' : 'Feature disabled',
+          errorCode: 'execution_run_not_allowed',
+        };
       }
     }
     if (!ctx.budgetRegistry) {
@@ -165,39 +170,31 @@ export function registerExecutionRunHandlers(
         return { ok: false, error: 'Execution run budget exceeded', errorCode: 'execution_run_budget_exceeded' };
       }
     }
-    if (!isSafePermissionModeForIntent(parsed.data.intent, parsed.data.permissionMode)) {
-      return { ok: false, error: 'Permission denied', errorCode: 'permission_denied' };
+    const policyValidation = validateExecutionRunStartIntentPolicy({
+      intent: parsed.data.intent,
+      permissionMode: parsed.data.permissionMode,
+      retentionPolicy: parsed.data.retentionPolicy,
+      runClass: parsed.data.runClass,
+      ioMode: parsed.data.ioMode,
+    });
+    if (!policyValidation.ok) {
+      return policyValidation;
     }
     const backendTarget = convertBackendTargetRefV2ToV1(parsed.data.backendTarget);
     const backendId = resolveExecutionRunRuntimeBackendId(backendTarget);
-    if (parsed.data.intent === 'review' && backendId === 'coderabbit') {
-      const codeRabbitConfig = readCodeRabbitReviewConfigFromEnv(process.env);
-      let preflight;
-      try {
-        preflight = await preflightCodeRabbitReviewScope({
-          cwd: ctx.cwd,
-          intentInput: parsed.data.intentInput,
-          maxEligibleFiles: codeRabbitConfig.maxEligibleFiles,
-        });
-      } catch (error) {
-        return executionRunNotAllowedError(error);
-      }
+    if (intentPolicy.startPreflight) {
+      const preflight = await intentPolicy.startPreflight({
+        backendId,
+        intentInput: parsed.data.intentInput,
+        cwd: ctx.cwd,
+        env: process.env,
+      });
       if (!preflight.ok) {
-        return { ok: false, error: preflight.error, errorCode: 'execution_run_not_allowed' };
+        return preflight;
       }
     }
     if (!policy.allowIoModes.has(parsed.data.ioMode)) {
       return { ok: false, error: 'Unsupported ioMode', errorCode: 'execution_run_not_allowed' };
-    }
-    if (parsed.data.intent === 'voice_agent') {
-      // Voice agent uses a dedicated streaming turn protocol; enforce it so we don't accidentally
-      // treat voice_agent like a generic bounded execution run.
-      if (parsed.data.ioMode !== 'streaming') {
-        return { ok: false, error: 'Unsupported ioMode', errorCode: 'execution_run_not_allowed' };
-      }
-      if (parsed.data.runClass !== 'long_lived') {
-        return { ok: false, error: 'Unsupported runClass', errorCode: 'execution_run_not_allowed' };
-      }
     }
 
     const parentRunId = typeof (raw as any)?.parentRunId === 'string' ? String((raw as any).parentRunId).trim() : '';
@@ -215,49 +212,13 @@ export function registerExecutionRunHandlers(
     }
     try {
       const accountSettings = await ctx.resolveAccountSettings?.() ?? null;
-      const startParams: any = { ...(parsed.data as any), backendTarget };
-      if (parsed.data.intent === 'voice_agent' && parsed.data.replay?.kind === 'voice_session.v1') {
-        const credentials = await readCredentials().catch(() => null);
-        if (credentials) {
-          const replayStrategy =
-            parsed.data.replay.strategy === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
-          const replaySeed = await resolveReplaySeedDraft({
-            credentials,
-            cwd: ctx.cwd,
-            source: {
-              kind: 'voice_session.v1',
-              previousSessionId: parsed.data.replay.previousSessionId,
-              transcriptEpoch: parsed.data.replay.transcriptEpoch,
-            },
-            strategy: replayStrategy,
-            recentMessagesCount: parsed.data.replay.recentMessagesCount ?? 16,
-            maxSeedChars:
-              typeof parsed.data.replay.maxSeedChars === 'number'
-                ? parsed.data.replay.maxSeedChars
-                : configuration.replaySeedMaxChars,
-            candidateLimit: configuration.replaySeedCandidateLimit,
-            summaryRunner: parsed.data.replay.summaryRunner ?? null,
-          }).catch(() => null);
-          if (replaySeed?.seedDraft) {
-            startParams.initialContext = [String(parsed.data.initialContext ?? '').trim(), replaySeed.seedDraft]
-              .filter((value) => value.length > 0)
-              .join('\n\n');
-            if (
-              parsed.data.bootstrapMode === 'ready_handshake'
-              && typeof startParams.initialContextMode !== 'string'
-            ) {
-              startParams.initialContextMode = 'first_turn';
-            }
-          }
-        }
-      }
-      delete startParams.replay;
 
       // Preserve passthrough fields for intent-specific configuration (e.g. voice_agent model IDs).
       const started = await manager.start({
         sessionId: ctx.sessionId,
         ...(accountSettings ? { accountSettings } : {}),
-        ...startParams,
+        ...(parsed.data as any),
+        backendTarget,
         ...(() => {
           const boundedTimeoutMs = resolveExecutionRunStartBoundedTimeoutMs({
             policy,

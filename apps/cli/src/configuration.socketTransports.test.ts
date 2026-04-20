@@ -17,7 +17,7 @@ describe('configuration socket transports', () => {
     tempDirs.length = 0;
   });
 
-  it('defaults to websocket-first transports', async () => {
+  it('defaults to polling-first transports (upgrade to websocket when available)', async () => {
     const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
@@ -26,7 +26,7 @@ describe('configuration socket transports', () => {
 
     const configMod = await import('./configuration');
     configMod.reloadConfiguration();
-    expect(configMod.configuration.socketIoTransports).toEqual(['websocket', 'polling']);
+    expect(configMod.configuration.socketIoTransports).toEqual(['polling', 'websocket']);
   });
 
   it('forces websocket-only when HAPPIER_SOCKET_FORCE_WEBSOCKET is enabled', async () => {

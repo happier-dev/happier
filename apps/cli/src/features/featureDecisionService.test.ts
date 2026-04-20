@@ -110,4 +110,20 @@ describe('resolveCliFeatureDecision', () => {
     expect(decision.blockedBy).toBe('dependency');
     expect(decision.blockerCode).toBe('dependency_disabled');
   });
+
+  it('disables voice.daemonInference when voice.agent is locally disabled', () => {
+    const decision = resolveCliFeatureDecision({
+      featureId: 'voice.daemonInference',
+      env: {
+        HAPPIER_FEATURE_VOICE__ENABLED: '1',
+        HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED: '1',
+        HAPPIER_FEATURE_VOICE_AGENT__ENABLED: '0',
+        HAPPIER_FEATURE_VOICE_DAEMON_INFERENCE__ENABLED: '1',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(decision.state).toBe('disabled');
+    expect(decision.blockedBy).toBe('dependency');
+    expect(decision.blockerCode).toBe('dependency_disabled');
+  });
 });

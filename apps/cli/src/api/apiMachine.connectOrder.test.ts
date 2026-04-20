@@ -14,7 +14,7 @@ vi.mock('@/configuration', () => ({
     serverUrl: 'https://example.test',
     apiServerUrl: 'https://example.test',
     socketForceWebsocketOnly: false,
-    socketIoTransports: ['websocket', 'polling'],
+    socketIoTransports: ['polling', 'websocket'],
   },
 }));
 

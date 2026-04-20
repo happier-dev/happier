@@ -1,8 +1,9 @@
 import { logger } from '@/ui/logger';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
-import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
 
 interface RipgrepRequest {
     args: string[];
@@ -17,16 +18,25 @@ interface RipgrepResponse {
     error?: string;
 }
 
-export function registerRipgrepHandler(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
+export function registerRipgrepHandler(
+    rpcHandlerManager: RpcHandlerRegistrar,
+    workingDirectory: string,
+    opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy }>,
+): void {
+    const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
     // Ripgrep handler - raw interface to ripgrep
     rpcHandlerManager.registerHandler<RipgrepRequest, RipgrepResponse>(RPC_METHODS.RIPGREP, async (data) => {
         logger.debug('Ripgrep request with args:', data.args, 'cwd:', data.cwd);
 
         let cwd = workingDirectory;
         if (data.cwd) {
-            const validation = validatePath(data.cwd, workingDirectory);
+            const validation = authorizeFilesystemPath({
+                targetPath: data.cwd,
+                defaultDirectory: workingDirectory,
+                accessPolicy,
+            });
             if (!validation.valid) return { success: false, error: validation.error };
-            cwd = validation.resolvedPath!;
+            cwd = validation.resolvedPath;
         }
 
         try {

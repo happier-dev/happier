@@ -13,9 +13,9 @@ describe('CLI integration test global setup', () => {
     vi.clearAllMocks()
   })
 
-  it('uses shared-only setup mode', async () => {
+  it('uses full setup mode', async () => {
     await globalSetup()
 
-    expect(setupMock).toHaveBeenCalledWith({ buildMode: 'shared-only' })
+    expect(setupMock).toHaveBeenCalledWith({ buildMode: 'full' })
   })
 })

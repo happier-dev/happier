@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ApiClient } from '@/api/api';
-import { isMachineIdConflictError, isMachineRevokedError } from '@/api/api';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
 import { updateSettings } from '@/persistence';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { isMachineIdConflictError, isMachineRevokedError } from './machineRegistrationErrors';
 
 type RecoveryLogger = Readonly<{
   info: (message: string, ...args: ReadonlyArray<unknown>) => void;

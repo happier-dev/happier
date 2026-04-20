@@ -16,6 +16,9 @@ export function registerHappierMcpBuiltInTools(
         resolveSessionId?: (toolArgs: unknown) => string;
     }>,
 ): Readonly<{ toolNames: string[] }> {
+  // B8 closure note:
+  // This registrar intentionally exposes first-party built-in Happier tools.
+  // Plugin-contributed MCP tool/resource seams are a separate lane and must not be implied here.
   const enabledTools = listBuiltInHappierTools({ surface: params.surface });
 
     for (const tool of enabledTools) {

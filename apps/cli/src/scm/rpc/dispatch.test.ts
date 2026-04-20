@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'fs';
+import { mkdirSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -14,6 +14,32 @@ type TestResponse = {
 };
 
 describe('runScmRoute', () => {
+    it('uses the non-repository handler for cwd outside the default directory when unrestricted', async () => {
+        const suiteDir = mkdtempSync(join(tmpdir(), 'happier-scm-dispatch-'));
+        const workspace = join(suiteDir, 'default');
+        const external = join(suiteDir, 'external');
+        mkdirSync(workspace, { recursive: true });
+        mkdirSync(external, { recursive: true });
+        const onNonRepository = vi.fn().mockResolvedValue({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY,
+            error: 'Not a repository',
+        } satisfies TestResponse);
+        const runWithBackend = vi.fn();
+
+        const response = await runScmRoute<{ cwd?: string }, TestResponse>({
+            request: { cwd: external },
+            workingDirectory: workspace,
+            onNonRepository,
+            runWithBackend,
+        });
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY);
+        expect(onNonRepository).toHaveBeenCalledTimes(1);
+        expect(runWithBackend).not.toHaveBeenCalled();
+    });
+
     it('returns INVALID_PATH when cwd fails validation', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-dispatch-'));
         const runWithBackend = vi.fn();
@@ -21,6 +47,7 @@ describe('runScmRoute', () => {
         const response = await runScmRoute<{ cwd?: string }, TestResponse>({
             request: { cwd: '/definitely/outside/workspace' },
             workingDirectory: workspace,
+            accessPolicy: { kind: 'restrictedRoots', roots: [workspace] },
             onNonRepository: () => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY }),
             runWithBackend,
         });

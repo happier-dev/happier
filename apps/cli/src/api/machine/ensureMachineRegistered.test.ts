@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
-import { MachineIdConflictError, MachineRevokedError } from '../api';
+import { MachineIdConflictError, MachineRevokedError } from './machineRegistrationErrors';
 
 vi.mock('@/ui/logger', () => ({
   logger: {

@@ -326,6 +326,211 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
   }
 });
 
+test('invalid-auth auto-reseed falls back to the next usable seed when the configured seed has no auth material', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-empty-seed-'));
+  let profileServer = null;
+  try {
+    const storageDir = join(tmp, 'storage');
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCli({ cliDir });
+    const binDir = join(tmp, 'bin');
+    await mkdir(binDir, { recursive: true });
+    await writeStubYarn({ binDir });
+
+    const targetCliHome = join(storageDir, 'dev', 'cli');
+    const emptySeedCliHome = join(storageDir, 'dev-auth', 'cli');
+    const mainCliHome = join(storageDir, 'main', 'cli');
+    await mkdir(targetCliHome, { recursive: true });
+    await mkdir(emptySeedCliHome, { recursive: true });
+    await mkdir(mainCliHome, { recursive: true });
+
+    await writeFile(
+      join(targetCliHome, 'access.key'),
+      credentialFileContents(makeToken({ sub: 'user-1', nonce: 'stale' })),
+      'utf-8'
+    );
+    await writeFile(join(targetCliHome, 'settings.json'), JSON.stringify({ machineId: 'target-machine' }) + '\n', 'utf-8');
+
+    const mainToken = makeToken({ sub: 'user-1', nonce: 'main-seed' });
+    await writeFile(
+      join(mainCliHome, 'access.key'),
+      credentialFileContents(mainToken),
+      'utf-8'
+    );
+    await writeFile(join(mainCliHome, 'settings.json'), JSON.stringify({ machineId: 'main-machine' }) + '\n', 'utf-8');
+
+    await writeStackEnv({
+      storageDir,
+      stackName: 'dev',
+      env: {
+        HAPPIER_STACK_STACK: 'dev',
+        HAPPIER_STACK_SERVER_PORT: '4251',
+        HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+        HAPPIER_STACK_CLI_HOME_DIR: targetCliHome,
+      },
+    });
+    await writeStackEnv({
+      storageDir,
+      stackName: 'dev-auth',
+      env: {
+        HAPPIER_STACK_STACK: 'dev-auth',
+        HAPPIER_STACK_SERVER_PORT: '4252',
+        HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+        HAPPIER_STACK_CLI_HOME_DIR: emptySeedCliHome,
+      },
+    });
+    await writeStackEnv({
+      storageDir,
+      stackName: 'main',
+      env: {
+        HAPPIER_STACK_STACK: 'main',
+        HAPPIER_STACK_SERVER_PORT: '4253',
+        HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+        HAPPIER_STACK_CLI_HOME_DIR: mainCliHome,
+      },
+    });
+
+    const env = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_AUTH_SEED_FROM: 'dev-auth',
+      HAPPIER_STACK_AUTO_AUTH_SEED: '1',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CLI_BUILD: '0',
+    };
+
+    profileServer = await startProfileAuthServer({ port: 4251, allowToken: mainToken });
+
+    await assert.doesNotReject(async () => {
+      await startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir: targetCliHome,
+        internalServerUrl: 'http://127.0.0.1:4251',
+        publicServerUrl: 'http://localhost:4251',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env,
+      });
+    });
+
+    const copiedAccessKey = await readFile(join(targetCliHome, 'access.key'), 'utf-8');
+    assert.equal(copiedAccessKey, credentialFileContents(mainToken));
+
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl: 'http://127.0.0.1:4251',
+      cliHomeDir: targetCliHome,
+    });
+  } finally {
+    if (profileServer) {
+      await profileServer.close();
+    }
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('invalid-auth auto-reseed falls through to a later usable local seed when the configured seed is stale', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-fallback-usable-'));
+  let profileServer = null;
+  try {
+    const storageDir = join(tmp, 'storage');
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCli({ cliDir });
+    const binDir = join(tmp, 'bin');
+    await mkdir(binDir, { recursive: true });
+    await writeStubYarn({ binDir });
+
+    const targetCliHome = join(storageDir, 'dev', 'cli');
+    const devAuthCliHome = join(storageDir, 'dev-auth', 'cli');
+    const mainCliHome = join(storageDir, 'main', 'cli');
+    await mkdir(targetCliHome, { recursive: true });
+    await mkdir(devAuthCliHome, { recursive: true });
+    await mkdir(mainCliHome, { recursive: true });
+
+    const targetToken = makeToken({ sub: 'user-shared', nonce: 'target-stale' });
+    const devAuthToken = makeToken({ sub: 'user-shared', nonce: 'seed-dev-auth' });
+    const mainToken = makeToken({ sub: 'user-shared', nonce: 'seed-main' });
+    await writeFile(join(targetCliHome, 'access.key'), credentialFileContents(targetToken), 'utf-8');
+    await writeFile(join(devAuthCliHome, 'access.key'), credentialFileContents(devAuthToken), 'utf-8');
+    await writeFile(join(mainCliHome, 'access.key'), credentialFileContents(mainToken), 'utf-8');
+    await writeFile(join(targetCliHome, 'settings.json'), JSON.stringify({ machineId: 'target-machine' }) + '\n', 'utf-8');
+    await writeFile(join(devAuthCliHome, 'settings.json'), JSON.stringify({ machineId: 'dev-auth-machine' }) + '\n', 'utf-8');
+    await writeFile(join(mainCliHome, 'settings.json'), JSON.stringify({ machineId: 'main-machine' }) + '\n', 'utf-8');
+
+    await writeStackEnv({
+      storageDir,
+      stackName: 'dev',
+      env: {
+        HAPPIER_STACK_STACK: 'dev',
+        HAPPIER_STACK_SERVER_PORT: '4351',
+        HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+        HAPPIER_STACK_CLI_HOME_DIR: targetCliHome,
+      },
+    });
+    await writeStackEnv({
+      storageDir,
+      stackName: 'dev-auth',
+      env: {
+        HAPPIER_STACK_STACK: 'dev-auth',
+        HAPPIER_STACK_SERVER_PORT: '4352',
+        HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+        HAPPIER_STACK_CLI_HOME_DIR: devAuthCliHome,
+      },
+    });
+    await writeStackEnv({
+      storageDir,
+      stackName: 'main',
+      env: {
+        HAPPIER_STACK_STACK: 'main',
+        HAPPIER_STACK_SERVER_PORT: '4353',
+        HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+        HAPPIER_STACK_CLI_HOME_DIR: mainCliHome,
+      },
+    });
+
+    const env = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_AUTH_SEED_FROM: 'main',
+      HAPPIER_STACK_AUTO_AUTH_SEED: '1',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CLI_BUILD: '0',
+    };
+
+    profileServer = await startProfileAuthServer({ port: 4351, allowToken: devAuthToken });
+
+    await assert.doesNotReject(async () => {
+      await startLocalDaemonWithAuth({
+        cliBin,
+        cliHomeDir: targetCliHome,
+        internalServerUrl: 'http://127.0.0.1:4351',
+        publicServerUrl: 'http://localhost:4351',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env,
+      });
+    });
+
+    const copiedAccessKey = await readFile(join(targetCliHome, 'access.key'), 'utf-8');
+    assert.equal(copiedAccessKey, credentialFileContents(devAuthToken));
+
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl: 'http://127.0.0.1:4351',
+      cliHomeDir: targetCliHome,
+    });
+  } finally {
+    if (profileServer) {
+      await profileServer.close();
+    }
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('invalid-auth reseed does not fall back to main when configured seed credentials are stale', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-fallback-'));
   let profileServer = null;

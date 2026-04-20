@@ -1,9 +1,6 @@
 export type {
-  ProviderSettingsBehavior,
   ProviderSettingsDescriptor,
   ProviderSettingsDefinition,
-  ProviderSettingsBuildMessageMetaExtras,
-  ProviderSettingsResolveSpawnExtras,
 } from './types.js';
 
 export {
@@ -20,7 +17,6 @@ export {
   CODEX_PROVIDER_SETTINGS_DEFAULTS,
   buildCodexProviderSettingsShape,
   normalizeCodexBackendMode,
-  resolveCodexSpawnExtrasFromSettings,
 } from './definitions/codex.js';
 
 export type { OpenCodeBackendMode } from './definitions/opencode.js';
@@ -40,7 +36,6 @@ export {
   CLAUDE_REMOTE_PROVIDER_FIELDS,
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
   MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS,
-  buildClaudeRemoteOutgoingMessageMetaExtras,
   buildClaudeRemoteProviderSettingsShape,
   isValidClaudeRemoteAdvancedOptionsJson,
   normalizeClaudeRemoteAdvancedOptionsJson,

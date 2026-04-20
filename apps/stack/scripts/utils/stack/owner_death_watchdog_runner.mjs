@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { readEnvObjectFromFile } from '../env/read.mjs';
 import { isPidAlive } from '../proc/pids.mjs';
 import { stopStackWithEnv } from './stop.mjs';
-import { getStackRuntimeProcessEntries, readStackRuntimeStateFile } from './runtime_state.mjs';
+import { readStackRuntimeStateFile } from './runtime_state.mjs';
 
 function parseFlagValue(flag) {
   const entry = process.argv.slice(2).find((arg) => arg.startsWith(`${flag}=`));
@@ -23,11 +23,6 @@ function countKilledProcesses(actions) {
   const uiDevKills = Array.isArray(actions?.uiDev) ? actions.uiDev.length : 0;
   const mobileKills = Array.isArray(actions?.mobile) ? actions.mobile.length : 0;
   return directKills + sweepKills + expoDevKills + uiDevKills + mobileKills;
-}
-
-function formatRuntimeProcesses(entries) {
-  if (!entries.length) return '';
-  return entries.map(({ key, pid }) => `${key}=${pid}`).join(', ');
 }
 
 const rootDir = parseFlagValue('--root-dir');
@@ -71,12 +66,13 @@ async function buildStackEnv() {
   };
 }
 
-async function sweepOwnedRuntime() {
+async function sweepOwnedRuntime(runtimeState = null) {
   if (stopping) return;
   stopping = true;
 
   await writeLog(`owner pid ${ownerPid} is gone; sweeping stack-owned runtime`);
   const env = await buildStackEnv();
+  const preserveDaemon = runtimeState?.stopRequest?.preserveDaemon === true;
   try {
     const actions = await stopStackWithEnv({
       rootDir,
@@ -87,6 +83,7 @@ async function sweepOwnedRuntime() {
       aggressive: false,
       sweepOwned: true,
       autoSweep: true,
+      preserveDaemon,
     });
     const killedCount = countKilledProcesses(actions);
     const errorCount = Array.isArray(actions?.errors) ? actions.errors.length : 0;
@@ -119,15 +116,7 @@ async function tick() {
     return;
   }
 
-  const liveRuntimeProcesses = getStackRuntimeProcessEntries(runtimeState).filter(({ pid }) => isPidAlive(pid));
-  if (liveRuntimeProcesses.length > 0) {
-    await writeLog(
-      `owner pid ${ownerPid} is gone but runtime still has live child processes (${formatRuntimeProcesses(liveRuntimeProcesses)}); keeping runtime`,
-    );
-    return;
-  }
-
-  await sweepOwnedRuntime();
+  await sweepOwnedRuntime(runtimeState);
 }
 
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {

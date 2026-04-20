@@ -13,6 +13,10 @@ import { homedir as osHomedir } from 'node:os';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { resolveMachineRpcWorkingDirectory } from './resolveMachineRpcWorkingDirectory';
+import {
+  resolveFilesystemAccessPolicy,
+  type FilesystemAccessPolicy,
+} from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { readDaemonTerminalPtyConfig } from '@/daemon/terminalPty/terminalPtyConfig';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager } from '@/daemon/terminalPty/terminalPtySessionManager';
 import { createNodePtyProvider } from '@/daemon/terminalPty/ptyProvider';
@@ -27,6 +31,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
     workingDirectory?: string;
+    accessPolicy?: FilesystemAccessPolicy;
     sessionManager?: TerminalPtySessionManager;
   }>;
 }>): void {
@@ -37,6 +42,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const workingDirectory =
     params.deps?.workingDirectory
     ?? resolveMachineRpcWorkingDirectory({ env });
+  const accessPolicy = params.deps?.accessPolicy ?? resolveFilesystemAccessPolicy({ env });
 
   let sessionManager: TerminalPtySessionManager | null = params.deps?.sessionManager ?? null;
   const getSessionManager = (): TerminalPtySessionManager => {
@@ -59,7 +65,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
           ? `${osHomedir()}/${raw.slice(2)}`
           : raw;
 
-    const validation = validatePath(expanded, workingDirectory);
+    const validation = validatePath(expanded, workingDirectory, undefined, accessPolicy);
     if (!validation.valid) {
       return err('terminal_cwd_denied');
     }

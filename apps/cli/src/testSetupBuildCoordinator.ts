@@ -174,8 +174,6 @@ export async function ensureBuildArtifactsReadyOnce(
   const startedAt = Date.now()
 
   while (true) {
-    if (await buildArtifactsAreReady(options.markerPaths, options.isReady)) return
-
     if (await tryAcquireBuildLock(options.lockPath)) {
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
       try {
@@ -187,6 +185,7 @@ export async function ensureBuildArtifactsReadyOnce(
           heartbeatTimer.unref?.()
         }
 
+        // Only trust existing outputs after we've proven no other process is still holding the build lock.
         if (await buildArtifactsAreReady(options.markerPaths, options.isReady)) return
         await options.runBuild()
         if (!(await buildArtifactsAreReady(options.markerPaths, options.isReady))) {

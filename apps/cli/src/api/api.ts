@@ -19,6 +19,19 @@ import {
   shouldTreatGetOrCreateSessionErrorAsOffline,
 } from './client/offlineErrors';
 import {
+  MachineContentPublicKeyMismatchError,
+  MachineIdConflictError,
+  MachineRevokedError,
+} from './machine/machineRegistrationErrors';
+export {
+  MachineContentPublicKeyMismatchError,
+  MachineIdConflictError,
+  MachineRevokedError,
+  isMachineContentPublicKeyMismatchError,
+  isMachineIdConflictError,
+  isMachineRevokedError,
+} from './machine/machineRegistrationErrors';
+import {
   AccountEncryptionModeResponseSchema,
   ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceIdSchema,
@@ -36,39 +49,6 @@ import type {
 } from '@happier-dev/protocol';
 import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
 
-export class MachineIdConflictError extends Error {
-  readonly machineId: string;
-  constructor(machineId: string) {
-    super(`Machine id conflict: ${machineId} is already registered to a different account on this server`);
-    this.name = 'MachineIdConflictError';
-    this.machineId = machineId;
-  }
-}
-
-export class MachineRevokedError extends Error {
-  readonly machineId: string;
-  constructor(machineId: string) {
-    super(`Machine revoked: ${machineId} is no longer valid on this server and must be rotated`);
-    this.name = 'MachineRevokedError';
-    this.machineId = machineId;
-  }
-}
-
-export class MachineContentPublicKeyMismatchError extends Error {
-  readonly machineId: string;
-  readonly reason: string;
-  constructor(machineId: string, reason: string) {
-    super(
-      `Machine registration rejected by server (reason=${reason}). ` +
-        'This usually means your local encryption key does not match your current account credentials. ' +
-        'Try `happier auth logout` then `happier auth login`.',
-    );
-    this.name = 'MachineContentPublicKeyMismatchError';
-    this.machineId = machineId;
-    this.reason = reason;
-  }
-}
-
 export class ConnectedServiceCredentialUnsupportedFormatError extends Error {
   readonly serviceId: ConnectedServiceId;
   readonly profileId: string;
@@ -78,31 +58,6 @@ export class ConnectedServiceCredentialUnsupportedFormatError extends Error {
     this.serviceId = serviceId;
     this.profileId = profileId;
   }
-}
-
-export function isMachineIdConflictError(error: unknown): error is MachineIdConflictError {
-  // Avoid relying on `instanceof`: bundlers / test runners may load multiple module instances.
-  if (!error || typeof error !== 'object') return false;
-  const maybe = error as any;
-  return maybe.name === 'MachineIdConflictError' && typeof maybe.machineId === 'string' && maybe.machineId.length > 0;
-}
-
-export function isMachineRevokedError(error: unknown): error is MachineRevokedError {
-  if (!error || typeof error !== 'object') return false;
-  const maybe = error as any;
-  return maybe.name === 'MachineRevokedError' && typeof maybe.machineId === 'string' && maybe.machineId.length > 0;
-}
-
-export function isMachineContentPublicKeyMismatchError(error: unknown): error is MachineContentPublicKeyMismatchError {
-  if (!error || typeof error !== 'object') return false;
-  const maybe = error as any;
-  return (
-    maybe.name === 'MachineContentPublicKeyMismatchError'
-    && typeof maybe.machineId === 'string'
-    && maybe.machineId.length > 0
-    && typeof maybe.reason === 'string'
-    && maybe.reason.length > 0
-  );
 }
 
 function resolveServerHttpBaseUrl(): string {

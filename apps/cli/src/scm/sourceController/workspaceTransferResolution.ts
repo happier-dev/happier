@@ -15,7 +15,7 @@ import {
     type ScmSourceControllerWorkspaceExportArtifacts,
 } from './workspaceExportArtifacts';
 import type { WorkspaceExportBlobProvider } from './workspaceExportStaging/stageWorkspaceEntries';
-import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from './workspaceExportPackaging/buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries';
+import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from './workspaceExportPackaging/artifacts/fromTransferEntries';
 import {
     isIgnorableWorkspaceExportAccessError,
     listWorkspaceExportFallbackEntries,

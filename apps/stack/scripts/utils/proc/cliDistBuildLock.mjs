@@ -47,6 +47,17 @@ function shouldReclaimLock(lockPath, staleAfterMs, nowMs) {
   return updatedAtMs > 0 && nowMs - updatedAtMs > staleAfterMs;
 }
 
+export function isCliDistBuildLockActive(lockPath, options = {}) {
+  const staleAfterMs = options.staleAfterMs ?? 240_000;
+  const nowMs = options.nowMs ?? Date.now();
+  try {
+    statSync(lockPath);
+  } catch {
+    return false;
+  }
+  return !shouldReclaimLock(lockPath, staleAfterMs, nowMs);
+}
+
 export async function withCliDistBuildLock(fn, options = {}) {
   const lockPath = options.lockPath;
   if (!lockPath) {

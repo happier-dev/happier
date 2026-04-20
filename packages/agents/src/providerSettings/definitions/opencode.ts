@@ -125,5 +125,4 @@ export function buildOpenCodeProviderSettingsShape(_zod: typeof z) {
 export const OPENCODE_PROVIDER_SETTINGS_DEFINITION: ProviderSettingsDefinition = Object.freeze({
   providerId: 'opencode',
   fields: OPENCODE_PROVIDER_ARTIFACTS.definitions,
-  buildOutgoingMessageMetaExtras: () => ({}),
 });
