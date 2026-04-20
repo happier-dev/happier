@@ -10,6 +10,47 @@ function normalizeTargetTriple(rawValue) {
   return value.length > 0 ? value : null;
 }
 
+export function resolveHostTauriTargetTriple({
+  platform = process.platform,
+  arch = process.arch,
+} = {}) {
+  if (platform === 'darwin') {
+    if (arch === 'arm64') return 'aarch64-apple-darwin';
+    if (arch === 'x64') return 'x86_64-apple-darwin';
+    return null;
+  }
+
+  if (platform === 'win32') {
+    if (arch === 'x64') return 'x86_64-pc-windows-msvc';
+    if (arch === 'arm64') return 'aarch64-pc-windows-msvc';
+    return null;
+  }
+
+  if (platform === 'linux') {
+    if (arch === 'arm64') return 'aarch64-unknown-linux-gnu';
+    if (arch === 'x64') return 'x86_64-unknown-linux-gnu';
+    return null;
+  }
+
+  return null;
+}
+
+export function resolveTauriSidecarBinaryFilename(env = process.env) {
+  const targetTriple = normalizeTargetTriple(env.TAURI_ENV_TARGET_TRIPLE ?? env.TARGET)
+    ?? resolveHostTauriTargetTriple();
+  if (!targetTriple) {
+    return process.platform === 'win32' ? 'hsetup.exe' : 'hsetup';
+  }
+  return targetTriple.includes('windows')
+    ? `hsetup-${targetTriple}.exe`
+    : `hsetup-${targetTriple}`;
+}
+
+function resolveBootstrapBinaryFilename(env = process.env) {
+  const targetTriple = normalizeTargetTriple(env.TAURI_ENV_TARGET_TRIPLE ?? env.TARGET);
+  return targetTriple?.includes('windows') ? 'hsetup.exe' : 'hsetup';
+}
+
 export function resolveBunTargetForTauriBuildEnv(env = process.env) {
   const targetTriple = normalizeTargetTriple(env.TAURI_ENV_TARGET_TRIPLE ?? env.TARGET);
   if (!targetTriple) {
@@ -90,6 +131,21 @@ export async function ensureTauriSidecarEntrypointFile({
   return targetPath;
 }
 
+export async function ensureTauriSidecarBinaryFile({
+  env = process.env,
+  srcTauriDir = join(uiDir, 'src-tauri'),
+  bootstrapDistBinDir = join(bootstrapDir, 'dist', 'bin'),
+  cpImpl = cp,
+} = {}) {
+  const sourcePath = join(bootstrapDistBinDir, resolveBootstrapBinaryFilename(env));
+  const targetPath = join(srcTauriDir, 'binaries', resolveTauriSidecarBinaryFilename(env));
+  const targetDir = dirname(targetPath);
+
+  await mkdir(targetDir, { recursive: true });
+  await cpImpl(sourcePath, targetPath, { force: true });
+  return targetPath;
+}
+
 export async function ensureTauriSidecarRuntimeFiles({
   srcTauriDir = join(uiDir, 'src-tauri'),
   bootstrapDistDir = join(bootstrapDir, 'dist'),
@@ -116,6 +172,7 @@ export async function prepareTauriSidecar({
   env = process.env,
   platform = process.platform,
   ensureWorkspacePackagesBuiltForComponent = ensureWorkspacePackagesBuiltForComponentDefault,
+  ensureTauriSidecarBinaryFileImpl = ensureTauriSidecarBinaryFile,
   ensureTauriSidecarEntrypointFileImpl = ensureTauriSidecarEntrypointFile,
   ensureTauriSidecarRuntimeFilesImpl = ensureTauriSidecarRuntimeFiles,
   spawnSyncImpl = spawnSync,
@@ -145,6 +202,11 @@ export async function prepareTauriSidecar({
     throw result.error;
   }
 
+  await ensureTauriSidecarBinaryFileImpl({
+    env: nextEnv,
+    srcTauriDir: join(uiDir, 'src-tauri'),
+    bootstrapDistBinDir: join(bootstrapDir, 'dist', 'bin'),
+  });
   await ensureTauriSidecarRuntimeFilesImpl({
     srcTauriDir: join(uiDir, 'src-tauri'),
     bootstrapDistDir: join(bootstrapDir, 'dist'),

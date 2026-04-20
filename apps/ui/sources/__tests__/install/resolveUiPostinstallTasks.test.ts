@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 describe('resolveUiPostinstallTasks', () => {
-    it('includes web-asset tasks by default', async () => {
+    it('keeps the remaining web-asset tasks but omits browser Kokoro vendoring by default', async () => {
         const mod: any = await import('../../../tools/resolveUiPostinstallTasks.mjs');
         expect(typeof mod.resolveUiPostinstallTasks).toBe('function');
 
@@ -10,12 +10,12 @@ describe('resolveUiPostinstallTasks', () => {
             expect.arrayContaining([
                 'setup-skia-web',
                 'vendor-monaco',
-                'vendor-kokoro-web',
                 'vendor-pierre-diffs-worker',
                 'vendor-codemirror-webview-bundle',
                 'vendor-xterm-webview-bundle',
             ]),
         );
+        expect(tasks).not.toContain('vendor-kokoro-web');
     });
 
     it('skips web-asset tasks when HAPPIER_UI_VENDOR_WEB_ASSETS=0', async () => {
@@ -25,7 +25,6 @@ describe('resolveUiPostinstallTasks', () => {
             expect.arrayContaining([
                 'setup-skia-web',
                 'vendor-monaco',
-                'vendor-kokoro-web',
                 'vendor-pierre-diffs-worker',
                 'vendor-codemirror-webview-bundle',
                 'vendor-xterm-webview-bundle',

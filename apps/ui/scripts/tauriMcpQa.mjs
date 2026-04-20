@@ -32,6 +32,7 @@ const tauriAttachWaitStatusPollAttempts = 3;
 const tauriAttachWaitStatusPollDelayMs = 250;
 const activitySurfacesAttachWaitMaxAttempts = 90;
 const defaultActivitySurfacesQaStackName = 'activity-surfaces-qa';
+const defaultDesktopSidebarChromeQaStackName = 'desktop-sidebar-chrome-qa';
 
 async function readJsonFile(filePath) {
   return JSON.parse(await readFile(filePath, 'utf8'));
@@ -439,10 +440,12 @@ export async function waitForAttachableTauriApp({
 export function resolveTauriMcpQaRunMode({ argv = [], env = process.env } = {}) {
   const args = Array.isArray(argv) ? argv : [];
   const keepRunning = args.includes('--serve') || readBooleanEnv(env.HAPPIER_TAURI_QA_KEEP_RUNNING, false);
-  const requestedScenario = args.includes('--activity-surfaces')
-    || String(env.HAPPIER_TAURI_QA_SCENARIO ?? '').trim().toLowerCase() === 'activity-surfaces'
+  const requestedScenarioEnv = String(env.HAPPIER_TAURI_QA_SCENARIO ?? '').trim().toLowerCase();
+  const requestedScenario = args.includes('--activity-surfaces') || requestedScenarioEnv === 'activity-surfaces'
     ? 'activity-surfaces'
-    : 'wizard';
+    : (args.includes('--desktop-sidebar-chrome') || requestedScenarioEnv === 'desktop-sidebar-chrome'
+        ? 'desktop-sidebar-chrome'
+        : 'wizard');
   const runWizardEnv = readBooleanEnv(env.HAPPIER_TAURI_QA_RUN_WIZARD, true);
   const runSelectedScenario = !keepRunning && (requestedScenario !== 'wizard' || (!args.includes('--no-wizard') && runWizardEnv));
   const teeLogs = args.includes('--tee-logs') || readBooleanEnv(env.HAPPIER_TAURI_QA_TEE_LOGS, false);
@@ -458,7 +461,7 @@ export function resolveTauriMcpQaRunMode({ argv = [], env = process.env } = {}) 
 
 export function resolveTauriQaScenarioEnvOverrides({ requestedScenario, env = process.env } = {}) {
   const resolvedEnv = env && typeof env === 'object' ? env : process.env;
-  if (requestedScenario !== 'activity-surfaces') {
+  if (requestedScenario !== 'activity-surfaces' && requestedScenario !== 'desktop-sidebar-chrome') {
     return {};
   }
 
@@ -467,7 +470,9 @@ export function resolveTauriQaScenarioEnvOverrides({ requestedScenario, env = pr
   const stackName =
     explicitStackName
     || resolveStackNameFromStackOwnedTauriIdentifier(explicitIdentifier)
-    || defaultActivitySurfacesQaStackName;
+    || (requestedScenario === 'activity-surfaces'
+      ? defaultActivitySurfacesQaStackName
+      : defaultDesktopSidebarChromeQaStackName);
   const identifier = explicitIdentifier || (stackName ? `com.happier.stack.${stackName}` : '');
 
   const overrides = {};
@@ -604,6 +609,12 @@ export async function resolveTauriMcpQaPlan({
         script: 'scripts/qa/tauriActivitySurfacesMcpQa.mjs',
         envOverrides: qaScenarioEnvOverrides,
       }
+    : runMode.requestedScenario === 'desktop-sidebar-chrome'
+      ? {
+          id: 'desktop-sidebar-chrome',
+          script: 'scripts/qa/tauriDesktopSidebarChromeMcpQa.mjs',
+          envOverrides: qaScenarioEnvOverrides,
+        }
     : {
         id: 'wizard',
         script: 'scripts/qa/tauriOnboardingWizardMcpQa.mjs',
@@ -621,6 +632,9 @@ export async function resolveTauriMcpQaPlan({
     qaScenario,
     wizardQa: {
       script: 'scripts/qa/tauriOnboardingWizardMcpQa.mjs',
+    },
+    desktopSidebarChromeQa: {
+      script: 'scripts/qa/tauriDesktopSidebarChromeMcpQa.mjs',
     },
     mcpServer: {
       command: 'npx',
@@ -748,6 +762,8 @@ function printUsage() {
     'options:',
     '  --json   Print the resolved launch plan without starting processes',
     '  --serve  Keep the app + MCP server running (do not run one-shot wizard QA)',
+    '  --activity-surfaces  Run the native desktop activity-surfaces QA capture',
+    '  --desktop-sidebar-chrome  Run the native desktop sidebar chrome QA capture',
     '  --no-wizard  Do not run the one-shot onboarding wizard capture',
     '  --tee-logs  Also print child process logs to stdout/stderr',
     '',

@@ -28,8 +28,17 @@ export function usePathname(): string {
     return '/';
 }
 
-export function useLocalSearchParams(): Record<string, string | string[] | undefined> {
-    return {};
+export function useLocalSearchParams<
+    TParams extends Record<string, string | string[] | undefined> = Record<string, string | string[] | undefined>,
+>(): TParams {
+    // Test-only stub; route-param-heavy specs should use the canonical expo-router mock factory instead.
+    return {} as unknown as TParams;
+}
+
+export function useGlobalSearchParams<
+    TParams extends Record<string, string | string[] | undefined> = Record<string, string | string[] | undefined>,
+>(): TParams {
+    return useLocalSearchParams<TParams>();
 }
 
 export const router = useRouter();

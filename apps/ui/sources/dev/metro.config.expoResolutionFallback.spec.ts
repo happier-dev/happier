@@ -253,7 +253,16 @@ describe('packages/tests uiWebMetro (Expo web baseUrl resolution)', () => {
                 env: { NODE_ENV: 'test' },
             });
 
-            expect(resolved.baseUrl).toBe(fresh.baseUrl);
+            const normalizeLoopbackHost = (raw: string) => {
+                const url = new URL(raw);
+                if (url.hostname === '127.0.0.1') {
+                    url.hostname = 'localhost';
+                }
+                return url.toString();
+            };
+
+            // We treat localhost and 127.0.0.1 as interchangeable loopback carriers; only the port matters.
+            expect(normalizeLoopbackHost(resolved.baseUrl)).toBe(normalizeLoopbackHost(fresh.baseUrl));
             expect(resolved.hasScriptTags).toBe(true);
         } finally {
             await new Promise<void>((resolve) => stale.server.close(() => resolve()));

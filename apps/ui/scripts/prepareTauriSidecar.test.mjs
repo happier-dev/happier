@@ -6,10 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  ensureTauriSidecarBinaryFile,
   ensureTauriWatcherIgnoreFile,
   ensureTauriSidecarEntrypointFile,
   ensureTauriSidecarRuntimeFiles,
   resolveBunTargetForTauriBuildEnv,
+  resolveTauriSidecarBinaryFilename,
   resolveTauriWatcherIgnoreContent,
 } from './prepareTauriSidecar.mjs';
 
@@ -45,6 +47,10 @@ test('prepareTauriSidecar builds app workspace dependencies before compiling hse
   const ensureWorkspacePackagesBuiltForComponent = async (componentDir, options) => {
     calls.push(['ensure', componentDir, options]);
   };
+  const ensureTauriSidecarBinaryFileImpl = async (options) => {
+    calls.push(['binary', options]);
+    return join(options.srcTauriDir, 'binaries', 'hsetup-aarch64-apple-darwin');
+  };
   const ensureTauriSidecarRuntimeFilesImpl = async (options) => {
     calls.push(['runtime', options]);
     return [];
@@ -63,6 +69,7 @@ test('prepareTauriSidecar builds app workspace dependencies before compiling hse
   const result = await prepareTauriSidecar({
     env: { TAURI_ENV_TARGET_TRIPLE: 'aarch64-apple-darwin' },
     ensureWorkspacePackagesBuiltForComponent,
+    ensureTauriSidecarBinaryFileImpl,
     ensureTauriSidecarRuntimeFilesImpl,
     ensureTauriSidecarEntrypointFileImpl,
     spawnSyncImpl,
@@ -77,8 +84,30 @@ test('prepareTauriSidecar builds app workspace dependencies before compiling hse
   assert.equal(calls[2][1], 'yarn');
   assert.deepEqual(calls[2][2], ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary']);
   assert.equal(calls[2][3].env.HAPPIER_BUN_TARGET, 'bun-darwin-arm64');
-  assert.equal(calls[3][0], 'runtime');
-  assert.equal(calls[4][0], 'entrypoint');
+  assert.equal(calls[3][0], 'binary');
+  assert.equal(calls[4][0], 'runtime');
+  assert.equal(calls[5][0], 'entrypoint');
+});
+
+test('ensureTauriSidecarBinaryFile stages the host target-scoped sidecar filename when the Tauri target triple is absent', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'happier-tauri-sidecar-bin-'));
+  const bootstrapDistBinDir = join(rootDir, 'bootstrap', 'dist', 'bin');
+  const srcTauriDir = join(rootDir, 'ui', 'src-tauri');
+  await mkdir(bootstrapDistBinDir, { recursive: true });
+  await mkdir(srcTauriDir, { recursive: true });
+
+  const sourcePath = join(bootstrapDistBinDir, process.platform === 'win32' ? 'hsetup.exe' : 'hsetup');
+  await writeFile(sourcePath, 'native-sidecar-binary', 'utf8');
+
+  const targetPath = await ensureTauriSidecarBinaryFile({
+    env: {},
+    srcTauriDir,
+    bootstrapDistBinDir,
+  });
+
+  assert.equal(targetPath, join(srcTauriDir, 'binaries', resolveTauriSidecarBinaryFilename({})));
+  assert.match(targetPath, new RegExp(`binaries[/\\\\]hsetup-[^/\\\\]+${process.platform === 'win32' ? '\\\\.exe$' : '$'}`));
+  assert.equal(await readFile(targetPath, 'utf8'), 'native-sidecar-binary');
 });
 
 test('prepareTauriSidecar invokes Yarn via a Windows-safe shell so yarn.cmd can be resolved', async () => {

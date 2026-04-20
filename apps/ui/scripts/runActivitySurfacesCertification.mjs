@@ -13,6 +13,7 @@ export const ACTIVITY_SURFACES_VALIDATION_NODE_TEST_FILES = [
   './scripts/runActivitySurfacesCertification.test.mjs',
   './scripts/runActivitySurfacesNativeCertification.test.mjs',
   './scripts/runActivitySurfacesReleaseReadiness.test.mjs',
+  './scripts/qa/tauriActivitySurfacesMcpQa.test.mjs',
   './scripts/validateExpoWidgetsNativeSync.test.mjs',
   './scripts/validateExpoWidgetsGeneratedProject.test.mjs',
   './scripts/validateExpoWidgetsSimulatorBuildSmoke.test.mjs',

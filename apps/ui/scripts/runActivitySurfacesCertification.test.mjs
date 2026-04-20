@@ -39,6 +39,7 @@ test('runActivitySurfacesCertification runs rollout-local script tests, narrowed
                     './scripts/runActivitySurfacesCertification.test.mjs',
                     './scripts/runActivitySurfacesNativeCertification.test.mjs',
                     './scripts/runActivitySurfacesReleaseReadiness.test.mjs',
+                    './scripts/qa/tauriActivitySurfacesMcpQa.test.mjs',
                     './scripts/validateExpoWidgetsNativeSync.test.mjs',
                     './scripts/validateExpoWidgetsGeneratedProject.test.mjs',
                     './scripts/validateExpoWidgetsSimulatorBuildSmoke.test.mjs',

@@ -65,6 +65,43 @@ test('tauri MCP QA can switch the one-shot capture scenario to activity-surfaces
     assert.equal(payload.plan.qaScenario?.script, 'scripts/qa/tauriActivitySurfacesMcpQa.mjs');
 });
 
+test('tauri MCP QA can switch the one-shot capture scenario to desktop-sidebar-chrome', async () => {
+    const scriptsDir = dirname(fileURLToPath(import.meta.url));
+    const scriptPath = join(scriptsDir, 'tauriMcpQa.mjs');
+
+    const { stdout } = await execFileAsync(process.execPath, [scriptPath, '--json', '--desktop-sidebar-chrome'], {
+        cwd: dirname(scriptsDir),
+        env: { ...process.env },
+        encoding: 'utf8',
+    });
+
+    const payload = JSON.parse(stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.plan.keepRunning, false);
+    assert.equal(payload.plan.runWizard, false);
+    assert.equal(payload.plan.qaScenario?.id, 'desktop-sidebar-chrome');
+    assert.equal(payload.plan.qaScenario?.script, 'scripts/qa/tauriDesktopSidebarChromeMcpQa.mjs');
+});
+
+test('tauri MCP QA desktop-sidebar-chrome scenario defaults to the canonical stack-owned desktop QA target when no stack env is provided', async () => {
+    const scriptsDir = dirname(fileURLToPath(import.meta.url));
+    const scriptPath = join(scriptsDir, 'tauriMcpQa.mjs');
+    const module = await import(pathToFileURL(scriptPath).href);
+
+    const plan = await module.resolveTauriMcpQaPlan({
+        argv: ['--desktop-sidebar-chrome'],
+        env: { ...process.env },
+    });
+
+    assert.equal(plan.requestedScenario, 'desktop-sidebar-chrome');
+    assert.equal(plan.qaScenario?.id, 'desktop-sidebar-chrome');
+    assert.equal(plan.qaScenario?.envOverrides?.HAPPIER_STACK_STACK, 'desktop-sidebar-chrome-qa');
+    assert.equal(plan.qaScenario?.envOverrides?.HAPPIER_STACK_TAURI_IDENTIFIER, 'com.happier.stack.desktop-sidebar-chrome-qa');
+    assert.equal(plan.tauriDev.env?.HAPPIER_STACK_STACK, 'desktop-sidebar-chrome-qa');
+    assert.equal(plan.tauriDev.env?.HAPPIER_STACK_TAURI_IDENTIFIER, 'com.happier.stack.desktop-sidebar-chrome-qa');
+    assert.equal(plan.tauriConfig.identifier, 'com.happier.stack.desktop-sidebar-chrome-qa');
+  });
+
 test('tauri MCP QA activity-surfaces scenario defaults to the canonical stack-owned desktop QA target when no stack env is provided', async () => {
     const scriptsDir = dirname(fileURLToPath(import.meta.url));
     const scriptPath = join(scriptsDir, 'tauriMcpQa.mjs');

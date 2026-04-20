@@ -1,12 +1,14 @@
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { applyLocalSettingsFromDesktopMcpBridge } from '@/sync/store/settingsWriters';
-import { sync } from '@/sync/sync';
-import type { Session } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import { buildDesktopActivityOverlaySnapshot } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlaySnapshot';
 import { buildDesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
 import { syncDesktopActivityOverlay } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
+import {
+    buildDesktopActivityOverlayQaSyncPayload,
+    desktopActivityOverlayQaSeedModes,
+} from '@/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtures.mjs';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { resolveDesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 
@@ -18,10 +20,47 @@ type McpWindowLike = typeof globalThis & {
         reverseRefs?: unknown;
         applyHappierLocalSettings?: unknown;
         ensureHappierSessionVisible?: unknown;
+        seedDesktopActivityOverlayQaState?: unknown;
+        clearDesktopActivityOverlayQaState?: unknown;
     };
 };
 
 const REF_PATTERN = /^\[?(?:ref=)?(e\d+)\]?$/;
+const desktopOverlayQaSeedModeSet = new Set(desktopActivityOverlayQaSeedModes);
+const DESKTOP_OVERLAY_QA_SEED_PIN_DURATION_MS = 30_000;
+const DESKTOP_OVERLAY_QA_SEED_PIN_INTERVAL_MS = 100;
+const desktopOverlayQaSeedPinTimers = new WeakMap<object, ReturnType<typeof setInterval>>();
+
+function stopDesktopOverlayQaSeedPinning(windowObj: object): void {
+    const timer = desktopOverlayQaSeedPinTimers.get(windowObj);
+    if (!timer) {
+        return;
+    }
+
+    clearInterval(timer);
+    desktopOverlayQaSeedPinTimers.delete(windowObj);
+}
+
+function startDesktopOverlayQaSeedPinning(
+    windowObj: object,
+    mode: string,
+    seedDesktopOverlayQaState: (mode: string) => Promise<Record<string, unknown>>,
+): void {
+    stopDesktopOverlayQaSeedPinning(windowObj);
+
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+        if (Date.now() - startedAt >= DESKTOP_OVERLAY_QA_SEED_PIN_DURATION_MS) {
+            stopDesktopOverlayQaSeedPinning(windowObj);
+            return;
+        }
+
+        void seedDesktopOverlayQaState(mode).catch(() => {
+            stopDesktopOverlayQaSeedPinning(windowObj);
+        });
+    }, DESKTOP_OVERLAY_QA_SEED_PIN_INTERVAL_MS);
+    desktopOverlayQaSeedPinTimers.set(windowObj, timer);
+}
 
 function xpathForText(text: string): string {
     if (!text.includes('\'')) {
@@ -44,13 +83,16 @@ export function installTauriMcpWebviewDriverScripts(options?: Readonly<{
     applyLocalSettings?: (delta: Partial<LocalSettings>) => void;
     ensureSessionVisible?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => Promise<boolean>;
     flushDesktopOverlaySync?: () => void | Promise<void>;
+    seedDesktopOverlayQaState?: (mode: string) => Promise<Record<string, unknown>>;
 }>) {
     const windowObj = options?.windowObj ?? (typeof window !== 'undefined' ? (window as unknown as McpWindowLike) : null);
     const documentObj = options?.documentObj ?? (typeof document !== 'undefined' ? document : null);
     const applyLocalSettings = options?.applyLocalSettings ?? applyLocalSettingsFromDesktopMcpBridge;
     const ensureSessionVisible = options?.ensureSessionVisible
-        ?? ((sessionId: string, helperOptions?: Readonly<{ forceRefresh?: boolean }>) =>
-            sync.ensureSessionVisibleForMessageRoute(sessionId, helperOptions));
+        ?? (async (sessionId: string, helperOptions?: Readonly<{ forceRefresh?: boolean }>) => {
+            const { sync } = await import('@/sync/sync');
+            return sync.ensureSessionVisibleForMessageRoute(sessionId, helperOptions);
+        });
     const flushDesktopOverlaySync = options?.flushDesktopOverlaySync ?? (async () => {
         // This bridge runs in both the main and overlay windows. Only the main window is allowed to
         // call `desktop_activity_overlay_sync` (the Rust command validates the caller label).
@@ -60,15 +102,18 @@ export function installTauriMcpWebviewDriverScripts(options?: Readonly<{
 
         const storageState = getStorage().getState();
         const localSettings = storageState.localSettings as unknown as Record<string, unknown>;
-        const sessions = (storageState.isDataReady
-            ? Object.values(storageState.sessions ?? {}) as Session[]
-            : []) satisfies Session[];
-        sessions.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
         const desktopPolicy = resolveDesktopOverlayPolicy(localSettings);
         const activityPolicy = resolveActivitySurfacePolicy(localSettings);
         const snapshot = buildDesktopActivityOverlaySnapshot({
-            sessions,
+            source: {
+                isDataReady: storageState.isDataReady,
+                sessionsById: storageState.sessions ?? {},
+                sessionListRenderablesById: storageState.sessionListRenderables ?? {},
+                sessionListIndexByServerId: storageState.sessionListIndexByServerId ?? {},
+                concurrentSessionListCacheByServerId: storageState.concurrentSessionListCacheByServerId ?? {},
+                quotaSummaries: [],
+            },
             activityPolicy,
             desktopPolicy,
         });
@@ -85,6 +130,38 @@ export function installTauriMcpWebviewDriverScripts(options?: Readonly<{
             policy: desktopPolicy,
             window: model.window,
         });
+    });
+    const seedDesktopOverlayQaState = options?.seedDesktopOverlayQaState ?? (async (mode: string) => {
+        if (isDesktopActivityOverlayWindowContext()) {
+            return {
+                ok: false,
+                reason: 'overlay-window-context',
+                mode,
+            };
+        }
+
+        const storageState = getStorage().getState();
+        const localSettings = storageState.localSettings as unknown as Record<string, unknown>;
+        const desktopPolicy = resolveDesktopOverlayPolicy(localSettings);
+        if (!desktopOverlayQaSeedModeSet.has(mode as typeof desktopActivityOverlayQaSeedModes[number])) {
+            return {
+                ok: false,
+                reason: 'unsupported-mode',
+                mode,
+            };
+        }
+        const payload = buildDesktopActivityOverlayQaSyncPayload({
+            mode,
+            policy: desktopPolicy,
+        });
+        await syncDesktopActivityOverlay(payload);
+        const firstCard = Array.isArray(payload.model?.expanded?.cards) ? payload.model.expanded.cards[0] : null;
+        return {
+            ok: true,
+            mode,
+            cardKind: firstCard?.kind ?? null,
+            expanded: payload.expanded === true,
+        };
     });
     if (!windowObj) {
         return;
@@ -219,4 +296,22 @@ export function installTauriMcpWebviewDriverScripts(options?: Readonly<{
             };
         }) as unknown;
     }
+
+    mcp.seedDesktopActivityOverlayQaState = (async (mode: unknown) => {
+        const normalizedMode = String(mode ?? '').trim();
+        if (!normalizedMode) {
+            return { ok: false, reason: 'missing-mode' };
+        }
+        stopDesktopOverlayQaSeedPinning(windowObj);
+        const result = await seedDesktopOverlayQaState(normalizedMode);
+        if (result.ok === true) {
+            startDesktopOverlayQaSeedPinning(windowObj, normalizedMode, seedDesktopOverlayQaState);
+        }
+        return result;
+    }) as unknown;
+
+    mcp.clearDesktopActivityOverlayQaState = (() => {
+        stopDesktopOverlayQaSeedPinning(windowObj);
+        return { ok: true };
+    }) as unknown;
 }

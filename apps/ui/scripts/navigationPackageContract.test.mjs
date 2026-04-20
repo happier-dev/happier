@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 import semver from 'semver';
 
+import './runVitestShards.test.mjs';
+
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
 }

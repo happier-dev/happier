@@ -647,10 +647,19 @@ export async function startTargetedDriverSession({
                 requireStackOwnedIdentifier,
             });
             const { statusResponse, matchedTarget, connectedTarget } = statusResult;
-            const softMatchedTarget = matchedTarget
-                ?? (isStackOwnedTauriIdentifier(connectedTarget?.identifier) ? connectedTarget : null);
+            const softMatchedTarget = matchedTarget ?? null;
 
             if (!softMatchedTarget) {
+                if (isStackOwnedTauriIdentifier(connectedTarget?.identifier)) {
+                    // eslint-disable-next-line no-await-in-loop
+                    await appendAttempt({
+                        ok: false,
+                        port: candidatePort,
+                        reason: 'connected-different-stack-app',
+                        connectedAppIdentifier: resolveDriverSessionAppIdentifier(connectedTarget),
+                        connectedIdentifier: connectedTarget.identifier ?? null,
+                    });
+                }
                 continue;
             }
 
@@ -705,10 +714,19 @@ export async function startTargetedDriverSession({
                 requireStackOwnedIdentifier,
             });
             const { statusResponse, matchedTarget, connectedTarget } = statusResult;
-            const softMatchedTarget = matchedTarget
-                ?? (isStackOwnedTauriIdentifier(connectedTarget?.identifier) ? connectedTarget : null);
+            const softMatchedTarget = matchedTarget ?? null;
 
             if (!softMatchedTarget) {
+                if (isStackOwnedTauriIdentifier(connectedTarget?.identifier)) {
+                    // eslint-disable-next-line no-await-in-loop
+                    await appendAttempt({
+                        ok: false,
+                        port: candidatePort,
+                        reason: 'connected-different-stack-app',
+                        connectedAppIdentifier: resolveDriverSessionAppIdentifier(connectedTarget),
+                        connectedIdentifier: connectedTarget.identifier ?? null,
+                    });
+                }
                 continue;
             }
 
@@ -731,6 +749,10 @@ export async function startTargetedDriverSession({
                 resolvedAppTarget,
             };
         }
+
+        throw new Error(
+            `Unable to resolve the preferred stack-owned Tauri app identifier ${softPreferredAppIdentifier}. Tried ports: ${candidatePorts.join(', ')}`,
+        );
     }
 
     for (const candidatePort of candidatePorts) {

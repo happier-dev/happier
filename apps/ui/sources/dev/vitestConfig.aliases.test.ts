@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 describe('vitest config aliases', () => {
@@ -28,7 +30,10 @@ describe('vitest config aliases', () => {
     it('resolves workspace agent imports to source files so vitest does not load stale dist exports', async () => {
         const module = await import('../../vitest.config');
         const config = module.default as {
-            plugins?: Array<{ name?: string; resolveId?: (id: string) => string | null | undefined }>;
+            plugins?: Array<{
+                name?: string;
+                resolveId?: (id: string, importer?: string) => string | null | undefined;
+            }>;
         };
         const plugins = Array.isArray(config.plugins)
             ? config.plugins
@@ -39,5 +44,17 @@ describe('vitest config aliases', () => {
         expect(resolver?.resolveId?.('@happier-dev/agents/permissions')).toContain(
             '/packages/agents/src/permissions/index.ts',
         );
+        expect(
+            resolver?.resolveId?.(
+                './providers/providerCliRuntime.js',
+                resolve('/Users/leeroy/Documents/Development/happier/dev/packages/agents/src/index.ts'),
+            ),
+        ).toContain('/packages/agents/src/providers/providerCliRuntime.ts');
+        expect(
+            resolver?.resolveId?.(
+                './localControl',
+                resolve('/Users/leeroy/Documents/Development/happier/dev/packages/agents/src/localControl.test.ts'),
+            ),
+        ).toContain('/packages/agents/src/localControl.ts');
     });
 });

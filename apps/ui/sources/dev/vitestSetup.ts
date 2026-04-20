@@ -582,6 +582,20 @@ vi.mock('expo-updates', () => ({
     checkForUpdateAsync: async () => ({ isAvailable: false }),
     fetchUpdateAsync: async () => {},
     reloadAsync: async () => {},
+    useUpdates: () => ({
+        currentlyRunning: null,
+        availableUpdate: null,
+        downloadedUpdate: null,
+        isChecking: false,
+        isDownloading: false,
+        isRestarting: false,
+        isUpdateAvailable: false,
+        isUpdatePending: false,
+        downloadProgress: undefined,
+        checkError: null,
+        downloadError: null,
+        lastCheckForUpdateTimeSinceRestart: null,
+    }),
 }));
 
 // `expo-image` uses native view managers; stub it for Vitest.

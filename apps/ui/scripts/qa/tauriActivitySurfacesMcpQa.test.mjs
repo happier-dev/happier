@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import * as preflightModule from './tauriActivitySurfacesPreflight.mjs';
@@ -11,6 +11,85 @@ import * as qaModule from './tauriActivitySurfacesMcpQa.mjs';
 
 const execFileAsync = promisify(execFile);
 const { resolveActivitySurfacesPreflightSelector } = preflightModule;
+const canonicalActivitySurfacesRequiredProofStepIds = [
+    'settings_overlay',
+    'overlay_route',
+    'overlay_collapsed',
+    'overlay_expanded',
+    'overlay_floating_fallback',
+    'overlay_floating_expanded',
+    'overlay_idle',
+    'overlay_permission_request',
+    'overlay_user_question',
+    'overlay_quota_summary',
+    'overlay_multi_session_list',
+];
+const canonicalActivitySurfacesProofStepIds = [
+    ...canonicalActivitySurfacesRequiredProofStepIds,
+    'overlay_completion_state',
+];
+const minimalActivitySurfacesCaptureStepIds = [
+    'settings_overlay',
+    'overlay_route',
+    'overlay_collapsed',
+    'overlay_expanded',
+    'overlay_floating_fallback',
+];
+const deterministicOverlayCaptureOptionalStepIds = canonicalActivitySurfacesRequiredProofStepIds.filter(
+    (stepId) => !minimalActivitySurfacesCaptureStepIds.includes(stepId),
+);
+
+function createSyntheticOverlayCaptureLaneArtifacts(stepId) {
+    return { stepId };
+}
+
+function createExpectedOverlayCaptureLaneResult({
+    includeCompletionState = false,
+} = {}) {
+    const optionalStepIds = includeCompletionState
+        ? [...deterministicOverlayCaptureOptionalStepIds, 'overlay_completion_state']
+        : deterministicOverlayCaptureOptionalStepIds;
+
+    return {
+        settingsArtifacts: createSyntheticOverlayCaptureLaneArtifacts('settings_overlay'),
+        overlayRouteArtifacts: createSyntheticOverlayCaptureLaneArtifacts('overlay_route'),
+        collapsedArtifacts: createSyntheticOverlayCaptureLaneArtifacts('overlay_collapsed'),
+        expandedArtifacts: createSyntheticOverlayCaptureLaneArtifacts('overlay_expanded'),
+        floatingFallbackArtifacts: createSyntheticOverlayCaptureLaneArtifacts('overlay_floating_fallback'),
+        overlayVisibilityEnabled: true,
+        optionalStepArtifacts: Object.fromEntries(
+            optionalStepIds.map((stepId) => [stepId, createSyntheticOverlayCaptureLaneArtifacts(stepId)]),
+        ),
+    };
+}
+
+function createSyntheticQaProofArtifacts(stepId) {
+    return {
+        screenshotPath: `/tmp/${stepId}.png`,
+        structurePath: `/tmp/${stepId}.structure.yml`,
+        a11yPath: `/tmp/${stepId}.a11y.yml`,
+    };
+}
+
+function createCompleteSyntheticQaOverlayCaptureResult({
+    includeCompletionState = false,
+} = {}) {
+    const optionalStepIds = includeCompletionState
+        ? [...deterministicOverlayCaptureOptionalStepIds, 'overlay_completion_state']
+        : deterministicOverlayCaptureOptionalStepIds;
+
+    return {
+        settingsArtifacts: createSyntheticQaProofArtifacts('settings_overlay'),
+        overlayRouteArtifacts: createSyntheticQaProofArtifacts('overlay_route'),
+        collapsedArtifacts: createSyntheticQaProofArtifacts('overlay_collapsed'),
+        expandedArtifacts: createSyntheticQaProofArtifacts('overlay_expanded'),
+        floatingFallbackArtifacts: createSyntheticQaProofArtifacts('overlay_floating_fallback'),
+        overlayVisibilityEnabled: true,
+        optionalStepArtifacts: Object.fromEntries(
+            optionalStepIds.map((stepId) => [stepId, createSyntheticQaProofArtifacts(stepId)]),
+        ),
+    };
+}
 
 test('tauri activity-surfaces QA exposes a deterministic capture plan', async () => {
     const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -28,7 +107,7 @@ test('tauri activity-surfaces QA exposes a deterministic capture plan', async ()
     assert.match(String(payload.plan.trackerPath), /happier-activity-surfaces-qa-tracking-2026-04-05\.md$/);
     assert.deepEqual(
         payload.plan.steps.map((step) => step.id),
-        ['settings_overlay', 'overlay_route', 'overlay_collapsed', 'overlay_expanded', 'overlay_floating_fallback'],
+        canonicalActivitySurfacesProofStepIds,
     );
     assert.deepEqual(payload.plan.steps[0].selectors, ['[data-testid="settings-desktop-overlay-enabled"]']);
     assert.equal(payload.plan.steps[0].snapshotSelector, '[data-testid="settings-desktop-overlay-enabled"]');
@@ -39,6 +118,30 @@ test('tauri activity-surfaces QA exposes a deterministic capture plan', async ()
     assert.deepEqual(payload.plan.steps[2].selectors, ['[data-testid="desktop-activity-overlay-collapsed-notch"]']);
     assert.deepEqual(payload.plan.steps[3].selectors, ['[data-testid="desktop-activity-overlay-expanded-notch"]']);
     assert.deepEqual(payload.plan.steps[4].selectors, ['[data-testid="desktop-activity-overlay-collapsed-floating"]']);
+    assert.deepEqual(payload.plan.steps[5].selectors, ['[data-testid="desktop-activity-overlay-expanded-floating"]']);
+    assert.deepEqual(payload.plan.steps[6].selectors, ['[data-testid="desktop-activity-overlay-card-idle-idle"]']);
+    assert.deepEqual(payload.plan.steps[7].selectors, ['[data-testid="desktop-activity-overlay-card-permission_request-qa-permission-request"]']);
+    assert.deepEqual(payload.plan.steps[8].selectors, ['[data-testid="desktop-activity-overlay-card-user_question-qa-user-question"]']);
+    assert.deepEqual(payload.plan.steps[9].selectors, ['[data-testid="desktop-activity-overlay-card-quota_summary-qa-quota-summary"]']);
+    assert.deepEqual(payload.plan.steps[10].selectors, ['[data-testid="desktop-activity-overlay-card-multi_session_list-list"]']);
+    assert.deepEqual(payload.plan.steps[11].selectors, ['[data-testid="desktop-activity-overlay-card-completion_state-qa-completion-state"]']);
+    assert.deepEqual(
+        payload.plan.steps.map((step) => [step.id, step.required === true]),
+        [
+            ['settings_overlay', true],
+            ['overlay_route', true],
+            ['overlay_collapsed', true],
+            ['overlay_expanded', true],
+            ['overlay_floating_fallback', true],
+            ['overlay_floating_expanded', true],
+            ['overlay_idle', true],
+            ['overlay_permission_request', true],
+            ['overlay_user_question', true],
+            ['overlay_quota_summary', true],
+            ['overlay_multi_session_list', true],
+            ['overlay_completion_state', false],
+        ],
+    );
     assert.deepEqual(payload.plan.preflight.settingsSelectors, [
         '[data-testid="settings-desktop-overlay-enabled"]',
     ]);
@@ -73,6 +176,19 @@ test('tauri activity-surfaces QA exposes a deterministic capture plan', async ()
         '[data-testid="onboarding-wizard-welcome-body"]',
     ]);
     assert.equal(payload.plan.preflight.settingsPath, '/settings');
+    assert.equal(
+        payload.plan.manual.some((entry) => entry.includes('confirm the runtime has at least one active session')),
+        false,
+    );
+    assert.equal(payload.plan.manual.some((entry) => entry.includes('idle surface')), true);
+    assert.equal(
+        payload.plan.manual.some((entry) => entry.includes('HAPPIER_TAURI_ACTIVITY_SURFACES_QA_SEED_STRATEGY=skip')),
+        true,
+    );
+    assert.equal(
+        payload.plan.manual.some((entry) => entry.includes('permission_request') && entry.includes('user_question')),
+        true,
+    );
 });
 
 test('tauri activity-surfaces expands the overlay by emitting an overlay interaction', async () => {
@@ -1390,6 +1506,55 @@ test('tauri activity-surfaces QA records the desktop overlay enablement payload 
     assert.equal(warnings.some((text) => String(text).includes('desktop overlay enablement flush reported failure')), true);
 });
 
+test('tauri activity-surfaces QA uses the pinned stack wrapper for stack happier commands when a stack name is present', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesStackCli, 'function');
+
+    const calls = [];
+    const result = await qaModule.runActivitySurfacesStackCli(['session', 'create', '--json'], {
+        env: {
+            HAPPIER_STACK_STACK: 'activity-surfaces-qa',
+            HAPPIER_STACK_CLI_HOME_DIR: '/tmp/happier-stack/cli',
+            HAPPIER_HOME_DIR: '',
+        },
+        execFileImpl: async (command, args, options) => {
+            calls.push({ command, args, options });
+            return { stdout: '{"ok":true}\n', stderr: '' };
+        },
+    });
+
+    assert.equal(result.stdout, '{"ok":true}\n');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, process.execPath);
+    assert.deepEqual(
+        calls[0].args.slice(-6),
+        ['stack.mjs', 'happier', 'activity-surfaces-qa', '--', 'session', 'create', '--json'].slice(-6),
+    );
+    assert.equal(calls[0].options.env.HAPPIER_HOME_DIR, '/tmp/happier-stack/cli');
+    assert.equal(calls[0].options.env.HAPPIER_STACK_CLI_HOME_DIR, '/tmp/happier-stack/cli');
+});
+
+test('tauri activity-surfaces QA falls back to the direct happier script when no pinned stack name is present', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesStackCli, 'function');
+
+    const calls = [];
+    await qaModule.runActivitySurfacesStackCli(['auth', 'status', '--json'], {
+        env: {
+            HAPPIER_STACK_CLI_HOME_DIR: '/tmp/happier-stack/cli',
+            HAPPIER_HOME_DIR: '',
+        },
+        execFileImpl: async (command, args, options) => {
+            calls.push({ command, args, options });
+            return { stdout: '{"ok":true}\n', stderr: '' };
+        },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, process.execPath);
+    assert.equal(String(calls[0].args[0]).endsWith('/apps/stack/scripts/happier.mjs'), true);
+    assert.deepEqual(calls[0].args.slice(1), ['auth', 'status', '--json']);
+    assert.equal(calls[0].options.env.HAPPIER_HOME_DIR, '/tmp/happier-stack/cli');
+});
+
 test('tauri activity-surfaces QA seeds a qualifying session through the canonical stack happier commands', async () => {
     assert.equal(typeof qaModule.seedActivitySurfacesOverlaySession, 'function');
 
@@ -1854,6 +2019,52 @@ test('tauri activity-surfaces QA retries direct session-route hydration when the
     );
 });
 
+test('tauri activity-surfaces QA treats repeated seeded route settle timeouts as best-effort after MCP hydration succeeds', async () => {
+    assert.equal(typeof qaModule.hydrateActivitySurfacesSeededSessionForOverlayCapture, 'function');
+
+    const calls = [];
+    await qaModule.hydrateActivitySurfacesSeededSessionForOverlayCapture({
+        sessionId: 'sess_seeded_overlay',
+        appIdentifier: 9223,
+        env: {
+            HAPPIER_STACK_CLI_HOME_DIR: '/tmp/happier-stack/cli',
+            HAPPIER_HOME_DIR: '',
+        },
+        driverSession: { driverSessionPort: 9223 },
+        ensureSessionVisible: async () => true,
+        navigateWebview: async (pathname, options = {}) => {
+            calls.push({ kind: 'navigate', pathname, options });
+        },
+        waitForPathname: async (pathname, options = {}) => {
+            calls.push({ kind: 'waitForPathname', pathname, options });
+            throw new Error(`Timed out waiting for the seeded session route to settle on ${pathname}.`);
+        },
+        wait: async (ms) => {
+            calls.push({ kind: 'delay', ms });
+        },
+    });
+
+    assert.deepEqual(
+        calls.map((entry) => {
+            if (entry.kind === 'navigate') {
+                return ['navigate', entry.pathname, entry.options.windowId ?? null];
+            }
+            if (entry.kind === 'waitForPathname') {
+                return ['waitForPathname', entry.pathname, entry.options.windowId ?? null];
+            }
+            return ['delay', entry.ms];
+        }),
+        [
+            ['navigate', '/session/sess_seeded_overlay', 'main'],
+            ['waitForPathname', '/session/sess_seeded_overlay', 'main'],
+            ['navigate', '/session/sess_seeded_overlay', 'main'],
+            ['waitForPathname', '/session/sess_seeded_overlay', 'main'],
+            ['navigate', '/settings/desktop', 'main'],
+            ['delay', 500],
+        ],
+    );
+});
+
 test('tauri activity-surfaces QA hydrates seeded sessions through the MCP session-visibility hook', async () => {
     assert.equal(typeof qaModule.ensureActivitySurfacesSessionVisibleForRoute, 'function');
 
@@ -2154,6 +2365,339 @@ test('tauri activity-surfaces QA retries seeded session creation by deriving the
     );
 });
 
+test('tauri activity-surfaces QA falls back to the direct happier CLI when the named stack does not exist but a compose-backed server URL is configured', async () => {
+    assert.equal(typeof qaModule.seedActivitySurfacesOverlaySession, 'function');
+
+    const calls = [];
+    const prerequisiteCalls = [];
+    let createAttempts = 0;
+
+    const result = await qaModule.seedActivitySurfacesOverlaySession({
+        env: {
+            HAPPIER_STACK_STACK: 'compose-desktop-qa',
+            HAPPIER_STACK_CLI_HOME_DIR: '/tmp/happier-stack/cli',
+            HAPPIER_HOME_DIR: '',
+            HAPPIER_SERVER_URL: 'http://127.0.0.1:57279',
+            HAPPIER_TAURI_WEB_RUNTIME_SERVER_CONTEXT: 'stack',
+        },
+        ensureSessionCreateReady: async (request) => {
+            prerequisiteCalls.push(request);
+        },
+        runCliJson: async (args, options) => {
+            calls.push({ args, options });
+            if (args[0] === 'session' && args[1] === 'create') {
+                createAttempts += 1;
+                if (createAttempts === 1) {
+                    throw Object.assign(
+                        new Error('Command failed: node apps/stack/scripts/stack.mjs happier compose-desktop-qa -- session create --json'),
+                        {
+                            stdout: '',
+                            stderr: 'stack "compose-desktop-qa" does not exist yet',
+                        },
+                    );
+                }
+                return {
+                    ok: true,
+                    kind: 'session_create',
+                    data: {
+                        created: true,
+                        session: {
+                            id: 'sess_compose_seeded_overlay',
+                        },
+                    },
+                };
+            }
+            if (args[0] === 'session' && args[1] === 'send') {
+                return {
+                    ok: true,
+                    kind: 'session_send',
+                    data: {
+                        sessionId: 'sess_compose_seeded_overlay',
+                        localId: 'local_1',
+                        waited: false,
+                    },
+                };
+            }
+            throw new Error(`Unexpected seed command: ${args.join(' ')}`);
+        },
+    });
+
+    assert.equal(result.sessionId, 'sess_compose_seeded_overlay');
+    assert.deepEqual(prerequisiteCalls, []);
+    assert.deepEqual(
+        calls.map(({ args, options }) => ({
+            args,
+            stackName: options.env.HAPPIER_STACK_STACK ?? null,
+            serverUrl: options.env.HAPPIER_SERVER_URL ?? null,
+            homeDir: options.env.HAPPIER_HOME_DIR ?? null,
+            forceWebsocket: options.env.HAPPIER_SOCKET_FORCE_WEBSOCKET ?? null,
+        })),
+        [
+            {
+                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                stackName: 'compose-desktop-qa',
+                serverUrl: 'http://127.0.0.1:57279',
+                homeDir: '/tmp/happier-stack/cli',
+                forceWebsocket: null,
+            },
+            {
+                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                stackName: null,
+                serverUrl: 'http://127.0.0.1:57279',
+                homeDir: '/tmp/happier-stack/cli',
+                forceWebsocket: '1',
+            },
+            {
+                args: ['session', 'send', 'sess_compose_seeded_overlay', 'Please post a brief status update so the desktop overlay becomes visible.'],
+                stackName: null,
+                serverUrl: 'http://127.0.0.1:57279',
+                homeDir: '/tmp/happier-stack/cli',
+                forceWebsocket: '1',
+            },
+        ],
+    );
+});
+
+test('tauri activity-surfaces QA seeds through the direct happier CLI first when a compose-backed server URL is configured without stack runtime context', async () => {
+    assert.equal(typeof qaModule.seedActivitySurfacesOverlaySession, 'function');
+
+    const calls = [];
+
+    const result = await qaModule.seedActivitySurfacesOverlaySession({
+        appIdentifier: 'com.happier.stack.compose-desktop-qa',
+        env: {
+            HAPPIER_STACK_STACK: 'compose-desktop-qa',
+            HAPPIER_SERVER_URL: 'http://127.0.0.1:57279',
+        },
+        runCliJson: async (args, options) => {
+            calls.push({ args, options });
+            if (args[0] === 'session' && args[1] === 'create') {
+                return {
+                    ok: true,
+                    kind: 'session_create',
+                    data: {
+                        created: true,
+                        session: {
+                            id: 'sess_compose_direct_first',
+                        },
+                    },
+                };
+            }
+            if (args[0] === 'session' && args[1] === 'send') {
+                return {
+                    ok: true,
+                    kind: 'session_send',
+                    data: {
+                        sessionId: 'sess_compose_direct_first',
+                        localId: 'local_1',
+                        waited: false,
+                    },
+                };
+            }
+            throw new Error(`Unexpected seed command: ${args.join(' ')}`);
+        },
+    });
+
+    assert.equal(result.sessionId, 'sess_compose_direct_first');
+    assert.deepEqual(
+        calls.map(({ args, options }) => ({
+            args,
+            stackName: options.env.HAPPIER_STACK_STACK ?? null,
+            serverUrl: options.env.HAPPIER_SERVER_URL ?? null,
+            forceWebsocket: options.env.HAPPIER_SOCKET_FORCE_WEBSOCKET ?? null,
+        })),
+        [
+            {
+                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                stackName: null,
+                serverUrl: 'http://127.0.0.1:57279',
+                forceWebsocket: '1',
+            },
+            {
+                args: ['session', 'send', 'sess_compose_direct_first', 'Please post a brief status update so the desktop overlay becomes visible.'],
+                stackName: null,
+                serverUrl: 'http://127.0.0.1:57279',
+                forceWebsocket: '1',
+            },
+        ],
+    );
+});
+
+test('tauri activity-surfaces QA retries direct session seeding after materializing CLI auth from the authenticated app when compose-backed direct auth returns 401', async () => {
+    assert.equal(typeof qaModule.seedActivitySurfacesOverlaySession, 'function');
+
+    const calls = [];
+    const authMaterializationCalls = [];
+    let createAttempts = 0;
+
+    const result = await qaModule.seedActivitySurfacesOverlaySession({
+        appIdentifier: 'com.happier.stack.compose-desktop-qa',
+        env: {
+            HAPPIER_STACK_STACK: 'compose-desktop-qa',
+            HAPPIER_SERVER_URL: 'http://127.0.0.1:57279',
+            HAPPIER_TAURI_WEB_RUNTIME_SERVER_CONTEXT: 'stack',
+        },
+        materializeDirectCliAuth: async (request) => {
+            authMaterializationCalls.push(request);
+            return '/tmp/happier-compose-cli-home';
+        },
+        runCliJson: async (args, options) => {
+            calls.push({ args, options });
+            if (args[0] === 'session' && args[1] === 'create') {
+                createAttempts += 1;
+                if (createAttempts === 1) {
+                    throw Object.assign(
+                        new Error('Command failed: node apps/stack/scripts/stack.mjs happier compose-desktop-qa -- session create --json'),
+                        {
+                            stdout: '',
+                            stderr: 'stack "compose-desktop-qa" does not exist yet',
+                        },
+                    );
+                }
+                if (createAttempts === 2) {
+                    throw Object.assign(
+                        new Error('Command failed: node apps/stack/scripts/happier.mjs session create --json'),
+                        {
+                            stdout: '',
+                            stderr: '[local] daemon credentials were rejected by the server (401).',
+                        },
+                    );
+                }
+                return {
+                    ok: true,
+                    kind: 'session_create',
+                    data: {
+                        created: true,
+                        session: {
+                            id: 'sess_compose_reauthed',
+                        },
+                    },
+                };
+            }
+            if (args[0] === 'session' && args[1] === 'send') {
+                return {
+                    ok: true,
+                    kind: 'session_send',
+                    data: {
+                        sessionId: 'sess_compose_reauthed',
+                        localId: 'local_2',
+                        waited: false,
+                    },
+                };
+            }
+            throw new Error(`Unexpected seed command: ${args.join(' ')}`);
+        },
+    });
+
+    assert.equal(result.sessionId, 'sess_compose_reauthed');
+    assert.deepEqual(
+        authMaterializationCalls.map((request) => ({
+            appIdentifier: request.appIdentifier,
+            cliHomeDir: request.cliHomeDir ?? null,
+            serverUrl: request.env.HAPPIER_SERVER_URL ?? null,
+            stackName: request.env.HAPPIER_STACK_STACK ?? null,
+            forceWebsocket: request.env.HAPPIER_SOCKET_FORCE_WEBSOCKET ?? null,
+        })),
+        [
+            {
+                appIdentifier: 'com.happier.stack.compose-desktop-qa',
+                cliHomeDir: null,
+                serverUrl: 'http://127.0.0.1:57279',
+                stackName: null,
+                forceWebsocket: '1',
+            },
+        ],
+    );
+    assert.deepEqual(
+        calls.map(({ args, options }) => ({
+            args,
+            stackName: options.env.HAPPIER_STACK_STACK ?? null,
+            homeDir: options.env.HAPPIER_HOME_DIR ?? null,
+            stackCliHomeDir: options.env.HAPPIER_STACK_CLI_HOME_DIR ?? null,
+            forceWebsocket: options.env.HAPPIER_SOCKET_FORCE_WEBSOCKET ?? null,
+        })),
+        [
+            {
+                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                stackName: 'compose-desktop-qa',
+                homeDir: null,
+                stackCliHomeDir: null,
+                forceWebsocket: null,
+            },
+            {
+                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                stackName: null,
+                homeDir: null,
+                stackCliHomeDir: null,
+                forceWebsocket: '1',
+            },
+            {
+                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                stackName: null,
+                homeDir: '/tmp/happier-compose-cli-home',
+                stackCliHomeDir: '/tmp/happier-compose-cli-home',
+                forceWebsocket: '1',
+            },
+            {
+                args: ['session', 'send', 'sess_compose_reauthed', 'Please post a brief status update so the desktop overlay becomes visible.'],
+                stackName: null,
+                homeDir: '/tmp/happier-compose-cli-home',
+                stackCliHomeDir: '/tmp/happier-compose-cli-home',
+                forceWebsocket: '1',
+            },
+        ],
+    );
+});
+
+test('tauri activity-surfaces QA materializes compose-backed direct CLI credentials using standard base64 encoding', async () => {
+    assert.equal(typeof qaModule.materializeActivitySurfacesCliAuthFromWebStorage, 'function');
+
+    const tempRoot = mkdtempSync(join(process.cwd(), '.project/tmp/materialize-activity-cli-auth-test-'));
+    try {
+        const cliHomeDir = join(tempRoot, 'cli-home');
+        const expectedSecretBytes = Buffer.from([251, 255, 254, 250, 239, 191, 190, 173]);
+        const expectedSecretBase64Url = expectedSecretBytes.toString('base64url');
+        assert.equal(/[\\-_]/u.test(expectedSecretBase64Url), true);
+
+        const result = await qaModule.materializeActivitySurfacesCliAuthFromWebStorage({
+            appIdentifier: 'com.happier.stack.compose-desktop-qa',
+            cliHomeDir,
+            env: {
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:57279',
+            },
+            runCli: async () => ({
+                stdout: JSON.stringify({
+                    ok: true,
+                    activeServerId: 'env_1c620c9a',
+                    sourceKey: 'auth_credentials__srv_env_1c620c9a',
+                    credentials: {
+                        token: 'compose-token',
+                        secret: expectedSecretBase64Url,
+                    },
+                }),
+            }),
+        });
+
+        assert.equal(result, cliHomeDir);
+
+        const legacyAccessKey = JSON.parse(readFileSync(join(cliHomeDir, 'access.key'), 'utf8'));
+        const scopedAccessKey = JSON.parse(
+            readFileSync(join(cliHomeDir, 'servers', 'env_1c620c9a', 'access.key'), 'utf8'),
+        );
+
+        assert.equal(legacyAccessKey.token, 'compose-token');
+        assert.equal(scopedAccessKey.token, 'compose-token');
+        assert.equal(legacyAccessKey.secret.includes('-'), false);
+        assert.equal(legacyAccessKey.secret.includes('_'), false);
+        assert.equal(scopedAccessKey.secret.includes('-'), false);
+        assert.equal(scopedAccessKey.secret.includes('_'), false);
+        assert.equal(Buffer.from(legacyAccessKey.secret, 'base64').equals(expectedSecretBytes), true);
+        assert.equal(Buffer.from(scopedAccessKey.secret, 'base64').equals(expectedSecretBytes), true);
+    } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('tauri activity-surfaces QA can persist desktop overlay visibility mode directly for deterministic capture', async () => {
     assert.equal(typeof qaModule.enableDesktopOverlayVisibilityMode, 'function');
 
@@ -2205,6 +2749,27 @@ test('tauri activity-surfaces QA accepts a tauri-mcp warning prefix before the s
     });
 
     assert.equal(result, true);
+});
+
+test('tauri activity-surfaces QA parses the final JSON line after stack daemon status prefixes', () => {
+    assert.equal(typeof qaModule.parseStructuredJsonPayload, 'function');
+
+    const payload = qaModule.parseStructuredJsonPayload([
+        '[local] daemon auth scope: activeServerId=stack_overlay-v2-20260418__id_default',
+        '[local] daemon already running for stack home (pid=82230)',
+        '{"v":1,"ok":true,"kind":"session_create","data":{"session":{"id":"sess_json_line"}}}',
+    ].join('\n'));
+
+    assert.deepEqual(payload, {
+        v: 1,
+        ok: true,
+        kind: 'session_create',
+        data: {
+            session: {
+                id: 'sess_json_line',
+            },
+        },
+    });
 });
 
 test('tauri activity-surfaces QA only reports success when the persisted overlay visibility mode matches the requested value', async () => {
@@ -2494,16 +3059,63 @@ test('tauri activity-surfaces QA omits the implicit main window id from webview 
 
 function createSyntheticOverlayWindowState({
     hostMode = 'notch_integrated',
+    requestedHostMode = hostMode === 'floating' ? 'floating' : 'notch_integrated',
+    proofMode = 'session_overview',
     expanded = false,
 } = {}) {
     const screenFrame = { x: 0, y: 0, width: 1512, height: 982 };
     const computedY = hostMode === 'notch_integrated' ? 0 : 18;
+    const normalizedProofMode = proofMode === 'idle' ? 'idle_state' : proofMode;
+    const rows = normalizedProofMode === 'multi_session_list'
+        ? [
+            { sessionId: 'session-1', title: 'Session One', subtitle: 'Repo', statusText: 'Running', previewText: 'Primary' },
+            { sessionId: 'session-2', title: 'Session Two', subtitle: 'Repo', statusText: 'Ready', previewText: 'Secondary' },
+        ]
+        : normalizedProofMode === 'session_overview'
+            ? [
+                { sessionId: 'session-1', title: 'Session One', subtitle: 'Repo', statusText: 'Needs attention', previewText: 'Primary' },
+            ]
+            : [];
+    const cards = (() => {
+        switch (normalizedProofMode) {
+            case 'idle_state':
+                return [{ id: 'idle', kind: 'idle_state', title: 'No active sessions' }];
+            case 'permission_request':
+                return [{ id: 'permission:qa-permission-request', kind: 'permission_request', requestId: 'qa-permission-request', sessionId: 'session-1' }];
+            case 'user_question':
+                return [{ id: 'question:qa-user-question', kind: 'user_question', requestId: 'qa-user-question', sessionId: 'session-1' }];
+            case 'quota_summary':
+                return [{ id: 'qa-quota-summary', kind: 'quota_summary', title: 'Quota' }];
+            case 'completion_state':
+                return [{ id: 'qa-completion-state', kind: 'completion_state', sessionId: 'session-1' }];
+            case 'multi_session_list':
+                return [{ id: 'list', kind: 'multi_session_list', rows }];
+            case 'session_overview':
+            default:
+                return [{ id: 'session:session-1', kind: 'session_overview', sessionId: 'session-1', title: 'Session One', active: true, updatedAt: 1 }];
+        }
+    })();
 
     return {
         expanded,
         policy: { enabled: true },
+        model: {
+            isExpanded: expanded,
+            collapsed: {
+                primaryCardKind: normalizedProofMode,
+            },
+            expanded: {
+                rows,
+                cards,
+            },
+        },
         placementDiagnostics: {
+            requestedHostMode,
             hostMode,
+            hostFallbackReason: requestedHostMode === 'notch_integrated' && hostMode === 'floating'
+                ? 'panel_host_apply_failed'
+                : null,
+            nativeHostPath: hostMode === 'notch_integrated' ? 'panel' : 'window',
             effectiveMonitor: screenFrame,
             displayContext: {
                 screenFrame,
@@ -2519,11 +3131,14 @@ function createSyntheticOverlayWindowState({
     };
 }
 
-test('tauri activity-surfaces QA captures the settings surface before enabling the desktop overlay', async () => {
+test('tauri activity-surfaces QA captures the full deterministic overlay proof matrix before restoring settings', async () => {
     assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
 
     const calls = [];
     let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -2549,37 +3164,44 @@ test('tauri activity-surfaces QA captures the settings surface before enabling t
         },
         setOverlayPresentationMode: async ({ presentationMode, windowId }) => {
             calls.push(['presentation', presentationMode, windowId ?? null]);
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             return true;
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
+        },
+        seedOverlayProofState: async ({ mode, windowId }) => {
+            calls.push(['seed-overlay', mode, windowId ?? null]);
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                requestedHostMode: currentRequestedHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector) => {
             calls.push(['click', selector]);
+            currentExpanded = true;
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
         },
+        isSelectorVisible: async () => false,
+        isSelectorVisibleByDomQuery: async () => false,
         appendWarning: async () => {
             throw new Error('unexpected warning');
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     const openSettingsIndex = calls.findIndex((entry) => entry[0] === 'open-settings-page');
     assert.ok(openSettingsIndex >= 0);
     assert.equal(
@@ -2594,8 +3216,8 @@ test('tauri activity-surfaces QA captures the settings surface before enabling t
         calls.filter((entry) => entry[0] === 'set-expanded').map((entry) => entry.slice(1)),
         [
             [false, 'activity_overlay'],
-            [true, 'activity_overlay'],
             [false, 'activity_overlay'],
+            [true, 'activity_overlay'],
         ],
     );
     assert.deepEqual(
@@ -2608,9 +3230,111 @@ test('tauri activity-surfaces QA captures the settings surface before enabling t
     );
     assert.deepEqual(
         calls.filter((entry) => entry[0] === 'capture').map((entry) => entry[1]),
-        ['settings_overlay', 'overlay_route', 'overlay_collapsed', 'overlay_expanded', 'overlay_floating_fallback'],
+        [
+            'settings_overlay',
+            'overlay_route',
+            'overlay_collapsed',
+            'overlay_expanded',
+            'overlay_floating_fallback',
+            'overlay_floating_expanded',
+            'overlay_idle',
+            'overlay_permission_request',
+            'overlay_user_question',
+            'overlay_quota_summary',
+            'overlay_multi_session_list',
+        ],
     );
-    assert.equal(calls.some((entry) => entry[0] === 'click'), false);
+    assert.deepEqual(
+        calls.filter((entry) => entry[0] === 'seed-overlay').map((entry) => entry.slice(1)),
+        [
+            ['idle', 'main'],
+            ['permission_request', 'main'],
+            ['user_question', 'main'],
+            ['quota_summary', 'main'],
+            ['multi_session_list', 'main'],
+            ['completion_state', 'main'],
+        ],
+    );
+    assert.equal(calls.some((entry) => entry[0] === 'click' && entry[1] === '[data-testid="desktop-activity-overlay-collapsed"]'), true);
+});
+
+test('tauri activity-surfaces QA captures deterministic seeded overlay proof states instead of opportunistic card snapshots', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    const captures = [];
+    const seededModes = [];
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId) => {
+            captures.push(stepId);
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded) => {
+            currentExpanded = expanded === true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            seededModes.push(mode);
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        isSelectorVisible: async (selector) => selector !== '[data-testid="desktop-activity-overlay-card-completion_state-qa-completion-state"]',
+        isSelectorVisibleByDomQuery: async () => false,
+        wait: async () => {},
+        appendWarning: async () => {},
+    });
+
+    assert.deepEqual(
+        result.optionalStepArtifacts,
+        createExpectedOverlayCaptureLaneResult().optionalStepArtifacts,
+    );
+    assert.deepEqual(seededModes, [
+        'idle',
+        'permission_request',
+        'user_question',
+        'quota_summary',
+        'multi_session_list',
+        'completion_state',
+    ]);
+    assert.deepEqual(captures, [
+        'settings_overlay',
+        'overlay_route',
+        'overlay_collapsed',
+        'overlay_expanded',
+        'overlay_floating_fallback',
+        'overlay_floating_expanded',
+        'overlay_idle',
+        'overlay_permission_request',
+        'overlay_user_question',
+        'overlay_quota_summary',
+        'overlay_multi_session_list',
+    ]);
 });
 
 test('tauri activity-surfaces QA fails closed when forced notch presentation never reports placement diagnostics', async () => {
@@ -2645,6 +3369,9 @@ test('tauri activity-surfaces QA accepts floating host fallback when forced notc
     const calls = [];
     const warnings = [];
     let currentOverlayHostMode = 'floating';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
 
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
@@ -2661,29 +3388,36 @@ test('tauri activity-surfaces QA accepts floating host fallback when forced notc
         enableDesktopOverlayVisibility: async () => true,
         setOverlayPresentationMode: async ({ presentationMode }) => {
             calls.push(['presentation', presentationMode]);
-            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'floating';
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = 'floating';
             return true;
         },
         setOverlayExpanded: async (expanded) => {
             calls.push(['set-expanded', expanded]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async () => createSyntheticOverlayWindowState({
             hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
         }),
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
         wait: async () => {},
         appendWarning: async (_artifactRoot, text) => {
             warnings.push(text);
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     assert.equal(
         warnings.some((text) => text.includes('resolved to floating host mode')),
         true,
@@ -2696,6 +3430,12 @@ test('tauri activity-surfaces QA accepts floating host fallback when forced notc
             ['overlay_collapsed', '[data-testid="desktop-activity-overlay-collapsed-floating"]', '[data-testid="desktop-activity-overlay-collapsed-floating"]'],
             ['overlay_expanded', '[data-testid="desktop-activity-overlay-expanded-floating"]', '[data-testid="desktop-activity-overlay-expanded-floating"]'],
             ['overlay_floating_fallback', null, null],
+            ['overlay_floating_expanded', null, null],
+            ['overlay_idle', null, null],
+            ['overlay_permission_request', null, null],
+            ['overlay_user_question', null, null],
+            ['overlay_quota_summary', null, null],
+            ['overlay_multi_session_list', null, null],
         ],
     );
 });
@@ -2705,6 +3445,8 @@ test('tauri activity-surfaces QA restores the requested presentation mode when c
 
     const calls = [];
     let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
 
     await assert.rejects(
         () => qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
@@ -2728,15 +3470,24 @@ test('tauri activity-surfaces QA restores the requested presentation mode when c
             },
             setOverlayPresentationMode: async ({ presentationMode }) => {
                 calls.push(['presentation', presentationMode]);
+                currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
                 currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
                 return true;
             },
-            setOverlayExpanded: async () => {},
+            setOverlayExpanded: async (expanded) => {
+                currentExpanded = expanded === true;
+            },
+            seedOverlayProofState: async ({ mode }) => ({ ok: true, mode }),
             getOverlayWindowState: async () => ({
                 ...createSyntheticOverlayWindowState({
                     hostMode: currentOverlayHostMode,
+                    requestedHostMode: currentRequestedHostMode,
+                    expanded: currentExpanded,
                 }),
             }),
+            clickCollapsedOverlay: async () => {
+                currentExpanded = true;
+            },
             wait: async () => {},
             appendWarning: async () => {},
         }),
@@ -2755,6 +3506,9 @@ test('tauri activity-surfaces QA falls back to clicking the collapsed overlay wh
     const calls = [];
     let expandedCaptureAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -2782,21 +3536,31 @@ test('tauri activity-surfaces QA falls back to clicking the collapsed overlay wh
             return true;
         },
         setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             return true;
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
-                expanded: true,
+                requestedHostMode: currentRequestedHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector, options = {}) => {
             calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -2806,14 +3570,7 @@ test('tauri activity-surfaces QA falls back to clicking the collapsed overlay wh
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     assert.equal(expandedCaptureAttempts, 2);
     assert.deepEqual(
         calls.filter((entry) => entry[0] === 'click'),
@@ -2828,6 +3585,9 @@ test('tauri activity-surfaces QA degrades overlay expand timeouts into a warning
     const warnings = [];
     let expandedCaptureAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
 
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
@@ -2856,12 +3616,14 @@ test('tauri activity-surfaces QA degrades overlay expand timeouts into a warning
             return true;
         },
         setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             return true;
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
-            if (expanded === true) {
+            currentExpanded = expanded === true;
+            if (expanded === true && currentRequestedHostMode === 'notch_integrated') {
                 throw new Error('Error: JavaScript execution failed: WebView execution failed: Script execution timeout');
             }
         },
@@ -2869,10 +3631,19 @@ test('tauri activity-surfaces QA degrades overlay expand timeouts into a warning
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                requestedHostMode: currentRequestedHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector, options = {}) => {
             calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -2894,6 +3665,8 @@ test('tauri activity-surfaces QA falls back to an unscoped expanded capture when
     const calls = [];
     let expandedCaptureAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
 
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
@@ -2931,16 +3704,24 @@ test('tauri activity-surfaces QA falls back to an unscoped expanded capture when
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
-                expanded: true,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector, options = {}) => {
             calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -2952,7 +3733,79 @@ test('tauri activity-surfaces QA falls back to an unscoped expanded capture when
 
     assert.deepEqual(result.expandedArtifacts, { stepId: 'overlay_expanded', unscoped: true });
     assert.equal(expandedCaptureAttempts, 1);
-    assert.equal(calls.some((entry) => entry[0] === 'click'), false);
+    assert.deepEqual(
+        calls.filter((entry) => entry[0] === 'click'),
+        [['click', '[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay']],
+    );
+});
+
+test('tauri activity-surfaces QA retries floating expanded proof capture via the collapsed floating surface when the floating DOM selector disappears', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    let floatingExpandedCaptureAttempts = 0;
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId) => {
+            calls.push(['capture', stepId]);
+            if (stepId === 'overlay_floating_expanded') {
+                floatingExpandedCaptureAttempts += 1;
+                if (floatingExpandedCaptureAttempts === 1) {
+                    currentExpanded = false;
+                    throw new Error('dom-structure:overlay_floating_expanded failed after 2 attempts: Error: No elements found matching selector \"[data-testid=\\\"desktop-activity-overlay-expanded-floating\\\"]\" (strategy: css)');
+                }
+            }
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded, options = {}) => {
+            calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async () => {},
+        appendWarning: async () => {},
+    });
+
+    assert.deepEqual(result.optionalStepArtifacts.overlay_floating_expanded, { stepId: 'overlay_floating_expanded' });
+    assert.equal(floatingExpandedCaptureAttempts, 2);
+    assert.deepEqual(
+        calls.filter((entry) => entry[0] === 'click'),
+        [
+            ['click', '[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay'],
+            ['click', '[data-testid="desktop-activity-overlay-collapsed-floating"]', 'activity_overlay'],
+        ],
+    );
 });
 
 test('tauri activity-surfaces QA writes overlay-route diagnostics and retries overlay-route capture under always_when_enabled when selectors never appear', async () => {
@@ -2963,6 +3816,8 @@ test('tauri activity-surfaces QA writes overlay-route diagnostics and retries ov
     const writes = [];
     let overlayRouteAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
 
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
@@ -3001,11 +3856,23 @@ test('tauri activity-surfaces QA writes overlay-route diagnostics and retries ov
             currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             return true;
         },
-        setOverlayExpanded: async () => {},
+        setOverlayExpanded: async (expanded) => {
+            currentExpanded = expanded === true;
+        },
         getOverlayWindowState: async () => createSyntheticOverlayWindowState({
             hostMode: currentOverlayHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
         }),
-        clickCollapsedOverlay: async () => {},
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
         wait: async () => {},
         appendWarning: async (_artifactRoot, text) => {
             warnings.push(text);
@@ -3042,6 +3909,8 @@ test("tauri activity-surfaces QA pokes overlay expansion state when the overlay 
     const calls = [];
     let overlayRouteAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
 
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
@@ -3080,11 +3949,21 @@ test("tauri activity-surfaces QA pokes overlay expansion state when the overlay 
         },
         setOverlayExpanded: async (expanded, { windowId } = {}) => {
             calls.push(['set-expanded', expanded === true, windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async () => createSyntheticOverlayWindowState({
             hostMode: currentOverlayHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
         }),
-        clickCollapsedOverlay: async () => {},
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
         wait: async () => {},
         appendWarning: async () => {},
     });
@@ -3102,6 +3981,8 @@ test('tauri activity-surfaces QA probes overlay window state after requesting ex
 
     const calls = [];
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3128,13 +4009,24 @@ test('tauri activity-surfaces QA probes overlay window state after requesting ex
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
-                expanded: true,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
+        },
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -3145,12 +4037,15 @@ test('tauri activity-surfaces QA probes overlay window state after requesting ex
     });
 
     assert.equal(result.expandedArtifacts.stepId, 'overlay_expanded');
-    const setExpandedIndex = calls.findIndex((entry) => entry[0] === 'set-expanded' && entry[1] === true);
-    const getStateIndex = calls.findIndex(
-        (entry, index) => index > setExpandedIndex && entry[0] === 'get-overlay-state' && entry[1] === 'activity_overlay',
+    const expandRequestIndex = calls.findIndex(
+        (entry) => (entry[0] === 'set-expanded' && entry[1] === true)
+            || (entry[0] === 'click' && entry[1] === '[data-testid="desktop-activity-overlay-collapsed"]'),
     );
-    assert.ok(setExpandedIndex >= 0);
-    assert.ok(getStateIndex > setExpandedIndex);
+    const getStateIndex = calls.findIndex(
+        (entry, index) => index > expandRequestIndex && entry[0] === 'get-overlay-state' && entry[1] === 'activity_overlay',
+    );
+    assert.ok(expandRequestIndex >= 0);
+    assert.ok(getStateIndex > expandRequestIndex);
 });
 
 test('tauri activity-surfaces QA retries the desktop settings opener only after the initial settings capture fails', async () => {
@@ -3160,6 +4055,8 @@ test('tauri activity-surfaces QA retries the desktop settings opener only after 
     let settingsCaptureAttempts = 0;
     let traceSelectorProbeSeen = false;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3207,12 +4104,23 @@ test('tauri activity-surfaces QA retries the desktop settings opener only after 
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
+        },
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -3222,14 +4130,7 @@ test('tauri activity-surfaces QA retries the desktop settings opener only after 
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     assert.equal(settingsCaptureAttempts, 2);
     assert.equal(traceSelectorProbeSeen, true);
     const openSettingsIndices = calls
@@ -3247,6 +4148,8 @@ test('tauri activity-surfaces QA retries the dedicated desktop settings opener w
     const calls = [];
     let settingsCaptureAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3286,15 +4189,24 @@ test('tauri activity-surfaces QA retries the dedicated desktop settings opener w
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector) => {
             calls.push(['click', selector]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -3304,14 +4216,7 @@ test('tauri activity-surfaces QA retries the dedicated desktop settings opener w
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     assert.equal(settingsCaptureAttempts, 2);
     assert.equal(calls.some((entry) => entry[0] === 'open-settings-page'), true);
     assert.equal(calls.some((entry) => entry[0] === 'enable-overlay'), true);
@@ -3324,6 +4229,8 @@ test('tauri activity-surfaces QA recovers a main-window crash during overlay set
     let settingsCaptureAttempts = 0;
     let openSettingsAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3366,15 +4273,24 @@ test('tauri activity-surfaces QA recovers a main-window crash during overlay set
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector) => {
             calls.push(['click', selector]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -3384,14 +4300,7 @@ test('tauri activity-surfaces QA recovers a main-window crash during overlay set
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     assert.equal(settingsCaptureAttempts, 2);
     assert.equal(openSettingsAttempts, 3);
     assert.equal(calls.some((entry) => entry[0] === 'recover-app-crash'), true);
@@ -3404,6 +4313,8 @@ test('tauri activity-surfaces QA detects an overlay-settings crash through a DOM
     let settingsCaptureAttempts = 0;
     let openSettingsAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3438,11 +4349,22 @@ test('tauri activity-surfaces QA detects an overlay-settings crash through a DOM
             currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
             return true;
         },
-        setOverlayExpanded: async () => {},
+        setOverlayExpanded: async (expanded) => {
+            currentExpanded = expanded === true;
+        },
         getOverlayWindowState: async () => createSyntheticOverlayWindowState({
             hostMode: currentOverlayHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
         }),
-        clickCollapsedOverlay: async () => {},
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
         wait: async () => {},
         appendWarning: async () => {
             throw new Error('unexpected warning');
@@ -3459,6 +4381,8 @@ test('tauri activity-surfaces QA skips the dedicated desktop settings opener whe
 
     const calls = [];
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3491,12 +4415,23 @@ test('tauri activity-surfaces QA skips the dedicated desktop settings opener whe
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
+        },
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -3506,14 +4441,7 @@ test('tauri activity-surfaces QA skips the dedicated desktop settings opener whe
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     assert.equal(calls.some((entry) => entry[0] === 'capture' && entry[1] === 'settings_overlay'), true);
     assert.equal(calls.some((entry) => entry[0] === 'enable-overlay'), true);
 });
@@ -3523,6 +4451,8 @@ test('tauri activity-surfaces QA accepts a successful settings overlay capture w
 
     const calls = [];
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3553,12 +4483,23 @@ test('tauri activity-surfaces QA accepts a successful settings overlay capture w
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
+        },
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -3568,14 +4509,7 @@ test('tauri activity-surfaces QA accepts a successful settings overlay capture w
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     assert.equal(calls.some((entry) => entry[0] === 'capture' && entry[1] === 'settings_overlay'), true);
     assert.equal(
         calls.findIndex((entry) => entry[0] === 'capture' && entry[1] === 'settings_overlay')
@@ -3590,6 +4524,8 @@ test('tauri activity-surfaces QA continues overlay capture when the desktop sett
     const warnings = [];
     const calls = [];
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3623,15 +4559,24 @@ test('tauri activity-surfaces QA continues overlay capture when the desktop sett
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector) => {
             calls.push(['click', selector]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         wait: async (ms) => {
             calls.push(['delay', ms]);
@@ -3653,6 +4598,8 @@ test('tauri activity-surfaces QA falls back to always_when_enabled when the over
     const calls = [];
     let overlayRouteAttempts = 0;
     let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
     const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
         appIdentifier: 9223,
         env: { EXISTING: 'value' },
@@ -3685,15 +4632,24 @@ test('tauri activity-surfaces QA falls back to always_when_enabled when the over
         },
         setOverlayExpanded: async (expanded, options = {}) => {
             calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
             calls.push(['get-overlay-state', options.windowId ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
             });
         },
         clickCollapsedOverlay: async (selector) => {
             calls.push(['click', selector]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
         },
         appendWarning: async (artifactRoot, line) => {
             calls.push(['warning', artifactRoot, line]);
@@ -3703,14 +4659,7 @@ test('tauri activity-surfaces QA falls back to always_when_enabled when the over
         },
     });
 
-    assert.deepEqual(result, {
-        settingsArtifacts: { stepId: 'settings_overlay' },
-        overlayRouteArtifacts: { stepId: 'overlay_route' },
-        collapsedArtifacts: { stepId: 'overlay_collapsed' },
-        expandedArtifacts: { stepId: 'overlay_expanded' },
-        floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-        overlayVisibilityEnabled: true,
-    });
+    assert.deepEqual(result, createExpectedOverlayCaptureLaneResult());
     const visibilityModes = calls.filter((entry) => entry[0] === 'visibility').map((entry) => entry[1]);
     assert.equal(visibilityModes[0], 'always_when_enabled');
     assert.equal(visibilityModes[visibilityModes.length - 1], 'active_sessions');
@@ -3759,14 +4708,7 @@ test('tauri activity-surfaces QA records stage-trace entries across the orchestr
         ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
         seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
         hydrateSeededSession: async () => true,
-        runOverlayCapture: async () => ({
-            settingsArtifacts: { stepId: 'settings_overlay' },
-            overlayRouteArtifacts: { stepId: 'overlay_route' },
-            collapsedArtifacts: { stepId: 'overlay_collapsed' },
-            expandedArtifacts: { stepId: 'overlay_expanded' },
-            floatingFallbackArtifacts: { stepId: 'overlay_floating_fallback' },
-            overlayVisibilityEnabled: true,
-        }),
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult(),
         appendTracker: async () => {},
         appendStageTrace: async (_artifactRoot, entry) => {
             stageTrace.push(entry);
@@ -3794,10 +4736,10 @@ test('tauri activity-surfaces QA records stage-trace entries across the orchestr
     assert.equal(writes.some((entry) => entry.path.endsWith('/00-backend-state.json')), true);
     assert.equal(writes.some((entry) => entry.path.endsWith('/00-seeded-session.json')), true);
     assert.equal(result.seededSession.sessionId, 'sess_seeded_overlay');
-    assert.deepEqual(result.steps, ['settings_overlay', 'overlay_route', 'overlay_collapsed', 'overlay_expanded', 'overlay_floating_fallback']);
+    assert.deepEqual(result.steps, canonicalActivitySurfacesRequiredProofStepIds);
 });
 
-test('tauri activity-surfaces QA tracker evidence tolerates missing step artifacts', async () => {
+test('tauri activity-surfaces QA marks missing required step artifacts as incomplete', async () => {
     assert.equal(typeof qaModule.runTauriActivitySurfacesQaCapture, 'function');
 
     const tmpRoot = mkdtempSync('/tmp/happier-activity-surfaces-qa-');
@@ -3831,25 +4773,245 @@ test('tauri activity-surfaces QA tracker evidence tolerates missing step artifac
             }),
             runCli: async () => ({ stdout: '{"ok":true}' }),
             writeArtifact: async () => {},
-            ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
-            seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
-            hydrateSeededSession: async () => true,
-            runOverlayCapture: async () => ({
-                settingsArtifacts: null,
-                overlayRouteArtifacts: { screenshotPath: '/tmp/route.png', structurePath: '/tmp/route.txt', a11yPath: '/tmp/route-a11y.txt' },
-                collapsedArtifacts: { screenshotPath: '/tmp/collapsed.png', structurePath: '/tmp/collapsed.txt', a11yPath: '/tmp/collapsed-a11y.txt' },
-                expandedArtifacts: { screenshotPath: '/tmp/expanded.png', structurePath: '/tmp/expanded.txt', a11yPath: '/tmp/expanded-a11y.txt' },
-                overlayVisibilityEnabled: true,
-            }),
+        ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
+        seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
+        hydrateSeededSession: async () => true,
+        runOverlayCapture: async () => ({
+            settingsArtifacts: null,
+            overlayRouteArtifacts: { screenshotPath: '/tmp/route.png', structurePath: '/tmp/route.txt', a11yPath: '/tmp/route-a11y.txt' },
+            collapsedArtifacts: { screenshotPath: '/tmp/collapsed.png', structurePath: '/tmp/collapsed.txt', a11yPath: '/tmp/collapsed-a11y.txt' },
+            expandedArtifacts: { screenshotPath: '/tmp/expanded.png', structurePath: '/tmp/expanded.txt', a11yPath: '/tmp/expanded-a11y.txt' },
+            floatingFallbackArtifacts: { screenshotPath: '/tmp/fallback.png', structurePath: '/tmp/fallback.txt', a11yPath: '/tmp/fallback-a11y.txt' },
+            overlayVisibilityEnabled: true,
+            optionalStepArtifacts: createCompleteSyntheticQaOverlayCaptureResult().optionalStepArtifacts,
+        }),
             appendStageTrace: async () => {},
         });
 
-        assert.equal(result.ok, true);
+        assert.equal(result.ok, false);
+        assert.equal(result.blocker, 'missing_required_step_artifacts');
         const trackerContents = readFileSync(trackerPath, 'utf8');
         assert.match(trackerContents, /overlay_route/);
         assert.match(trackerContents, /settings_overlay/);
         assert.match(trackerContents, /missing/);
         assert.match(trackerContents, /2026-04-07-activity-surfaces-premium-finalization-plan\.md/);
+    } finally {
+        rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('tauri activity-surfaces QA marks an empty proof plan as incomplete instead of greening it', async () => {
+    assert.equal(typeof qaModule.runTauriActivitySurfacesQaCapture, 'function');
+
+    const result = await qaModule.runTauriActivitySurfacesQaCapture({
+        plan: {
+            artifactRoot: '/tmp/activity-surfaces-empty-plan-artifacts',
+            trackerPath: '/tmp/activity-surfaces-empty-plan-tracker.md',
+            steps: [],
+            preflight: { settingsPath: '/settings' },
+            manual: [],
+        },
+        env: { EXISTING: 'value' },
+        ensureWorkspaceBuilt: async () => {},
+        ensureArtifactDir: async () => {},
+        startDriverSessionImpl: async () => ({
+            driverSessionPort: 9223,
+            resolvedAppIdentifier: 9223,
+            driverSessionCommand: 'driver-session-start',
+            driverSessionResponseFile: '/tmp/driver-session.json',
+            driverSessionStatusCommand: 'driver-session-status',
+            driverSessionStatusResponseFile: '/tmp/driver-session-status.json',
+        }),
+        runCli: async () => ({ stdout: '{"ok":true}' }),
+        writeArtifact: async () => {},
+        ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
+        seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
+        hydrateSeededSession: async () => true,
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult(),
+        appendStageTrace: async () => {},
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'missing_required_step_artifacts');
+    assert.deepEqual(result.steps, canonicalActivitySurfacesRequiredProofStepIds);
+});
+
+test('tauri activity-surfaces QA uses deterministic idle proof seeding instead of stack session creation when idle mode is requested', async () => {
+    assert.equal(typeof qaModule.runTauriActivitySurfacesQaCapture, 'function');
+
+    const stageTrace = [];
+    let seedCalls = 0;
+    let hydrateCalls = 0;
+    let overlayCaptureSeedStrategy = null;
+
+    const result = await qaModule.runTauriActivitySurfacesQaCapture({
+        plan: {
+            artifactRoot: '/tmp/activity-surfaces-artifacts',
+            trackerPath: '/tmp/activity-surfaces-tracker.md',
+            steps: canonicalActivitySurfacesProofStepIds.map((id) => ({
+                id,
+                required: canonicalActivitySurfacesRequiredProofStepIds.includes(id),
+            })),
+            preflight: { settingsPath: '/settings' },
+            manual: [],
+        },
+        env: {
+            EXISTING: 'value',
+            HAPPIER_TAURI_ACTIVITY_SURFACES_QA_SEED_STRATEGY: 'idle',
+        },
+        ensureWorkspaceBuilt: async () => {},
+        ensureArtifactDir: async () => {},
+        startDriverSessionImpl: async () => ({
+            driverSessionPort: 9223,
+            resolvedAppIdentifier: 9223,
+            driverSessionCommand: 'driver-session-start',
+            driverSessionResponseFile: '/tmp/driver-session.json',
+            driverSessionStatusCommand: 'driver-session-status',
+            driverSessionStatusResponseFile: '/tmp/driver-session-status.json',
+        }),
+        runCli: async () => ({ stdout: '{"ok":true}' }),
+        writeArtifact: async () => {},
+        ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
+        seedSession: async () => {
+            seedCalls += 1;
+            return { sessionId: 'sess_seeded_overlay' };
+        },
+        hydrateSeededSession: async () => {
+            hydrateCalls += 1;
+            return true;
+        },
+        runOverlayCapture: async ({ seedStrategy }) => {
+            overlayCaptureSeedStrategy = seedStrategy;
+            return createCompleteSyntheticQaOverlayCaptureResult();
+        },
+        appendTracker: async () => {},
+        appendStageTrace: async (_artifactRoot, entry) => {
+            stageTrace.push(entry);
+        },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(seedCalls, 0);
+    assert.equal(hydrateCalls, 0);
+    assert.equal(overlayCaptureSeedStrategy, 'idle');
+    assert.equal(result.seededSession, null);
+    assert.equal(result.seededSessionId, null);
+    assert.deepEqual(stageTrace.map((entry) => `${entry.stage}:${entry.status}`), [
+        'driver_session:start',
+        'driver_session:done',
+        'backend_state:start',
+        'backend_state:done',
+        'settings_preflight:start',
+        'settings_preflight:done',
+        'overlay_capture:start',
+        'overlay_capture:done',
+        'manual_steps_artifact:start',
+        'manual_steps_artifact:done',
+        'tracker_evidence:start',
+        'tracker_evidence:done',
+    ]);
+});
+
+test('tauri activity-surfaces QA can promote optional overlay card proof steps to required proof', async () => {
+    assert.equal(typeof qaModule.runTauriActivitySurfacesQaCapture, 'function');
+
+    const result = await qaModule.runTauriActivitySurfacesQaCapture({
+        plan: {
+            artifactRoot: '/tmp/activity-surfaces-artifacts',
+            trackerPath: '/tmp/activity-surfaces-tracker.md',
+            steps: canonicalActivitySurfacesProofStepIds.map((id) => ({
+                id,
+                required: canonicalActivitySurfacesRequiredProofStepIds.includes(id),
+            })),
+            preflight: { settingsPath: '/settings' },
+            manual: [],
+        },
+        env: {
+            EXISTING: 'value',
+            HAPPIER_TAURI_ACTIVITY_SURFACES_QA_REQUIRE_STEPS: 'overlay_completion_state',
+        },
+        ensureWorkspaceBuilt: async () => {},
+        ensureArtifactDir: async () => {},
+        startDriverSessionImpl: async () => ({
+            driverSessionPort: 9223,
+            resolvedAppIdentifier: 9223,
+            driverSessionCommand: 'driver-session-start',
+            driverSessionResponseFile: '/tmp/driver-session.json',
+            driverSessionStatusCommand: 'driver-session-status',
+            driverSessionStatusResponseFile: '/tmp/driver-session-status.json',
+        }),
+        runCli: async () => ({ stdout: '{"ok":true}' }),
+        writeArtifact: async () => {},
+        ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
+        seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
+        hydrateSeededSession: async () => true,
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult({
+            includeCompletionState: true,
+        }),
+        appendStageTrace: async () => {},
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.blocker, null);
+    assert.deepEqual(result.steps, [...canonicalActivitySurfacesRequiredProofStepIds, 'overlay_completion_state']);
+});
+
+test('tauri activity-surfaces QA exits non-zero when main receives incomplete proof', async () => {
+    const scriptsDir = dirname(fileURLToPath(import.meta.url));
+    const scriptPath = join(scriptsDir, 'tauriActivitySurfacesMcpQa.mjs');
+    const module = await import(pathToFileURL(scriptPath).href);
+
+    assert.equal(typeof module.main, 'function');
+
+    const processApi = { exitCode: 0 };
+    const writes = [];
+    await module.main([], {
+        runCapture: async () => ({
+            ok: false,
+            blocker: 'missing_required_step_artifacts',
+            steps: [],
+        }),
+        stdout: {
+            write: (text) => {
+                writes.push(text);
+            },
+        },
+        stderr: {
+            write: (text) => {
+                writes.push(text);
+            },
+        },
+        processApi,
+    });
+
+    assert.equal(processApi.exitCode, 1);
+    assert.equal(writes.length > 0, true);
+});
+
+test('tauri activity-surfaces QA exits non-zero when the default script path receives an incomplete proof fixture', async () => {
+    const scriptsDir = dirname(fileURLToPath(import.meta.url));
+    const scriptPath = join(scriptsDir, 'tauriActivitySurfacesMcpQa.mjs');
+    const tmpRoot = mkdtempSync(join('/tmp', 'activity-surfaces-default-main-'));
+
+    try {
+        try {
+            await execFileAsync(process.execPath, [scriptPath], {
+                cwd: dirname(dirname(scriptsDir)),
+                env: {
+                    ...process.env,
+                    HAPPIER_TAURI_ACTIVITY_SURFACES_QA_CAPTURE_FIXTURE: 'incomplete-proof',
+                    HAPPIER_TAURI_QA_OUTDIR: join(tmpRoot, 'artifacts'),
+                    HAPPIER_TAURI_QA_TRACKER_PATH: join(tmpRoot, 'tracker.md'),
+                },
+                encoding: 'utf8',
+                timeout: 3_000,
+            });
+            assert.fail('expected the default script path to exit non-zero for the incomplete-proof fixture');
+        } catch (error) {
+            assert.equal(error?.code, 1);
+            assert.match(String(error.stdout ?? ''), /"blocker":\s*"missing_required_step_artifacts"/);
+            assert.match(String(error.stdout ?? ''), /"ok":\s*false/);
+        }
     } finally {
         rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -3866,7 +5028,7 @@ test('tauri activity-surfaces QA degrades backend-state MCP error envelopes into
         plan: {
             artifactRoot: '/tmp/activity-surfaces-artifacts',
             trackerPath: '/tmp/activity-surfaces-tracker.md',
-            steps: [],
+            steps: minimalActivitySurfacesCaptureStepIds.map((id) => ({ id })),
             preflight: { settingsPath: '/settings' },
             manual: [],
         },
@@ -3901,13 +5063,7 @@ test('tauri activity-surfaces QA degrades backend-state MCP error envelopes into
         hydrateSeededSession: async () => true,
         runOverlayCapture: async () => {
             overlayCaptureRan = true;
-            return {
-                settingsArtifacts: { stepId: 'settings_overlay' },
-                overlayRouteArtifacts: { stepId: 'overlay_route' },
-                collapsedArtifacts: { stepId: 'overlay_collapsed' },
-                expandedArtifacts: { stepId: 'overlay_expanded' },
-                overlayVisibilityEnabled: true,
-            };
+            return createCompleteSyntheticQaOverlayCaptureResult();
         },
         appendTracker: async () => {},
         appendStageTrace: async (_artifactRoot, entry) => {
@@ -3954,7 +5110,7 @@ test('tauri activity-surfaces QA records the failing stage when orchestrated cap
             plan: {
                 artifactRoot: '/tmp/activity-surfaces-artifacts',
                 trackerPath: '/tmp/activity-surfaces-tracker.md',
-                steps: [],
+                steps: canonicalActivitySurfacesProofStepIds.map((id) => ({ id })),
                 preflight: { settingsPath: '/settings' },
                 manual: [],
             },
@@ -4007,7 +5163,7 @@ test('tauri activity-surfaces QA writes structured backend-state diagnostics whe
         plan: {
             artifactRoot: '/tmp/activity-surfaces-artifacts',
             trackerPath: '/tmp/activity-surfaces-tracker.md',
-            steps: [],
+                steps: canonicalActivitySurfacesProofStepIds.map((id) => ({ id })),
             preflight: { settingsPath: '/settings' },
             manual: [],
         },
@@ -4043,13 +5199,7 @@ test('tauri activity-surfaces QA writes structured backend-state diagnostics whe
         ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
         seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
         hydrateSeededSession: async () => true,
-        runOverlayCapture: async () => ({
-            settingsArtifacts: { stepId: 'settings_overlay' },
-            overlayRouteArtifacts: { stepId: 'overlay_route' },
-            collapsedArtifacts: { stepId: 'overlay_collapsed' },
-            expandedArtifacts: { stepId: 'overlay_expanded' },
-            overlayVisibilityEnabled: true,
-        }),
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult(),
         appendTracker: async () => {},
         appendStageTrace: async (_artifactRoot, entry) => {
             stageTrace.push(entry);
@@ -5077,7 +6227,7 @@ test('tauri activity-surfaces QA records backend-state failure when MCP only ret
         plan: {
             artifactRoot: '/tmp/activity-surfaces-artifacts',
             trackerPath: '/tmp/activity-surfaces-tracker.md',
-            steps: [],
+            steps: minimalActivitySurfacesCaptureStepIds.map((id) => ({ id })),
             preflight: { settingsPath: '/settings' },
             manual: [],
         },
@@ -5102,13 +6252,7 @@ test('tauri activity-surfaces QA records backend-state failure when MCP only ret
         ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
         seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
         hydrateSeededSession: async () => true,
-        runOverlayCapture: async () => ({
-            settingsArtifacts: { stepId: 'settings_overlay' },
-            overlayRouteArtifacts: { stepId: 'overlay_route' },
-            collapsedArtifacts: { stepId: 'overlay_collapsed' },
-            expandedArtifacts: { stepId: 'overlay_expanded' },
-            overlayVisibilityEnabled: true,
-        }),
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult(),
         appendTracker: async () => {},
         appendStageTrace: async (_artifactRoot, entry) => {
             stageTrace.push(entry);
@@ -5139,7 +6283,7 @@ test('tauri activity-surfaces QA still enters settings preflight after degraded 
         plan: {
             artifactRoot: '/tmp/activity-surfaces-artifacts',
             trackerPath: '/tmp/activity-surfaces-tracker.md',
-            steps: [],
+            steps: minimalActivitySurfacesCaptureStepIds.map((id) => ({ id })),
             preflight: { settingsPath: '/settings' },
             manual: [],
         },
@@ -5164,13 +6308,7 @@ test('tauri activity-surfaces QA still enters settings preflight after degraded 
         },
         seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
         hydrateSeededSession: async () => true,
-        runOverlayCapture: async () => ({
-            settingsArtifacts: { stepId: 'settings_overlay' },
-            overlayRouteArtifacts: { stepId: 'overlay_route' },
-            collapsedArtifacts: { stepId: 'overlay_collapsed' },
-            expandedArtifacts: { stepId: 'overlay_expanded' },
-            overlayVisibilityEnabled: true,
-        }),
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult(),
         appendTracker: async () => {},
         appendStageTrace: async (_artifactRoot, entry) => {
             stageTrace.push(entry);
@@ -6244,6 +7382,63 @@ test('tauri activity-surfaces QA does not trust a stale cached stack identifier 
     assert.equal(jsonCalls.some((call) => call[0] === 'driver-session' && call[1] === 'status' && call[2] === '--port' && call[3] === '9225'), true);
     assert.equal(jsonCalls.some((call) => call[0] === 'driver-session' && call[1] === 'stop' && call[3] === '9224'), true);
     assert.equal(jsonCalls.some((call) => call[0] === 'driver-session' && call[1] === 'start' && call[3] === '9224'), true);
+    assert.equal(jsonCalls.some((call) => call[0] === 'driver-session' && call[1] === 'status' && call[3] === '9224'), true);
+});
+
+test('tauri activity-surfaces QA does not attach to a different stack-owned app when a preferred stack identifier is expected', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesMcpCli, 'function');
+
+    const expectedStackIdentifier = 'com.happier.stack.overlay-v2-20260418';
+    const staleStackIdentifier = 'com.happier.stack.repo-dev-a1cc5e0671';
+    const driverSession = {
+        driverSessionPort: 9223,
+        resolvedAppIdentifier: null,
+    };
+    const jsonCalls = [];
+    const cliCalls = [];
+
+    const result = await qaModule.runActivitySurfacesMcpCli(
+        ['webview-wait-for', '--type', 'selector', '--strategy', 'css', '--value', '[data-testid="foo"]', '--timeout', '8000', '--window-id', 'main'],
+        {
+            appIdentifier: null,
+            driverSession,
+            env: { EXISTING: 'value', HAPPIER_STACK_STACK: 'overlay-v2-20260418' },
+            runCli: async (args, options) => {
+                cliCalls.push({ args, options });
+                return { stdout: 'selector-ready' };
+            },
+            runCliJson: async (args) => {
+                jsonCalls.push(args);
+                const port = String(args[args.length - 1] ?? '').trim();
+                if (args[0] === 'driver-session' && args[1] === 'stop') {
+                    return { ok: true };
+                }
+                if (args[0] === 'driver-session' && args[1] === 'start') {
+                    return { ok: true };
+                }
+                if (args[0] === 'driver-session' && args[1] === 'status') {
+                    if (port === '9223') {
+                        return { text: JSON.stringify({ connected: true, port: 9223, identifier: staleStackIdentifier }) };
+                    }
+                    if (port === '9224') {
+                        return { text: JSON.stringify({ connected: true, port: 9224, identifier: expectedStackIdentifier }) };
+                    }
+                    return { text: JSON.stringify({ connected: false, apps: [] }) };
+                }
+                throw new Error(`Unexpected JSON call: ${args.join(' ')}`);
+            },
+        },
+    );
+
+    assert.equal(result.stdout, 'selector-ready');
+    assert.equal(driverSession.driverSessionPort, 9224);
+    assert.equal(driverSession.resolvedAppIdentifier, expectedStackIdentifier);
+    assert.equal(cliCalls.length, 1);
+    assert.equal(cliCalls[0].options.driverSession?.driverSessionPort, 9224);
+    assert.equal(cliCalls[0].args.includes('--app-identifier'), true);
+    assert.equal(cliCalls[0].args.includes(expectedStackIdentifier), true);
+    assert.equal(cliCalls[0].args.includes(staleStackIdentifier), false);
+    assert.equal(jsonCalls.some((call) => call[0] === 'driver-session' && call[1] === 'status' && call[3] === '9223'), true);
     assert.equal(jsonCalls.some((call) => call[0] === 'driver-session' && call[1] === 'status' && call[3] === '9224'), true);
 });
 
@@ -7712,7 +8907,7 @@ test('tauri activity-surfaces QA retries driver-session bootstrap while the laun
         plan: {
             artifactRoot: '/tmp/happier-activity-surfaces-launcher-retry',
             trackerPath: '/tmp/happier-activity-surfaces-tracker.md',
-            steps: [],
+            steps: canonicalActivitySurfacesProofStepIds.map((id) => ({ id })),
             preflight: { settingsPath: '/settings' },
             manual: [],
         },
@@ -7746,13 +8941,7 @@ test('tauri activity-surfaces QA retries driver-session bootstrap while the laun
         ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
         seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
         hydrateSeededSession: async () => true,
-        runOverlayCapture: async () => ({
-            settingsArtifacts: { stepId: 'settings_overlay' },
-            overlayRouteArtifacts: { stepId: 'overlay_route' },
-            collapsedArtifacts: { stepId: 'overlay_collapsed' },
-            expandedArtifacts: { stepId: 'overlay_expanded' },
-            overlayVisibilityEnabled: true,
-        }),
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult(),
         appendTracker: async () => {},
         appendStageTrace: async (_artifactRoot, entry) => {
             stageTrace.push(entry);
@@ -7781,7 +8970,7 @@ test('tauri activity-surfaces QA restarts the stack runtime before retrying driv
         plan: {
             artifactRoot: '/tmp/happier-activity-surfaces-launcher-restart',
             trackerPath: '/tmp/happier-activity-surfaces-tracker.md',
-            steps: [],
+            steps: canonicalActivitySurfacesProofStepIds.map((id) => ({ id })),
             preflight: { settingsPath: '/settings' },
             manual: [],
         },
@@ -7816,13 +9005,7 @@ test('tauri activity-surfaces QA restarts the stack runtime before retrying driv
         ensureSettingsReady: async () => ({ ok: true, attempts: 1 }),
         seedSession: async () => ({ sessionId: 'sess_seeded_overlay' }),
         hydrateSeededSession: async () => true,
-        runOverlayCapture: async () => ({
-            settingsArtifacts: { stepId: 'settings_overlay' },
-            overlayRouteArtifacts: { stepId: 'overlay_route' },
-            collapsedArtifacts: { stepId: 'overlay_collapsed' },
-            expandedArtifacts: { stepId: 'overlay_expanded' },
-            overlayVisibilityEnabled: true,
-        }),
+        runOverlayCapture: async () => createCompleteSyntheticQaOverlayCaptureResult(),
         appendTracker: async () => {},
         appendStageTrace: async () => {},
         driverSessionRetryAttempts: 2,

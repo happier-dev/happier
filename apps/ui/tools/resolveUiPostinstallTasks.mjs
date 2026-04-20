@@ -17,7 +17,6 @@ export function resolveUiPostinstallTasks({ env }) {
             'verify-expo-router-web-modal-patch',
             'setup-skia-web',
             'vendor-monaco',
-            'vendor-kokoro-web',
             'vendor-pierre-diffs-worker',
             'vendor-codemirror-webview-bundle',
             'vendor-xterm-webview-bundle',

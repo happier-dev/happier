@@ -219,16 +219,10 @@ if (shouldNarrowWatchFolders) {
 // dependency graph expectations. Large artifact trees are excluded via Metro block lists above instead of removing
 // whole workspaces from the watch set.
 
-// Kokoro (kokoro-js) ships a `.web.js` prebundle that Metro cannot transform (it contains non-literal dynamic imports).
-// For Expo web, force Metro to resolve the package to its ESM entry and shim Node builtins that the ESM file imports
-// but never uses in browser mode.
-const kokoroEntryPoint = path.resolve(__dirname, "../../node_modules/kokoro-js/dist/kokoro.js");
 const nodePathShim = path.resolve(__dirname, "sources/platform/nodeShims/nodePathShim.ts");
 const nodeFsPromisesShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeFsPromisesShim.ts");
 const nodeFsShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeFsShim.ts");
 const nodeUrlShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeUrlShim.ts");
-const onnxruntimeWebStub = path.resolve(__dirname, "sources/platform/stubs/onnxruntimeWebStub.ts");
-const kokoroJsStub = path.resolve(__dirname, "sources/platform/stubs/kokoroJsStub.ts");
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
 const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
 const reactNativeWebShim = path.resolve(__dirname, "sources/platform/shims/reactNativeWebShim.ts");
@@ -384,6 +378,21 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { type: "sourceFile", filePath: workspaceEntryPoint };
   }
 
+  // Browser Kokoro/ORT runtime support has been removed from the active web bundle.
+  // Fail closed at the resolver boundary so transitive dependencies cannot pull the
+  // old browser runtime back into export/build flows.
+  if (
+    platform === "web" &&
+    (
+      resolvedModuleName === "kokoro-js" ||
+      resolvedModuleName.startsWith("kokoro-js/") ||
+      resolvedModuleName === "onnxruntime-web" ||
+      resolvedModuleName.startsWith("onnxruntime-web/")
+    )
+  ) {
+    return { type: "empty" };
+  }
+
   // On web, Expo aliases `react-native` to `react-native-web`, which does not export
   // `unstable_batchedUpdates`. Some libraries (e.g. `@legendapp/list`) import it from
   // `react-native` and crash at runtime. Use a shim that re-exports RNW + adds the missing API.
@@ -416,22 +425,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     /[\\/]node_modules[\\/]react-native[\\/]Libraries[\\/]Core[\\/]setUpReactDevTools\.js$/u.test(String(context?.originModulePath ?? ""))
   ) {
     return { type: "sourceFile", filePath: reactNativeDevToolsSettingsManagerWebStub };
-  }
-
-  if (resolvedModuleName === "kokoro-js" || resolvedModuleName.startsWith("kokoro-js/")) {
-    if (platform === "web") {
-      return { type: "sourceFile", filePath: kokoroJsStub };
-    }
-    return { type: "sourceFile", filePath: kokoroEntryPoint };
-  }
-
-  // onnxruntime-web's bundle contains non-literal dynamic imports that Metro cannot parse.
-  // Use a stub on web so the UI can export/bundle; kokoro local TTS is not supported on web.
-  if (
-    platform === "web" &&
-    (moduleName === "onnxruntime-web" || moduleName.startsWith("onnxruntime-web/"))
-  ) {
-    return { type: "sourceFile", filePath: onnxruntimeWebStub };
   }
 
   if (moduleName === "path") {

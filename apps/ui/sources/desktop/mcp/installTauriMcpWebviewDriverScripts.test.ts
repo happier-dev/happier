@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installTauriMcpWebviewDriverScripts } from './installTauriMcpWebviewDriverScripts';
 import { maybeInstallTauriMcpBridge } from './maybeInstallTauriMcpBridge';
 
 describe('installTauriMcpWebviewDriverScripts', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('installs resolveRef helpers expected by mcp-server-tauri tooling', () => {
         const element = { tagName: 'BUTTON' } as unknown as Element;
         const reverseRefs = new Map<string, Element>([['e1', element]]);
@@ -199,6 +203,128 @@ describe('installTauriMcpWebviewDriverScripts', () => {
                 options: { forceRefresh: true },
             },
         ]);
+    });
+
+    it('installs a deterministic desktop-overlay QA seed helper for canonical proof states', async () => {
+        const seededModes: string[] = [];
+        const windowObj = {
+            __MCP__: {},
+        } as unknown as typeof globalThis;
+        const documentObj = {
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
+        } as unknown as Document;
+
+        installTauriMcpWebviewDriverScripts({
+            windowObj,
+            documentObj,
+            seedDesktopOverlayQaState: async (mode) => {
+                seededModes.push(mode);
+                return {
+                    ok: true,
+                    mode,
+                    cardKind: mode,
+                };
+            },
+        });
+
+        const result = await (
+            windowObj as unknown as {
+                __MCP__?: {
+                    seedDesktopActivityOverlayQaState?: (mode: unknown) => Promise<{ ok: boolean; mode?: string }>;
+                };
+            }
+        ).__MCP__?.seedDesktopActivityOverlayQaState?.('permission_request');
+
+        expect(result).toMatchObject({
+            ok: true,
+            mode: 'permission_request',
+        });
+        expect(seededModes).toEqual(['permission_request']);
+    });
+
+    it('briefly pins desktop-overlay QA seed state so live runtime refresh cannot overwrite proof captures', async () => {
+        vi.useFakeTimers();
+
+        const seededModes: string[] = [];
+        const windowObj = {
+            __MCP__: {},
+        } as unknown as typeof globalThis;
+        const documentObj = {
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
+        } as unknown as Document;
+
+        installTauriMcpWebviewDriverScripts({
+            windowObj,
+            documentObj,
+            seedDesktopOverlayQaState: async (mode) => {
+                seededModes.push(mode);
+                return {
+                    ok: true,
+                    mode,
+                    cardKind: mode,
+                };
+            },
+        });
+
+        await (
+            windowObj as unknown as {
+                __MCP__?: {
+                    seedDesktopActivityOverlayQaState?: (mode: unknown) => Promise<{ ok: boolean; mode?: string }>;
+                };
+            }
+        ).__MCP__?.seedDesktopActivityOverlayQaState?.('quota_summary');
+
+        await vi.advanceTimersByTimeAsync(350);
+
+        expect(seededModes.length).toBeGreaterThan(1);
+        expect(new Set(seededModes)).toEqual(new Set(['quota_summary']));
+    });
+
+    it('stops the previous desktop-overlay QA seed pin before pinning a new proof state', async () => {
+        vi.useFakeTimers();
+
+        const seededModes: string[] = [];
+        const windowObj = {
+            __MCP__: {},
+        } as unknown as typeof globalThis;
+        const documentObj = {
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
+        } as unknown as Document;
+
+        installTauriMcpWebviewDriverScripts({
+            windowObj,
+            documentObj,
+            seedDesktopOverlayQaState: async (mode) => {
+                seededModes.push(mode);
+                return {
+                    ok: true,
+                    mode,
+                    cardKind: mode,
+                };
+            },
+        });
+
+        const mcp = (
+            windowObj as unknown as {
+                __MCP__?: {
+                    seedDesktopActivityOverlayQaState?: (mode: unknown) => Promise<{ ok: boolean; mode?: string }>;
+                };
+            }
+        ).__MCP__;
+
+        await mcp?.seedDesktopActivityOverlayQaState?.('permission_request');
+        await mcp?.seedDesktopActivityOverlayQaState?.('user_question');
+        await vi.advanceTimersByTimeAsync(250);
+
+        expect(seededModes).toContain('permission_request');
+        expect(seededModes.at(-1)).toBe('user_question');
+        expect(seededModes.slice(2)).not.toContain('permission_request');
     });
 
     it('maybeInstallTauriMcpBridge installs scripts only on desktop', () => {

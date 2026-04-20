@@ -74,6 +74,12 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useAllSessions: () => allSessions,
         useMachine: (machineId: string) => store.getState().machines[machineId] ?? null,
         useSession: () => null,
+        useProjectForSession: (sessionId: string | null) => {
+            if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+                return null;
+            }
+            return store.getState().getProjectForSession?.(sessionId) ?? null;
+        },
         useSessionListRenderable: () => null,
         useSessionListRenderableWithServerScope: () => null,
         useSessionListRenderablesById: () => sessionListRenderablesById,

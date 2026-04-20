@@ -2,14 +2,35 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
+import {
+  createManagedChildLifecycle,
+  resolveSignalExitCode,
+  runManagedChildCommand,
+} from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 function parsePositiveInt(raw) {
   const parsed = Number.parseInt(String(raw ?? '').trim(), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveConcurrencyFlagValue(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+
+  const idx = args.indexOf('--concurrency');
+  if (idx !== -1) {
+    return args[idx + 1] ?? null;
+  }
+
+  const inline = args.find((arg) => typeof arg === 'string' && arg.startsWith('--concurrency='));
+  if (typeof inline === 'string') {
+    return inline.slice('--concurrency='.length);
+  }
+
+  return null;
 }
 
 export function resolveVitestShardCount(env) {
@@ -18,6 +39,14 @@ export function resolveVitestShardCount(env) {
   // Running too many files in a single Vitest process can cause heap growth over time,
   // even with `isolate: true`. More shards keeps each process smaller and avoids OOMs.
   return override ?? 24;
+}
+
+export function resolveVitestShardConcurrency(env, argv) {
+  const flagOverride = parsePositiveInt(resolveConcurrencyFlagValue(argv));
+  if (flagOverride) return flagOverride;
+
+  const envOverride = parsePositiveInt(env?.HAPPIER_UI_VITEST_SHARD_CONCURRENCY);
+  return envOverride ?? 1;
 }
 
 export function resolveVitestConfigPath(argv) {
@@ -29,8 +58,87 @@ export function resolveVitestConfigPath(argv) {
 
 export function resolveVitestPassthroughArgs(argv) {
   const idx = argv.indexOf('--config');
-  if (idx === -1) return argv.slice(2);
-  return argv.slice(idx + 2);
+  const raw = idx === -1 ? argv.slice(2) : argv.slice(idx + 2);
+
+  const cleaned = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const arg = raw[i];
+    if (arg === '--concurrency') {
+      i += 1;
+      continue;
+    }
+    if (typeof arg === 'string' && arg.startsWith('--concurrency=')) {
+      continue;
+    }
+    cleaned.push(arg);
+  }
+
+  return cleaned;
+}
+
+function looksLikePositionalFileFilter(arg) {
+  if (typeof arg !== 'string') return false;
+  const value = arg.trim();
+  if (!value) return false;
+  // Globs / paths / filenames. We intentionally keep this a heuristic since Vitest treats
+  // trailing positional args as file filters. We only strip these for the *sharded run*
+  // once explicit file lists are provided.
+  if (/[\\\/]/.test(value)) return true;
+  if (/[*?[\]{}()]/.test(value)) return true;
+  if (/\.(c|m)?jsx?$/.test(value)) return true;
+  if (/\.(spec|test)\.(c|m)?tsx?$/.test(value)) return true;
+  if (/\.(c|m)?tsx?$/.test(value)) return true;
+  return false;
+}
+
+const FLAGS_WITH_VALUE = new Set([
+  '--reporter',
+  '--testNamePattern',
+  '-t',
+  '--root',
+  '--dir',
+  '--include',
+  '--exclude',
+  '--setupFiles',
+  '--outputFile',
+  '--shard',
+  '--poolOptions.threads.singleThread',
+  '--pool',
+  '--environment',
+]);
+
+export function stripTrailingPositionalFileFilters(passthroughArgs) {
+  const args = Array.isArray(passthroughArgs) ? passthroughArgs.slice() : [];
+  const valueIndexes = new Set();
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (typeof arg !== 'string') continue;
+    if (!arg.startsWith('-')) continue;
+    if (arg === '--') break;
+    if (arg.includes('=')) continue;
+    if (FLAGS_WITH_VALUE.has(arg) && i + 1 < args.length) {
+      valueIndexes.add(i + 1);
+      i += 1;
+    }
+  }
+
+  while (args.length > 0) {
+    const lastIndex = args.length - 1;
+    const last = args[lastIndex];
+    if (typeof last !== 'string' || last.startsWith('-') || valueIndexes.has(lastIndex)) {
+      break;
+    }
+    if (!looksLikePositionalFileFilter(last)) {
+      break;
+    }
+    args.pop();
+  }
+
+  return args;
+}
+
+export function resolveVitestRunPassthroughArgs(argv) {
+  return stripTrailingPositionalFileFilters(resolveVitestPassthroughArgs(argv));
 }
 
 function parseVitestListJson(raw) {
@@ -60,6 +168,24 @@ export function partitionVitestFilesIntoShards(files, shardCount) {
     cursor += size;
   }
   return buckets;
+}
+
+export function createVitestShardRunPlan({ shardFiles, shardCount }) {
+  const count = Number.isFinite(shardCount) && shardCount > 0 ? Math.floor(shardCount) : 1;
+  const buckets = Array.isArray(shardFiles) ? shardFiles : [];
+
+  const plan = [];
+  for (let shardIndex = 1; shardIndex <= count; shardIndex += 1) {
+    const files = buckets[shardIndex - 1] ?? [];
+    if (!Array.isArray(files) || files.length === 0) continue;
+    plan.push({
+      shardIndex,
+      shardCount: count,
+      shardSpec: `${shardIndex}/${count}`,
+      files,
+    });
+  }
+  return plan;
 }
 
 async function resolveVitestTestFiles({ configPath, nodeOptions, passthroughArgs }) {
@@ -139,6 +265,120 @@ function spawnVitestRun({ configPath, nodeOptions, passthroughArgs, files }) {
   });
 }
 
+function startVitestRun({ configPath, nodeOptions, passthroughArgs, files }) {
+  const child = spawn(
+    'vitest',
+    [
+      'run',
+      '--config',
+      configPath,
+      '--no-file-parallelism',
+      ...passthroughArgs,
+      ...files,
+    ],
+    {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: nodeOptions,
+      },
+      stdio: 'inherit',
+      detached: process.platform !== 'win32',
+      shell: process.platform === 'win32',
+    },
+  );
+
+  const lifecycle = createManagedChildLifecycle(child, {
+    cleanupPollMs: 25,
+    signalCleanupGraceMs: 0,
+    exitCleanupGraceMs: 1_000,
+    parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
+  });
+
+  const promise = new Promise((resolve) => {
+    child.once('error', (error) => {
+      lifecycle.dispose();
+      resolve({
+        child,
+        ok: false,
+        error,
+      });
+    });
+
+    child.once('exit', async (code, signal) => {
+      await lifecycle.finalizeChildExit({
+        graceMs: 1_000,
+        pollMs: 25,
+        skipAliveCheck: true,
+      });
+      resolve({
+        child,
+        ok: true,
+        code,
+        signal,
+      });
+    });
+  });
+
+  return {
+    promise,
+    cancel: async () => {
+      await lifecycle.cleanupChild('SIGTERM');
+    },
+  };
+}
+
+export async function runVitestShardRunPlan({ plan, concurrency, startShard }) {
+  const shardPlan = Array.isArray(plan) ? plan : [];
+  const limitRaw = Number.isFinite(concurrency) && concurrency > 0 ? Math.floor(concurrency) : 1;
+  const limit = Math.max(1, limitRaw);
+
+  const active = new Map();
+  let cursor = 0;
+
+  function startNext() {
+    if (cursor >= shardPlan.length) return;
+    const entry = shardPlan[cursor];
+    cursor += 1;
+    const handle = startShard(entry);
+    active.set(entry.shardSpec, { entry, handle });
+  }
+
+  while (active.size < limit && cursor < shardPlan.length) {
+    startNext();
+  }
+
+  while (active.size > 0) {
+    const races = Array.from(active.values()).map(({ entry, handle }) =>
+      Promise.resolve(handle.promise).then((result) => ({ entry, handle, result })),
+    );
+
+    // eslint-disable-next-line no-await-in-loop
+    const { entry, result } = await Promise.race(races);
+    active.delete(entry.shardSpec);
+
+    if (!result.ok) {
+      await Promise.allSettled(Array.from(active.values()).map(({ handle: other }) => other.cancel?.()));
+      throw result.error;
+    }
+
+    if (result.signal) {
+      await Promise.allSettled(Array.from(active.values()).map(({ handle: other }) => other.cancel?.()));
+      return result;
+    }
+
+    if (result.code && result.code !== 0) {
+      await Promise.allSettled(Array.from(active.values()).map(({ handle: other }) => other.cancel?.()));
+      return result;
+    }
+
+    while (active.size < limit && cursor < shardPlan.length) {
+      startNext();
+    }
+  }
+
+  return { ok: true, code: 0, signal: null };
+}
+
 async function main(argv) {
   const configPath = resolveVitestConfigPath(argv);
   if (!configPath) {
@@ -148,29 +388,51 @@ async function main(argv) {
   }
 
   const shardCount = resolveVitestShardCount(process.env);
+  const shardConcurrency = resolveVitestShardConcurrency(process.env, argv);
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
   const passthroughArgs = resolveVitestPassthroughArgs(argv);
+  const runPassthroughArgs = stripTrailingPositionalFileFilters(passthroughArgs);
 
   const allFiles = await resolveVitestTestFiles({ configPath, nodeOptions, passthroughArgs });
   const shardFiles = partitionVitestFilesIntoShards(allFiles, shardCount);
+  const plan = createVitestShardRunPlan({ shardFiles, shardCount });
 
-  for (let index = 1; index <= shardCount; index += 1) {
-    const files = shardFiles[index - 1] ?? [];
-    if (files.length === 0) continue;
+  const startShard = (entry) => {
     // eslint-disable-next-line no-console
-    console.log(`[vitest] shard ${index}/${shardCount}`);
-    const result = await spawnVitestRun({ configPath, nodeOptions, passthroughArgs, files });
-    if (!result.ok) {
-      throw result.error;
+    console.log(`[vitest] shard ${entry.shardSpec}`);
+    if (shardConcurrency <= 1) {
+      return {
+        promise: spawnVitestRun({
+          configPath,
+          nodeOptions,
+          passthroughArgs: runPassthroughArgs,
+          files: entry.files,
+        }),
+        cancel: async () => {},
+      };
     }
-    if (result.signal) {
-      process.exit(resolveSignalExitCode(result.signal));
-      return;
-    }
-    if (result.code && result.code !== 0) {
-      process.exit(result.code);
-    }
+
+    return startVitestRun({
+      configPath,
+      nodeOptions,
+      passthroughArgs: runPassthroughArgs,
+      files: entry.files,
+    });
+  };
+
+  const result = await runVitestShardRunPlan({
+    plan,
+    concurrency: shardConcurrency,
+    startShard,
+  });
+
+  if (result.signal) {
+    process.exit(resolveSignalExitCode(result.signal));
+    return;
+  }
+  if (result.code && result.code !== 0) {
+    process.exit(result.code);
   }
 }
 

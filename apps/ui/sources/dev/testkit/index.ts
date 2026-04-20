@@ -2,6 +2,7 @@ export * from './cleanup/standardCleanup';
 export * from './fixtures/featureFixtures';
 export * from './fixtures/machineFixtures';
 export * from './fixtures/permissionFixtures';
+export * from './fixtures/pluginProviderDaemonProjection';
 export * from './fixtures/sessionFixtures';
 export * from './fixtures/themeFixtures';
 export * from './fixtures/transcriptFixtures';

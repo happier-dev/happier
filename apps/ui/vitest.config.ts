@@ -1,8 +1,11 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
-import { existsSync } from 'node:fs'
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
+import {
+    createWorkspacePackageSourcesPlugin,
+    type WorkspacePackageSpec,
+} from '../../scripts/testing/vitestWorkspacePackageResolution'
 
 const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
 const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 1;
@@ -19,70 +22,35 @@ function resolveExpoNodeModuleStub(id: string): string | null {
     return null;
 }
 
-function resolveWorkspacePackageSource(
-    id: string,
-    packageName: string,
-    packageSourceRoot: string,
-): string | null {
-    if (id === packageName) {
-        return resolve(packageSourceRoot, 'index.ts');
-    }
+const workspacePackages: readonly WorkspacePackageSpec[] = [
+    {
+        packageName: '@happier-dev/protocol',
+        packageSourceRoot: resolve('../../packages/protocol/src'),
+    },
+    {
+        packageName: '@happier-dev/agents',
+        packageSourceRoot: resolve('../../packages/agents/src'),
+    },
+    {
+        packageName: '@happier-dev/cli-common',
+        packageSourceRoot: resolve('../../packages/cli-common/src'),
+    },
+    {
+        packageName: '@happier-dev/connection-supervisor',
+        packageSourceRoot: resolve('../../packages/connection-supervisor/src'),
+    },
+] as const;
 
-    if (!id.startsWith(`${packageName}/`)) {
-        return null;
-    }
-
-    const subpath = id.slice(packageName.length + 1);
-    const candidates = [
-        resolve(packageSourceRoot, `${subpath}.ts`),
-        resolve(packageSourceRoot, `${subpath}.tsx`),
-        resolve(packageSourceRoot, subpath, 'index.ts'),
-        resolve(packageSourceRoot, subpath, 'index.tsx'),
-    ];
-
-    return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
-function resolveProtocolWorkspaceSource(id: string): string | null {
-    return resolveWorkspacePackageSource(
-        id,
-        '@happier-dev/protocol',
-        resolve('../../packages/protocol/src'),
-    );
-}
-
-function resolveAgentsWorkspaceSource(id: string): string | null {
-    return resolveWorkspacePackageSource(
-        id,
-        '@happier-dev/agents',
-        resolve('../../packages/agents/src'),
-    );
-}
-
-function resolveCliCommonWorkspaceSource(id: string): string | null {
-    return resolveWorkspacePackageSource(
-        id,
-        '@happier-dev/cli-common',
-        resolve('../../packages/cli-common/src'),
-    );
-}
-
-function resolveConnectionSupervisorWorkspaceSource(id: string): string | null {
-    return resolveWorkspacePackageSource(
-        id,
-        '@happier-dev/connection-supervisor',
-        resolve('../../packages/connection-supervisor/src'),
-    );
-}
+const workspaceSourcesPlugin = createWorkspacePackageSourcesPlugin(
+    workspacePackages,
+    'happier-vitest-expo-node-module-stubs',
+);
 
 const expoNodeModuleStubsPlugin = {
     name: 'happier-vitest-expo-node-module-stubs',
     enforce: 'pre' as const,
-    resolveId(id: string) {
-        return resolveProtocolWorkspaceSource(id)
-            ?? resolveAgentsWorkspaceSource(id)
-            ?? resolveCliCommonWorkspaceSource(id)
-            ?? resolveConnectionSupervisorWorkspaceSource(id)
+    resolveId(id: string, importer?: string) {
+        return workspaceSourcesPlugin.resolveId(id, importer)
             ?? resolveExpoNodeModuleStub(id);
     },
 };

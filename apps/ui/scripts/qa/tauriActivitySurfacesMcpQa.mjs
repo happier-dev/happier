@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join } from 'node:path';
 import process from 'node:process';
@@ -18,6 +19,7 @@ import {
     todayStamp,
     writeTextArtifact,
 } from './tauriMcpCli.mjs';
+import { summarizeQaStepArtifactsProof } from './tauriQaProofSummary.mjs';
 import {
     analyzeActivitySurfacesPreflightRootText,
     analyzeActivitySurfacesPreflightSurface,
@@ -29,12 +31,20 @@ import {
     hasStackOwnedTauriRuntime,
     resolveDefaultDriverSessionPort,
     resolveCandidateDriverSessionPorts,
+    resolvePreferredStackTauriIdentifier,
     resolveStackNameFromStackOwnedTauriIdentifier,
     startTargetedDriverSession,
     tryParseDriverSessionStatus,
     resolvePreferredAppIdentifierFromDriverStatus,
 } from './tauriDriverSessionSelection.mjs';
 import { appendTauriQaHmrOptOut } from './tauriQaPathing.mjs';
+import { resolveStackCredentialPaths } from '../../../stack/scripts/utils/auth/credentials_paths.mjs';
+import {
+    desktopActivityOverlayQaCardSeedIds,
+    normalizeDesktopActivityOverlayCardKindForTestID,
+    resolveDesktopActivityOverlayCardSelectorByKind,
+    resolveDesktopActivityOverlaySurfaceSelector,
+} from '../../sources/activity/adapters/desktop/ui/shared/desktopActivityOverlaySelectors.mjs';
 export { resolveExactDriverSessionTarget } from './tauriDriverSessionSelection.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -74,6 +84,22 @@ const relaySpecificOnboardingSelectors = [
     '[data-testid="onboarding-wizard-relay-host-local-checklist-row-startRelayRuntime"]',
 ];
 const activitySurfacesSeedFollowUpMessage = 'Please post a brief status update so the desktop overlay becomes visible.';
+const canonicalActivitySurfacesRequiredProofStepIds = [
+    'settings_overlay',
+    'overlay_route',
+    'overlay_collapsed',
+    'overlay_expanded',
+    'overlay_floating_fallback',
+    'overlay_floating_expanded',
+    'overlay_idle',
+    'overlay_permission_request',
+    'overlay_user_question',
+    'overlay_quota_summary',
+    'overlay_multi_session_list',
+];
+const canonicalActivitySurfacesOptionalOverlayCardStepIds = [
+    'overlay_completion_state',
+];
 const desktopOverlayLocalSettingsStorageKey = 'mmkv.default\\local-settings';
 const defaultDesktopOverlayVisibilityMode = 'active_sessions';
 const desktopOverlayVisibilityModeLabelByValue = {
@@ -105,6 +131,19 @@ const execFileAsync = promisify(execFile);
 function readString(value, fallback = '') {
     const text = String(value ?? '').trim();
     return text || fallback;
+}
+
+function resolveActivitySurfacesQaCaptureFixture(env = process.env) {
+    const fixture = readString(env?.HAPPIER_TAURI_ACTIVITY_SURFACES_QA_CAPTURE_FIXTURE);
+    if (fixture !== 'incomplete-proof') {
+        return null;
+    }
+
+    return {
+        ok: false,
+        blocker: 'missing_required_step_artifacts',
+        steps: [],
+    };
 }
 
 function normalizeStorageScope(raw) {
@@ -280,7 +319,22 @@ export function parseSelectorPresenceProbeText(text) {
     }
 }
 
-function parseStructuredJsonPayload(text) {
+function parseStructuredJsonCandidate(candidate) {
+    try {
+        const parsed = JSON.parse(candidate);
+        if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
+            const nested = parseStructuredJsonPayload(parsed.text);
+            if (nested != null) {
+                return nested;
+            }
+        }
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+export function parseStructuredJsonPayload(text) {
     const raw = String(text ?? '').trim();
     if (!raw) {
         return null;
@@ -293,17 +347,21 @@ function parseStructuredJsonPayload(text) {
         .reverse();
 
     for (const candidate of candidates) {
-        try {
-            const parsed = JSON.parse(candidate);
-            if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
-                const nested = parseStructuredJsonPayload(parsed.text);
-                if (nested != null) {
-                    return nested;
-                }
-            }
+        const parsed = parseStructuredJsonCandidate(candidate);
+        if (parsed != null) {
             return parsed;
-        } catch {
-            // Keep scanning earlier chunks until we find the real JSON envelope.
+        }
+
+        const lineCandidates = candidate
+            .split(/\r?\n/u)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .reverse();
+        for (const lineCandidate of lineCandidates) {
+            const parsedLine = parseStructuredJsonCandidate(lineCandidate);
+            if (parsedLine != null) {
+                return parsedLine;
+            }
         }
     }
 
@@ -518,13 +576,25 @@ async function runRawActivitySurfacesMcpCliJson(args, options = {}) {
     });
 }
 
-async function runActivitySurfacesStackCli(args, { env = process.env, timeoutMs = stackCliCommandTimeoutMs } = {}) {
-    return execFileAsync(
+export async function runActivitySurfacesStackCli(
+    args,
+    {
+        env = process.env,
+        timeoutMs = stackCliCommandTimeoutMs,
+        execFileImpl = execFileAsync,
+    } = {},
+) {
+    const resolvedEnv = resolveActivitySurfacesStackCliEnv(env);
+    const stackName = readString(resolvedEnv.HAPPIER_STACK_STACK);
+    const invocationArgs = stackName
+        ? [join(repoRoot, 'apps', 'stack', 'scripts', 'stack.mjs'), 'happier', stackName, '--', ...args]
+        : [join(repoRoot, 'apps', 'stack', 'scripts', 'happier.mjs'), ...args];
+    return execFileImpl(
         process.execPath,
-        [join(repoRoot, 'apps', 'stack', 'scripts', 'happier.mjs'), ...args],
+        invocationArgs,
         {
             cwd: repoRoot,
-            env: resolveActivitySurfacesStackCliEnv(env),
+            env: resolvedEnv,
             encoding: 'utf8',
             timeout: timeoutMs,
             maxBuffer: 20 * 1024 * 1024,
@@ -582,6 +652,314 @@ function isMissingActivitySurfacesStackDaemonError(error) {
         error && typeof error === 'object' && 'stderr' in error ? String(error.stderr ?? '') : '',
     ];
     return pieces.some((piece) => piece.includes('No daemon running, no state file found'));
+}
+
+function isMissingActivitySurfacesStackError(error) {
+    const pieces = [
+        error instanceof Error ? error.message : String(error ?? ''),
+        error && typeof error === 'object' && 'stdout' in error ? String(error.stdout ?? '') : '',
+        error && typeof error === 'object' && 'stderr' in error ? String(error.stderr ?? '') : '',
+    ];
+    return pieces.some((piece) => /stack\s+"[^"]+"\s+does not exist yet/i.test(piece));
+}
+
+function isRejectedActivitySurfacesDirectCliAuthError(error) {
+    const pieces = [
+        error instanceof Error ? error.message : String(error ?? ''),
+        error && typeof error === 'object' && 'stdout' in error ? String(error.stdout ?? '') : '',
+        error && typeof error === 'object' && 'stderr' in error ? String(error.stderr ?? '') : '',
+    ];
+    return pieces.some((piece) => piece.includes('daemon credentials were rejected by the server (401)'));
+}
+
+function hasActivitySurfacesSeedServerUrl(env = process.env) {
+    return Boolean(
+        readString(env?.HAPPIER_TAURI_WEB_RUNTIME_SERVER_URL)
+        || readString(env?.HAPPIER_SERVER_URL),
+    );
+}
+
+function hasActivitySurfacesStackCliRuntimeContext(env = process.env) {
+    return Boolean(
+        readString(env?.HAPPIER_STACK_CLI_HOME_DIR)
+        || readString(env?.HAPPIER_STACK_ENV_FILE),
+    );
+}
+
+function resolveActivitySurfacesSessionSeedMode(env = process.env) {
+    if (!hasActivitySurfacesSeedServerUrl(env)) {
+        return 'stack';
+    }
+
+    const runtimeServerContext = readString(env?.HAPPIER_TAURI_WEB_RUNTIME_SERVER_CONTEXT)
+        || readString(env?.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT);
+    if (!hasActivitySurfacesStackCliRuntimeContext(env)) {
+        return runtimeServerContext === 'stack' ? 'stack' : 'direct';
+    }
+    return runtimeServerContext === 'stack' ? 'stack' : 'direct';
+}
+
+function resolveActivitySurfacesDirectCliEnv(env = process.env) {
+    const resolvedEnv = resolveActivitySurfacesStackCliEnv(env);
+    delete resolvedEnv.HAPPIER_STACK_STACK;
+    delete resolvedEnv.HAPPIER_SOCKET_TRANSPORTS;
+    resolvedEnv.HAPPIER_SOCKET_FORCE_WEBSOCKET = '1';
+    return resolvedEnv;
+}
+
+function isActivitySurfacesCliAuthCredentials(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+    const token = readString(value.token);
+    if (!token) {
+        return false;
+    }
+    if (readString(value.secret)) {
+        return true;
+    }
+    const encryption = value.encryption;
+    return Boolean(
+        encryption
+        && typeof encryption === 'object'
+        && !Array.isArray(encryption)
+        && readString(encryption.publicKey)
+        && readString(encryption.machineKey),
+    );
+}
+
+function normalizeActivitySurfacesCliBase64(value) {
+    const text = readString(value);
+    if (!text || !/^[A-Za-z0-9+/=_-]+$/u.test(text)) {
+        return text;
+    }
+
+    try {
+        const decoded = Buffer.from(text, text.includes('-') || text.includes('_') ? 'base64url' : 'base64');
+        if (decoded.length === 0 && text.length > 0) {
+            return text;
+        }
+
+        const normalized = decoded.toString('base64');
+        const comparableInput = text.replace(/=+$/u, '').replace(/\+/gu, '-').replace(/\//gu, '_');
+        const comparableNormalized = normalized.replace(/=+$/u, '').replace(/\+/gu, '-').replace(/\//gu, '_');
+        return comparableInput === comparableNormalized ? normalized : text;
+    } catch {
+        return text;
+    }
+}
+
+function normalizeActivitySurfacesCliAuthCredentialsForCli(value) {
+    if (!isActivitySurfacesCliAuthCredentials(value)) {
+        return null;
+    }
+
+    const token = readString(value.token);
+    const secret = readString(value.secret);
+    if (secret) {
+        return {
+            token,
+            secret: normalizeActivitySurfacesCliBase64(secret),
+        };
+    }
+
+    return {
+        token,
+        encryption: {
+            publicKey: normalizeActivitySurfacesCliBase64(value.encryption.publicKey),
+            machineKey: normalizeActivitySurfacesCliBase64(value.encryption.machineKey),
+        },
+    };
+}
+
+function buildReadActivitySurfacesAuthCredentialsScript() {
+    return `(() => {
+        try {
+            const storage = window.localStorage;
+            const session = window.sessionStorage;
+            if (!storage || typeof storage.getItem !== 'function') {
+                return { ok: false, reason: 'missing-storage' };
+            }
+
+            const activeServerId = String(session?.getItem?.('activeServerId') ?? '').trim();
+            const preferredKeys = [];
+            if (activeServerId) {
+                preferredKeys.push(\`auth_credentials__srv_\${activeServerId}\`);
+            }
+            preferredKeys.push('auth_credentials');
+
+            const seen = new Set();
+            const orderedKeys = [];
+            for (const key of preferredKeys) {
+                if (typeof key === 'string' && key && !seen.has(key)) {
+                    seen.add(key);
+                    orderedKeys.push(key);
+                }
+            }
+            for (let index = 0; index < storage.length; index += 1) {
+                const key = storage.key(index);
+                if (typeof key === 'string' && key.startsWith('auth_credentials') && !seen.has(key)) {
+                    seen.add(key);
+                    orderedKeys.push(key);
+                }
+            }
+
+            for (const key of orderedKeys) {
+                const raw = storage.getItem(key);
+                if (!raw) {
+                    continue;
+                }
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (
+                        parsed
+                        && typeof parsed === 'object'
+                        && typeof parsed.token === 'string'
+                        && parsed.token.trim()
+                        && (
+                            (typeof parsed.secret === 'string' && parsed.secret.trim())
+                            || (
+                                parsed.encryption
+                                && typeof parsed.encryption === 'object'
+                                && typeof parsed.encryption.publicKey === 'string'
+                                && parsed.encryption.publicKey.trim()
+                                && typeof parsed.encryption.machineKey === 'string'
+                                && parsed.encryption.machineKey.trim()
+                            )
+                        )
+                    ) {
+                        return {
+                            ok: true,
+                            activeServerId,
+                            sourceKey: key,
+                            credentials: parsed,
+                        };
+                    }
+                } catch {
+                    // ignore malformed entries and keep scanning
+                }
+            }
+
+            return {
+                ok: false,
+                reason: 'missing-auth-credentials',
+                activeServerId,
+                scannedKeys: orderedKeys,
+            };
+        } catch (error) {
+            return {
+                ok: false,
+                reason: 'read-failed',
+                error: String(error && error.message ? error.message : error),
+            };
+        }
+    })()`;
+}
+
+async function readActivitySurfacesAuthCredentialsFromWebview({
+    appIdentifier,
+    env = process.env,
+    driverSession = null,
+    windowId = 'main',
+    runCli = runActivitySurfacesMcpCli,
+} = {}) {
+    const response = await runCli(
+        [
+            'webview-execute-js',
+            '--script',
+            buildReadActivitySurfacesAuthCredentialsScript(),
+            '--app-identifier',
+            String(appIdentifier),
+            '--json',
+        ],
+        { appIdentifier, env, driverSession, windowId, timeoutMs: cliInteractTimeoutMs },
+    );
+    const payload = parseStructuredJsonPayload(String(response.stdout ?? ''));
+    if (!payload || typeof payload !== 'object' || payload.ok !== true || !isActivitySurfacesCliAuthCredentials(payload.credentials)) {
+        return null;
+    }
+    return {
+        activeServerId: readString(payload.activeServerId),
+        sourceKey: readString(payload.sourceKey),
+        credentials: payload.credentials,
+    };
+}
+
+export async function materializeActivitySurfacesCliAuthFromWebStorage({
+    appIdentifier,
+    env = process.env,
+    cliHomeDir = null,
+    driverSession = null,
+    windowId = 'main',
+    runCli = runActivitySurfacesMcpCli,
+} = {}) {
+    const serverUrl = readString(env?.HAPPIER_SERVER_URL) || readString(env?.HAPPIER_TAURI_WEB_RUNTIME_SERVER_URL);
+    if (!serverUrl || !appIdentifier) {
+        return null;
+    }
+
+    const resolvedCredentials = await readActivitySurfacesAuthCredentialsFromWebview({
+        appIdentifier,
+        env,
+        driverSession,
+        windowId,
+        runCli,
+    });
+    if (!resolvedCredentials) {
+        return null;
+    }
+
+    const resolvedCliHomeDir = readString(cliHomeDir)
+        || join(repoRoot, '.project', 'tmp', 'activity-surfaces-cli-auth', nowStamp());
+    const credentialPaths = resolveStackCredentialPaths({
+        cliHomeDir: resolvedCliHomeDir,
+        serverUrl,
+        env: {
+            ...env,
+            ...(resolvedCredentials.activeServerId ? { HAPPIER_ACTIVE_SERVER_ID: resolvedCredentials.activeServerId } : {}),
+        },
+    });
+
+    const cliCredentials = normalizeActivitySurfacesCliAuthCredentialsForCli(resolvedCredentials.credentials);
+    if (!cliCredentials) {
+        return null;
+    }
+
+    const credentialsText = `${JSON.stringify(cliCredentials, null, 2)}\n`;
+    for (const credentialPath of [credentialPaths.serverScopedPath, credentialPaths.legacyPath]) {
+        await ensureDir(dirname(credentialPath));
+        await writeFile(credentialPath, credentialsText, { encoding: 'utf8', mode: 0o600 });
+    }
+
+    const settingsPath = join(resolvedCliHomeDir, 'settings.json');
+    await ensureDir(dirname(settingsPath));
+    await writeFile(
+        settingsPath,
+        `${JSON.stringify({
+            schemaVersion: 5,
+            onboardingCompleted: true,
+            activeServerId: credentialPaths.activeServerId,
+            servers: {
+                [credentialPaths.activeServerId]: {
+                    id: credentialPaths.activeServerId,
+                    name: credentialPaths.activeServerId,
+                    serverUrl,
+                    webappUrl: serverUrl,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    lastUsedAt: 0,
+                },
+            },
+            machineIdByServerId: {
+                [credentialPaths.activeServerId]: randomUUID(),
+            },
+            machineIdConfirmedByServerByServerId: {},
+            lastChangesCursorByServerIdByAccountId: {},
+        }, null, 2)}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+    );
+
+    return resolvedCliHomeDir;
 }
 
 export async function ensureActivitySurfacesStackRuntimeReadyForSessionSeed({
@@ -664,6 +1042,8 @@ export async function seedActivitySurfacesOverlaySession({
     env = process.env,
     runCliJson = runActivitySurfacesStackCliJson,
     ensureSessionCreateReady = ensureActivitySurfacesStackRuntimeReadyForSessionSeed,
+    materializeDirectCliAuth = materializeActivitySurfacesCliAuthFromWebStorage,
+    cliHomeDir = null,
     sessionPath = repoRoot,
     timeoutMs = stackCliCommandTimeoutMs,
 } = {}) {
@@ -675,21 +1055,63 @@ export async function seedActivitySurfacesOverlaySession({
             stackEnv.HAPPIER_STACK_STACK = derivedStackName;
         }
     }
+    const seedMode = resolveActivitySurfacesSessionSeedMode(stackEnv);
+    let sessionCliEnv = seedMode === 'direct' ? resolveActivitySurfacesDirectCliEnv(stackEnv) : stackEnv;
+    const createSeedSession = async (currentEnv) => await runCliJson(
+        ['session', 'create', '--path', String(sessionPath), '--backend', backendTarget],
+        { env: currentEnv, timeoutMs },
+    );
     let createPayload;
     try {
-        createPayload = await runCliJson(
-            ['session', 'create', '--path', String(sessionPath), '--backend', backendTarget],
-            { env: stackEnv, timeoutMs },
-        );
+        createPayload = await createSeedSession(sessionCliEnv);
     } catch (error) {
-        if (!isMissingActivitySurfacesStackDaemonError(error)) {
+        if (seedMode === 'stack' && isMissingActivitySurfacesStackDaemonError(error)) {
+            await ensureSessionCreateReady({ env: stackEnv, timeoutMs, appIdentifier });
+            createPayload = await createSeedSession(sessionCliEnv);
+        } else if (isMissingActivitySurfacesStackError(error) && hasActivitySurfacesSeedServerUrl(stackEnv)) {
+            sessionCliEnv = resolveActivitySurfacesDirectCliEnv(stackEnv);
+            try {
+                createPayload = await createSeedSession(sessionCliEnv);
+            } catch (retryError) {
+                if (!(isRejectedActivitySurfacesDirectCliAuthError(retryError) && hasActivitySurfacesSeedServerUrl(sessionCliEnv))) {
+                    throw retryError;
+                }
+                const reseededCliHomeDir = await materializeDirectCliAuth({
+                    appIdentifier,
+                    env: sessionCliEnv,
+                    cliHomeDir,
+                });
+                if (!reseededCliHomeDir) {
+                    throw retryError;
+                }
+                sessionCliEnv = {
+                    ...sessionCliEnv,
+                    HAPPIER_HOME_DIR: reseededCliHomeDir,
+                    HAPPIER_STACK_CLI_HOME_DIR: reseededCliHomeDir,
+                };
+                createPayload = await createSeedSession(sessionCliEnv);
+            }
+        } else if (isRejectedActivitySurfacesDirectCliAuthError(error) && hasActivitySurfacesSeedServerUrl(sessionCliEnv)) {
+            const reseededCliHomeDir = await materializeDirectCliAuth({
+                appIdentifier,
+                env: sessionCliEnv,
+                cliHomeDir,
+            });
+            if (!reseededCliHomeDir) {
+                throw error;
+            }
+            sessionCliEnv = {
+                ...sessionCliEnv,
+                HAPPIER_HOME_DIR: reseededCliHomeDir,
+                HAPPIER_STACK_CLI_HOME_DIR: reseededCliHomeDir,
+            };
+            createPayload = await runCliJson(
+                ['session', 'create', '--path', String(sessionPath), '--backend', backendTarget],
+                { env: sessionCliEnv, timeoutMs },
+            );
+        } else {
             throw error;
         }
-        await ensureSessionCreateReady({ env: stackEnv, timeoutMs, appIdentifier });
-        createPayload = await runCliJson(
-            ['session', 'create', '--path', String(sessionPath), '--backend', backendTarget],
-            { env: stackEnv, timeoutMs },
-        );
     }
 
     if (!createPayload || typeof createPayload !== 'object' || createPayload.ok !== true || createPayload.kind !== 'session_create') {
@@ -705,7 +1127,7 @@ export async function seedActivitySurfacesOverlaySession({
     if (strategy === 'attention_only') {
         stopPayload = await runCliJson(
             ['session', 'stop', sessionId],
-            { env: stackEnv, timeoutMs },
+            { env: sessionCliEnv, timeoutMs },
         );
 
         if (!stopPayload || typeof stopPayload !== 'object' || stopPayload.ok !== true || stopPayload.kind !== 'session_stop') {
@@ -720,7 +1142,7 @@ export async function seedActivitySurfacesOverlaySession({
             sessionId,
             activitySurfacesSeedFollowUpMessage,
         ],
-        { env: stackEnv, timeoutMs },
+        { env: sessionCliEnv, timeoutMs },
     );
 
     if (!sendPayload || typeof sendPayload !== 'object' || sendPayload.ok !== true || sendPayload.kind !== 'session_send') {
@@ -910,8 +1332,11 @@ export async function hydrateActivitySurfacesSeededSessionForOverlayCapture({
                 });
                 break;
             } catch (error) {
-                if (attempt >= 2 || !isSeededSessionRouteWaitTimeoutError(error)) {
+                if (!isSeededSessionRouteWaitTimeoutError(error)) {
                     throw error;
+                }
+                if (attempt >= 2) {
+                    break;
                 }
             }
         }
@@ -1034,11 +1459,17 @@ async function ensureActivitySurfacesDriverSession(driverSession, { env = proces
     }
 
     const requireStackOwnedIdentifier = hasStackOwnedTauriRuntime(env) === true;
+    const preferredStackOwnedIdentifier = requireStackOwnedIdentifier
+        ? resolvePreferredStackTauriIdentifier(env)
+        : '';
 
     function shouldAcceptResolvedAppIdentifier(value) {
         const normalized = String(value ?? '').trim();
         if (!normalized) return false;
         if (!requireStackOwnedIdentifier) return true;
+        if (preferredStackOwnedIdentifier) {
+            return normalized === preferredStackOwnedIdentifier;
+        }
         return normalized.startsWith('com.happier.stack.');
     }
 
@@ -1312,6 +1743,7 @@ function buildStepPlan() {
     return [
         {
             id: 'settings_overlay',
+            required: true,
             title: 'Settings / desktop overlay',
             windowId: 'main',
             selectors: [
@@ -1325,6 +1757,7 @@ function buildStepPlan() {
         },
         {
             id: 'overlay_route',
+            required: true,
             title: 'Desktop overlay route',
             windowId: 'activity_overlay',
             selectors: [
@@ -1338,35 +1771,240 @@ function buildStepPlan() {
         },
         {
             id: 'overlay_collapsed',
+            required: true,
             title: 'Desktop overlay collapsed / notch mode',
             windowId: 'activity_overlay',
-            selectors: ['[data-testid="desktop-activity-overlay-collapsed-notch"]'],
+            selectors: [resolveDesktopActivityOverlaySurfaceSelector('desktop-activity-overlay-collapsed', 'notch_integrated')],
             screenshot: '03-overlay-collapsed-notch.png',
             domStructure: '03-overlay-collapsed-notch.structure.yml',
             domAccessibility: '03-overlay-collapsed-notch.a11y.yml',
             notes: ['capture the interactive collapsed overlay surface while notch-integrated presentation is forced'],
+            expectedOverlayState: {
+                expanded: false,
+            },
+            expectedPlacement: {
+                requestedHostMode: 'notch_integrated',
+            },
         },
         {
             id: 'overlay_expanded',
+            required: true,
             title: 'Desktop overlay expanded / notch mode',
             windowId: 'activity_overlay',
-            selectors: ['[data-testid="desktop-activity-overlay-expanded-notch"]'],
+            selectors: [resolveDesktopActivityOverlaySurfaceSelector('desktop-activity-overlay-expanded', 'notch_integrated')],
             screenshot: '04-overlay-expanded-notch.png',
             domStructure: '04-overlay-expanded-notch.structure.yml',
             domAccessibility: '04-overlay-expanded-notch.a11y.yml',
             notes: ['capture the expanded overlay surface after the collapsed surface expands in notch-integrated presentation'],
+            expectedOverlayState: {
+                expanded: true,
+            },
+            expectedPlacement: {
+                requestedHostMode: 'notch_integrated',
+            },
         },
         {
             id: 'overlay_floating_fallback',
-            title: 'Desktop overlay floating fallback',
+            required: true,
+            title: 'Desktop overlay collapsed / floating mode',
             windowId: 'activity_overlay',
-            selectors: ['[data-testid="desktop-activity-overlay-collapsed-floating"]'],
+            selectors: [resolveDesktopActivityOverlaySurfaceSelector('desktop-activity-overlay-collapsed', 'floating_overlay')],
             screenshot: '05-overlay-floating-fallback.png',
             domStructure: '05-overlay-floating-fallback.structure.yml',
             domAccessibility: '05-overlay-floating-fallback.a11y.yml',
             notes: ['capture the collapsed floating fallback surface after forcing floating overlay presentation'],
+            expectedOverlayState: {
+                expanded: false,
+            },
+            expectedPlacement: {
+                requestedHostMode: 'floating',
+                hostMode: 'floating',
+            },
+        },
+        {
+            id: 'overlay_floating_expanded',
+            required: true,
+            title: 'Desktop overlay expanded / floating mode',
+            windowId: 'activity_overlay',
+            selectors: [resolveDesktopActivityOverlaySurfaceSelector('desktop-activity-overlay-expanded', 'floating_overlay')],
+            screenshot: '06-overlay-expanded-floating.png',
+            domStructure: '06-overlay-expanded-floating.structure.yml',
+            domAccessibility: '06-overlay-expanded-floating.a11y.yml',
+            notes: ['capture the expanded floating overlay surface after forcing floating overlay presentation'],
+            expectedOverlayState: {
+                expanded: true,
+            },
+            expectedPlacement: {
+                requestedHostMode: 'floating',
+                hostMode: 'floating',
+            },
+        },
+        {
+            id: 'overlay_idle',
+            required: true,
+            title: 'Desktop overlay idle card',
+            windowId: 'activity_overlay',
+            proofSeedMode: 'idle',
+            selectors: [resolveDesktopActivityOverlayCardSelectorByKind('idle')],
+            screenshot: '07-overlay-idle.png',
+            domStructure: '07-overlay-idle.structure.yml',
+            domAccessibility: '07-overlay-idle.a11y.yml',
+            notes: ['capture the explicit idle-state overlay card with no inactive fallback rows'],
+            expectedOverlayState: {
+                expanded: true,
+                primaryCardKind: 'idle',
+                cardKinds: ['idle'],
+                rowCount: 0,
+            },
+        },
+        {
+            id: 'overlay_permission_request',
+            required: true,
+            title: 'Desktop overlay permission request card',
+            windowId: 'activity_overlay',
+            proofSeedMode: 'permission_request',
+            selectors: [
+                resolveDesktopActivityOverlayCardSelectorByKind('permission_request', desktopActivityOverlayQaCardSeedIds.permission_request),
+            ],
+            screenshot: '08-overlay-permission-request.png',
+            domStructure: '08-overlay-permission-request.structure.yml',
+            domAccessibility: '08-overlay-permission-request.a11y.yml',
+            notes: ['capture the deterministic permission-request overlay card'],
+            expectedOverlayState: {
+                expanded: true,
+                primaryCardKind: 'permission_request',
+                cardKinds: ['permission_request'],
+            },
+        },
+        {
+            id: 'overlay_user_question',
+            required: true,
+            title: 'Desktop overlay user question card',
+            windowId: 'activity_overlay',
+            proofSeedMode: 'user_question',
+            selectors: [
+                resolveDesktopActivityOverlayCardSelectorByKind('user_question', desktopActivityOverlayQaCardSeedIds.user_question),
+            ],
+            screenshot: '09-overlay-user-question.png',
+            domStructure: '09-overlay-user-question.structure.yml',
+            domAccessibility: '09-overlay-user-question.a11y.yml',
+            notes: ['capture the deterministic user-question overlay card'],
+            expectedOverlayState: {
+                expanded: true,
+                primaryCardKind: 'user_question',
+                cardKinds: ['user_question'],
+            },
+        },
+        {
+            id: 'overlay_quota_summary',
+            required: true,
+            title: 'Desktop overlay quota summary card',
+            windowId: 'activity_overlay',
+            proofSeedMode: 'quota_summary',
+            selectors: [
+                resolveDesktopActivityOverlayCardSelectorByKind('quota_summary', desktopActivityOverlayQaCardSeedIds.quota_summary),
+            ],
+            screenshot: '10-overlay-quota-summary.png',
+            domStructure: '10-overlay-quota-summary.structure.yml',
+            domAccessibility: '10-overlay-quota-summary.a11y.yml',
+            notes: ['capture the deterministic quota-summary overlay card'],
+            expectedOverlayState: {
+                expanded: true,
+                primaryCardKind: 'quota_summary',
+                cardKinds: ['quota_summary'],
+            },
+        },
+        {
+            id: 'overlay_multi_session_list',
+            required: true,
+            title: 'Desktop overlay multi-session overview card',
+            windowId: 'activity_overlay',
+            proofSeedMode: 'multi_session_list',
+            selectors: [
+                resolveDesktopActivityOverlayCardSelectorByKind('multi_session_list'),
+            ],
+            screenshot: '11-overlay-multi-session-list.png',
+            domStructure: '11-overlay-multi-session-list.structure.yml',
+            domAccessibility: '11-overlay-multi-session-list.a11y.yml',
+            notes: ['capture the multi-session overview proof state with multiple visible session rows'],
+            expectedOverlayState: {
+                expanded: true,
+                primaryCardKind: 'multi_session_list',
+                cardKinds: ['multi_session_list'],
+                minRowCount: 2,
+            },
+        },
+        {
+            id: 'overlay_completion_state',
+            required: false,
+            title: 'Desktop overlay completion card',
+            windowId: 'activity_overlay',
+            proofSeedMode: 'completion_state',
+            selectors: [
+                resolveDesktopActivityOverlayCardSelectorByKind('completion_state', desktopActivityOverlayQaCardSeedIds.completion_state),
+            ],
+            screenshot: '12-overlay-completion-state.png',
+            domStructure: '12-overlay-completion-state.structure.yml',
+            domAccessibility: '12-overlay-completion-state.a11y.yml',
+            notes: ['capture the completion-state card when the implementation exposes it'],
+            expectedOverlayState: {
+                expanded: true,
+                primaryCardKind: 'completion_state',
+                cardKinds: ['completion_state'],
+            },
         },
     ];
+}
+
+function parseActivitySurfacesQaStepIdList(rawValue) {
+    return String(rawValue ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+}
+
+function resolveActivitySurfacesRequiredProofStepIds(steps, env = process.env) {
+    const knownStepIds = new Set(
+        Array.isArray(steps)
+            ? steps.map((step) => readString(step?.id)).filter(Boolean)
+            : [],
+    );
+    const explicitRequired = Array.isArray(steps)
+        ? steps
+            .filter((step) => step?.required === true)
+            .map((step) => readString(step?.id))
+            .filter(Boolean)
+        : [];
+    const required = explicitRequired.length > 0
+        ? explicitRequired
+        : knownStepIds.size > 0
+            ? canonicalActivitySurfacesRequiredProofStepIds.filter((stepId) => knownStepIds.has(stepId))
+            : canonicalActivitySurfacesRequiredProofStepIds;
+    const promoted = parseActivitySurfacesQaStepIdList(
+        env?.HAPPIER_TAURI_ACTIVITY_SURFACES_QA_REQUIRE_STEPS,
+    ).filter((stepId) => knownStepIds.has(stepId));
+
+    return [...new Set([...required, ...promoted])];
+}
+
+function resolveActivitySurfacesQaSeedStrategy(env = process.env) {
+    const strategy = readString(env?.HAPPIER_TAURI_ACTIVITY_SURFACES_QA_SEED_STRATEGY, 'active_session');
+    if (strategy === 'skip') {
+        return 'idle';
+    }
+    if (
+        strategy === 'active_session'
+        || strategy === 'attention_only'
+        || strategy === 'idle'
+        || strategy === 'permission_request'
+        || strategy === 'user_question'
+        || strategy === 'quota_summary'
+        || strategy === 'multi_session_list'
+        || strategy === 'completion_state'
+    ) {
+        return strategy;
+    }
+    throw new Error(`Unsupported activity-surfaces QA seed strategy: ${strategy}`);
 }
 
 async function capturePreflightStructureSnapshot({
@@ -2758,7 +3396,9 @@ export function buildTauriActivitySurfacesQaPlan({ env = process.env } = {}) {
             'If protected-route navigation keeps redirecting back to `/`, sign in first or seed a post-auth state before rerunning this QA capture.',
             'If the app lands on the post-auth setup wizard, complete or dismiss it once before rerunning this QA capture.',
             'If the settings switch cannot be toggled through MCP, flip the desktop overlay switch once in the real settings screen and rerun.',
-            'If the overlay stays hidden after enabling it, confirm the runtime has at least one active session and rerun the capture.',
+            'If you need to validate the explicit idle surface, rerun with `HAPPIER_TAURI_ACTIVITY_SURFACES_QA_SEED_STRATEGY=skip`; `always_when_enabled` should still render the idle surface without an active session.',
+            'To validate deterministic seeded proof states directly, rerun with modes such as `permission_request`, `user_question`, `quota_summary`, or `multi_session_list`.',
+            'If the overlay still stays hidden after enabling it in `always_when_enabled`, inspect placement diagnostics and warnings, then rerun the capture.',
         ],
     };
 }
@@ -3051,6 +3691,54 @@ export async function getActivitySurfacesOverlayWindowState({
         throw new Error(`Unable to read desktop overlay window state: ${reason}`);
     }
     return payload.state ?? null;
+}
+
+export async function seedActivitySurfacesOverlayProofState({
+    mode,
+    appIdentifier,
+    env,
+    artifactRoot,
+    driverSession = null,
+    windowId = 'main',
+    runCli = runActivitySurfacesMcpCli,
+} = {}) {
+    const normalizedMode = readString(mode);
+    if (!normalizedMode) {
+        throw new Error('Desktop overlay proof-state seed mode is required.');
+    }
+
+    const response = await runCli(
+        [
+            'webview-execute-js',
+            '--script',
+            `(async () => {
+                const mcp = window.__MCP__;
+                if (!mcp || typeof mcp.seedDesktopActivityOverlayQaState !== 'function') {
+                    return { ok: false, reason: 'missing-seed-helper' };
+                }
+                try {
+                    return await mcp.seedDesktopActivityOverlayQaState(${JSON.stringify(normalizedMode)});
+                } catch (error) {
+                    return {
+                        ok: false,
+                        reason: String(error && error.message ? error.message : error),
+                    };
+                }
+            })()`,
+            '--app-identifier',
+            String(appIdentifier),
+            '--json',
+        ],
+        { appIdentifier, env, driverSession, windowId, timeoutMs: cliInteractTimeoutMs },
+    );
+    const payload = parseStructuredJsonPayload(String(response.stdout ?? ''));
+    if (payload?.ok !== true && artifactRoot) {
+        await appendWarning(
+            artifactRoot,
+            `- overlay proof-state seed ${normalizedMode} failed: ${readString(payload?.reason, 'unknown')}`,
+        );
+    }
+    return payload ?? { ok: false, reason: 'invalid-seed-response', mode: normalizedMode };
 }
 
 export async function clickActivitySurfacesSelector(
@@ -3882,6 +4570,13 @@ async function appendTrackerEvidence({
     await appendTextArtifact(trackerPath, `${lines.join('\n')}\n`);
 }
 
+export function summarizeTauriActivitySurfacesQaProof({ stepArtifacts = {}, requiredStepIds = [] } = {}) {
+    return summarizeQaStepArtifactsProof({
+        stepArtifacts,
+        requiredStepIds,
+    });
+}
+
 async function persistDesktopOverlayLocalSetting({
     appIdentifier,
     env,
@@ -4052,6 +4747,10 @@ export function assertActivitySurfacesOverlayPlacementContract(
     overlayState,
     {
         expectedHostMode,
+        expectedRequestedHostMode = null,
+        expectedNativeHostPath = null,
+        requireFallbackReason = false,
+        requireNoFallbackReason = false,
         requireComputedTopEdge = false,
         requireAppliedNativeFrame = false,
         requireAppliedNativeFrameTopEdge = requireAppliedNativeFrame && expectedHostMode === 'notch_integrated',
@@ -4062,9 +4761,33 @@ export function assertActivitySurfacesOverlayPlacementContract(
     if (!placementDiagnostics || typeof placementDiagnostics !== 'object') {
         throw new Error(`Unable to validate ${label}: overlay placement diagnostics are unavailable.`);
     }
+    if (
+        expectedRequestedHostMode
+        && placementDiagnostics.requestedHostMode !== expectedRequestedHostMode
+    ) {
+        throw new Error(
+            `Unable to validate ${label}: expected requested host mode ${expectedRequestedHostMode}, received ${String(placementDiagnostics.requestedHostMode ?? 'unknown')}.`,
+        );
+    }
     if (placementDiagnostics.hostMode !== expectedHostMode) {
         throw new Error(
             `Unable to validate ${label}: expected ${expectedHostMode} host mode, received ${String(placementDiagnostics.hostMode ?? 'unknown')}.`,
+        );
+    }
+    if (
+        expectedNativeHostPath
+        && placementDiagnostics.nativeHostPath !== expectedNativeHostPath
+    ) {
+        throw new Error(
+            `Unable to validate ${label}: expected native host path ${expectedNativeHostPath}, received ${String(placementDiagnostics.nativeHostPath ?? 'unknown')}.`,
+        );
+    }
+    if (requireFallbackReason && !readString(placementDiagnostics.hostFallbackReason)) {
+        throw new Error(`Unable to validate ${label}: host fallback reason is missing for a degraded host state.`);
+    }
+    if (requireNoFallbackReason && readString(placementDiagnostics.hostFallbackReason)) {
+        throw new Error(
+            `Unable to validate ${label}: expected no host fallback reason, received ${String(placementDiagnostics.hostFallbackReason)}.`,
         );
     }
 
@@ -4113,6 +4836,157 @@ export function assertActivitySurfacesOverlayPlacementContract(
     return placementDiagnostics;
 }
 
+function summarizeActivitySurfacesOverlayWindowState(overlayState) {
+    const model = overlayState?.model && typeof overlayState.model === 'object'
+        ? overlayState.model
+        : null;
+    const expandedModel = model?.expanded && typeof model.expanded === 'object'
+        ? model.expanded
+        : null;
+    const cards = Array.isArray(expandedModel?.cards) ? expandedModel.cards : [];
+    const rows = Array.isArray(expandedModel?.rows) ? expandedModel.rows : [];
+
+    return {
+        expanded: overlayState?.expanded === true || model?.isExpanded === true,
+        primaryCardKind: model?.collapsed?.primaryCardKind
+            ? normalizeDesktopActivityOverlayCardKindForTestID(model.collapsed.primaryCardKind)
+            : null,
+        cardKinds: cards.map((card) => normalizeDesktopActivityOverlayCardKindForTestID(card?.kind)),
+        rowCount: rows.length,
+        requestedHostMode: overlayState?.placementDiagnostics?.requestedHostMode ?? null,
+        hostMode: overlayState?.placementDiagnostics?.hostMode ?? null,
+        hostFallbackReason: overlayState?.placementDiagnostics?.hostFallbackReason ?? null,
+        nativeHostPath: overlayState?.placementDiagnostics?.nativeHostPath ?? null,
+        computedPosition: overlayState?.placementDiagnostics?.computedPosition ?? null,
+        appliedNativeFrame: overlayState?.placementDiagnostics?.appliedNativeFrame ?? null,
+    };
+}
+
+function assertActivitySurfacesOverlayStateContract(
+    overlayState,
+    expectedOverlayState,
+    { label = 'overlay' } = {},
+) {
+    if (!expectedOverlayState || typeof expectedOverlayState !== 'object') {
+        return summarizeActivitySurfacesOverlayWindowState(overlayState);
+    }
+
+    const summary = summarizeActivitySurfacesOverlayWindowState(overlayState);
+
+    if (typeof expectedOverlayState.expanded === 'boolean' && summary.expanded !== expectedOverlayState.expanded) {
+        throw new Error(
+            `Unable to validate ${label}: expected expanded=${String(expectedOverlayState.expanded)}, received ${String(summary.expanded)}.`,
+        );
+    }
+    if (
+        expectedOverlayState.primaryCardKind
+        && summary.primaryCardKind !== normalizeDesktopActivityOverlayCardKindForTestID(expectedOverlayState.primaryCardKind)
+    ) {
+        throw new Error(
+            `Unable to validate ${label}: expected primary card kind ${String(expectedOverlayState.primaryCardKind)}, received ${String(summary.primaryCardKind ?? 'unknown')}.`,
+        );
+    }
+    if (Array.isArray(expectedOverlayState.cardKinds)) {
+        const expectedCardKinds = expectedOverlayState.cardKinds.map((kind) =>
+            normalizeDesktopActivityOverlayCardKindForTestID(kind),
+        );
+        if (JSON.stringify(summary.cardKinds) !== JSON.stringify(expectedCardKinds)) {
+            throw new Error(
+                `Unable to validate ${label}: expected card kinds ${JSON.stringify(expectedCardKinds)}, received ${JSON.stringify(summary.cardKinds)}.`,
+            );
+        }
+    }
+    if (
+        typeof expectedOverlayState.rowCount === 'number'
+        && summary.rowCount !== expectedOverlayState.rowCount
+    ) {
+        throw new Error(
+            `Unable to validate ${label}: expected rowCount=${String(expectedOverlayState.rowCount)}, received ${String(summary.rowCount)}.`,
+        );
+    }
+    if (
+        typeof expectedOverlayState.minRowCount === 'number'
+        && summary.rowCount < expectedOverlayState.minRowCount
+    ) {
+        throw new Error(
+            `Unable to validate ${label}: expected at least ${String(expectedOverlayState.minRowCount)} rows, received ${String(summary.rowCount)}.`,
+        );
+    }
+
+    return summary;
+}
+
+function resolveActivitySurfacesOverlayNativeTopEdge(frame) {
+    if (!frame || typeof frame !== 'object') {
+        return null;
+    }
+    const y = Number(frame.y);
+    const height = Number(frame.height);
+    if (!Number.isFinite(y) || !Number.isFinite(height)) {
+        return null;
+    }
+    return y + height;
+}
+
+function assertActivitySurfacesOverlayInteractionPlacementStable(
+    beforeState,
+    afterState,
+    { label = 'overlay_interaction' } = {},
+) {
+    const beforeDiagnostics = beforeState?.placementDiagnostics;
+    const afterDiagnostics = afterState?.placementDiagnostics;
+    if (!beforeDiagnostics || !afterDiagnostics) {
+        throw new Error(`Unable to validate ${label}: interaction placement diagnostics are unavailable.`);
+    }
+    const beforeY = Number(beforeDiagnostics.computedPosition?.y);
+    const afterY = Number(afterDiagnostics.computedPosition?.y);
+    if (Number.isFinite(beforeY) && Number.isFinite(afterY) && afterY > beforeY + 0.5) {
+        throw new Error(
+            `Unable to validate ${label}: overlay dropped below the menu-bar plane after interaction (${String(beforeY)} -> ${String(afterY)}).`,
+        );
+    }
+    const beforeTopEdge = resolveActivitySurfacesOverlayNativeTopEdge(beforeDiagnostics.appliedNativeFrame);
+    const afterTopEdge = resolveActivitySurfacesOverlayNativeTopEdge(afterDiagnostics.appliedNativeFrame);
+    if (
+        beforeTopEdge != null
+        && afterTopEdge != null
+        && Math.abs(afterTopEdge - beforeTopEdge) > notchNativeFrameTopEdgeTolerancePx
+    ) {
+        throw new Error(
+            `Unable to validate ${label}: native frame top edge drifted after interaction (${String(beforeTopEdge)} -> ${String(afterTopEdge)}).`,
+        );
+    }
+}
+
+async function writeActivitySurfacesOverlayStepStateArtifact({
+    artifactRoot,
+    step,
+    overlayState,
+    screenshotPath = null,
+    writeArtifact = writeTextArtifact,
+}) {
+    if (!artifactRoot || !step?.screenshot || !overlayState) {
+        return null;
+    }
+    const diagnosticsPath = join(
+        artifactRoot,
+        String(step.screenshot).replace(/\.png$/i, '.window-state.json'),
+    );
+    const summary = summarizeActivitySurfacesOverlayWindowState(overlayState);
+    await writeArtifact(
+        diagnosticsPath,
+        `${JSON.stringify({
+            stepId: step.id,
+            screenshotPath,
+            expectedOverlayState: step.expectedOverlayState ?? null,
+            expectedPlacement: step.expectedPlacement ?? null,
+            overlayState: summary,
+            placementDiagnostics: overlayState?.placementDiagnostics ?? null,
+        }, null, 2)}\n`,
+    );
+    return diagnosticsPath;
+}
+
 function buildForcedNotchCaptureOverrides(hostMode) {
     if (hostMode !== 'floating') {
         return {
@@ -4133,6 +5007,47 @@ function buildForcedNotchCaptureOverrides(hostMode) {
     };
 }
 
+async function findFirstVisibleActivitySurfacesStepSelector({
+    step,
+    appIdentifier,
+    env,
+    driverSession,
+    isSelectorVisible,
+    isSelectorVisibleByDomQuery,
+}) {
+    const selectors = Array.isArray(step?.selectors) ? step.selectors : [];
+
+    for (const selector of selectors) {
+        if (!readString(selector)) {
+            continue;
+        }
+        try {
+            if (await isSelectorVisible(selector, {
+                appIdentifier,
+                env,
+                driverSession,
+                windowId: step?.windowId ?? null,
+                timeoutMs: 1_200,
+            })) {
+                return selector;
+            }
+        } catch {}
+        try {
+            if (await isSelectorVisibleByDomQuery(selector, {
+                appIdentifier,
+                env,
+                driverSession,
+                windowId: step?.windowId ?? null,
+                timeoutMs: domQueryFallbackProbeTimeoutMs,
+            })) {
+                return selector;
+            }
+        } catch {}
+    }
+
+    return null;
+}
+
 export async function runActivitySurfacesDesktopOverlayCaptureLane({
     appIdentifier,
     driverSession,
@@ -4150,6 +5065,7 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
     enableDesktopOverlayVisibility = enableDesktopOverlayVisibilityMode,
     setOverlayPresentationMode = async () => true,
     setOverlayExpanded = setActivitySurfacesOverlayExpanded,
+    seedOverlayProofState = seedActivitySurfacesOverlayProofState,
     getOverlayWindowState = null,
     clickCollapsedOverlay = clickSelector,
     captureUnscoped = null,
@@ -4162,6 +5078,7 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
     postEnableDelayMs = 750,
     postCollapseDelayMs = 600,
     presentationMode = 'automatic',
+    seedStrategy = 'active_session',
 }) {
     const requestedVisibilityMode = visibilityMode;
     const requestedPresentationMode = presentationMode;
@@ -4176,6 +5093,7 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
         return message.includes('step overlay_route')
             || message.includes("Window 'activity_overlay' not found");
     };
+    const proofStepsById = Object.fromEntries(buildStepPlan().map((step) => [step.id, step]));
     const desktopSettingsOpenSelectorProbeTraceFile = join(artifactRoot, '99-desktop-settings-open.selector-probes.jsonl');
     const traceDesktopSettingsSelectorProbe = async (entry) => {
         await appendTextArtifact(
@@ -4429,6 +5347,74 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
         return null;
     };
 
+    const validateOverlayProofState = (stepId, overlayState, { placementOverride = null } = {}) => {
+        const step = proofStepsById[stepId];
+        if (!step) {
+            throw new Error(`Unknown overlay proof step: ${String(stepId)}`);
+        }
+
+        const expectedPlacement = {
+            ...(step.expectedPlacement ?? {}),
+            ...(placementOverride ?? {}),
+        };
+        if (expectedPlacement.hostMode) {
+            assertActivitySurfacesOverlayPlacementContract(overlayState, {
+                expectedHostMode: expectedPlacement.hostMode,
+                expectedRequestedHostMode: expectedPlacement.requestedHostMode ?? null,
+                expectedNativeHostPath: expectedPlacement.nativeHostPath ?? null,
+                requireFallbackReason: expectedPlacement.requireFallbackReason === true,
+                requireNoFallbackReason: expectedPlacement.requireNoFallbackReason === true,
+                requireComputedTopEdge: expectedPlacement.requireComputedTopEdge === true,
+                requireAppliedNativeFrame: expectedPlacement.requireAppliedNativeFrame === true,
+                label: stepId,
+            });
+        }
+        if (step.expectedOverlayState) {
+            assertActivitySurfacesOverlayStateContract(overlayState, step.expectedOverlayState, { label: stepId });
+        }
+        return summarizeActivitySurfacesOverlayWindowState(overlayState);
+    };
+
+    const waitForValidatedOverlayProofState = async (stepId, { attempts = 8, delayMs = 350, placementOverride = null } = {}) =>
+        waitForOverlayStateFromMainWindow({
+            attempts,
+            delayMs,
+            accept: (state) => {
+                if (!state?.policy?.enabled) {
+                    return false;
+                }
+                try {
+                    validateOverlayProofState(stepId, state, { placementOverride });
+                    return true;
+                } catch {
+                    return false;
+                }
+            },
+        });
+
+    const captureValidatedOverlayProofStep = async (stepId, captureOptions = {}, { overlayState, placementOverride = null } = {}) => {
+        const step = proofStepsById[stepId];
+        const resolvedState = overlayState ?? await waitForValidatedOverlayProofState(stepId, {
+            placementOverride,
+        });
+        if (!resolvedState) {
+            throw new Error(`Desktop overlay proof state never matched ${stepId}.`);
+        }
+        validateOverlayProofState(stepId, resolvedState, { placementOverride });
+        const artifacts = await captureRequired(stepId, captureOptions);
+        await writeActivitySurfacesOverlayStepStateArtifact({
+            artifactRoot,
+            step,
+            overlayState: resolvedState,
+            screenshotPath: artifacts?.screenshotPath ?? null,
+            writeArtifact,
+        });
+        return {
+            artifacts,
+            overlayState: resolvedState,
+        };
+    };
+
     let overlayState = await waitForOverlayStateFromMainWindow({ attempts: 10, delayMs: 500 });
     if (!overlayState) {
         // The QA harness can apply desktop settings via localStorage as a fallback when the in-app MCP bridge
@@ -4642,6 +5628,8 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
         }
     };
 
+    const optionalStepArtifacts = {};
+
     try {
         const notchPresentationApplied = await setOverlayPresentationMode({
             appIdentifier,
@@ -4676,11 +5664,17 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
                 '- notch-integrated presentation resolved to floating host mode; capturing floating fallback geometry for the forced-notch steps',
             );
         }
-        assertActivitySurfacesOverlayPlacementContract(notchOverlayState, {
-            expectedHostMode: forcedNotchHostMode,
+        const notchPlacementOverride = {
+            hostMode: forcedNotchHostMode,
+            requestedHostMode: 'notch_integrated',
+            nativeHostPath: forcedNotchHostMode === 'notch_integrated' ? 'panel' : 'window',
+            requireFallbackReason: forcedNotchHostMode === 'floating',
+            requireNoFallbackReason: forcedNotchHostMode === 'notch_integrated',
             requireComputedTopEdge: forcedNotchHostMode === 'notch_integrated',
             requireAppliedNativeFrame: forcedNotchHostMode === 'notch_integrated',
-            label: 'overlay_collapsed',
+        };
+        validateOverlayProofState('overlay_collapsed', notchOverlayState, {
+            placementOverride: notchPlacementOverride,
         });
 
         // The overlay can persist an expanded state between launches. Force a collapsed baseline
@@ -4700,29 +5694,62 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
         }
         await wait(postCollapseDelayMs);
 
+        const collapsedNotchState = await waitForValidatedOverlayProofState('overlay_collapsed', {
+            placementOverride: notchPlacementOverride,
+        });
+        if (!collapsedNotchState) {
+            throw new Error('Desktop overlay never reached the collapsed notch proof state.');
+        }
+
         let collapsedArtifacts;
         try {
-            collapsedArtifacts = await captureRequired('overlay_collapsed', forcedNotchCaptureOverrides.collapsed ?? undefined);
+            ({ artifacts: collapsedArtifacts } = await captureValidatedOverlayProofStep(
+                'overlay_collapsed',
+                forcedNotchCaptureOverrides.collapsed ?? undefined,
+                {
+                    overlayState: collapsedNotchState,
+                    placementOverride: notchPlacementOverride,
+                },
+            ));
         } catch (error) {
             const recovered = await recoverOverlayWindowIfMissing(error, 'overlay_collapsed');
             if (!recovered) {
                 throw error;
             }
-            collapsedArtifacts = await captureRequired('overlay_collapsed', forcedNotchCaptureOverrides.collapsed ?? undefined);
+            ({ artifacts: collapsedArtifacts } = await captureValidatedOverlayProofStep(
+                'overlay_collapsed',
+                forcedNotchCaptureOverrides.collapsed ?? undefined,
+                {
+                    placementOverride: notchPlacementOverride,
+                },
+            ));
         }
 
+        let clickTriggeredExpansion = false;
         try {
-            await setOverlayExpanded(true, {
+            await clickCollapsedOverlay('[data-testid="desktop-activity-overlay-collapsed"]', {
                 appIdentifier,
                 driverSession,
                 env,
                 windowId: 'activity_overlay',
             });
+            clickTriggeredExpansion = true;
         } catch (error) {
             await appendWarningArtifact(
                 artifactRoot,
-                `- unable to force-expand the desktop overlay before capture; continuing: ${error instanceof Error ? error.message : String(error)}`,
+                `- unable to click the collapsed desktop overlay before expanded proof capture; falling back to programmatic expansion: ${error instanceof Error ? error.message : String(error)}`,
             );
+            await setOverlayExpanded(true, {
+                appIdentifier,
+                driverSession,
+                env,
+                windowId: 'activity_overlay',
+            }).catch(async (setExpandedError) => {
+                await appendWarningArtifact(
+                    artifactRoot,
+                    `- unable to force-expand the desktop overlay before capture; continuing: ${setExpandedError instanceof Error ? setExpandedError.message : String(setExpandedError)}`,
+                );
+            });
         }
 
         if (typeof getOverlayWindowState === 'function') {
@@ -4739,9 +5766,46 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
         }
 
         await wait(postCollapseDelayMs);
+        let expandedNotchState = await waitForValidatedOverlayProofState('overlay_expanded', {
+            placementOverride: notchPlacementOverride,
+        });
+        if (!expandedNotchState) {
+            await setOverlayExpanded(true, {
+                appIdentifier,
+                driverSession,
+                env,
+                windowId: 'activity_overlay',
+            }).catch(async (error) => {
+                await appendWarningArtifact(
+                    artifactRoot,
+                    `- unable to recover expanded desktop overlay state after click interaction: ${error instanceof Error ? error.message : String(error)}`,
+                );
+            });
+            await wait(postCollapseDelayMs);
+            expandedNotchState = await waitForValidatedOverlayProofState('overlay_expanded', {
+                placementOverride: notchPlacementOverride,
+            });
+        }
+        if (!expandedNotchState) {
+            throw new Error('Desktop overlay never reached the expanded notch proof state.');
+        }
+        if (clickTriggeredExpansion) {
+            assertActivitySurfacesOverlayInteractionPlacementStable(
+                collapsedNotchState,
+                expandedNotchState,
+                { label: 'overlay_expanded' },
+            );
+        }
         let expandedArtifacts;
         try {
-            expandedArtifacts = await captureRequired('overlay_expanded', forcedNotchCaptureOverrides.expanded ?? undefined);
+            ({ artifacts: expandedArtifacts } = await captureValidatedOverlayProofStep(
+                'overlay_expanded',
+                forcedNotchCaptureOverrides.expanded ?? undefined,
+                {
+                    overlayState: expandedNotchState,
+                    placementOverride: notchPlacementOverride,
+                },
+            ));
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error ?? '');
             const canCaptureUnscoped = typeof captureUnscoped === 'function'
@@ -4753,21 +5817,50 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
                 const recovered = await recoverOverlayWindowIfMissing(error, 'overlay_expanded');
                 if (recovered) {
                     try {
-                        expandedArtifacts = await captureRequired('overlay_expanded', forcedNotchCaptureOverrides.expanded ?? undefined);
+                        ({ artifacts: expandedArtifacts } = await captureValidatedOverlayProofStep(
+                            'overlay_expanded',
+                            forcedNotchCaptureOverrides.expanded ?? undefined,
+                            {
+                                placementOverride: notchPlacementOverride,
+                            },
+                        ));
                     } catch {
                         // Fall through to the interactive click fallback.
                     }
                 }
 
                 if (!expandedArtifacts) {
-                    await clickCollapsedOverlay('[data-testid="desktop-activity-overlay-collapsed"]', {
-                        appIdentifier,
-                        driverSession,
-                        env,
-                        windowId: 'activity_overlay',
-                    });
+                    let expandedViaCommand = true;
+                    try {
+                        await setOverlayExpanded(true, {
+                            appIdentifier,
+                            driverSession,
+                            env,
+                            windowId: 'activity_overlay',
+                        });
+                    } catch (error) {
+                        expandedViaCommand = false;
+                        await appendWarningArtifact(
+                            artifactRoot,
+                            `- unable to recover overlay expansion through the programmatic expanded command; retrying with a collapsed-surface click: ${error instanceof Error ? error.message : String(error)}`,
+                        );
+                    }
+                    if (!expandedViaCommand) {
+                        await clickCollapsedOverlay('[data-testid="desktop-activity-overlay-collapsed"]', {
+                            appIdentifier,
+                            driverSession,
+                            env,
+                            windowId: 'activity_overlay',
+                        });
+                    }
                     await wait(postCollapseDelayMs);
-                    expandedArtifacts = await captureRequired('overlay_expanded', forcedNotchCaptureOverrides.expanded ?? undefined);
+                    ({ artifacts: expandedArtifacts } = await captureValidatedOverlayProofStep(
+                        'overlay_expanded',
+                        forcedNotchCaptureOverrides.expanded ?? undefined,
+                        {
+                            placementOverride: notchPlacementOverride,
+                        },
+                    ));
                 }
             }
         }
@@ -4794,8 +5887,17 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
         if (!floatingOverlayState) {
             throw new Error('Desktop overlay never reported floating placement diagnostics after forcing floating overlay presentation mode.');
         }
+        const floatingPlacementOverride = {
+            hostMode: 'floating',
+            requestedHostMode: 'floating',
+            nativeHostPath: 'window',
+            requireNoFallbackReason: true,
+        };
         assertActivitySurfacesOverlayPlacementContract(floatingOverlayState, {
             expectedHostMode: 'floating',
+            expectedRequestedHostMode: 'floating',
+            expectedNativeHostPath: 'window',
+            requireNoFallbackReason: true,
             label: 'overlay_floating_fallback',
         });
 
@@ -4814,15 +5916,157 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
         }
         await wait(postCollapseDelayMs);
 
+        const collapsedFloatingState = await waitForValidatedOverlayProofState('overlay_floating_fallback', {
+            placementOverride: floatingPlacementOverride,
+        });
+        if (!collapsedFloatingState) {
+            throw new Error('Desktop overlay never reached the collapsed floating proof state.');
+        }
+
         let floatingFallbackArtifacts;
         try {
-            floatingFallbackArtifacts = await captureRequired('overlay_floating_fallback');
+            ({ artifacts: floatingFallbackArtifacts } = await captureValidatedOverlayProofStep(
+                'overlay_floating_fallback',
+                {},
+                {
+                    overlayState: collapsedFloatingState,
+                    placementOverride: floatingPlacementOverride,
+                },
+            ));
         } catch (error) {
             const recovered = await recoverOverlayWindowIfMissing(error, 'overlay_floating_fallback');
             if (!recovered) {
                 throw error;
             }
-            floatingFallbackArtifacts = await captureRequired('overlay_floating_fallback');
+            ({ artifacts: floatingFallbackArtifacts } = await captureValidatedOverlayProofStep(
+                'overlay_floating_fallback',
+                {},
+                {
+                    placementOverride: floatingPlacementOverride,
+                },
+            ));
+        }
+
+        await setOverlayExpanded(true, {
+            appIdentifier,
+            driverSession,
+            env,
+            windowId: 'activity_overlay',
+        }).catch(async (error) => {
+            await appendWarningArtifact(
+                artifactRoot,
+                `- unable to expand the floating desktop overlay before proof capture: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        });
+        await wait(postCollapseDelayMs);
+        let floatingExpandedArtifacts;
+        try {
+            ({ artifacts: floatingExpandedArtifacts } = await captureValidatedOverlayProofStep('overlay_floating_expanded', {}, {
+                placementOverride: floatingPlacementOverride,
+            }));
+        } catch (error) {
+            const recovered = await recoverOverlayWindowIfMissing(error, 'overlay_floating_expanded');
+            if (recovered) {
+                try {
+                    ({ artifacts: floatingExpandedArtifacts } = await captureValidatedOverlayProofStep('overlay_floating_expanded', {}, {
+                        placementOverride: floatingPlacementOverride,
+                    }));
+                } catch {
+                    // Fall through to the interactive click fallback.
+                }
+            }
+
+            if (!floatingExpandedArtifacts) {
+                let expandedViaClick = true;
+                try {
+                    await clickCollapsedOverlay('[data-testid="desktop-activity-overlay-collapsed-floating"]', {
+                        appIdentifier,
+                        driverSession,
+                        env,
+                        windowId: 'activity_overlay',
+                    });
+                } catch (clickError) {
+                    expandedViaClick = false;
+                    await appendWarningArtifact(
+                        artifactRoot,
+                        `- unable to recover floating overlay expansion via the collapsed floating surface; retrying the programmatic expanded command: ${clickError instanceof Error ? clickError.message : String(clickError)}`,
+                    );
+                }
+                if (!expandedViaClick) {
+                    await setOverlayExpanded(true, {
+                        appIdentifier,
+                        driverSession,
+                        env,
+                        windowId: 'activity_overlay',
+                    }).catch(async (setExpandedError) => {
+                        await appendWarningArtifact(
+                            artifactRoot,
+                            `- unable to recover floating overlay expansion through the programmatic expanded command: ${setExpandedError instanceof Error ? setExpandedError.message : String(setExpandedError)}`,
+                        );
+                    });
+                }
+                await wait(postCollapseDelayMs);
+                ({ artifacts: floatingExpandedArtifacts } = await captureValidatedOverlayProofStep('overlay_floating_expanded', {}, {
+                    placementOverride: floatingPlacementOverride,
+                }));
+            }
+        }
+        optionalStepArtifacts.overlay_floating_expanded = floatingExpandedArtifacts;
+
+        const seededProofStepIds = canonicalActivitySurfacesRequiredProofStepIds
+            .concat(canonicalActivitySurfacesOptionalOverlayCardStepIds)
+            .filter((stepId) => proofStepsById[stepId]?.proofSeedMode);
+        for (const stepId of seededProofStepIds) {
+            const step = proofStepsById[stepId];
+            const seedResult = await seedOverlayProofState({
+                mode: step.proofSeedMode,
+                appIdentifier,
+                driverSession,
+                env,
+                artifactRoot,
+                windowId: 'main',
+            }).catch((error) => ({
+                ok: false,
+                reason: error instanceof Error ? error.message : String(error),
+            }));
+            if (seedResult?.ok !== true) {
+                const reason = readString(seedResult?.reason, 'seed-proof-state-failed');
+                if (step.required === true) {
+                    throw new Error(`Unable to seed overlay proof state ${String(step.proofSeedMode)}: ${reason}`);
+                }
+                await appendWarningArtifact(
+                    artifactRoot,
+                    `- optional overlay proof step ${stepId} could not be seeded: ${reason}`,
+                );
+                continue;
+            }
+
+            await wait(postCollapseDelayMs);
+            try {
+                if (step.required !== true) {
+                    const matchedSelector = await findFirstVisibleActivitySurfacesStepSelector({
+                        step,
+                        appIdentifier,
+                        env,
+                        driverSession,
+                        isSelectorVisible,
+                        isSelectorVisibleByDomQuery,
+                    });
+                    if (!matchedSelector) {
+                        continue;
+                    }
+                }
+                const { artifacts } = await captureValidatedOverlayProofStep(stepId);
+                optionalStepArtifacts[stepId] = artifacts;
+            } catch (error) {
+                if (step.required === true) {
+                    throw error;
+                }
+                await appendWarningArtifact(
+                    artifactRoot,
+                    `- optional overlay proof step ${stepId} could not be captured: ${error instanceof Error ? error.message : String(error)}`,
+                );
+            }
         }
 
         return {
@@ -4832,6 +6076,7 @@ export async function runActivitySurfacesDesktopOverlayCaptureLane({
             expandedArtifacts,
             floatingFallbackArtifacts,
             overlayVisibilityEnabled,
+            optionalStepArtifacts,
         };
     } finally {
         await restoreRequestedOverlayPresentationMode();
@@ -4911,6 +6156,8 @@ export async function runTauriActivitySurfacesQaCapture({
     await ensureWorkspaceBuilt({ env });
     await ensureArtifactDir(plan.artifactRoot);
     const startDriverSessionFn = startDriverSessionImpl ?? startDriverSessionOverride;
+    const requiredStepIds = resolveActivitySurfacesRequiredProofStepIds(plan.steps, env);
+    const seedStrategy = resolveActivitySurfacesQaSeedStrategy(env);
 
     const stageTraceFile = join(plan.artifactRoot, '00-stage-trace.jsonl');
     function isRetryableDriverSessionBootstrapError(error) {
@@ -5045,38 +6292,45 @@ export async function runTauriActivitySurfacesQaCapture({
         }),
     );
 
-    const seededSessionFile = join(plan.artifactRoot, '00-seeded-session.json');
-    const seededSession = await traceStage(
-        'seed_overlay_session',
-        async () => {
-            const result = await seedSession({
+    const shouldSeedStackSession = seedStrategy === 'active_session' || seedStrategy === 'attention_only';
+    const seededSessionFile = shouldSeedStackSession
+        ? join(plan.artifactRoot, '00-seeded-session.json')
+        : null;
+    let seededSession = null;
+    if (shouldSeedStackSession) {
+        seededSession = await traceStage(
+            'seed_overlay_session',
+            async () => {
+                const result = await seedSession({
+                    appIdentifier: driverSession.resolvedAppIdentifier,
+                    env: { ...env, HAPPIER_TAURI_ACTIVITY_SURFACES_QA_SEED_STRATEGY: seedStrategy },
+                    strategy: seedStrategy,
+                });
+                await writeArtifact(
+                    seededSessionFile,
+                    `${JSON.stringify(result, null, 2)}\n`,
+                );
+                return result;
+            },
+            (result) => ({
+                seededSessionFile,
+                sessionId: result?.sessionId ?? null,
+            }),
+        );
+
+        await traceStage(
+            'hydrate_seeded_session',
+            () => hydrateSeededSession({
+                sessionId: seededSession.sessionId,
                 appIdentifier: driverSession.resolvedAppIdentifier,
                 env,
-            });
-            await writeArtifact(
-                seededSessionFile,
-                `${JSON.stringify(result, null, 2)}\n`,
-            );
-            return result;
-        },
-        (result) => ({
-            seededSessionFile,
-            sessionId: result?.sessionId ?? null,
-        }),
-    );
-
-    await traceStage(
-        'hydrate_seeded_session',
-        () => hydrateSeededSession({
-            sessionId: seededSession.sessionId,
-            appIdentifier: driverSession.resolvedAppIdentifier,
-            env,
-            driverSession,
-        }),
-        () => ({
-            sessionId: seededSession.sessionId,
-        }),
-    );
+                driverSession,
+            }),
+            () => ({
+                sessionId: seededSession.sessionId,
+            }),
+        );
+    }
 
     async function captureRequired(stepId, captureOptions = {}) {
         const step = stepsById[stepId];
@@ -5108,6 +6362,7 @@ export async function runTauriActivitySurfacesQaCapture({
             driverSession,
             env,
             artifactRoot: plan.artifactRoot,
+            seedStrategy,
             visibilityMode: defaultDesktopOverlayVisibilityMode,
             setOverlayPresentationMode: (options) => enableDesktopOverlayPresentationMode(options),
             captureRequired,
@@ -5147,12 +6402,35 @@ export async function runTauriActivitySurfacesQaCapture({
         expandedArtifacts,
         floatingFallbackArtifacts,
         overlayVisibilityEnabled,
+        optionalStepArtifacts = {},
     } = overlayCapture;
     stepArtifacts.settings_overlay = settingsArtifacts;
     stepArtifacts.overlay_route = overlayRouteArtifacts;
     stepArtifacts.overlay_collapsed = collapsedArtifacts;
     stepArtifacts.overlay_expanded = expandedArtifacts;
     stepArtifacts.overlay_floating_fallback = floatingFallbackArtifacts;
+    for (const [stepId, artifacts] of Object.entries(optionalStepArtifacts)) {
+        stepArtifacts[stepId] = artifacts;
+    }
+
+    const proofSummary = summarizeTauriActivitySurfacesQaProof({
+        stepArtifacts,
+        requiredStepIds,
+    });
+    const hasDeclaredProofSteps = Array.isArray(plan.steps) && plan.steps.length > 0;
+    const effectiveProofSummary = hasDeclaredProofSteps
+        ? proofSummary
+        : {
+            ok: false,
+            blocker: 'missing_required_step_artifacts',
+            steps: requiredStepIds,
+        };
+    if (!effectiveProofSummary.ok) {
+        await appendWarningArtifact(
+            plan.artifactRoot,
+            '- required step artifacts were incomplete or not declared during the native proof run; the live stack is not authoritative yet',
+        );
+    }
 
     await traceStage(
         'manual_steps_artifact',
@@ -5187,25 +6465,33 @@ export async function runTauriActivitySurfacesQaCapture({
     );
 
     return {
-        ok: true,
+        ...effectiveProofSummary,
         artifactRoot: plan.artifactRoot,
         trackerPath: plan.trackerPath,
         appIdentifier: driverSession.resolvedAppIdentifier,
         seededSession,
-        seededSessionId: seededSession.sessionId,
+        seededSessionId: seededSession?.sessionId ?? null,
         steps: Object.keys(stepArtifacts),
         stageTraceFile,
         backendState,
     };
 }
 
-async function main(argv = process.argv.slice(2)) {
+export async function main(
+    argv = process.argv.slice(2),
+    {
+        runCapture = null,
+        stdout = process.stdout,
+        stderr = process.stderr,
+        processApi = process,
+    } = {},
+) {
     const plan = buildTauriActivitySurfacesQaPlan();
     const json = argv.includes('--json');
     const help = argv.includes('--help') || argv.includes('-h');
 
     if (help) {
-        process.stdout.write([
+        stdout.write([
             'Usage: node ./apps/ui/scripts/qa/tauriActivitySurfacesMcpQa.mjs [--json]',
             '',
             'Plan preview:',
@@ -5221,12 +6507,31 @@ async function main(argv = process.argv.slice(2)) {
     }
 
     if (json) {
-        process.stdout.write(JSON.stringify({ ok: true, plan }, null, 2) + '\n');
+        stdout.write(JSON.stringify({ ok: true, plan }, null, 2) + '\n');
+        return;
+    }
+
+    if (typeof runCapture === 'function') {
+        const result = await runCapture({ plan, env: process.env });
+        stdout.write(JSON.stringify(result, null, 2) + '\n');
+        if (!result.ok) {
+            processApi.exitCode = 1;
+        }
+        return;
+    }
+
+    const fixtureResult = resolveActivitySurfacesQaCaptureFixture(process.env);
+    if (fixtureResult) {
+        stdout.write(JSON.stringify(fixtureResult, null, 2) + '\n');
+        processApi.exitCode = 1;
         return;
     }
 
     const result = await runTauriActivitySurfacesQaCapture({ plan, env: process.env });
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    stdout.write(JSON.stringify(result, null, 2) + '\n');
+    if (!result.ok) {
+        processApi.exitCode = 1;
+    }
 }
 
 const currentFilePath = fileURLToPath(import.meta.url);

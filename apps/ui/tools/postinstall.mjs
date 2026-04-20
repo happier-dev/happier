@@ -222,51 +222,6 @@ if (wants('vendor-monaco')) {
     }
 }
 
-// Vendor Kokoro JS runtime for web. Metro can't bundle kokoro-js reliably (it contains `import.meta` and other
-// ESM-only patterns), so we load it as a separate ESM module from `public/` at runtime.
-if (wants('vendor-kokoro-web')) {
-    try {
-        const kokoroCandidateDirs = [
-            path.resolve(expoAppDir, 'node_modules', 'kokoro-js'),
-            path.resolve(repoRootDir, 'node_modules', 'kokoro-js'),
-        ];
-        const kokoroDir = kokoroCandidateDirs.find((p) => fs.existsSync(p));
-        if (kokoroDir) {
-            const src = path.resolve(kokoroDir, 'dist', 'kokoro.web.js');
-            const dst = path.resolve(expoAppDir, 'public', 'vendor', 'kokoro', 'kokoro.web.js');
-            if (fs.existsSync(src)) {
-                fs.mkdirSync(path.dirname(dst), { recursive: true });
-                fs.cpSync(src, dst, { force: true });
-            }
-        }
-
-        const ortCandidateDirs = [
-            path.resolve(expoAppDir, 'node_modules', 'onnxruntime-web', 'dist'),
-            path.resolve(repoRootDir, 'node_modules', 'onnxruntime-web', 'dist'),
-        ];
-        const ortDistDir = ortCandidateDirs.find((p) => fs.existsSync(p));
-        if (ortDistDir) {
-            const dstDir = path.resolve(expoAppDir, 'public', 'vendor', 'kokoro', 'onnxruntime-web');
-            fs.mkdirSync(dstDir, { recursive: true });
-            const files = [
-                'ort-wasm-simd-threaded.jsep.mjs',
-                'ort-wasm-simd-threaded.jsep.wasm',
-                'ort-wasm-simd-threaded.mjs',
-                'ort-wasm-simd-threaded.wasm',
-            ];
-            for (const fileName of files) {
-                const src = path.resolve(ortDistDir, fileName);
-                const dst = path.resolve(dstDir, fileName);
-                if (fs.existsSync(src)) {
-                    fs.cpSync(src, dst, { force: true });
-                }
-            }
-        }
-    } catch (e) {
-        // Best-effort: Kokoro GS is optional and should not break installs.
-    }
-}
-
 // Vendor Pierre diffs worker assets for web/desktop. Metro can't reliably resolve worker-module URLs for ESM workers,
 // so we copy Pierre's "portable worker" bundle into `public/` and load it via `new Worker(url, { type: 'module' })`.
 if (wants('vendor-pierre-diffs-worker')) {
