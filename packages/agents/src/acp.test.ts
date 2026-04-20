@@ -1,27 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
+import * as acpModule from './acp.js';
 import { BUILT_IN_ACP_CONFIG, getBuiltInAcpConfig, hasBuiltInAcpConfig } from './acp.js';
 import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
 
 describe('built-in ACP config', () => {
   it('keeps the built-in ACP allowlist explicit and drift-free', () => {
-    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'kiro', 'ohMyPi']);
+    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['kiro', 'ohMyPi']);
   });
 
-  it('exposes Custom ACP as a built-in generic ACP agent family', () => {
-    expect(hasBuiltInAcpConfig('customAcp')).toBe(true);
-    expect(getBuiltInAcpConfig('customAcp')).toMatchObject({
-      agentId: 'customAcp',
-      launcher: {
-        command: getProviderCliRuntimeSpec('customAcp').binaryName,
-        args: [],
-      },
-      transportProfile: 'generic',
-      supportsLoadSession: true,
-      supportsModes: 'auto',
-      supportsModels: 'auto',
-      promptImageSupport: 'auto',
-    });
+  it('does not expose legacy Custom ACP through the canonical built-in ACP config', () => {
+    expect('LEGACY_CUSTOM_ACP_COMPAT_CONFIG' in acpModule).toBe(false);
+    expect(hasBuiltInAcpConfig('customAcp')).toBe(false);
+    expect(getBuiltInAcpConfig('customAcp')).toBeNull();
   });
 
   it('exposes Kiro as a built-in generic ACP agent', () => {

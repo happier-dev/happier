@@ -18,11 +18,11 @@ export const PromptExternalLinkEntryV1Schema = z.object({
   lastLibraryDigest: z.string().min(1).nullable().optional(),
   lastExternalDigest: z.string().min(1).nullable().optional(),
   lastSyncAtMs: z.number().int().min(0).optional(),
-}).strict();
+}).passthrough();
 export type PromptExternalLinkEntryV1 = z.infer<typeof PromptExternalLinkEntryV1Schema>;
 
 export const PromptExternalLinksV1Schema = z.object({
   v: z.literal(1),
   links: z.array(PromptExternalLinkEntryV1Schema).default([]),
-}).strict();
+}).passthrough();
 export type PromptExternalLinksV1 = z.infer<typeof PromptExternalLinksV1Schema>;

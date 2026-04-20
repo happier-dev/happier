@@ -3,6 +3,33 @@ import { describe, expect, it } from 'vitest';
 import { PromptInvocationEntryV1Schema, PromptInvocationsV1Schema, normalizePromptInvocationTokenV1 } from './promptInvocationsV1.js';
 
 describe('PromptInvocationsV1Schema', () => {
+  it('preserves additive fields on invocation payloads', () => {
+    const parsed = PromptInvocationsV1Schema.parse({
+      v: 1,
+      entries: [
+        {
+          id: 'i1',
+          token: '/foo',
+          title: 'Foo',
+          target: { kind: 'doc', artifactId: 'a1', futureTargetField: 'keep-me' },
+          behavior: 'insert',
+          allowArgs: true,
+          availableIn: 'global',
+          futureEntryField: true,
+        },
+      ],
+      futureInvocationsEnvelope: {
+        kind: 'prompt_invocations.v2',
+      },
+    });
+
+    expect((parsed as any).futureInvocationsEnvelope).toEqual({
+      kind: 'prompt_invocations.v2',
+    });
+    expect((parsed.entries[0] as any)?.futureEntryField).toBe(true);
+    expect((parsed.entries[0].target as any)?.futureTargetField).toBe('keep-me');
+  });
+
   it('defaults to an empty list', () => {
     expect(PromptInvocationsV1Schema.parse({})).toEqual({ v: 1, entries: [] });
   });

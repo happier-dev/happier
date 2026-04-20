@@ -1,10 +1,10 @@
-import { AGENTS_CORE } from './manifest.js';
 import type {
   AgentCore,
   AgentId,
   AgentLocalControlAttachStrategy,
   AgentLocalControlTopology,
 } from './types.js';
+import { getAgentCore } from './manifest.js';
 
 export type AgentLocalControlCapability = Readonly<{
   supported: boolean;
@@ -13,7 +13,7 @@ export type AgentLocalControlCapability = Readonly<{
 }>;
 
 export function getAgentLocalControlCapability(agentId: AgentId): AgentLocalControlCapability | null {
-  const agent = AGENTS_CORE[agentId] as AgentCore;
+  const agent = getAgentCore(agentId) as AgentCore;
   const localControl = agent.localControl;
   if (!localControl || localControl.supported !== true) return null;
   return {

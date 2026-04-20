@@ -12,7 +12,7 @@ export const PromptBundleEntryV1Schema = z
     contentKind: z.enum(['utf8', 'binary']),
     unixMode: z.number().int().min(0).max(0o7777).nullable().optional(),
   })
-  .strict();
+  .passthrough();
 
 export type PromptBundleEntryV1 = z.infer<typeof PromptBundleEntryV1Schema>;
 
@@ -23,7 +23,7 @@ export const PromptBundleBodyV1Schema = z
     createdAtMs: z.number().int().min(0),
     updatedAtMs: z.number().int().min(0),
   })
-  .strict();
+  .passthrough();
 
 export type PromptBundleBodyV1 = z.infer<typeof PromptBundleBodyV1Schema>;
 

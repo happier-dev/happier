@@ -238,6 +238,30 @@ describe('FeaturesResponseSchema', () => {
     expect(parsed.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
   });
 
+  it('does not reject the whole payload when voice capabilities are malformed', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {
+        voice: { enabled: true },
+      },
+      capabilities: {
+        voice: {
+          configured: 'not-a-boolean',
+          provider: 'future-provider',
+          requested: true,
+          disabledByBuildPolicy: true,
+        },
+      },
+    });
+
+    expect(parsed.features.voice.enabled).toBe(true);
+    expect(parsed.capabilities.voice).toEqual({
+      configured: false,
+      provider: null,
+      requested: true,
+      disabledByBuildPolicy: true,
+    });
+  });
+
   it('normalizes machine transfer server-routed max-bytes env/config values', () => {
     expect(MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY).toBe(
       'HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES',

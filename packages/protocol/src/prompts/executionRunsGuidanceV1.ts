@@ -1,6 +1,13 @@
 import { buildBackendTargetKey, type BackendTargetRefV1 } from '../backendTargets/backendTargetRef.js';
 
-type ExecutionRunsGuidanceIntentV1 = 'review' | 'plan' | 'delegate';
+export const EXECUTION_RUNS_GUIDANCE_INTENTS_V1 = ['review', 'plan', 'delegate'] as const;
+export type ExecutionRunsGuidanceIntentV1 = (typeof EXECUTION_RUNS_GUIDANCE_INTENTS_V1)[number];
+
+const EXECUTION_RUNS_GUIDANCE_INTENT_SET_V1 = new Set<string>(EXECUTION_RUNS_GUIDANCE_INTENTS_V1);
+
+export function isExecutionRunsGuidanceIntentV1(intent: string): intent is ExecutionRunsGuidanceIntentV1 {
+  return EXECUTION_RUNS_GUIDANCE_INTENT_SET_V1.has(String(intent ?? '').trim());
+}
 
 export type ExecutionRunsGuidanceEntryV1 = Readonly<{
   id: string;
@@ -56,6 +63,13 @@ export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
   lines.push('');
 
   let usedChars = lines.join('\n').length;
+  const tryPush = (line: string): boolean => {
+    const nextLen = usedChars + 1 + line.length;
+    if (nextLen > maxChars) return false;
+    lines.push(line);
+    usedChars = nextLen;
+    return true;
+  };
   let included = 0;
   const includedEntries: ExecutionRunsGuidanceEntryV1[] = [];
 
@@ -82,16 +96,8 @@ export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
   }
 
   if (remaining > 0) {
-    lines.push(`- (+${remaining} more rules in settings)`);
+    tryPush(`- (+${remaining} more rules in settings)`);
   }
-
-  const tryPush = (line: string): boolean => {
-    const nextLen = usedChars + 1 + line.length;
-    if (nextLen > maxChars) return false;
-    lines.push(line);
-    usedChars = nextLen;
-    return true;
-  };
 
   const exampleToolCalls = (() => {
     const seen = new Set<string>();

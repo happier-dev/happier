@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { PromptDocArtifactRefV1Schema } from './promptArtifactRefsV1.js';
+
 const PromptInvocationTokenV1Schema = z
   .string()
   .min(2)
@@ -14,10 +16,7 @@ export type PromptInvocationBehaviorV1 = z.infer<typeof PromptInvocationBehavior
 export const PromptInvocationAvailabilityV1Schema = z.enum(['global', 'session_only']);
 export type PromptInvocationAvailabilityV1 = z.infer<typeof PromptInvocationAvailabilityV1Schema>;
 
-export const PromptInvocationTargetV1Schema = z.object({
-  kind: z.literal('doc'),
-  artifactId: z.string().min(1),
-});
+export const PromptInvocationTargetV1Schema = PromptDocArtifactRefV1Schema;
 
 export type PromptInvocationTargetV1 = z.infer<typeof PromptInvocationTargetV1Schema>;
 
@@ -29,7 +28,7 @@ export const PromptInvocationEntryV1Schema = z.object({
   behavior: PromptInvocationBehaviorV1Schema.default('insert'),
   allowArgs: z.boolean().default(false),
   availableIn: PromptInvocationAvailabilityV1Schema.default('global'),
-});
+}).passthrough();
 
 export type PromptInvocationEntryV1 = z.infer<typeof PromptInvocationEntryV1Schema>;
 
@@ -38,6 +37,7 @@ export const PromptInvocationsV1Schema = z
     v: z.literal(1).default(1),
     entries: z.array(PromptInvocationEntryV1Schema).default([]),
   })
+  .passthrough()
   .catch({ v: 1, entries: [] });
 
 export type PromptInvocationsV1 = z.infer<typeof PromptInvocationsV1Schema>;

@@ -106,6 +106,80 @@ describe('sessionAuthoring field artifacts', () => {
     expectTypeOf<typeof parsed>().toMatchTypeOf<SessionAuthoringValueV1>();
   });
 
+  it('preserves additive fields from newer authored payloads', () => {
+    const parsed = SessionAuthoringValueV1Schema.parse({
+      targetType: 'new_session',
+      directory: '/tmp/project',
+      displayText: 'ship it',
+      agentId: 'codex',
+      prompt: 'ship it',
+      transcriptStorage: 'direct',
+      profileId: null,
+      environmentVariables: null,
+      resumeSessionId: null,
+      permissionMode: null,
+      permissionModeUpdatedAt: null,
+      modelId: null,
+      modelUpdatedAt: null,
+      mcpSelection: null,
+      connectedServices: null,
+      backendTarget: {
+        kind: 'configuredAcpBackend',
+        backendId: 'review-bot',
+      },
+      checkoutCreationDraft: {
+        kind: 'git_worktree',
+        displayName: 'feature/auth',
+        baseRef: 'main',
+        futureDraftField: 'keep-me',
+      },
+      terminal: {
+        mode: 'tmux',
+        tmux: {
+          sessionName: 'dev',
+          futureTerminalField: true,
+        },
+        futureTerminalEnvelope: {
+        kind: 'session_authoring_terminal.v2',
+        },
+      },
+      windowsRemoteSessionLaunchMode: null,
+      windowsRemoteSessionConsole: null,
+      codexBackendMode: null,
+      acpSessionModeId: null,
+      sessionConfigOptionOverrides: null,
+      existingSessionId: null,
+      sessionEncryptionMode: null,
+      sessionEncryptionKeyBase64: null,
+      sessionEncryptionVariant: null,
+      automation: {
+        enabled: true,
+        name: 'Daily summary',
+        description: 'Ship the summary',
+        scheduleKind: 'interval',
+        everyMinutes: 60,
+        cronExpr: '0 * * * *',
+        timezone: 'Europe/Zurich',
+        futureAutomationField: 123,
+      },
+      futureTopLevelField: {
+        kind: 'session_authoring.v2',
+        extra: true,
+      },
+    });
+
+    expect((parsed as any).futureTopLevelField).toEqual({
+      kind: 'session_authoring.v2',
+      extra: true,
+    });
+    expect((parsed.checkoutCreationDraft as any)?.futureDraftField).toBe('keep-me');
+    expect((parsed.terminal?.tmux as any)?.futureTerminalField).toBe(true);
+    expect((parsed.terminal as any)?.futureTerminalEnvelope).toEqual({
+      kind: 'session_authoring_terminal.v2',
+    });
+    expect((parsed.automation as any)?.futureAutomationField).toBe(123);
+  });
+
   it('rejects invalid authored values', () => {
     expect(() => SessionAuthoringValueV1Schema.parse({
       targetType: 'unknown',
@@ -121,12 +195,6 @@ describe('sessionAuthoring field artifacts', () => {
       targetType: 'new_session',
       directory: '/tmp/project',
       codexBackendMode: 'bad-mode',
-    })).toThrow();
-
-    expect(() => SessionAuthoringValueV1Schema.parse({
-      targetType: 'new_session',
-      directory: '/tmp/project',
-      workspaceId: 'workspace-1',
     })).toThrow();
   });
 });

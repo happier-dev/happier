@@ -55,7 +55,7 @@ const TransferUrlEndpointCandidateSchema = z
       });
     }
   })
-  .strict();
+  .passthrough();
 
 export const TransferEndpointCandidateSchema = z.discriminatedUnion('kind', [
   TransferUrlEndpointCandidateSchema,

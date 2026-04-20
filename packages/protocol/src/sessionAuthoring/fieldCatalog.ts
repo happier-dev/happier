@@ -33,7 +33,7 @@ export const SessionAuthoringCheckoutCreationDraftV1Schema = z.object({
   displayName: z.string().trim().min(1),
   baseRef: z.string().trim().min(1).nullable(),
   branchMode: z.enum(['new', 'existing']).optional(),
-}).strict();
+}).passthrough();
 
 export const SessionAuthoringTerminalV1Schema = z.object({
   mode: z.enum(['integrated', 'plain', 'tmux', 'windows_terminal', 'windows_console']).optional(),
@@ -41,8 +41,8 @@ export const SessionAuthoringTerminalV1Schema = z.object({
     sessionName: z.string().optional(),
     isolated: z.boolean().optional(),
     tmpDir: z.union([z.string(), z.null()]).optional(),
-  }).optional(),
-}).strict();
+  }).passthrough().optional(),
+}).passthrough();
 
 export const SessionAuthoringAutomationV1Schema = z.object({
   enabled: z.boolean(),
@@ -52,7 +52,7 @@ export const SessionAuthoringAutomationV1Schema = z.object({
   everyMinutes: z.number().int().min(1).max(24 * 60),
   cronExpr: z.string(),
   timezone: z.string().nullable(),
-}).strict();
+}).passthrough();
 
 export const SessionAuthoringCodexBackendModeSchema = z.enum(CODEX_BACKEND_MODES);
 

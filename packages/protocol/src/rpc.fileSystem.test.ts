@@ -27,7 +27,7 @@ describe('RPC_METHODS file-system surface', () => {
     expect('DAEMON_BULK_TRANSFER_UPLOAD_INIT' in RPC_METHODS).toBe(false);
     expect('DAEMON_BULK_TRANSFER_DOWNLOAD_INIT' in RPC_METHODS).toBe(false);
 
-    // Guardrail: legacy undeployed session file/attachment transfer families must not reappear
+    // Guardrail: legacy undeployed session file/attachment transfer surfaces must not reappear
     // as method literals in the canonical RPC method table.
     const methodLiterals = Object.values(RPC_METHODS) as readonly string[];
     expect(methodLiterals.some((literal) => literal.startsWith('daemon.sessionFiles.'))).toBe(false);

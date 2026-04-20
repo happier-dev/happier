@@ -27,7 +27,7 @@ export const CodeRabbitReviewEngineInputSchema = z
     promptOnly: z.boolean().optional(),
     maxFiles: z.number().int().min(1).max(5000).optional(),
   })
-  .strict();
+  .passthrough();
 export type CodeRabbitReviewEngineInput = z.infer<typeof CodeRabbitReviewEngineInputSchema>;
 const DEFAULT_CODERABBIT_REVIEW_ENGINE_INPUT: CodeRabbitReviewEngineInput = CodeRabbitReviewEngineInputSchema.parse({});
 

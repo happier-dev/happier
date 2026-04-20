@@ -1,12 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  PromptBundleBodyV1Schema,
   PROMPT_BUNDLE_SCHEMA_LIMITS_V1,
   validatePromptBundleBodyV1AgainstSchemaId,
   type PromptBundleBodyV1,
 } from './promptBundleSchemas.js';
 
 describe('validatePromptBundleBodyV1AgainstSchemaId', () => {
+  it('preserves additive fields in bundle bodies and entries', () => {
+    const parsed = PromptBundleBodyV1Schema.parse({
+      v: 1,
+      entries: [
+        {
+          path: 'SKILL.md',
+          contentBase64: Buffer.from('# Skill', 'utf8').toString('base64'),
+          contentKind: 'utf8',
+          futureEntryField: true,
+        },
+      ],
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      futureBundleField: {
+        kind: 'prompt_bundle.v2',
+      },
+    });
+
+    expect((parsed as any).futureBundleField).toEqual({
+      kind: 'prompt_bundle.v2',
+    });
+    expect((parsed.entries[0] as any)?.futureEntryField).toBe(true);
+  });
+
   it('accepts a minimal skill bundle with SKILL.md', () => {
     const body: PromptBundleBodyV1 = {
       v: 1,

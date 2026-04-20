@@ -1,5 +1,7 @@
-import type { AgentId } from './types.js';
+import type { AgentId, CanonicalAgentId } from './types.js';
+import { getAgentLocalCliConfig } from './localCli.js';
 import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
+import type { ProviderAuthAdapter } from './runtime/adjunctAdapters/types.js';
 
 export type AgentAuthProbeParser =
   | 'unknown'
@@ -23,7 +25,7 @@ export type AgentAuthProbeConfig = Readonly<{
   credentialPaths?: ReadonlyArray<string>;
 }>;
 
-export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeConfig>> = Object.freeze({
+export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAuthProbeConfig>> = Object.freeze({
   claude: {
     agentId: 'claude',
     binaryNames: [getProviderCliRuntimeSpec('claude').binaryName],
@@ -31,7 +33,7 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeCon
     parser: 'claudeCredentialsFile',
     backgroundChecks: 'safe',
     envVars: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-    credentialPaths: ['~/.claude/.credentials.json'],
+    credentialPaths: ['~/.claude/.credentials.json', '~/.claude/.claude.json'],
   },
   codex: {
     agentId: 'codex',
@@ -100,13 +102,6 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeCon
     parser: 'kiroWhoamiJson',
     backgroundChecks: 'manual_only',
   },
-  customAcp: {
-    agentId: 'customAcp',
-    binaryNames: [getProviderCliRuntimeSpec('customAcp').binaryName],
-    statusCommand: null,
-    parser: 'unknown',
-    backgroundChecks: 'manual_only',
-  },
   ohMyPi: {
     agentId: 'ohMyPi',
     binaryNames: [getProviderCliRuntimeSpec('ohMyPi').binaryName],
@@ -139,8 +134,21 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeCon
   },
 });
 
+export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAuthProbeConfig>> = CANONICAL_AGENT_AUTH_PROBE_CONFIG;
+
 export function getAgentAuthProbeConfig(agentId: AgentId): AgentAuthProbeConfig {
   return AGENT_AUTH_PROBE_CONFIG[agentId];
+}
+
+export function getProviderAuthAdapter(agentId: AgentId): ProviderAuthAdapter {
+  const localCli = getAgentLocalCliConfig(agentId);
+  const localCliAuth = getAgentAuthProbeConfig(agentId);
+
+  return {
+    supportKind: localCli.supportKind,
+    localCliAuth,
+    ...(localCli.loginLaunch ? { loginLaunch: localCli.loginLaunch } : {}),
+  };
 }
 
 export function isAgentAuthProbeSafeForBackgroundChecks(agentId: AgentId): boolean {

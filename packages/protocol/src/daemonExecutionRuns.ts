@@ -10,7 +10,11 @@ import {
   ExecutionRunRetentionPolicySchema,
   ExecutionRunStatusSchema,
 } from './executionRuns.js';
-import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
+import {
+  BackendTargetRefV2Schema,
+  normalizeBackendTargetRefV2InputToV2,
+} from './backendTargets/backendTargetRefV2.js';
+import { hasLegacyCustomAcpConcreteBackendId } from './backendTargets/compat/customAcp.js';
 
 /**
  * Daemon-scoped execution run listing.
@@ -32,7 +36,7 @@ const DaemonExecutionRunMarkerSchemaCore = z.object({
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   intent: ExecutionRunIntentSchema,
-  backendTarget: BackendTargetRefSchema,
+  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
   display: ExecutionRunDisplaySchema.optional(),
 
   runClass: ExecutionRunClassSchema,
@@ -49,7 +53,7 @@ const DaemonExecutionRunMarkerSchemaCore = z.object({
   errorCode: z.string().max(200).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
 }).passthrough().superRefine((value, ctx) => {
-  if (value.backendTarget.kind === 'builtInAgent' && value.backendTarget.agentId === 'customAcp') {
+  if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'backendTarget must identify a concrete backend',

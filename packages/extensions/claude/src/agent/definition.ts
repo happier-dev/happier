@@ -1,0 +1,22 @@
+import {
+  CANONICAL_AGENT_AUTH_PROBE_CONFIG,
+  CANONICAL_AGENT_LOCAL_CLI_CONFIG,
+  CANONICAL_AGENT_MODEL_CONFIG,
+  CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS,
+  CANONICAL_AGENT_SESSION_MODES,
+  CANONICAL_AGENTS_CORE,
+  CANONICAL_PROVIDER_CLI_RUNTIME_SPECS,
+} from '@happier-dev/agents';
+
+// IMPORTANT: this must stay JSON-serializable (data-only).
+export const AGENT_DEFINITION = Object.freeze({
+  id: 'claude',
+  core: CANONICAL_AGENTS_CORE.claude,
+  sessionModeDescriptor: CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS.claude,
+  sessionModesKind: CANONICAL_AGENT_SESSION_MODES.claude,
+  modelConfig: CANONICAL_AGENT_MODEL_CONFIG.claude,
+  authProbeConfig: CANONICAL_AGENT_AUTH_PROBE_CONFIG.claude,
+  localCli: CANONICAL_AGENT_LOCAL_CLI_CONFIG.claude,
+  providerCliRuntime: CANONICAL_PROVIDER_CLI_RUNTIME_SPECS.claude,
+  providerSettings: null,
+});

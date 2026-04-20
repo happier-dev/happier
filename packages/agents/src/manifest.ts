@@ -1,5 +1,11 @@
-import type { AgentCore, AgentId } from './types.js';
+import {
+    type AgentCore,
+    type AgentId,
+    type AgentResumeConfig,
+    type CanonicalAgentId,
+} from './types.js';
 import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
+import type { ProviderConnectedServicesAdapter } from './runtime/adjunctAdapters/types.js';
 
 export const DEFAULT_AGENT_ID: AgentId = 'claude';
 
@@ -7,7 +13,7 @@ function providerDetectKey(agentId: AgentId): string {
     return getProviderCliRuntimeSpec(agentId).binaryName;
 }
 
-export const AGENTS_CORE = {
+export const CANONICAL_AGENTS_CORE = {
     claude: {
         id: 'claude',
         cliSubcommand: 'claude',
@@ -232,24 +238,6 @@ export const AGENTS_CORE = {
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'unsupported' },
         tools: { delivery: 'native_mcp', support: 'supported' },
     },
-    customAcp: {
-        id: 'customAcp',
-        backendDefinition: false,
-        cliSubcommand: 'customAcp',
-        detectKey: providerDetectKey('customAcp'),
-        flavorAliases: ['custom-acp'],
-        cloudConnect: null,
-        connectedServices: null,
-        resume: { vendorResume: 'unsupported' },
-        sessionStorage: { direct: true, persisted: true },
-        sessionCapabilities: {
-            sessionListing: 'unsupported',
-            sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
-            sessionRollback: { conversation: 'unsupported' },
-        },
-        handoff: { vendorStateTransfer: 'unsupported' },
-        tools: { delivery: 'native_mcp', support: 'supported' },
-    },
     ohMyPi: {
         id: 'ohMyPi',
         cliSubcommand: 'ohMyPi',
@@ -318,4 +306,27 @@ export const AGENTS_CORE = {
         handoff: { vendorStateTransfer: 'unsupported' },
         tools: { delivery: 'shell_bridge', support: 'experimental' },
     },
-} as const satisfies Record<AgentId, AgentCore>;
+} as const satisfies Record<CanonicalAgentId, AgentCore>;
+
+export const AGENTS_CORE = CANONICAL_AGENTS_CORE;
+
+export function getAgentCore(agentId: AgentId): AgentCore {
+    return CANONICAL_AGENTS_CORE[agentId];
+}
+
+export function getProviderConnectedServicesAdapter(agentId: AgentId): ProviderConnectedServicesAdapter | null {
+    const providerCore = getAgentCore(agentId);
+
+    if (providerCore.cloudConnect == null && providerCore.connectedServices == null) {
+        return null;
+    }
+
+    return {
+        ...(providerCore.cloudConnect != null ? { cloudConnect: providerCore.cloudConnect } : {}),
+        ...(providerCore.connectedServices != null ? { connectedServices: providerCore.connectedServices } : {}),
+    };
+}
+
+export function getAgentResumeConfig(agentId: AgentId): AgentResumeConfig {
+    return getAgentCore(agentId).resume;
+}

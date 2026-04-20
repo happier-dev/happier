@@ -70,6 +70,17 @@ export {
   type BackendTargetSourceKindV2,
 } from './backendTargets/backendTargetRefV2.js';
 export {
+  isLegacyCustomAcpId,
+  isLegacyConfiguredAcpFlavorCarrier,
+  isLegacyConfiguredAcpCompatible,
+  readLegacyConfiguredAcpBackendId,
+} from './backendTargets/compat/customAcp.js';
+export {
+  readLegacyContinueWithReplayCompatBackendTargetInput,
+  normalizeLegacyContinueWithReplayRpcParamsInput,
+  validateLegacyContinueWithReplayRpcParamsCompat,
+} from './backendTargets/compat/continueWithReplayRpcParamsCompat.js';
+export {
   ActionDefinitionBindingsV1Schema,
   ActionDefinitionExamplesV1Schema,
   ActionExecutionDescriptorV1Schema,
@@ -102,9 +113,12 @@ export {
   type ExtensionSourceTrustPolicyV1,
 } from './extensions/extensionSourceSpecV1.js';
 export {
+  BackendRuntimeAdapterOperationCatalogV1,
   BackendRuntimeAdapterHandlerRefV1Schema,
   BackendRuntimeAdapterKindV1Schema,
   BackendRuntimeAdapterV1Schema,
+  isSupportedBackendRuntimeAdapterOperationV1,
+  type BackendRuntimeAdapterOperationV1,
   type BackendRuntimeAdapterHandlerRefV1,
   type BackendRuntimeAdapterKindV1,
   type BackendRuntimeAdapterV1,
@@ -128,15 +142,10 @@ export {
   type HookRegistrationV1,
 } from './extensions/hookRegistrationV1.js';
 export {
-  PluginContributionsV1Schema,
-  PluginManifestV1Schema,
-  PluginTargetDescriptorV1Schema,
-  PluginTargetsV1Schema,
-  type PluginContributionsV1,
-  type PluginManifestV1,
-  type PluginTargetDescriptorV1,
-  type PluginTargetsV1,
-} from './extensions/pluginManifestV1.js';
+  ExtensionIdSchema,
+  encodeExtensionIdForFilesystem,
+  type ExtensionId,
+} from './extensions/extensionId.js';
 export {
   ProviderAuthV1Schema,
   ProviderDefinitionV1Schema,
@@ -173,6 +182,144 @@ export {
   type ProviderCliRuntimeV1,
   type ProviderCliSourcePreferenceV1 as ProviderCliRuntimeSourcePreferenceV1,
 } from './extensions/providerCliRuntimeV1.js';
+export {
+  ExtensionActionAvailabilityV2Schema,
+  ExtensionActionConfirmationV2Schema,
+  ExtensionActionContributionV2Schema,
+  ExtensionActionDangerLevelV2Schema,
+  ExtensionActionPlacementV2Schema,
+  ExtensionActionScopeV2Schema,
+  ExtensionActionSurfaceV2Schema,
+  ExtensionDaemonHandlerRefV1Schema,
+  type ExtensionActionAvailabilityV2,
+  type ExtensionActionConfirmationV2,
+  type ExtensionActionContributionV2,
+  type ExtensionActionDangerLevelV2,
+  type ExtensionActionPlacementV2,
+  type ExtensionActionScopeV2,
+  type ExtensionActionSurfaceV2,
+  type ExtensionDaemonHandlerRefV1,
+} from './extensions/actions/v2.js';
+export {
+  ExtensionBackendContributionV2Schema,
+  ExtensionBackendTargetSourceKindV2Schema,
+  ExtensionBackendTargetV2Schema,
+  ExtensionCommandContributionV2Schema,
+  ExtensionCommandVisibilityV2Schema,
+  ExtensionContributionV2Schema,
+  ExtensionHookContributionV2Schema,
+  ExtensionLifecycleEventV2Schema,
+  ExtensionLifecycleHandlerContributionV2Schema,
+  ExtensionProviderContributionV2Schema,
+  ExtensionResourceContributionV2Schema,
+  ExtensionResourceKindV2Schema,
+  ExtensionToolContributionV2Schema,
+  ExtensionUiDescriptorContributionV2Schema,
+  ExtensionUiDescriptorSurfaceV2Schema,
+  ExtensionUiFieldOptionV2Schema,
+  ExtensionUiFieldTypeV2Schema,
+  ExtensionUiFieldV2Schema,
+  type ExtensionBackendContributionV2,
+  type ExtensionBackendTargetSourceKindV2,
+  type ExtensionBackendTargetV2,
+  type ExtensionCommandContributionV2,
+  type ExtensionCommandVisibilityV2,
+  type ExtensionContributionV2,
+  type ExtensionHookContributionV2,
+  type ExtensionLifecycleEventV2,
+  type ExtensionLifecycleHandlerContributionV2,
+  type ExtensionProviderContributionV2,
+  type ExtensionResourceContributionV2,
+  type ExtensionResourceKindV2,
+  type ExtensionToolContributionV2,
+  type ExtensionUiDescriptorContributionV2,
+  type ExtensionUiDescriptorSurfaceV2,
+  type ExtensionUiFieldOptionV2,
+  type ExtensionUiFieldTypeV2,
+  type ExtensionUiFieldV2,
+} from './extensions/contributions/v2.js';
+export {
+  ExtensionDaemonTargetV2Schema,
+  ExtensionEnginesV2Schema,
+  ExtensionManifestV2Schema,
+  ExtensionTargetsV2Schema,
+  type ExtensionDaemonTargetV2,
+  type ExtensionEnginesV2,
+  type ExtensionManifestV2,
+  type ExtensionTargetsV2,
+} from './extensions/manifest/v2.js';
+export {
+  ExtensionMarketplaceCatalogV1Schema,
+  ExtensionMarketplaceEntryV1Schema,
+  ExtensionMarketplaceSourceKindV1Schema,
+  ExtensionManifestMarketplaceMetadataV1Schema,
+  type ExtensionMarketplaceCatalogV1,
+  type ExtensionMarketplaceEntryV1,
+  type ExtensionMarketplaceSourceKindV1,
+  type ExtensionManifestMarketplaceMetadataV1,
+} from './extensions/marketplace/catalog.js';
+export {
+  ExtensionPermissionCapabilityV1Schema,
+  ExtensionPermissionDeclarationV1Schema,
+  type ExtensionPermissionCapabilityV1,
+  type ExtensionPermissionDeclarationV1,
+} from './extensions/permissions/v1.js';
+export {
+  ExtensionResourcePackageItemV1Schema,
+  ExtensionResourcePackageV1Schema,
+  type ExtensionResourcePackageItemV1,
+  type ExtensionResourcePackageV1,
+} from './extensions/resources/package.js';
+export {
+  ExtensionRuntimeApiV1Schema,
+  ExtensionRuntimeCapabilityFamilyV1Schema,
+  type ExtensionRuntimeApiV1,
+  type ExtensionRuntimeCapabilityFamilyV1,
+} from './extensions/runtime/api.js';
+export {
+  ExtensionReloadDiagnosticSeverityV1Schema,
+  ExtensionReloadDiagnosticV1Schema,
+  ExtensionReloadReasonV1Schema,
+  ExtensionReloadRequestV1Schema,
+  ExtensionReloadResponseV1Schema,
+  ExtensionReloadStatusRequestV1Schema,
+  ExtensionReloadStatusResponseV1Schema,
+  type ExtensionReloadDiagnosticSeverityV1,
+  type ExtensionReloadDiagnosticV1,
+  type ExtensionReloadReasonV1,
+  type ExtensionReloadRequestV1,
+  type ExtensionReloadResponseV1,
+  type ExtensionReloadStatusRequestV1,
+  type ExtensionReloadStatusResponseV1,
+} from './extensions/reload/rpc.js';
+export {
+  EXTENSION_HOOK_CATALOG_V1,
+  ExtensionHookAggregationKindV1Schema,
+  ExtensionHookDefinitionV1Schema,
+  ExtensionHookFailureModeV1Schema,
+  ExtensionHookScopeV1Schema,
+  getExtensionHookDefinitionV1,
+  type ExtensionHookAggregationKindV1,
+  type ExtensionHookDefinitionV1,
+  type ExtensionHookFailureModeV1,
+  type ExtensionHookIdV1,
+  type ExtensionHookScopeV1,
+} from './extensions/hooks/catalog.js';
+export {
+  BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1,
+  BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_BY_BRIDGE_V1,
+  EXECUTION_RUN_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1,
+  SESSION_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1,
+  type BridgeLifecycleHookEventIdV1,
+  type ExecutionRunBridgeLifecycleHookEventIdV1,
+  type SessionBridgeLifecycleHookEventIdV1,
+} from './hooks/bridgeLifecycleHookCatalog.js';
+export {
+  DAEMON_SPAWN_HOOK_EVENT_IDS_BY_PHASE_V1,
+  DAEMON_SPAWN_HOOK_EVENT_IDS_V1,
+  type DaemonSpawnHookPhaseV1,
+  type DaemonSpawnHookEventIdV1,
+} from './hooks/daemonSpawnHookCatalog.js';
 export {
   HookCategoryV1Schema,
   type HookCategoryV1,
@@ -298,6 +445,7 @@ export {
 export {
   ConnectedServiceCredentialFormatSchema,
   ConnectedServiceCredentialKindSchema,
+  ConnectedServiceCloudVendorKeySchema,
   ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
@@ -308,6 +456,7 @@ export {
   SealedConnectedServiceQuotaSnapshotV1Schema,
   type ConnectedServiceCredentialFormat,
   type ConnectedServiceCredentialKind,
+  type ConnectedServiceCloudVendorKey,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
   type ConnectedServiceProfileId,
@@ -608,6 +757,7 @@ export {
   type SessionContinueWithReplayRpcParams,
   type SessionContinueWithReplayRpcResult,
 } from './sessionContinueWithReplay.js';
+export { parseSessionContinueWithReplayRpcParamsCompatIngress } from './sessionContinueWithReplayCompat.js';
 export {
   SessionForkPointSchema,
   SessionForkRpcParamsSchema,
@@ -639,6 +789,111 @@ export {
   type RpcErrorCode,
   type RpcMethod,
 } from './rpc.js';
+export {
+  DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH,
+  LocalNeuralExecutionSchema,
+  DaemonVoiceInferenceServiceStateSchema,
+  DaemonVoiceInferenceAudioCodecSchema,
+  DaemonVoiceInferenceAudioOutputSchema,
+  DaemonVoiceInferenceNormalizationStrategySchema,
+  DaemonVoiceInferenceNormalizationDecisionSchema,
+  DaemonVoiceInferenceInstallPhaseSchema,
+  DaemonVoiceInferenceInstallProgressSchema,
+  DaemonVoiceInferenceModelInstallStateSchema,
+  DaemonVoiceInferenceModelStatusSchema,
+  DaemonVoiceInferenceErrorCodeSchema,
+  DaemonVoiceInferenceErrorSchema,
+  DaemonVoiceInferenceStatusRequestSchema,
+  DaemonVoiceInferenceStatusResponseSchema,
+  DaemonVoiceInferenceModelsListRequestSchema,
+  DaemonVoiceInferenceModelsListResponseSchema,
+  DaemonVoiceInferenceModelsInstallRequestSchema,
+  DaemonVoiceInferenceModelsInstallResponseSchema,
+  DaemonVoiceInferenceModelsRemoveRequestSchema,
+  DaemonVoiceInferenceModelsRemoveResponseSchema,
+  DaemonVoiceInferenceModelsStatusRequestSchema,
+  DaemonVoiceInferenceModelsStatusResponseSchema,
+  DaemonVoiceInferenceModelsWarmRequestSchema,
+  DaemonVoiceInferenceModelsWarmResponseSchema,
+  DaemonVoiceInferenceTtsSynthesizeRequestSchema,
+  DaemonVoiceInferenceTtsSynthesizeResponseSchema,
+  DaemonVoiceInferenceTtsCancelRequestSchema,
+  DaemonVoiceInferenceTtsCancelResponseSchema,
+  DaemonVoiceInferenceSttTranscribeRequestSchema,
+  DaemonVoiceInferenceSttTranscribeResponseSchema,
+  DaemonVoiceInferenceSttCancelRequestSchema,
+  DaemonVoiceInferenceSttCancelResponseSchema,
+  type LocalNeuralExecution,
+  type DaemonVoiceInferenceServiceState,
+  type DaemonVoiceInferenceAudioCodec,
+  type DaemonVoiceInferenceAudioOutput,
+  type DaemonVoiceInferenceNormalizationStrategy,
+  type DaemonVoiceInferenceNormalizationDecision,
+  type DaemonVoiceInferenceInstallPhase,
+  type DaemonVoiceInferenceInstallProgress,
+  type DaemonVoiceInferenceModelInstallState,
+  type DaemonVoiceInferenceModelStatus,
+  type DaemonVoiceInferenceErrorCode,
+  type DaemonVoiceInferenceError,
+  type DaemonVoiceInferenceStatusRequest,
+  type DaemonVoiceInferenceStatusResponse,
+  type DaemonVoiceInferenceModelsListRequest,
+  type DaemonVoiceInferenceModelsListResponse,
+  type DaemonVoiceInferenceModelsInstallRequest,
+  type DaemonVoiceInferenceModelsInstallResponse,
+  type DaemonVoiceInferenceModelsRemoveRequest,
+  type DaemonVoiceInferenceModelsRemoveResponse,
+  type DaemonVoiceInferenceModelsStatusRequest,
+  type DaemonVoiceInferenceModelsStatusResponse,
+  type DaemonVoiceInferenceModelsWarmRequest,
+  type DaemonVoiceInferenceModelsWarmResponse,
+  type DaemonVoiceInferenceTtsSynthesizeRequest,
+  type DaemonVoiceInferenceTtsSynthesizeResponse,
+  DaemonVoiceInferenceTtsChunkRequestSchema,
+  type DaemonVoiceInferenceTtsChunkRequest,
+  DaemonVoiceInferenceTtsChunkResponseSchema,
+  type DaemonVoiceInferenceTtsChunkResponse,
+  DaemonVoiceInferenceTtsFinalizeRequestSchema,
+  type DaemonVoiceInferenceTtsFinalizeRequest,
+  DaemonVoiceInferenceTtsFinalizeResponseSchema,
+  type DaemonVoiceInferenceTtsFinalizeResponse,
+  DaemonVoiceInferenceTtsAbortRequestSchema,
+  type DaemonVoiceInferenceTtsAbortRequest,
+  DaemonVoiceInferenceTtsAbortResponseSchema,
+  type DaemonVoiceInferenceTtsAbortResponse,
+  type DaemonVoiceInferenceTtsCancelRequest,
+  type DaemonVoiceInferenceTtsCancelResponse,
+  DaemonVoiceInferenceSttUploadInitRequestSchema,
+  type DaemonVoiceInferenceSttUploadInitRequest,
+  DaemonVoiceInferenceSttUploadInitResponseSchema,
+  type DaemonVoiceInferenceSttUploadInitResponse,
+  DaemonVoiceInferenceSttUploadChunkRequestSchema,
+  type DaemonVoiceInferenceSttUploadChunkRequest,
+  DaemonVoiceInferenceSttUploadChunkResponseSchema,
+  type DaemonVoiceInferenceSttUploadChunkResponse,
+  DaemonVoiceInferenceSttUploadFinalizeRequestSchema,
+  type DaemonVoiceInferenceSttUploadFinalizeRequest,
+  DaemonVoiceInferenceSttUploadFinalizeResponseSchema,
+  type DaemonVoiceInferenceSttUploadFinalizeResponse,
+  DaemonVoiceInferenceSttUploadAbortRequestSchema,
+  type DaemonVoiceInferenceSttUploadAbortRequest,
+  DaemonVoiceInferenceSttUploadAbortResponseSchema,
+  type DaemonVoiceInferenceSttUploadAbortResponse,
+  type DaemonVoiceInferenceSttTranscribeRequest,
+  type DaemonVoiceInferenceSttTranscribeResponse,
+  type DaemonVoiceInferenceSttCancelRequest,
+  type DaemonVoiceInferenceSttCancelResponse,
+} from './daemonVoiceInference.js';
+export {
+  ModelPackKindSchema,
+  ModelPackManifestSchema,
+  ModelPackVoiceCatalogEntrySchema,
+  parseModelPackManifest,
+  type ModelPackKind,
+  type ModelPackManifest,
+  type ModelPackVoiceCatalogEntry,
+} from './voice/modelPacks/manifest.js';
+export { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from './voice/voiceAgentRunMetadataContract.js';
 export {
   createRpcCallError,
   isRpcMethodNotAvailableError,
@@ -828,16 +1083,39 @@ export {
 } from './sessionMetadata/sessionRollbackRangesV1.js';
 
 export {
-  AgentRuntimeDescriptorV1Schema,
-  type AgentRuntimeDescriptorV1,
-  createAgentRuntimeDescriptorV1Schema,
+  AgentRuntimeFacetsV1Schema,
+  type AgentRuntimeFacetsV1,
+  type AgentRuntimeTranscriptSourceFacetV1,
+  createAgentRuntimeFacetsV1Schema,
+  readAgentRuntimeFacetsV1,
+} from './sessionMetadata/agentRuntimeFacetsV1.js';
+export {
+  RuntimeDescriptorV1Schema,
+  type RuntimeDescriptorV1,
+  type RuntimeDescriptorEnvelopeV1,
+  type RuntimeDescriptorProviderExtraV1,
+  type CodexAgentRuntimeDescriptorV1,
+  type OpenCodeAgentRuntimeDescriptorV1,
+  type PiAgentRuntimeDescriptorV1,
   buildCodexAgentRuntimeDescriptorV1,
   buildOpenCodeAgentRuntimeDescriptorV1,
   buildPiAgentRuntimeDescriptorV1,
-  readAgentRuntimeDescriptorV1,
   readCanonicalAgentRuntimeDescriptorV1ForProvider,
-  readAgentRuntimeDescriptorV1ForProvider,
-} from './sessionMetadata/agentRuntimeDescriptorV1.js';
+  buildCodexRuntimeIdentityDescriptorV1,
+  buildOpenCodeRuntimeIdentityDescriptorV1,
+  buildPiRuntimeIdentityDescriptorV1,
+  createRuntimeDescriptorV1Schema,
+  readRuntimeDescriptorV1,
+  readRuntimeDescriptorV1ForProvider,
+  readCanonicalRuntimeDescriptorV1ForProvider,
+} from './sessionMetadata/runtimeDescriptorV1.js';
+export {
+  LegacyAgentRuntimeDescriptorV1Schema,
+  readRawRuntimeDescriptorV1FromMetadata,
+  readRuntimeDescriptorV1FromMetadata,
+  writeRuntimeDescriptorV1ToMetadata,
+  type RuntimeDescriptorMetadataCarrier,
+} from './sessionMetadata/compat/runtimeDescriptorMetadata.js';
 
 export {
   ModelOverrideV1Schema,
@@ -1207,6 +1485,54 @@ export {
 } from './daemonExecutionRuns.js';
 
 export {
+  DaemonContributionRegistryProjectionProviderEntryV1Schema,
+  DaemonContributionRegistryProjectionBackendEntryV1Schema,
+  DaemonContributionRegistryProjectionActionEntryV1Schema,
+  DaemonContributionRegistryProjectionResourceEntryV1Schema,
+  DaemonContributionRegistryProjectionUiDescriptorEntryV1Schema,
+  DaemonContributionRegistryProjectionUiFieldV1Schema,
+  DaemonContributionRegistryProjectionV1Schema,
+  DaemonContributionRegistryProjectionDescribeRequestSchema,
+  DaemonContributionRegistryProjectionDescribeResponseSchema,
+  ExtensionProjectedActionV2Schema,
+  ExtensionProjectedBackendV2Schema,
+  ExtensionProjectedCommandV2Schema,
+  ExtensionProjectedContributionBaseV2Schema,
+  ExtensionProjectedHookV2Schema,
+  ExtensionProjectedProviderV2Schema,
+  ExtensionProjectedResourceV2Schema,
+  ExtensionProjectedToolV2Schema,
+  ExtensionProjectedUiDescriptorV2Schema,
+  ExtensionProjectionDiagnosticV2Schema,
+  ExtensionProjectionInstalledPackageV2Schema,
+  ExtensionProjectionSourceV2Schema,
+  ExtensionProjectionV2Schema,
+  type DaemonContributionRegistryProjectionProviderEntryV1,
+  type DaemonContributionRegistryProjectionBackendEntryV1,
+  type DaemonContributionRegistryProjectionActionEntryV1,
+  type DaemonContributionRegistryProjectionResourceEntryV1,
+  type DaemonContributionRegistryProjectionUiDescriptorEntryV1,
+  type DaemonContributionRegistryProjectionUiFieldV1,
+  type DaemonContributionRegistryProjectionV1,
+  type DaemonContributionRegistryProjection,
+  type DaemonContributionRegistryProjectionDescribeRequest,
+  type DaemonContributionRegistryProjectionDescribeResponse,
+  type ExtensionProjectedActionV2,
+  type ExtensionProjectedBackendV2,
+  type ExtensionProjectedCommandV2,
+  type ExtensionProjectedContributionBaseV2,
+  type ExtensionProjectedHookV2,
+  type ExtensionProjectedProviderV2,
+  type ExtensionProjectedResourceV2,
+  type ExtensionProjectedToolV2,
+  type ExtensionProjectedUiDescriptorV2,
+  type ExtensionProjectionDiagnosticV2,
+  type ExtensionProjectionInstalledPackageV2,
+  type ExtensionProjectionSourceV2,
+  type ExtensionProjectionV2,
+} from './daemonContributionRegistryProjection.js';
+
+export {
   DaemonTerminalErrorCodeSchema,
   DaemonTerminalErrorSchema,
   DaemonTerminalEnsureRequestSchema,
@@ -1248,6 +1574,9 @@ export {
 } from './daemonTerminal.js';
 
 export {
+  DIRECT_SESSIONS_PROVIDER_IDS,
+  DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1,
+  type DirectSessionsSourceKindV1,
   resolveDirectSessionsSourceKey,
 } from './providers/directSessionsCatalog.js';
 
@@ -1332,6 +1661,7 @@ export {
   SessionHandoffPrepareTargetResponseSchema,
   SessionHandoffProgressCheckpointSchema,
   SessionHandoffProgressWarningCodeSchema,
+  SESSION_HANDOFF_PROGRESS_TIMELINES_V1,
   SessionHandoffStartRequestSchema,
   SessionHandoffStartResponseSchema,
   SessionHandoffStatusGetRequestSchema,
@@ -1351,6 +1681,7 @@ export {
   type SessionHandoffProviderBundleTransferPublication,
   type SessionHandoffProgressCheckpoint,
   type SessionHandoffProgressWarningCode,
+  type SessionHandoffProgressTimelineKindV1,
   type SessionHandoffResumePlan,
   type SessionHandoffStartRequest,
   type SessionHandoffStartResponse,
@@ -1574,6 +1905,11 @@ export {
 } from './structuredMessages/reviewPublishRequestV1.js';
 
 export {
+  ExecutionRunStructuredRunRefSchema,
+  type ExecutionRunStructuredRunRef,
+} from './structuredMessages/executionRunStructuredRunRef.js';
+
+export {
   PlanOutputV1Schema,
   parsePlanOutputV1,
   type PlanOutputV1,
@@ -1592,6 +1928,12 @@ export {
   VoiceAgentTurnV1Schema,
   type VoiceAgentTurnV1,
 } from './structuredMessages/voiceAgentTurnV1.js';
+export {
+  deriveVoiceAgentTurnLocalId,
+  deriveVoiceAgentTurnProvisionalLocalId,
+  readVoiceAgentTurnPayloadFromMeta,
+  readVoiceAgentTurnProvisionalLocalId,
+} from './structuredMessages/voiceAgentTurnLocalId.js';
 
 export {
   SessionSynopsisV1Schema,
@@ -1830,11 +2172,39 @@ export {
   type PromptRegistrySourceDescriptorV1,
   type PromptRegistrySourcesV1,
 } from './promptLibrary/promptRegistriesV1.js';
+export {
+  MarketplaceSourceOriginV1Schema,
+  MarketplaceSourceRegistryV1Schema,
+  MarketplaceSourceV1Schema,
+  createCuratedMarketplaceSourceV1,
+  createMarketplaceSourceV1,
+  createDefaultCuratedMarketplaceSourceRegistryV1,
+  deriveMarketplaceSourceId,
+  deriveMarketplaceSourceTitle,
+  seedCuratedMarketplaceSourceRegistryV1,
+  normalizeMarketplaceSourceUrlV1,
+  resolvePreferredMarketplaceSource,
+  DEFAULT_CURATED_MARKETPLACE_SOURCE_DESCRIPTION,
+  DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE,
+  type MarketplaceSourceOriginV1,
+  type MarketplaceSourceRecordInputV1,
+  type MarketplaceSourceRegistryV1,
+  type MarketplaceSourceV1,
+} from './marketplace/marketplaceSourceRegistryV1.js';
 
 export {
   PromptPlacementV1Schema,
   type PromptPlacementV1,
 } from './promptLibrary/promptPlacementV1.js';
+
+export {
+  PromptArtifactKindV1Schema,
+  PromptArtifactRefV1Schema,
+  PromptDocArtifactRefV1Schema,
+  type PromptArtifactKindV1,
+  type PromptArtifactRefV1,
+  type PromptDocArtifactRefV1,
+} from './promptLibrary/promptArtifactRefsV1.js';
 
 export {
   PromptStackEditPolicyV1Schema,
@@ -1882,7 +2252,9 @@ export {
   type ChangeTitleInstructionV1Options,
 } from './prompts/changeTitleInstructionV1.js';
 export {
+  EXECUTION_RUNS_GUIDANCE_INTENTS_V1,
   buildExecutionRunsGuidanceBlockV1,
+  isExecutionRunsGuidanceIntentV1,
   normalizeExecutionRunsGuidanceFingerprintV1,
   type ExecutionRunsGuidanceEntryV1,
 } from './prompts/executionRunsGuidanceV1.js';

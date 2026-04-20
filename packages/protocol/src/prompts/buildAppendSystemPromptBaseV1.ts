@@ -1,5 +1,9 @@
 import { BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
-import { buildExecutionRunsGuidanceBlockV1, type ExecutionRunsGuidanceEntryV1 } from './executionRunsGuidanceV1.js';
+import {
+  buildExecutionRunsGuidanceBlockV1,
+  isExecutionRunsGuidanceIntentV1,
+  type ExecutionRunsGuidanceEntryV1,
+} from './executionRunsGuidanceV1.js';
 import { buildMemoryRecallGuidanceBlockV1 } from './memoryRecallGuidanceV1.js';
 import { buildPromptPlanV1, renderPromptPlanV1, type PromptPlanV1 } from './promptPlanV1.js';
 import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './systemPromptBaseV1.js';
@@ -28,10 +32,7 @@ function coerceExecutionRunsGuidanceEntriesV1(raw: unknown): ExecutionRunsGuidan
     const suggestedIntentRaw = typeof (item as Record<string, unknown>).suggestedIntent === 'string'
       ? String((item as Record<string, unknown>).suggestedIntent).trim()
       : '';
-    const suggestedIntent =
-      suggestedIntentRaw === 'review' || suggestedIntentRaw === 'plan' || suggestedIntentRaw === 'delegate'
-        ? suggestedIntentRaw
-        : undefined;
+    const suggestedIntent = isExecutionRunsGuidanceIntentV1(suggestedIntentRaw) ? suggestedIntentRaw : undefined;
     const suggestedBackendTargetParsed = BackendTargetRefSchema.safeParse(
       (item as Record<string, unknown>).suggestedBackendTarget,
     );

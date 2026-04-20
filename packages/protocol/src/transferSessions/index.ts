@@ -7,6 +7,7 @@ export {
     TransferSessionChunkEnvelopeSchema,
     TransferSessionExportOpenResponseSchema,
     TransferSessionImportOpenResponseSchema,
+    TransferSessionOpenResponseSchema,
     TransferSessionLimitsSchema,
     TransferSessionProtocolVersionSchema,
 } from './transferSessionSchemas.js';
@@ -14,4 +15,5 @@ export type {
     TransferSessionChunkEnvelope,
     TransferSessionExportOpenResponse,
     TransferSessionImportOpenResponse,
+    TransferSessionOpenResponse,
 } from './transferSessionTypes.js';

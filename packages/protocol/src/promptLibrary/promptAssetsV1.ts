@@ -19,7 +19,7 @@ export const PromptAssetSupportsScopeV1Schema = z
     user: z.boolean(),
     project: z.boolean(),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetSupportsScopeV1 = z.infer<typeof PromptAssetSupportsScopeV1Schema>;
 
 export const PromptAssetCapabilitiesV1Schema = z
@@ -28,7 +28,7 @@ export const PromptAssetCapabilitiesV1Schema = z
     supportsNestedNamespaces: z.boolean().optional(),
     supportsSymlinkInstall: z.boolean().optional(),
   })
-  .strict()
+  .passthrough()
   .default({});
 export type PromptAssetCapabilitiesV1 = z.infer<typeof PromptAssetCapabilitiesV1Schema>;
 
@@ -38,7 +38,7 @@ export const PromptAssetDefaultRootV1Schema = z
     scope: PromptAssetScopeV1Schema,
     pathTemplate: z.string().min(1),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetDefaultRootV1 = z.infer<typeof PromptAssetDefaultRootV1Schema>;
 
 export const PromptAssetExternalRefV1Schema = z.record(z.string(), z.unknown());
@@ -57,7 +57,7 @@ export const PromptAssetTypeDescriptorV1Schema = z
     defaultRoots: z.array(PromptAssetDefaultRootV1Schema),
     capabilities: PromptAssetCapabilitiesV1Schema,
   })
-  .strict();
+  .passthrough();
 export type PromptAssetTypeDescriptorV1 = z.infer<typeof PromptAssetTypeDescriptorV1Schema>;
 
 export const PromptAssetDiscoveryItemV1Schema = z
@@ -71,20 +71,20 @@ export const PromptAssetDiscoveryItemV1Schema = z
     digest: z.string().min(1),
     displayPath: z.string().min(1),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetDiscoveryItemV1 = z.infer<typeof PromptAssetDiscoveryItemV1Schema>;
 
 export const PromptAssetBundleRecordV1Schema = PromptAssetDiscoveryItemV1Schema.extend({
   libraryKind: z.literal('bundle'),
   bundleSchemaId: PromptBundleSchemaIdV1Schema,
   bundleBody: PromptBundleBodyV1Schema,
-}).strict();
+}).passthrough();
 export type PromptAssetBundleRecordV1 = z.infer<typeof PromptAssetBundleRecordV1Schema>;
 
 export const PromptAssetDocRecordV1Schema = PromptAssetDiscoveryItemV1Schema.extend({
   libraryKind: z.literal('doc'),
   markdown: z.string(),
-}).strict();
+}).passthrough();
 export type PromptAssetDocRecordV1 = z.infer<typeof PromptAssetDocRecordV1Schema>;
 
 export const PromptAssetMutationErrorCodeV1Schema = z.enum([
@@ -103,7 +103,7 @@ export const PromptAssetMutationPreviewV1Schema = z
     targetPath: z.string().min(1),
     fileCount: z.number().int().min(0),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetMutationPreviewV1 = z.infer<typeof PromptAssetMutationPreviewV1Schema>;
 
 export const PromptAssetWriteBundleRequestSchema = z
@@ -120,7 +120,7 @@ export const PromptAssetWriteBundleRequestSchema = z
     previewOnly: z.boolean().optional(),
     expectedDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetWriteBundleRequest = z.infer<typeof PromptAssetWriteBundleRequestSchema>;
 
 export const PromptAssetWriteDocRequestSchema = z
@@ -135,7 +135,7 @@ export const PromptAssetWriteDocRequestSchema = z
     previewOnly: z.boolean().optional(),
     expectedDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetWriteDocRequest = z.infer<typeof PromptAssetWriteDocRequestSchema>;
 
 export const PromptAssetWriteRequestSchema = z.union([
@@ -153,7 +153,7 @@ export const PromptAssetDeleteRequestSchema = z
     previewOnly: z.boolean().optional(),
     expectedDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetDeleteRequest = z.infer<typeof PromptAssetDeleteRequestSchema>;
 
 export const PromptAssetReadRequestSchema = z
@@ -163,7 +163,7 @@ export const PromptAssetReadRequestSchema = z
     directory: z.string().min(1).nullable().optional(),
     externalRef: PromptAssetExternalRefV1Schema,
   })
-  .strict();
+  .passthrough();
 export type PromptAssetReadRequest = z.infer<typeof PromptAssetReadRequestSchema>;
 
 export const PromptAssetDiscoverRequestSchema = z
@@ -172,7 +172,7 @@ export const PromptAssetDiscoverRequestSchema = z
     scope: PromptAssetScopeV1Schema,
     directory: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetDiscoverRequest = z.infer<typeof PromptAssetDiscoverRequestSchema>;
 
 export const PromptAssetMutationSuccessResponseV1Schema = z
@@ -182,7 +182,7 @@ export const PromptAssetMutationSuccessResponseV1Schema = z
     digest: z.string().min(1).optional(),
     preview: PromptAssetMutationPreviewV1Schema.optional(),
   })
-  .strict();
+  .passthrough();
 
 export const PromptAssetMutationErrorResponseV1Schema = z
   .object({
@@ -191,7 +191,7 @@ export const PromptAssetMutationErrorResponseV1Schema = z
     error: z.string().min(1),
     currentDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .passthrough();
 
 export const PromptAssetMutationResponseV1Schema = z.union([
   PromptAssetMutationSuccessResponseV1Schema,
@@ -204,7 +204,7 @@ export const PromptAssetListTypesResponseV1Schema = z
     ok: z.literal(true),
     types: z.array(PromptAssetTypeDescriptorV1Schema),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetListTypesResponseV1 = z.infer<typeof PromptAssetListTypesResponseV1Schema>;
 
 export const PromptAssetDiscoverResponseV1Schema = z
@@ -212,14 +212,14 @@ export const PromptAssetDiscoverResponseV1Schema = z
     ok: z.literal(true),
     items: z.array(PromptAssetDiscoveryItemV1Schema),
   })
-  .strict();
+  .passthrough();
 export type PromptAssetDiscoverResponseV1 = z.infer<typeof PromptAssetDiscoverResponseV1Schema>;
 
 export const PromptAssetReadResponseV1Schema = z.union([
   z.object({
     ok: z.literal(true),
     item: z.union([PromptAssetBundleRecordV1Schema, PromptAssetDocRecordV1Schema]),
-  }).strict(),
+  }).passthrough(),
   PromptAssetMutationErrorResponseV1Schema,
 ]);
 export type PromptAssetReadResponseV1 = z.infer<typeof PromptAssetReadResponseV1Schema>;

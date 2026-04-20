@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { AgentRuntimeDescriptorV1Schema } from '../sessionMetadata/agentRuntimeDescriptorV1.js';
+import { RuntimeDescriptorV1Schema } from '../sessionMetadata/runtimeDescriptorV1.js';
 import { CODEX_BACKEND_MODES } from '../providers/codex/backendMode.js';
 import {
   DirectSessionsProviderIdSchema,
@@ -56,7 +56,7 @@ export const DirectSessionLinkEnsureRequestSchema = z
     titleHint: z.string().min(1).max(10_000).optional(),
     directoryHint: z.string().min(1).max(10_000).optional(),
     codexBackendMode: z.enum(CODEX_BACKEND_MODES).optional(),
-    runtimeDescriptor: AgentRuntimeDescriptorV1Schema.optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     source: DirectSessionsSourceSchema,
   })
   .passthrough();

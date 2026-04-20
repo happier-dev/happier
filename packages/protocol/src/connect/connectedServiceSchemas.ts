@@ -10,6 +10,14 @@ export const ConnectedServiceIdSchema = z.enum([
 
 export type ConnectedServiceId = z.infer<typeof ConnectedServiceIdSchema>;
 
+export const ConnectedServiceCloudVendorKeySchema = z.enum([
+    'openai',
+    'anthropic',
+    'gemini',
+]);
+
+export type ConnectedServiceCloudVendorKey = z.infer<typeof ConnectedServiceCloudVendorKeySchema>;
+
 export const ConnectedServiceCredentialFormatSchema = z.enum(['account_scoped_v1']);
 export type ConnectedServiceCredentialFormat = z.infer<typeof ConnectedServiceCredentialFormatSchema>;
 

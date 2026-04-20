@@ -1,7 +1,7 @@
 import type { CodexBackendMode } from './providerSettings/definitions/codex.js';
 import type { OpenCodeBackendMode } from './providerSettings/definitions/opencode.js';
-import { AGENTS_CORE } from './manifest.js';
 import type { AgentCore, AgentCoreRuntimeControlSurface, AgentId } from './types.js';
+import { getAgentCore } from './manifest.js';
 
 type PartialDeepLeaf = string | number | boolean | bigint | symbol | null | undefined | Date | RegExp | Function;
 
@@ -62,7 +62,7 @@ function mergeRuntimeOverrides<T>(base: T, overrides: PartialDeep<T> | undefined
 }
 
 function readAgentRuntimeControlSurface(agentId: AgentId): AgentCoreRuntimeControlSurface {
-    const entry = AGENTS_CORE[agentId] as AgentCore;
+    const entry = getAgentCore(agentId) as AgentCore;
     return {
         sessionStorage: entry.sessionStorage,
         sessionCapabilities: entry.sessionCapabilities,
@@ -74,7 +74,7 @@ function readAgentRuntimeControlSurface(agentId: AgentId): AgentCoreRuntimeContr
 }
 
 export function getAgentRuntimeKindsManifest<TAgentId extends AgentId>(agentId: TAgentId): AgentCore['runtimeKinds'] | null {
-    return (AGENTS_CORE[agentId] as AgentCore).runtimeKinds ?? null;
+    return (getAgentCore(agentId) as AgentCore).runtimeKinds ?? null;
 }
 
 export function resolveDefaultAgentRuntimeKind<TAgentId extends AgentId>(agentId: TAgentId): AgentRuntimeKindFor<TAgentId> | null {

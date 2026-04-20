@@ -1,7 +1,7 @@
-import type { AgentId } from './types.js';
+import type { AgentId, CanonicalAgentId } from './types.js';
 import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
 
-export type AgentCliAuthSupport = 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+export type AgentCliSupportKind = 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
 
 export type AgentCliLaunchCommand = Readonly<{
   command: string;
@@ -13,13 +13,13 @@ export type AgentLocalCliConfig = Readonly<{
   agentId: AgentId;
   detectKey: string;
   machineLoginKey: string;
-  authSupport: AgentCliAuthSupport;
+  supportKind: AgentCliSupportKind;
   loginLaunch: AgentCliLaunchCommand | null;
 }>;
 
 type AgentLocalCliConfigInput = Readonly<{
   machineLoginKey: string;
-  authSupport: AgentCliAuthSupport;
+  supportKind: AgentCliSupportKind;
   loginLaunch:
     | Readonly<{
         args: ReadonlyArray<string>;
@@ -34,7 +34,7 @@ function createAgentLocalCliConfig(agentId: AgentId, input: AgentLocalCliConfigI
     agentId,
     detectKey: binaryName,
     machineLoginKey: input.machineLoginKey,
-    authSupport: input.authSupport,
+    supportKind: input.supportKind,
     loginLaunch: input.loginLaunch
       ? {
           command: binaryName,
@@ -45,10 +45,10 @@ function createAgentLocalCliConfig(agentId: AgentId, input: AgentLocalCliConfigI
   };
 }
 
-export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfig>> = Object.freeze({
+export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> = Object.freeze({
   claude: createAgentLocalCliConfig('claude', {
     machineLoginKey: 'claude-code',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: [],
       initialInput: '/login\r',
@@ -56,35 +56,35 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
   }),
   codex: createAgentLocalCliConfig('codex', {
     machineLoginKey: 'codex',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: ['login'],
     },
   }),
   opencode: createAgentLocalCliConfig('opencode', {
     machineLoginKey: 'opencode',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: ['auth', 'login'],
     },
   }),
   gemini: createAgentLocalCliConfig('gemini', {
     machineLoginKey: 'gemini-cli',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: ['auth'],
     },
   }),
   auggie: createAgentLocalCliConfig('auggie', {
     machineLoginKey: 'auggie',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: ['login'],
     },
   }),
   qwen: createAgentLocalCliConfig('qwen', {
     machineLoginKey: 'qwen',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: [],
       initialInput: '/auth\r',
@@ -92,7 +92,7 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
   }),
   kimi: createAgentLocalCliConfig('kimi', {
     machineLoginKey: 'kimi',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: [],
       initialInput: '/setup\r',
@@ -100,7 +100,7 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
   }),
   kilo: createAgentLocalCliConfig('kilo', {
     machineLoginKey: 'kilo',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: [],
       initialInput: '/connect\r',
@@ -108,34 +108,31 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
   }),
   kiro: createAgentLocalCliConfig('kiro', {
     machineLoginKey: 'kiro-cli',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: ['login'],
     },
   }),
-  customAcp: createAgentLocalCliConfig('customAcp', {
-    machineLoginKey: 'custom-acp',
-    authSupport: 'unsupported',
-    loginLaunch: null,
-  }),
   ohMyPi: createAgentLocalCliConfig('ohMyPi', {
     machineLoginKey: 'oh-my-pi',
-    authSupport: 'manual_only',
+    supportKind: 'manual_only',
     loginLaunch: null,
   }),
   pi: createAgentLocalCliConfig('pi', {
     machineLoginKey: 'pi',
-    authSupport: 'status_only',
+    supportKind: 'status_only',
     loginLaunch: null,
   }),
   copilot: createAgentLocalCliConfig('copilot', {
     machineLoginKey: 'copilot',
-    authSupport: 'login_terminal',
+    supportKind: 'login_terminal',
     loginLaunch: {
       args: ['login'],
     },
   }),
 });
+
+export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> = CANONICAL_AGENT_LOCAL_CLI_CONFIG;
 
 export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig {
   return AGENT_LOCAL_CLI_CONFIG[agentId];

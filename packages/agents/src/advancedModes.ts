@@ -29,7 +29,7 @@ export type AgentAdvancedModeCapabilities = Readonly<{
 export function getAgentAdvancedModeCapabilities(agentId: AgentId): AgentAdvancedModeCapabilities {
   const sessionModeDescriptor = getAgentSessionModeDescriptor(agentId);
   const supportsPlanMode = sessionModeDescriptor.semantics === 'agent-modes';
-  const supportsAcceptEdits = agentId === 'claude';
+  const supportsAcceptEdits = sessionModeDescriptor.source === 'provider-native';
   const supportsRuntimeModeSwitch = sessionModeDescriptor.runtimeSwitch;
 
   return { supportsPlanMode, supportsAcceptEdits, supportsRuntimeModeSwitch };

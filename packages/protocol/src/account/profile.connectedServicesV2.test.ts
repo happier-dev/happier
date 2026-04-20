@@ -8,6 +8,22 @@ describe('AccountProfileSchema connectedServicesV2', () => {
     expect(parsed.connectedServicesV2).toEqual([]);
   });
 
+  it('limits legacy connectedServices to cloud-vendor keys', () => {
+    const parsed = AccountProfileSchema.parse({
+      id: 'acct',
+      connectedServices: ['openai', 'anthropic', 'gemini'],
+    });
+
+    expect(parsed.connectedServices).toEqual(['openai', 'anthropic', 'gemini']);
+
+    expect(() =>
+      AccountProfileSchema.parse({
+        id: 'acct',
+        connectedServices: ['openai-codex'],
+      }),
+    ).toThrow();
+  });
+
   it('accepts connectedServicesV2 service + profile projections', () => {
     const parsed = AccountProfileSchema.parse({
       id: 'acct',
@@ -24,4 +40,3 @@ describe('AccountProfileSchema connectedServicesV2', () => {
     expect(parsed.connectedServicesV2[0]?.profiles[0]?.profileId).toBe('work');
   });
 });
-

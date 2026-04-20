@@ -15,9 +15,30 @@ export const RPC_METHODS = {
   DAEMON_MEMORY_STATUS: 'daemon.memory.status',
   DAEMON_MEMORY_SETTINGS_GET: 'daemon.memory.settings.get',
   DAEMON_MEMORY_SETTINGS_SET: 'daemon.memory.settings.set',
+  DAEMON_VOICE_INFERENCE_STATUS: 'daemon.voiceInference.status',
+  DAEMON_VOICE_INFERENCE_MODELS_LIST: 'daemon.voiceInference.models.list',
+  DAEMON_VOICE_INFERENCE_MODELS_INSTALL: 'daemon.voiceInference.models.install',
+  DAEMON_VOICE_INFERENCE_MODELS_REMOVE: 'daemon.voiceInference.models.remove',
+  DAEMON_VOICE_INFERENCE_MODELS_STATUS: 'daemon.voiceInference.models.status',
+  DAEMON_VOICE_INFERENCE_MODELS_WARM: 'daemon.voiceInference.models.warm',
+  DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE: 'daemon.voiceInference.tts.synthesize',
+  DAEMON_VOICE_INFERENCE_TTS_CHUNK: 'daemon.voiceInference.tts.chunk',
+  DAEMON_VOICE_INFERENCE_TTS_FINALIZE: 'daemon.voiceInference.tts.finalize',
+  DAEMON_VOICE_INFERENCE_TTS_ABORT: 'daemon.voiceInference.tts.abort',
+  DAEMON_VOICE_INFERENCE_TTS_CANCEL: 'daemon.voiceInference.tts.cancel',
+  DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT: 'daemon.voiceInference.stt.upload.init',
+  DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK: 'daemon.voiceInference.stt.upload.chunk',
+  DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE: 'daemon.voiceInference.stt.upload.finalize',
+  DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT: 'daemon.voiceInference.stt.upload.abort',
+  DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE: 'daemon.voiceInference.stt.transcribe',
+  DAEMON_VOICE_INFERENCE_STT_CANCEL: 'daemon.voiceInference.stt.cancel',
   DAEMON_MCP_SERVERS_TEST: 'daemon.mcpServers.test',
   DAEMON_MCP_SERVERS_DETECT: 'daemon.mcpServers.detect',
   DAEMON_MCP_SERVERS_PREVIEW: 'daemon.mcpServers.preview',
+  DAEMON_EXTENSIONS_RELOAD: 'daemon.extensions.reload',
+  DAEMON_EXTENSIONS_RELOAD_STATUS: 'daemon.extensions.reload.status',
+  DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE:
+    'daemon.extensions.contributionRegistryProjection.describe',
   // Preserve the established wire literals for mixed-version UI/daemon compatibility.
   DAEMON_TRANSFER_UPLOAD_INIT: 'daemon.bulkTransfer.upload.init',
   DAEMON_TRANSFER_UPLOAD_CHUNK: 'daemon.bulkTransfer.upload.chunk',
@@ -48,6 +69,8 @@ export const RPC_METHODS = {
   DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE: 'daemon.promptRegistry.download.finalize',
   DAEMON_PROMPT_REGISTRY_DOWNLOAD_ABORT: 'daemon.promptRegistry.download.abort',
   DAEMON_PROMPT_REGISTRY_INSTALL: 'daemon.promptRegistry.install',
+  DAEMON_MARKETPLACE_SOURCE_REGISTRY_GET: 'daemon.marketplaceSourceRegistry.get',
+  DAEMON_MARKETPLACE_SOURCE_REGISTRY_SET: 'daemon.marketplaceSourceRegistry.set',
   DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST: 'daemon.directSessions.candidates.list',
   DAEMON_DIRECT_SESSION_LINK_ENSURE: 'daemon.directSessions.link.ensure',
   DAEMON_DIRECT_SESSION_ATTACH: 'daemon.directSessions.attach',
@@ -149,7 +172,7 @@ export const SESSION_RPC_METHODS = {
 
 export function isRpcMethodNotFoundResult(value: unknown): value is { error: string; errorCode?: string } {
   if (!value || typeof value !== 'object') return false;
-  const maybe = value as any;
+  const maybe = value as { error?: unknown; errorCode?: unknown };
   if (maybe.errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) return true;
   return maybe.error === RPC_ERROR_MESSAGES.METHOD_NOT_FOUND;
 }

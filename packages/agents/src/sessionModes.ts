@@ -1,4 +1,5 @@
-import type { AgentId } from './types.js';
+import type { AgentId, CanonicalAgentId } from './types.js';
+import { CANONICAL_AGENT_IDS } from './types.js';
 import type { AgentRuntimeModeSwitchKind } from './advancedModes.js';
 
 export type AgentSessionModesKind = 'none' | 'acpPolicyPresets' | 'acpAgentModes' | 'staticAgentModes';
@@ -20,7 +21,7 @@ export type AgentSessionModeDescriptor = Readonly<{
  * - keep deprecated alias mapping consistent (`--permission-mode plan` → `--agent-mode plan`)
  * - avoid duplicating “does this agent expose ACP modes?” logic across packages
  */
-export const AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<AgentId, AgentSessionModeDescriptor>> = Object.freeze({
+export const CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<CanonicalAgentId, AgentSessionModeDescriptor>> = Object.freeze({
   claude: { source: 'provider-native', semantics: 'agent-modes', runtimeSwitch: 'provider-native' },
   codex: { source: 'acp', semantics: 'policy-presets', runtimeSwitch: 'metadata-gating' },
   opencode: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
@@ -30,11 +31,12 @@ export const AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<AgentId, AgentSessi
   kimi: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
   kilo: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
   kiro: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
-  customAcp: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
   ohMyPi: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
   pi: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
   copilot: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
 });
+
+export const AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<CanonicalAgentId, AgentSessionModeDescriptor>> = CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS;
 
 function descriptorToSessionModesKind(descriptor: AgentSessionModeDescriptor): AgentSessionModesKind {
   if (descriptor.source === 'provider-native' && descriptor.semantics === 'agent-modes') {
@@ -49,21 +51,16 @@ function descriptorToSessionModesKind(descriptor: AgentSessionModeDescriptor): A
   return 'none';
 }
 
-export const AGENT_SESSION_MODES: Readonly<Record<AgentId, AgentSessionModesKind>> = Object.freeze({
-  claude: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.claude),
-  codex: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.codex),
-  opencode: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.opencode),
-  gemini: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.gemini),
-  auggie: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.auggie),
-  qwen: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.qwen),
-  kimi: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.kimi),
-  kilo: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.kilo),
-  kiro: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.kiro),
-  customAcp: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.customAcp),
-  ohMyPi: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.ohMyPi),
-  pi: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.pi),
-  copilot: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.copilot),
-});
+export const CANONICAL_AGENT_SESSION_MODES: Readonly<Record<CanonicalAgentId, AgentSessionModesKind>> = Object.freeze(
+  Object.fromEntries(
+    CANONICAL_AGENT_IDS.map((agentId) => [
+      agentId,
+      descriptorToSessionModesKind(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS[agentId]),
+    ]),
+  ) as Record<CanonicalAgentId, AgentSessionModesKind>,
+);
+
+export const AGENT_SESSION_MODES: Readonly<Record<CanonicalAgentId, AgentSessionModesKind>> = CANONICAL_AGENT_SESSION_MODES;
 
 export function getAgentSessionModeDescriptor(agentId: AgentId): AgentSessionModeDescriptor {
   return AGENT_SESSION_MODE_DESCRIPTORS[agentId];

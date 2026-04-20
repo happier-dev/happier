@@ -1,34 +1,51 @@
+import { CANONICAL_AGENTS_CORE as CANONICAL_AGENTS_CORE_FROM_MANIFEST } from './manifest.js';
+import { CANONICAL_AGENT_MODEL_CONFIG as CANONICAL_AGENT_MODEL_CONFIG_FROM_MODELS } from './models.js';
+import { CANONICAL_PROVIDER_CLI_RUNTIME_SPECS as CANONICAL_PROVIDER_CLI_RUNTIME_SPECS_FROM_RUNTIME } from './providers/providerCliRuntime.js';
+
 export const HAPPY_AGENTS_PACKAGE = '@happier-dev/agents';
+export const CANONICAL_AGENTS_CORE = CANONICAL_AGENTS_CORE_FROM_MANIFEST;
+export const CANONICAL_AGENT_MODEL_CONFIG = CANONICAL_AGENT_MODEL_CONFIG_FROM_MODELS;
+export const CANONICAL_PROVIDER_CLI_RUNTIME_SPECS = CANONICAL_PROVIDER_CLI_RUNTIME_SPECS_FROM_RUNTIME;
 
 export {
     AGENT_IDS,
+    CANONICAL_AGENT_IDS,
+    isAgentId,
     PERMISSION_INTENTS,
     PERMISSION_MODES,
-    type AgentCore,
-    type AgentCoreRuntimeControlSurface,
-    type AgentHandoffConfig,
-    type AgentId,
-    type AgentLocalControlConfig,
-    type AgentLocalControlAttachStrategy,
-    type AgentLocalControlTopology,
-    type AgentResumeConfig,
-    type AgentSessionCapabilitySupportLevel,
-    type AgentSessionCapabilities,
-    type AgentSessionStorage,
-    type AgentToolsConfig,
-    type AgentToolsDelivery,
-    type AgentToolsSupportLevel,
-    type ConnectedServiceId,
-    type ConnectedServiceKind,
-    type CloudConnectTargetStatus,
-    type CloudVendorKey,
-    type PermissionIntent,
-    type PermissionMode,
-    type VendorHandoffSupportLevel,
-    type VendorResumeIdField,
-    type VendorResumeSupportLevel,
 } from './types.js';
-export { AGENTS_CORE, DEFAULT_AGENT_ID } from './manifest.js';
+export type {
+    AgentCore,
+    AgentCoreRuntimeControlSurface,
+    AgentHandoffConfig,
+    AgentId,
+    CanonicalAgentId,
+    AgentLocalControlConfig,
+    AgentLocalControlAttachStrategy,
+    AgentLocalControlTopology,
+    AgentResumeConfig,
+    AgentSessionCapabilitySupportLevel,
+    AgentSessionCapabilities,
+    AgentSessionStorage,
+    AgentToolsConfig,
+    AgentToolsDelivery,
+    AgentToolsSupportLevel,
+    ConnectedServiceId,
+    ConnectedServiceKind,
+    CloudConnectTargetStatus,
+    CloudVendorKey,
+    PermissionIntent,
+    PermissionMode,
+    VendorHandoffSupportLevel,
+    VendorResumeIdField,
+    VendorResumeSupportLevel,
+} from './types.js';
+export {
+  AGENTS_CORE,
+  DEFAULT_AGENT_ID,
+  getAgentCore,
+  getAgentResumeConfig,
+} from './manifest.js';
 export {
   getAllProviderDefinitions,
   getAllProviderDefinitionContracts,
@@ -56,7 +73,7 @@ export {
   usesTerminalHostedLocalControl,
   type AgentLocalControlCapability,
 } from './localControl.js';
-export { resolveAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
+export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 export {
   AGENT_MODEL_CONFIG,
@@ -68,13 +85,15 @@ export {
 } from './models.js';
 export {
   AGENT_LOCAL_CLI_CONFIG,
+  CANONICAL_AGENT_LOCAL_CLI_CONFIG,
   getAgentLocalCliConfig,
-  type AgentCliAuthSupport,
+  type AgentCliSupportKind,
   type AgentCliLaunchCommand,
   type AgentLocalCliConfig,
 } from './localCli.js';
 export {
   AGENT_AUTH_PROBE_CONFIG,
+  CANONICAL_AGENT_AUTH_PROBE_CONFIG,
   getAgentAuthProbeConfig,
   isAgentAuthProbeSafeForBackgroundChecks,
   type AgentAuthProbeConfig,
@@ -101,6 +120,8 @@ export {
 export {
   AGENT_SESSION_MODE_DESCRIPTORS,
   AGENT_SESSION_MODES,
+  CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS,
+  CANONICAL_AGENT_SESSION_MODES,
   getAgentSessionModeDescriptor,
   getAgentSessionModesKind,
   type AgentSessionModeDescriptor,
@@ -108,11 +129,12 @@ export {
   type AgentSessionModeSource,
   type AgentSessionModesKind,
 } from './sessionModes.js';
+export * as legacyCustomAcpCompat from './compat/customAcp.js';
 
 export {
   normalizeCodexBackendMode,
   type CodexBackendMode,
-  type ProviderSettingsBehavior,
+  type OpenCodeBackendMode,
   type ProviderSettingsDescriptor,
   getAllProviderSettingsDefinitions,
   getProviderSettingsDefinition,
@@ -147,6 +169,7 @@ export {
     parsePermissionIntentAlias,
     parsePermissionModeAlias,
     resolvePermissionModeGroupForAgent,
+    resolvePermissionModeGroupForSessionModeDescriptor,
     normalizePermissionModeForAgent,
     normalizePermissionModeForGroup,
     resolveLatestPermissionIntent,
@@ -164,6 +187,7 @@ export {
   getAgentSessionCapabilities,
   getAgentSessionCapability,
   isAgentSessionCapabilitySupported,
+  readRuntimeCapabilitiesForSession,
   type AgentSessionCapabilityKey,
 } from './sessionControls/sessionCapabilities.js';
 export {
@@ -184,6 +208,25 @@ export {
 export {
   buildOpenCodeAgentRuntimeDescriptor,
 } from './providers/opencode/buildAgentRuntimeDescriptor.js';
+export {
+  readNormalizedRuntimeDescriptor,
+} from './runtime/identity/runtimeDescriptor.js';
+export {
+  bridgeTranscriptSourceHandoffGap,
+  catchUpTranscriptSourceWindow,
+  readInitialTranscriptSourceWindow,
+  replayTranscriptSourceHistory,
+  type TranscriptSourceFollowLease,
+  type TranscriptSourceFollowUpdate,
+  type TranscriptSourcePage,
+  type TranscriptSourceReadAfter,
+  type TranscriptSourceWindowState,
+} from './runtime/facets/transcriptSource.js';
+export {
+  RUNTIME_DESCRIPTOR_PROVIDER_IDS,
+  getRuntimeDescriptorReader,
+  isSupportedRuntimeDescriptorProviderId,
+} from './runtime/identity/runtimeDescriptorReaderRegistry.js';
 export {
   readSessionMetadataRuntimeDescriptor,
 } from './providers/readSessionMetadataRuntimeDescriptor.js';
@@ -278,5 +321,56 @@ export {
 export * from './providers/providerCliInstallGuidance.js';
 
 export * from './providerSettings/index.js';
+
+export type {
+  BackendCatalogDefinition,
+  ProviderCatalogDefinition,
+} from './definitions/types.js';
+export type { EngineSpec, RuntimeKindSpec } from './runtime/engine/contracts.js';
+export type {
+  EngineAdapter,
+  MaybePromise,
+  RuntimeBindings,
+  RuntimeControlSurface,
+  RuntimeFacets,
+  RuntimeTranscriptSourceFacet,
+} from './runtime/engine/contracts.js';
+export type { RuntimeDescriptor } from './runtime/identity/runtimeDescriptor.js';
+export {
+  publishRuntimeIdentity,
+  type RuntimeIdentityPublication,
+} from './runtime/identity/runtimeIdentityPublication.js';
+export type { RuntimeDiscovery } from './runtime/discovery/runtimeDiscovery.js';
+export type {
+  RuntimeCapabilities,
+  RuntimeExecutionRunCapabilities,
+} from './runtime/capabilities/runtimeCapabilities.js';
+export {
+  publishRuntimeCapabilities,
+} from './runtime/capabilities/runtimeCapabilitiesPublication.js';
+export type {
+  ProviderAuthAdapter,
+  ProviderConnectedServicesAdapter,
+  ProviderMessageMetaEnricher,
+  RuntimePreferencesAdapter,
+} from './runtime/adjunctAdapters/types.js';
+export {
+  getProviderAuthAdapter,
+  getProviderConnectedServicesAdapter,
+  getProviderRuntimePreferencesAdapter,
+  getProviderMessageMetaEnricher,
+} from './runtime/adjunctAdapters/index.js';
+export {
+  isCodexVendorResumeBackendEnabled,
+  resolveCodexSessionRuntimePreferences,
+  resolveCodexRuntimeBackendMode,
+  resolveCodexSpawnExtrasForRuntime,
+  resolveCodexSpawnExtrasFromSettings,
+  resolveOpenCodeSessionRuntimePreferences,
+} from './runtime/preferences/index.js';
+export {
+  buildClaudeRemoteOutgoingMessageMetaExtras,
+  resolveProviderOutgoingMessageMetaExtras,
+} from './runtime/adjunctAdapters/messageMetaRegistry.js';
 
 export * from './voice/index.js';

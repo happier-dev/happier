@@ -22,18 +22,6 @@ function providerLauncherCommand(agentId: AgentId): string {
 }
 
 export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpConfig>>> = Object.freeze({
-  customAcp: {
-    agentId: 'customAcp',
-    launcher: {
-      command: providerLauncherCommand('customAcp'),
-      args: [],
-    },
-    transportProfile: 'generic',
-    supportsLoadSession: true,
-    supportsModes: 'auto',
-    supportsModels: 'auto',
-    promptImageSupport: 'auto',
-  },
   ohMyPi: {
     agentId: 'ohMyPi',
     launcher: {

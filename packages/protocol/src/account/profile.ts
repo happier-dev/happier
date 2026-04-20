@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 import { ImageRefSchema } from '../common/imageRef.js';
-import { ConnectedServiceIdSchema } from '../connect/connectedServiceSchemas.js';
+import {
+  ConnectedServiceCloudVendorKeySchema,
+  ConnectedServiceIdSchema,
+} from '../connect/connectedServiceSchemas.js';
 
 const ConnectedServiceV2ProfileSchema = z.object({
   profileId: z.string().min(1),
@@ -37,7 +40,7 @@ export const AccountProfileSchema = z.object({
   username: z.string().nullable().optional().default(null),
   avatar: ImageRefSchema.nullable().optional().default(null),
   linkedProviders: z.array(LinkedProviderSchema).default([]),
-  connectedServices: z.array(z.string()).default([]),
+  connectedServices: z.array(ConnectedServiceCloudVendorKeySchema).default([]),
   connectedServicesV2: z.array(ConnectedServiceV2ServiceSchema).default([]),
 }).passthrough();
 

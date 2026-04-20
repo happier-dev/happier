@@ -12,6 +12,107 @@ import {
 } from './promptRegistriesV1.js';
 
 describe('promptRegistriesV1 schemas', () => {
+  it('preserves additive fields across registry payloads', () => {
+    const configured = PromptRegistryConfiguredSourceV1Schema.parse({
+      id: 'local-skills',
+      adapterId: 'git',
+      title: 'Local skills repo',
+      enabled: true,
+      config: {
+        repositoryUrl: 'file:///tmp/skills-repo',
+        subdirectory: 'skills',
+        futureConfigField: true,
+      },
+      futureConfiguredSourceField: 'keep-me',
+    });
+    const adapter = PromptRegistryAdapterDescriptorV1Schema.parse({
+      id: 'skills_sh',
+      title: 'skills.sh',
+      description: 'Curated skills registry.',
+      supportsConfiguredSources: false,
+      supportsQuery: true,
+      minimumQueryLength: 2,
+      futureAdapterField: 'keep-me',
+    });
+    const source = PromptRegistrySourceDescriptorV1Schema.parse({
+      id: 'skills_sh:featured',
+      adapterId: 'skills_sh',
+      title: 'Featured skills',
+      subtitle: 'Popular skills from skills.sh',
+      origin: 'built_in',
+      futureSourceField: 'keep-me',
+    });
+    const summary = PromptRegistryItemSummaryV1Schema.parse({
+      sourceId: 'git:local-skills',
+      itemId: 'git:local-skills:reviewer',
+      title: 'reviewer',
+      description: 'Code review helper',
+      bundleSchemaId: 'skills.skill_md_v1',
+      displayPath: 'reviewer',
+      providerHints: ['agents.skill', 'claude.skill'],
+      futureSummaryField: 'keep-me',
+    });
+    const fetched = PromptRegistryFetchedItemV1Schema.parse({
+      sourceId: 'git:local-skills',
+      itemId: 'git:local-skills:reviewer',
+      title: 'reviewer',
+      description: 'Code review helper',
+      bundleSchemaId: 'skills.skill_md_v1',
+      bundleBody: {
+        v: 1,
+        entries: [{ path: 'SKILL.md', contentBase64: 'IyByZXZpZXdlcg==', contentKind: 'utf8', futureEntryField: true }],
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        futureBundleField: 'keep-me',
+      },
+      futureFetchedField: 'keep-me',
+    });
+    const request = PromptRegistryInstallRequestV1Schema.parse({
+      sourceId: 'skills_sh:featured',
+      itemId: 'skills_sh:featured:web-design-guidelines',
+      configuredSources: [configured],
+      installTarget: {
+        assetTypeId: 'agents.skill',
+        scope: 'project',
+        directory: '/tmp/project',
+        targetName: 'web-design-guidelines',
+        installMode: 'symlink',
+        futureInstallTargetField: 'keep-me',
+      },
+      previewOnly: true,
+      expectedDigest: null,
+      futureRequestField: 'keep-me',
+    });
+    const response = PromptRegistryInstallResponseV1Schema.parse({
+      ok: true,
+      externalRef: { skillName: 'web-design-guidelines', futureRefField: 'keep-me' },
+      digest: 'abc123',
+      preview: {
+        operation: 'write',
+        targetPath: '.agents/skills/web-design-guidelines',
+        fileCount: 2,
+        futurePreviewField: 'keep-me',
+      },
+      futureResponseField: 'keep-me',
+    });
+
+    expect((configured as any).futureConfiguredSourceField).toBe('keep-me');
+    expect((configured.config as any).futureConfigField).toBe(true);
+    expect((adapter as any).futureAdapterField).toBe('keep-me');
+    expect((source as any).futureSourceField).toBe('keep-me');
+    expect((summary as any).futureSummaryField).toBe('keep-me');
+    expect((fetched as any).futureFetchedField).toBe('keep-me');
+    expect((fetched.bundleBody as any).futureBundleField).toBe('keep-me');
+    expect((fetched.bundleBody.entries[0] as any)?.futureEntryField).toBe(true);
+    expect((request as any).futureRequestField).toBe('keep-me');
+    expect((request.installTarget as any).futureInstallTargetField).toBe('keep-me');
+    expect((response as any).futureResponseField).toBe('keep-me');
+    if (response.ok) {
+      expect((response.externalRef as any).futureRefField).toBe('keep-me');
+      expect((response.preview as any).futurePreviewField).toBe('keep-me');
+    }
+  });
+
   it('parses configured git registry sources', () => {
     const parsed = PromptRegistryConfiguredSourceV1Schema.parse({
       id: 'local-skills',

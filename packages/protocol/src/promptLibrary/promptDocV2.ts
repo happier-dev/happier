@@ -7,7 +7,7 @@ export const PromptDocBodyV1Schema = z
     createdAtMs: z.number().int().min(0),
     updatedAtMs: z.number().int().min(0),
   })
-  .strict();
+  .passthrough();
 
 export type PromptDocBodyV1 = z.infer<typeof PromptDocBodyV1Schema>;
 

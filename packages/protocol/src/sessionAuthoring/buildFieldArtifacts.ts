@@ -50,7 +50,7 @@ export function buildSessionAuthoringFieldArtifacts<TDefinitions extends Session
   return {
     definitions,
     shape,
-    valueSchema: z.object(shape).strict() as z.ZodObject<SessionAuthoringFieldShape<TDefinitions>>,
+    valueSchema: z.object(shape).passthrough() as z.ZodObject<SessionAuthoringFieldShape<TDefinitions>>,
     defaults,
   };
 }

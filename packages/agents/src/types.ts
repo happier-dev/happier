@@ -2,8 +2,27 @@ export type { ConnectedServiceId } from '@happier-dev/protocol';
 import { SESSION_PERMISSION_MODES, type ConnectedServiceId } from '@happier-dev/protocol';
 import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
-export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'customAcp', 'ohMyPi', 'pi', 'copilot'] as const;
-export type AgentId = (typeof AGENT_IDS)[number];
+export const CANONICAL_AGENT_IDS = [
+    'claude',
+    'codex',
+    'opencode',
+    'gemini',
+    'auggie',
+    'qwen',
+    'kimi',
+    'kilo',
+    'kiro',
+    'ohMyPi',
+    'pi',
+    'copilot',
+] as const;
+export type CanonicalAgentId = (typeof CANONICAL_AGENT_IDS)[number];
+export type AgentId = CanonicalAgentId;
+export const AGENT_IDS: readonly AgentId[] = [...CANONICAL_AGENT_IDS];
+
+export function isAgentId(value: unknown): value is AgentId {
+    return typeof value === 'string' && CANONICAL_AGENT_IDS.includes(value as AgentId);
+}
 
 export const PERMISSION_MODES = SESSION_PERMISSION_MODES;
 
@@ -102,9 +121,9 @@ export type AgentCore = Readonly<{
     /**
      * Whether this agent contributes a concrete backend definition.
      *
-     * Compatibility-only agent ids such as `customAcp` keep this false so backend
-     * definition assembly can derive its concrete id set from canonical metadata
-     * instead of a hard-coded denylist.
+     * Compatibility-only agent ids keep this false so backend definition assembly
+     * can derive its concrete id set from canonical metadata instead of a
+     * hard-coded denylist.
      */
     backendDefinition?: boolean;
     /**

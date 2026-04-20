@@ -66,12 +66,25 @@ const DIRECT_SESSIONS_PROVIDER_DEFINITION_BY_SOURCE_KIND = Object.freeze(
   ) as Record<DirectSessionsProviderDefinition['sourceKind'], DirectSessionsProviderDefinition>,
 );
 
-export const DIRECT_SESSIONS_PROVIDER_IDS = DIRECT_SESSIONS_PROVIDER_DEFINITIONS.map(
-  (definition) => definition.providerId,
-) as [typeof DIRECT_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'], ...(typeof DIRECT_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'])[]];
+export const DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1 = Object.freeze(
+  Object.fromEntries(
+    DIRECT_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => [definition.sourceKind, [definition.providerId]] as const),
+  ) as Record<DirectSessionsProviderDefinition['sourceKind'], readonly [DirectSessionsProviderDefinition['providerId']]>,
+);
 
+export const DIRECT_SESSIONS_PROVIDER_IDS = Object.freeze(
+  Object.values(DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1).flat(),
+) as [
+  typeof DIRECT_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'],
+  ...(typeof DIRECT_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'])[],
+];
+
+// B8 closure note:
+// Direct-session provider ids/sources stay first-party constrained for this wave.
+// Plugin/runtime parity should not assume plugin-defined direct-session sources yet.
 export const DirectSessionsProviderIdSchema = z.enum(DIRECT_SESSIONS_PROVIDER_IDS);
 export type DirectSessionsProviderId = z.infer<typeof DirectSessionsProviderIdSchema>;
+export type DirectSessionsSourceKindV1 = keyof typeof DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1;
 
 export const DirectSessionsSourceSchema = z.discriminatedUnion('kind', DIRECT_SESSIONS_SOURCE_SCHEMAS);
 export type DirectSessionsSource = z.infer<typeof DirectSessionsSourceSchema>;

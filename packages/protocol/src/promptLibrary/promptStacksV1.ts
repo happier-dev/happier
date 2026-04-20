@@ -1,13 +1,10 @@
 import { z } from 'zod';
 
+import { PromptArtifactRefV1Schema, type PromptArtifactRefV1 } from './promptArtifactRefsV1.js';
 import { PromptPlacementV1Schema, type PromptPlacementV1 } from './promptPlacementV1.js';
 
-export const PromptStackRefV1Schema = z.object({
-  kind: z.enum(['doc', 'bundle']),
-  artifactId: z.string().min(1),
-});
-
-export type PromptStackRefV1 = z.infer<typeof PromptStackRefV1Schema>;
+export const PromptStackRefV1Schema = PromptArtifactRefV1Schema;
+export type PromptStackRefV1 = PromptArtifactRefV1;
 
 export const PromptStackEditPolicyV1Schema = z.enum([
   'user_only',

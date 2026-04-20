@@ -1,5 +1,5 @@
-import { AGENTS_CORE } from './manifest.js';
 import type { AgentId, AgentToolsDelivery, AgentToolsSupportLevel } from './types.js';
+import { getAgentCore } from './manifest.js';
 
 export type AgentToolsCapability = Readonly<{
   delivery: AgentToolsDelivery;
@@ -7,7 +7,7 @@ export type AgentToolsCapability = Readonly<{
 }>;
 
 export function getAgentToolsCapability(agentId: AgentId): AgentToolsCapability {
-  return AGENTS_CORE[agentId].tools;
+  return getAgentCore(agentId).tools;
 }
 
 export function usesNativeMcpTools(agentId: AgentId): boolean {

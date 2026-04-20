@@ -1,14 +1,34 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS } from './types.js';
-import { AGENT_MODEL_CONFIG, getAgentModelConfig, getAgentStaticModels } from './models.js';
+import * as modelsModule from './models.js';
+import { AGENT_IDS, CANONICAL_AGENT_IDS } from './types.js';
+import { LEGACY_CONFIGURED_BACKEND_SENTINEL_ID } from './compat/legacyConfiguredBackend.js';
+import { legacyCustomAcpCompat } from './index.js';
+import {
+  AGENT_MODEL_CONFIG,
+  CANONICAL_AGENT_MODEL_CONFIG,
+  getAgentModelConfig,
+  getAgentStaticModels,
+} from './models.js';
 
 describe('agent model config', () => {
-  it('covers every canonical agent', () => {
-    expect(Object.keys(AGENT_MODEL_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
+  it('covers every canonical agent in the shared model artifact map', () => {
+    expect(Object.keys(AGENT_MODEL_CONFIG).sort()).toEqual([...CANONICAL_AGENT_IDS].sort());
     for (const agentId of AGENT_IDS) {
       expect(getAgentModelConfig(agentId)).toBeDefined();
     }
+  });
+
+  it('keeps customAcp out of the canonical model artifact map while preserving explicit compat lookup', () => {
+    expect(Object.keys(CANONICAL_AGENT_MODEL_CONFIG).sort()).toEqual(
+      [...AGENT_IDS].filter((agentId) => agentId !== LEGACY_CONFIGURED_BACKEND_SENTINEL_ID).sort(),
+    );
+    expect(CANONICAL_AGENT_MODEL_CONFIG).not.toHaveProperty(LEGACY_CONFIGURED_BACKEND_SENTINEL_ID);
+    expect('LEGACY_CUSTOM_ACP_AGENT_MODEL_CONFIG' in modelsModule).toBe(false);
+    expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentModelConfig()).toMatchObject({
+      defaultMode: 'default',
+      acpApplyBehavior: 'set_model',
+    });
   });
 
   it('uses the same name and description contract for static models as dynamic models', () => {
@@ -17,10 +37,19 @@ describe('agent model config', () => {
     const claudeModels = getAgentStaticModels('claude');
     const geminiModels = getAgentStaticModels('gemini');
 
-    expect(claude.staticModels?.find((model) => model.id === 'claude-opus-4-6')).toMatchObject({
-      id: 'claude-opus-4-6',
-      name: 'Opus 4.6',
+    expect(claude.staticModels?.find((model) => model.id === 'claude-opus-4-7')).toMatchObject({
+      id: 'claude-opus-4-7',
+      name: 'Opus 4.7',
       description: expect.any(String),
+      modelOptions: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'reasoning_effort',
+          currentValue: 'xhigh',
+          options: expect.arrayContaining([
+            expect.objectContaining({ value: 'xhigh' }),
+          ]),
+        }),
+      ]),
     });
     expect(gemini.staticModels?.find((model) => model.id === 'gemini-3.1-pro-preview')).toMatchObject({
       id: 'gemini-3.1-pro-preview',
@@ -30,8 +59,8 @@ describe('agent model config', () => {
     expect(claude.staticModels?.map((model) => model.id)).toEqual(claude.allowedModes);
     expect(gemini.staticModels?.map((model) => model.id)).toEqual(gemini.allowedModes);
     expect(claudeModels[0]).toMatchObject({
-      id: 'claude-opus-4-6',
-      name: 'Opus 4.6',
+      id: 'claude-opus-4-7',
+      name: 'Opus 4.7',
       description: expect.any(String),
     });
     expect(geminiModels[0]?.name).toBe('Gemini 2.5 Pro');

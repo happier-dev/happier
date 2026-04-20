@@ -1,5 +1,9 @@
-import type { AgentId } from './types.js';
-import { resolveClaudeEffortLevelsForModelId } from './providers/claude/effort.js';
+import type { AgentId, CanonicalAgentId } from './types.js';
+import {
+  formatClaudeEffortLevelLabel,
+  resolveClaudeDefaultEffortLevelForModelId,
+  resolveClaudeEffortLevelsForModelId,
+} from './providers/claude/effort.js';
 
 export type AgentModelNonAcpApplyScope = 'spawn_only' | 'next_prompt';
 export type AgentModelOptionValueId = string;
@@ -64,30 +68,30 @@ export type AgentModelConfig = Readonly<{
   staticModels?: readonly AgentModelDescriptor[];
 }>;
 
-function toTitleCase(value: string): string {
-  if (!value) return value;
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
-}
-
 function withClaudeEffortModelOptions(model: AgentModelDescriptor): AgentModelDescriptor {
   const levels = resolveClaudeEffortLevelsForModelId(model.id);
-  if (levels.length === 0) return model;
+  const currentValue = resolveClaudeDefaultEffortLevelForModelId(model.id);
+  if (levels.length === 0 || !currentValue) return model;
 
-  const options = levels.map((level) => ({ value: level, name: toTitleCase(level) }));
+  const options = levels.map((level) => ({ value: level, name: formatClaudeEffortLevelLabel(level) }));
   return {
     ...model,
     modelOptions: [{
       id: 'reasoning_effort',
       name: 'Thinking',
       type: 'select',
-      // Claude defaults to high effort when unset; reflect that as the baseline UI value.
-      currentValue: 'high',
+      currentValue,
       options,
     }],
   };
 }
 
 const CLAUDE_STATIC_MODELS = Object.freeze(([
+  {
+    id: 'claude-opus-4-7',
+    name: 'Opus 4.7',
+    description: 'Newest highest-capability Claude model for the hardest coding and reasoning tasks.',
+  },
   {
     id: 'claude-opus-4-6',
     name: 'Opus 4.6',
@@ -191,7 +195,7 @@ const CODEX_STATIC_MODELS = Object.freeze([
   },
 ] satisfies readonly AgentModelDescriptor[]);
 
-export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = Object.freeze({
+export const CANONICAL_AGENT_MODEL_CONFIG = Object.freeze({
   claude: {
     supportsSelection: true,
     supportsFreeform: true,
@@ -274,16 +278,6 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  customAcp: {
-    supportsSelection: true,
-    supportsFreeform: true,
-    nonAcpApplyScope: 'next_prompt',
-    acpApplyBehavior: 'set_model',
-    acpModelConfigOptionId: 'model',
-    dynamicProbe: 'auto',
-    defaultMode: 'default',
-    allowedModes: ['default'],
-  },
   ohMyPi: {
     supportsSelection: true,
     supportsFreeform: true,
@@ -308,7 +302,9 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-});
+} satisfies Record<CanonicalAgentId, AgentModelConfig>);
+
+export const AGENT_MODEL_CONFIG: Readonly<Record<CanonicalAgentId, AgentModelConfig>> = CANONICAL_AGENT_MODEL_CONFIG;
 
 export function getAgentModelConfig(agentId: AgentId): AgentModelConfig {
   return AGENT_MODEL_CONFIG[agentId];

@@ -75,12 +75,25 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonMcpServersDetectResponseSchema?.safeParse).toBe('function');
     });
 
+    it('exports daemon voice inference schemas', () => {
+        expect(typeof (protocol as any).DaemonVoiceInferenceStatusRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceTtsSynthesizeRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceModelsWarmRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceTtsChunkRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceTtsFinalizeRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceSttUploadInitRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceSttUploadFinalizeResponseSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceSttTranscribeRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ModelPackManifestSchema?.safeParse).toBe('function');
+    });
+
     it('exports direct sessions daemon RPC schemas', () => {
         expect(typeof (protocol as any).DirectSessionsProviderIdSchema?.safeParse).toBe('function');
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('claude')).toBe('claude');
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('ohMyPi')).toBe('ohMyPi');
+        expect((protocol as any).DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1.claudeConfig).toEqual(['claude']);
         expect(typeof (protocol as any).DirectSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectTranscriptPageRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
@@ -90,10 +103,28 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DirectSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
     });
 
+    it('exports the canonical action id family catalog', () => {
+        expect((protocol as any).ACTION_ID_FAMILIES_V1.intent_start).toEqual([
+            'review.start',
+            'subagents.plan.start',
+            'subagents.delegate.start',
+            'voice_agent.start',
+        ]);
+        expect((protocol as any).ACTION_IDS).toContain('approval.request.create');
+    });
+
     it('exports session handoff schemas', () => {
         expect(typeof (protocol as any).SessionHandoffStartRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).SessionHandoffPrepareTargetRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).SessionHandoffStatusSchema?.safeParse).toBe('function');
+        expect((protocol as any).SESSION_HANDOFF_PROGRESS_TIMELINES_V1.full).toEqual([
+            'plan',
+            'transfer_blobs',
+            'stage_target',
+            'apply',
+            'import_session',
+            'finalize',
+        ]);
         expect(typeof (protocol as any).TransferChunkEnvelopeSchema?.safeParse).toBe('function');
         expect(Array.isArray((protocol as any).transferChunkEncryptionVectors)).toBe(true);
         expect(typeof (protocol as any).createDeterministicRandomBytesFromBase64).toBe('function');
@@ -150,6 +181,16 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).AcpConfiguredBackendV1Schema?.safeParse).toBe('function');
         expect(typeof (protocol as any).buildAcpConfiguredBackendV1).toBe('function');
         expect(typeof (protocol as any).readAcpConfiguredBackendV1FromMetadata).toBe('function');
+        expect(typeof (protocol as any).isLegacyConfiguredAcpFlavorCarrier).toBe('function');
+    });
+
+    it('keeps the agent-prefixed runtime-descriptor aliases out of the root export surface', () => {
+        expect((protocol as any).AgentRuntimeDescriptorV1Schema).toBeUndefined();
+        expect((protocol as any).readAgentRuntimeDescriptorV1).toBeUndefined();
+        expect(typeof (protocol as any).LegacyAgentRuntimeDescriptorV1Schema?.safeParse).toBe('function');
+        expect((protocol as any).readLegacyAgentRuntimeDescriptorV1).toBeUndefined();
+        expect((protocol as any).readLegacyAgentRuntimeDescriptorV1FromMetadata).toBeUndefined();
+        expect((protocol as any).readLegacyAgentRuntimeDescriptorV1ForProvider).toBeUndefined();
     });
 
     it('exports backend target schemas and helpers', () => {

@@ -5,6 +5,7 @@ import {
   DirectSessionAttachRequestSchema,
   DirectSessionDetachRequestSchema,
   DirectSessionFollowPolicySetRequestSchema,
+  DirectSessionLinkEnsureRequestSchema,
   DirectSessionsSourceSchema,
 } from './daemonRpcV1';
 import { AgentProviderIdV1Schema } from '../providers/agentProviderIdsV1';
@@ -22,15 +23,18 @@ describe('DirectSessionsProviderIdSchema', () => {
 
 describe('DirectSessionsSourceSchema', () => {
   it('accepts exact Codex user-home identity', () => {
-    expect(DirectSessionsSourceSchema.parse({
+    const parsed = DirectSessionsSourceSchema.parse({
       kind: 'codexHome',
       home: 'user',
       homePath: '/tmp/custom-codex-home',
-    })).toEqual({
+      futureSourceFlag: 'keep-me',
+    });
+    expect(parsed).toMatchObject({
       kind: 'codexHome',
       home: 'user',
       homePath: '/tmp/custom-codex-home',
     });
+    expect((parsed as any).futureSourceFlag).toBe('keep-me');
   });
 
   it('accepts exact Codex connected-service profile identity', () => {
@@ -49,8 +53,59 @@ describe('DirectSessionsSourceSchema', () => {
     });
   });
 
+  it('validates runtimeDescriptor as a schema-owned direct-session link field', () => {
+    const parsed = DirectSessionLinkEnsureRequestSchema.parse({
+      machineId: 'machine-1',
+      providerId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: {
+        kind: 'codexHome',
+        home: 'user',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'thread_1',
+        },
+        futureRuntimeDescriptorField: 'keep-me',
+      },
+    });
+
+    expect((parsed as any).runtimeDescriptorV1).toMatchObject({
+      v: 1,
+      providerId: 'codex',
+      provider: {
+        backendMode: 'appServer',
+        vendorSessionId: 'thread_1',
+      },
+    });
+    expect(((parsed as any).runtimeDescriptorV1 as any).futureRuntimeDescriptorField).toBe('keep-me');
+  });
+
+  it('rejects invalid runtimeDescriptorV1 shapes', () => {
+    expect(() => DirectSessionLinkEnsureRequestSchema.parse({
+      machineId: 'machine-1',
+      providerId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: {
+        kind: 'codexHome',
+        home: 'user',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 42,
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'thread_1',
+        },
+      },
+    })).toThrow();
+  });
+
   it('accepts direct-session attach renew requests with an existing lease id', () => {
-    expect(DirectSessionAttachRequestSchema.parse({
+    const parsed = DirectSessionAttachRequestSchema.parse({
       machineId: 'machine-1',
       sessionId: 'session-1',
       providerId: 'codex',
@@ -58,10 +113,13 @@ describe('DirectSessionsSourceSchema', () => {
       source: {
         kind: 'codexHome',
         home: 'user',
+        futureSourceFlag: 'keep-me',
       },
       leaseId: 'lease-1',
       ttlMs: 30_000,
-    })).toEqual({
+      futureAttachFlag: 'keep-me',
+    });
+    expect(parsed).toMatchObject({
       machineId: 'machine-1',
       sessionId: 'session-1',
       providerId: 'codex',
@@ -73,6 +131,7 @@ describe('DirectSessionsSourceSchema', () => {
       leaseId: 'lease-1',
       ttlMs: 30_000,
     });
+    expect((parsed as any).futureAttachFlag).toBe('keep-me');
   });
 
   it('accepts direct-session detach requests', () => {
