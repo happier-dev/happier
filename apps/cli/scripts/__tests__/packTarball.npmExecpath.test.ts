@@ -28,7 +28,7 @@ describe('packTarball (npmExecpath)', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       'npm',
-      ['pack', '--json', '--pack-destination', expect.stringContaining(destDir)],
+      ['pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
       expect.any(Object),
     );
   });
@@ -55,7 +55,7 @@ describe('packTarball (npmExecpath)', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       process.execPath,
-      [npmCliPath, 'pack', '--json', '--pack-destination', expect.stringContaining(destDir)],
+      [npmCliPath, 'pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
       expect.any(Object),
     );
   });

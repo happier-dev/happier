@@ -169,6 +169,30 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
     examples: ['node scripts/pipeline/run.mjs release-build-server-binaries --channel preview --targets linux-x64'],
   },
 
+  'release-prepare-binary-assets': {
+    summary: 'Prepare binary release assets through the shared product publisher path.',
+    usage:
+      `node scripts/pipeline/run.mjs release-prepare-binary-assets --product <cli|hstack|server> --channel <${publicReleaseChannelChoices}> --version <ver> --assets-base-url <url> --commit-sha <sha> [--skip-smoke]`,
+    options: [
+      '--deploy-environment <env>        Wrapper flag (default: production).',
+      '--secrets-source <auto|env|keychain>  Wrapper flag.',
+      '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
+      '--keychain-account <name>         Wrapper flag.',
+      '--dry-run                         Wrapper flag.',
+      '--product <cli|hstack|server>     Script flag (required).',
+      `--channel <${publicReleaseChannelChoices}>        Script flag (required).`,
+      '--version <ver>                   Script flag (required).',
+      '--assets-base-url <url>           Script flag (required).',
+      '--commit-sha <sha>                Script flag (required).',
+      '--workflow-run-id <id>            Script flag (optional).',
+      '--skip-smoke                      Script flag; skip executable smoke in artifact verification.',
+    ],
+    bullets: ['Builds artifacts, generates manifests, and verifies artifacts through the shared product metadata.'],
+    examples: [
+      'node scripts/pipeline/run.mjs release-prepare-binary-assets --product cli --channel preview --version 1.2.3-preview.4 --assets-base-url https://github.com/happier-dev/happier/releases/download/cli-preview --commit-sha HEAD --skip-smoke',
+    ],
+  },
+
   'release-publish-manifests': {
     summary: 'Generate “latest.json” manifest(s) for a product/channel (advanced helper).',
     usage:
@@ -216,6 +240,46 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
     bullets: ['This is safety-critical; prefer running it in CI in addition to local runs.'],
     examples: [
       'node scripts/pipeline/run.mjs release-verify-artifacts --artifacts-dir dist/release-assets/cli --public-key scripts/release/installers/happier-release.pub',
+    ],
+  },
+
+  'release-validate': {
+    summary: 'Run centralized release validation suites against published channels or local builds.',
+    usage:
+      'node scripts/pipeline/run.mjs release-validate --suite <suite> [--platform <linux|darwin|win32>] ([--source <kind> --ref <value>] | [--from-source <kind> --from-ref <value> --to-source <kind> --to-ref <value>] | [--product <id> --version <ver>]) [--dry-run]',
+    options: [
+      '--deploy-environment <env>        Wrapper flag (default: production).',
+      '--secrets-source <auto|env|keychain>  Wrapper flag.',
+      '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
+      '--keychain-account <name>         Wrapper flag.',
+      '--dry-run                         Wrapper flag.',
+      '--suite <suite>                   Script flag; installers-smoke|binary-smoke|artifact-verify|docker-release-assets|cli-update|server-upgrade|daemon-continuity|session-continuity.',
+      '--platform <linux|darwin|win32>   Script flag; defaults to current runtime platform.',
+      '--source <kind>                   Direct source mode (published-channel|published-tag|local-build|local-pack|git-ref-build).',
+      '--ref <ref>                       Direct source ref.',
+      '--from-source <kind>              Update mode source kind.',
+      '--from-ref <ref>                  Update mode source ref.',
+      '--to-source <kind>                Update mode target kind.',
+      '--to-ref <ref>                    Update mode target ref.',
+      '--product <cli|hstack|server>     Script flag for artifact-verify; resolves artifacts/checksums/manifests centrally.',
+      '--version <ver>                   Script flag for artifact-verify product targets.',
+      '--release-channel <stable|preview|dev>  Script flag for artifact-verify product targets and installers-smoke local-build validation.',
+      '--checksums <path>                Script flag for artifact-verify local-build overrides.',
+      '--public-key <path>               Script flag for artifact-verify local-build overrides.',
+      '--skip-smoke                      Script flag for artifact-verify.',
+    ],
+    bullets: [
+      'Executable suites: installers-smoke (published-channel|published-tag|local-build with --release-channel), binary-smoke (local-build on linux), artifact-verify (local-build or --product/--version).',
+      'Docker suite: docker-release-assets (local-build|published-channel; published-channel -> local-build upgrade).',
+      'Continuity suites: daemon-continuity, session-continuity (local-build).',
+      'cli-update (published-channel|published-tag -> published-channel|published-tag|local-build|local-pack).',
+      'server-upgrade (dry-run planning only).',
+    ],
+    examples: [
+      'node scripts/pipeline/run.mjs release-validate --suite installers-smoke --platform linux --source published-channel --ref preview --dry-run',
+      'node scripts/pipeline/run.mjs release-validate --suite installers-smoke --platform linux --source local-build --ref . --release-channel preview --dry-run',
+      'node scripts/pipeline/run.mjs release-validate --suite artifact-verify --platform linux --product cli --version 1.2.3-preview.4 --release-channel preview --skip-smoke --dry-run',
+      'node scripts/pipeline/run.mjs release-validate --suite cli-update --platform darwin --from-source published-tag --from-ref cli-preview --to-source local-build --to-ref HEAD --dry-run',
     ],
   },
 

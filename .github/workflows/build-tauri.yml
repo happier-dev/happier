@@ -183,7 +183,9 @@ jobs:
           # Prefer the npm registry over the Yarn registry to avoid transient 5xx fetch failures
           # that can break long cross-platform build workflows.
           npm_config_registry: https://registry.npmjs.org
-        run: yarn install --frozen-lockfile --ignore-engines --network-timeout 600000
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Build internal packages (protocol, agents)
         run: yarn -s build:packages

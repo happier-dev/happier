@@ -31,6 +31,8 @@ function createPackageJsonText(): string {
         'test:policy': 'node --import tsx ./scripts/testing/validateTestPolicy.ts',
         'test:inventory': 'node --import tsx ./scripts/testing/validateTestInventory.ts',
         'test:migration:inventory': 'node --import tsx ./scripts/testing/migrations/validateMigrationInventory.ts',
+        'test:migration:v2-zero:enforce': 'node --experimental-strip-types ./scripts/testing/migrations/validateV2ZeroInventory.ts --enforce',
+        'test:migration:governance': 'yarn -s test:migration:v2-zero:enforce && yarn -s test:migration:wire-compat',
       },
     },
     null,
@@ -67,7 +69,7 @@ jobs:
       - run: yarn -s test:e2e:mobile
       - run: yarn workspace @happier-dev/tests providers:run all smoke
       - run: yarn test:stress
-      - run: yarn test:wiring:self && yarn test:wiring && yarn test:policy && yarn test:inventory && yarn test:migration:inventory
+      - run: yarn test:wiring:self && yarn test:wiring && yarn test:policy && yarn test:inventory && yarn test:migration:inventory && yarn test:migration:governance
 `;
 }
 
@@ -92,6 +94,8 @@ yarn test:policy
 yarn test:policy:self
 yarn test:inventory
 yarn test:migration:inventory
+yarn test:migration:v2-zero:enforce
+yarn test:migration:governance
 \`\`\`
 `;
 }
@@ -138,6 +142,54 @@ test('flags missing governance docs and feature gating drift', () => {
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.match(messages, /Docs are missing command yarn test:policy/);
   assert.match(messages, /Feature gating is not verified for apps\/server\/vitest\.dbcontract\.config\.ts/);
+});
+
+test('flags missing migration governance parity in docs and workflow', () => {
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText: createPackageJsonText(),
+    workflowText: createWorkflowText().replace(' && yarn test:migration:governance', ''),
+    docsText: createDocsText()
+      .replace('yarn test:migration:v2-zero:enforce\n', '')
+      .replace('yarn test:migration:governance\n', ''),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.match(messages, /Docs are missing command yarn test:migration:v2-zero:enforce/);
+  assert.match(messages, /Docs are missing command yarn test:migration:governance/);
+  assert.match(messages, /Workflow coverage is missing for test:migration:governance/);
+});
+
+test('flags governed root script body drift when migration governance no longer runs the owned validator chain', () => {
+  const packageJson = JSON.parse(createPackageJsonText());
+  packageJson.scripts['test:migration:governance'] = 'yarn -s test:migration:wire-compat';
+
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText: JSON.stringify(packageJson, null, 2),
+    workflowText: createWorkflowText(),
+    docsText: createDocsText(),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.match(messages, /Root script test:migration:governance is missing required command body/);
+  assert.match(messages, /test:migration:v2-zero:enforce/);
+});
+
+test('flags root self-lane drift when migration lib self-tests fall out of test:policy:self', () => {
+  const packageJson = JSON.parse(createPackageJsonText());
+  packageJson.scripts['test:policy:self'] = 'node --import tsx --test scripts/testing/lib/*.test.ts scripts/testing/*.test.ts';
+
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText: JSON.stringify(packageJson, null, 2),
+    workflowText: createWorkflowText(),
+    docsText: createDocsText(),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.match(messages, /Root script test:policy:self is missing required command body/);
+  assert.ok(messages.includes('scripts\\/testing\\/migrations\\/lib\\/\\*\\.test\\.ts'));
 });
 
 test('flags unknown root commands mentioned in docs or workflow', () => {

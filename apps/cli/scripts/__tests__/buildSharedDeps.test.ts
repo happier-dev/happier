@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
 import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempDir';
+import { resolveBundledWorkspaceDependencyBuildOrder } from '../../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
 import {
+  execYarn,
   resolveTscBin,
+  resolveBundledWorkspaceTsconfigPath,
   resolveYarnInvocation,
   runTsc,
   syncBundledWorkspaceDist,
@@ -43,20 +46,29 @@ describe('buildSharedDeps', () => {
     const [cmd, args, opts] = cmdCall;
     expect(cmd).toBe('cmd.exe');
     expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
-    expect(String(args[3])).toContain('tsc.cmd');
-    expect(String(args[3])).toContain('-p');
-    expect(opts).toHaveProperty('stdio', 'inherit');
+    expect(args[3]).toBe(
+      '"C:\\repo\\node_modules\\.bin\\tsc.cmd ^"-p^" ^"C:\\repo\\packages\\protocol\\tsconfig.json^""',
+    );
+    expect(opts).toEqual({
+      stdio: 'inherit',
+      windowsVerbatimArguments: true,
+    });
   });
 
-  it('prefers the workspace root tsc binary when present', () => {
+  it('prefers the workspace root tsc.js entrypoint when the typescript package is resolvable', () => {
     const bin = resolveTscBin({
+      requireResolve: (specifier: string) => {
+        if (specifier === 'typescript/lib/tsc.js') {
+          return '/repo/node_modules/typescript/lib/tsc.js';
+        }
+        throw new Error(`unexpected specifier: ${specifier}`);
+      },
       exists: (candidate: string) =>
-        candidate.includes(`${sep}node_modules${sep}typescript${sep}bin${sep}`) &&
+        candidate.includes(`${sep}node_modules${sep}typescript${sep}lib${sep}`) &&
         !candidate.includes(`${sep}cli${sep}node_modules${sep}`),
     });
 
-    expect(bin).toMatch(/node_modules/);
-    expect(bin).not.toMatch(/cli[\\/]+node_modules/);
+    expect(bin).toBe('/repo/node_modules/typescript/lib/tsc.js');
   });
 
   it('falls back to yarn on PATH when npm_execpath points at npm-cli.js', () => {
@@ -77,12 +89,109 @@ describe('buildSharedDeps', () => {
     });
   });
 
-  it('executes tsc via node to avoid .bin symlink ENOENT issues', () => {
+  it('resolves extension workspace tsconfig paths from packages/extensions/<extensionId>', () => {
+    expect(resolveBundledWorkspaceTsconfigPath({ repoRoot: '/repo', workspaceName: 'extensions-acme' })).toBe(
+      '/repo/packages/extensions/acme/tsconfig.json',
+    );
+  });
+
+  it('orders bundled workspace builds so internal workspace dependencies compile first', () => {
+    const repoRoot = createTempDirSync('happier-cli-build-shared-order-');
+    try {
+      mkdirSync(resolve(repoRoot, 'apps', 'cli'), { recursive: true });
+      writeFileSync(
+        resolve(repoRoot, 'apps', 'cli', 'package.json'),
+        JSON.stringify(
+          {
+            bundledDependencies: [
+              '@happier-dev/cli-common',
+              '@happier-dev/release-runtime',
+              '@happier-dev/agents',
+              '@happier-dev/protocol',
+            ],
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const packageJsonByWorkspace: Record<string, Record<string, unknown>> = {
+        protocol: {
+          name: '@happier-dev/protocol',
+        },
+        agents: {
+          name: '@happier-dev/agents',
+          dependencies: {
+            '@happier-dev/protocol': '0.0.0',
+          },
+        },
+        'release-runtime': {
+          name: '@happier-dev/release-runtime',
+        },
+        'cli-common': {
+          name: '@happier-dev/cli-common',
+          dependencies: {
+            '@happier-dev/agents': '0.0.0',
+            '@happier-dev/release-runtime': '0.0.0',
+          },
+        },
+      };
+
+      for (const [workspaceName, packageJson] of Object.entries(packageJsonByWorkspace)) {
+        mkdirSync(resolve(repoRoot, 'packages', workspaceName), { recursive: true });
+        writeFileSync(
+          resolve(repoRoot, 'packages', workspaceName, 'package.json'),
+          JSON.stringify(packageJson, null, 2),
+          'utf8',
+        );
+        writeFileSync(resolve(repoRoot, 'packages', workspaceName, 'tsconfig.json'), '{}\n', 'utf8');
+      }
+
+      const ordered = resolveBundledWorkspaceDependencyBuildOrder({
+        repoRoot,
+        hostPackageDir: resolve(repoRoot, 'apps', 'cli'),
+      });
+
+      expect(ordered.indexOf('protocol')).toBeLessThan(ordered.indexOf('agents'));
+      expect(ordered.indexOf('agents')).toBeLessThan(ordered.indexOf('cli-common'));
+      expect(ordered.indexOf('release-runtime')).toBeLessThan(ordered.indexOf('cli-common'));
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
+  });
+
+  it('runs yarn.cmd through cmd.exe on Windows to avoid spawn EINVAL', () => {
+    const execFileSync = vi.fn(() => undefined);
+
+    execYarn(['-s', 'workspace', '@happier-dev/cli-common', 'build'], {
+      execFileSync,
+      npmExecPath: '/somewhere/lib/node_modules/npm/bin/npm-cli.js',
+      platform: 'win32',
+      cwd: 'C:\\repo',
+      stdio: 'inherit',
+    });
+
+    const cmdCall = execFileSync.mock.calls[0] as
+      | [string, string[], { cwd: string; stdio: string; windowsVerbatimArguments?: boolean }]
+      | undefined;
+    if (!cmdCall) throw new Error('expected execFileSync call');
+    const [cmd, args, options] = cmdCall;
+    expect(cmd).toBe('cmd.exe');
+    expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+    expect(String(args[3])).toContain('yarn.cmd');
+    expect(String(args[3])).toContain('@happier-dev/cli-common');
+    expect(options.cwd).toBe('C:\\repo');
+    expect(options.stdio).toBe('inherit');
+    expect(options.windowsVerbatimArguments).toBe(true);
+  });
+
+  it('executes the resolved tsc.js entrypoint via node', () => {
     const execFileSync = vi.fn(() => undefined);
 
     runTsc('/repo/packages/protocol/tsconfig.json', {
       execFileSync,
-      tscBin: '/repo/node_modules/typescript/bin/tsc',
+      tscBin: '/repo/node_modules/typescript/lib/tsc.js',
       platform: 'darwin',
     });
 
@@ -90,7 +199,7 @@ describe('buildSharedDeps', () => {
     if (!nodeCall) throw new Error('expected execFileSync call');
     const [cmd, args] = nodeCall;
     expect(cmd).toBe(process.execPath);
-    expect(args).toEqual(['/repo/node_modules/typescript/bin/tsc', '-p', '/repo/packages/protocol/tsconfig.json']);
+    expect(args).toEqual(['/repo/node_modules/typescript/lib/tsc.js', '-p', '/repo/packages/protocol/tsconfig.json']);
   });
 
   it('syncs workspace dist outputs into bundled deps for local bundled hosts when present', () => {

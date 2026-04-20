@@ -89,6 +89,52 @@ test('syncBundledWorkspacePackages derives the default bundled workspace set fro
   assert.equal(cpCalls[0][0], '/repo/packages/custom-bundle/dist');
 });
 
+test('syncBundledWorkspacePackages syncs extension workspaces from packages/extensions/<extensionId>', () => {
+  const cpCalls = [];
+
+  syncBundledWorkspacePackages({
+    repoRoot: '/repo',
+    hostApps: ['cli'],
+    existsSync: (candidate) => {
+      const text = String(candidate);
+      return (
+        text.endsWith('/apps/cli/package.json') ||
+        text.endsWith('/packages/extensions/acme/package.json') ||
+        text.endsWith('/packages/extensions/acme/dist') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/extensions-acme/package.json') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/extensions-acme/dist')
+      );
+    },
+    mkdirSync: () => {},
+    rmSync: () => {},
+    cpSync: (...args) => cpCalls.push(args),
+    renameSync: () => {},
+    readFileSync: (path) => {
+      const text = String(path);
+      if (text.endsWith('/apps/cli/package.json')) {
+        return JSON.stringify({
+          bundledDependencies: ['@happier-dev/extensions-acme'],
+        });
+      }
+
+      if (text.endsWith('/packages/extensions/acme/package.json')) {
+        return JSON.stringify({
+          name: '@happier-dev/extensions-acme',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+        });
+      }
+
+      throw new Error(`unexpected read: ${text}`);
+    },
+    writeFileSync: () => {},
+  });
+
+  assert.equal(cpCalls.length, 1);
+  assert.equal(cpCalls[0][0], '/repo/packages/extensions/acme/dist');
+});
+
 test('rmDirSafeSync retries transient ENOTEMPTY errors before removing a directory', () => {
   assert.equal(typeof rmDirSafeSync, 'function');
 

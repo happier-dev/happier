@@ -136,7 +136,7 @@ if [[ "$1" = "service" && "$2" = "install" ]]; then
   echo "service install ${version} home=\${HAPPIER_HOME_DIR:-unset} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
   exit 0
 fi
-if [[ "$1" = "service" && "$2" = "repair" && "$3" = "--yes" ]]; then
+if [[ ( "$1" = "service" || "$1" = "doctor" ) && "$2" = "repair" && "$3" = "--yes" ]]; then
   if [[ "\${HAPPIER_TEST_UNSUPPORTED_SERVICE_SURFACE:-0}" = "1" ]]; then
     echo "error: unknown option '--yes'" >&2
     exit 1
@@ -146,10 +146,13 @@ if [[ "$1" = "service" && "$2" = "repair" && "$3" = "--yes" ]]; then
     exit 1
   fi
   : > "${logPath}.repair-ran"
-  echo "service repair ${version} home=\${HAPPIER_HOME_DIR:-unset} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
+  echo "$1 repair ${version} home=\${HAPPIER_HOME_DIR:-unset} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
   exit 0
 fi
-if [[ "$1" = "service" && "$2" = "repair" && "$3" = "--json" ]]; then
+if [[ ( "$1" = "service" || "$1" = "doctor" ) && "$2" = "repair" && "$3" = "--json" ]]; then
+  if [[ "\${HAPPIER_TEST_LOG_SERVICE_PREFLIGHT:-0}" = "1" ]]; then
+    echo "$1 repair-json ${version} home=\${HAPPIER_HOME_DIR:-unset} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
+  fi
   if [[ -n "\${HAPPIER_TEST_SERVICE_REPAIR_JSON:-}" ]]; then
     printf '%s' "\${HAPPIER_TEST_SERVICE_REPAIR_JSON}"
     exit 0
@@ -158,6 +161,9 @@ if [[ "$1" = "service" && "$2" = "repair" && "$3" = "--json" ]]; then
   exit 1
 fi
 if [[ "$1" = "service" && "$2" = "list" && "$3" = "--json" ]]; then
+  if [[ "\${HAPPIER_TEST_LOG_SERVICE_PREFLIGHT:-0}" = "1" ]]; then
+    echo "service list-json ${version} home=\${HAPPIER_HOME_DIR:-unset} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
+  fi
   if [[ "\${HAPPIER_TEST_UNSUPPORTED_SERVICE_SURFACE:-0}" = "1" ]]; then
     echo "error: unknown option '--json'" >&2
     exit 1
@@ -177,6 +183,9 @@ if [[ "$1" = "service" && "$2" = "list" ]]; then
 fi
 if [[ "$1" = "service" && "$2" = "status" ]]; then
   if [[ "$3" = "--json" ]]; then
+    if [[ "\${HAPPIER_TEST_LOG_SERVICE_PREFLIGHT:-0}" = "1" ]]; then
+      echo "service status-json ${version} home=\${HAPPIER_HOME_DIR:-unset} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
+    fi
     if [[ -n "\${HAPPIER_TEST_SERVICE_STATUS_JSON:-}" ]]; then
       printf '%s' "\${HAPPIER_TEST_SERVICE_STATUS_JSON}"
       exit 0
@@ -289,6 +298,16 @@ if [[ -n "\${HAPPIER_TEST_CURL_FAIL_ON_MATCH:-}" && "$url" == *"\${HAPPIER_TEST_
   echo "\${HAPPIER_TEST_CURL_FAIL_MESSAGE:-curl failed for $url}" >&2
   exit 17
 fi
+if [[ -n "\${HAPPIER_TEST_CURL_FAIL_ONCE_MATCH:-}" ]] && [[ "$url" == *"\${HAPPIER_TEST_CURL_FAIL_ONCE_MATCH}"* ]]; then
+  marker="${root}/curl-fail-once.marker"
+  if [[ ! -f "$marker" ]]; then
+    : > "$marker"
+    if [[ -n "\${HAPPIER_TEST_CURL_FAIL_ONCE_STDERR:-}" ]]; then
+      printf '%s\\n' "\${HAPPIER_TEST_CURL_FAIL_ONCE_STDERR}" >&2
+    fi
+    exit "\${HAPPIER_TEST_CURL_FAIL_ONCE_EXIT_CODE:-56}"
+  fi
+fi
 if [[ -n "$out" ]]; then
   case "$url" in
     *${artifactV123.artifactName}) cp ${JSON.stringify(artifactV123.tarPath)} "$out" ;;
@@ -315,7 +334,6 @@ printf '%s' '${releaseJson}'
     HAPPIER_PRODUCT: 'cli',
     HAPPIER_INSTALL_DIR: installDir,
     HAPPIER_BIN_DIR: outBinDir,
-    HAPPIER_WITH_DAEMON: '',
     HAPPIER_NO_PATH_UPDATE: '1',
     HAPPIER_NONINTERACTIVE: '1',
     HAPPIER_HOME_DIR: '',
@@ -380,6 +398,40 @@ test('install.sh skips daemon service installation by default in noninteractive 
   }
 });
 
+test('install.sh skips daemon service preflight when daemon setup is explicitly disabled', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_WITH_DAEMON: '0',
+    HAPPIER_TEST_LOG_SERVICE_PREFLIGHT: '1',
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      ok: true,
+      executed: false,
+      existingServices: [
+        { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' },
+      ],
+      actions: [
+        { kind: 'remove-service', service: { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' } },
+      ],
+      manualWarnings: [],
+    }),
+    HAPPIER_TEST_SERVICE_LIST_JSON: JSON.stringify({
+      entries: [
+        { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' },
+      ],
+    }),
+    HAPPIER_TEST_SERVICE_STATUS_JSON: JSON.stringify({
+      ok: true,
+      daemon: { running: true, pid: 42 },
+      owner: null,
+    }),
+  });
+  try {
+    assert.equal(scenario.log.trim(), '');
+    assert.doesNotMatch(scenario.stdout, /Background Service/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
 test('install.sh prints download and extraction progress so large installs do not look stuck', async () => {
   const scenario = await runInstallerScenario();
   try {
@@ -391,6 +443,21 @@ test('install.sh prints download and extraction progress so large installs do no
     assert.match(scenario.stdout, /- \[✓\] Downloading minisign signature/);
     assert.match(scenario.stdout, /- \[\.\.\] Extracting payload/);
     assert.match(scenario.stdout, /- \[✓\] Extracting payload/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh retries transient minisign signature downloads before failing the install', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_TEST_CURL_FAIL_ONCE_MATCH: '.minisig',
+    HAPPIER_TEST_CURL_FAIL_ONCE_STDERR: 'curl: (56) The requested URL returned error: 618',
+    HAPPIER_TEST_CURL_FAIL_ONCE_EXIT_CODE: '56',
+  });
+  try {
+    assert.match(scenario.stdout, /- \[\.\.\] Downloading minisign signature/);
+    assert.match(scenario.stdout, /- \[✓\] Downloading minisign signature/);
+    assert.match(scenario.stdout, /Signature verified\./);
   } finally {
     await scenario.cleanup();
   }
@@ -507,10 +574,10 @@ test('install.sh installs and enables daemon service when explicitly opted in (b
   });
   try {
     assert.equal(scenario.stderr.trim(), '');
-    assert.match(scenario.log, /service repair 1\.2\.4 home=.*\/home\/\.happier channel=stable public=stable strategy=replace-ring/);
-    assert.match(scenario.log, /service install 1\.2\.4 home=.*\/home\/\.happier channel=stable public=stable strategy=replace-ring/);
+    assert.match(scenario.log, /doctor repair 1\.2\.4 home=.*\/install channel=stable public=stable strategy=replace-ring/);
+    assert.match(scenario.log, /service install 1\.2\.4 home=.*\/install channel=stable public=stable strategy=replace-ring/);
     assert.ok(
-      scenario.log.indexOf('service repair 1.2.4') < scenario.log.indexOf('service install 1.2.4'),
+      scenario.log.indexOf('doctor repair 1.2.4') < scenario.log.indexOf('service install 1.2.4'),
       'expected background-service repair to run before install',
     );
   } finally {
@@ -547,8 +614,29 @@ test('install.sh fails closed and prints sudo repair guidance when noninteractiv
   });
   try {
     assert.match(scenario.stderr, /system background services require sudo to repair or switch/i);
-    assert.match(scenario.stderr, /sudo .*service repair --yes/);
+    assert.match(scenario.stderr, /sudo .*doctor repair --yes/);
     assert.doesNotMatch(scenario.stdout, /Installing background service \(user-mode\)\.\.\./);
+    assert.equal(scenario.log.trim(), '');
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh ignores non-JSON repair preflight output and falls back to service list inventory', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_TEST_SERVICE_LIST_JSON: JSON.stringify({
+      entries: [
+        { mode: 'user', targetMode: 'default-following' },
+        { mode: 'system', targetMode: 'default-following' },
+      ],
+    }),
+    HAPPIER_TEST_SERVICE_LIST_TEXT: 'default service (user)\ndefault service (system)',
+    HAPPIER_TEST_SERVICE_STATUS_TEXT: 'current owner: background service',
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: 'error: "existingServices": []',
+  });
+  try {
+    assert.match(scenario.stderr, /system background services require sudo to repair or switch/i);
+    assert.match(scenario.stderr, /sudo .*doctor repair --yes/);
     assert.equal(scenario.log.trim(), '');
   } finally {
     await scenario.cleanup();
@@ -614,7 +702,7 @@ test('install.sh uses aggregated repair preflight JSON before attempting noninte
   });
   try {
     assert.match(scenario.stderr, /system background services require sudo to repair or switch/i);
-    assert.match(scenario.stderr, /sudo .*service repair --yes/);
+    assert.match(scenario.stderr, /sudo .*doctor repair --yes/);
     assert.doesNotMatch(scenario.stderr, /background service install failed/i);
     assert.equal(scenario.log.trim(), '');
   } finally {
@@ -657,8 +745,8 @@ ExecStart=/usr/bin/node /tmp/happier daemon start-sync
   try {
     assert.doesNotMatch(scenario.stderr, /system background services require sudo to repair or switch/i);
     assert.doesNotMatch(scenario.stderr, /outside the installer CLI inventory/i);
-    assert.match(scenario.log, /service repair 1\.2\.4 home=.*\/home\/\.happier channel=stable public=stable strategy=replace-ring/);
-    assert.match(scenario.log, /service install 1\.2\.4 home=.*\/home\/\.happier channel=stable public=stable strategy=replace-ring/);
+    assert.match(scenario.log, /doctor repair 1\.2\.4 home=.*\/install channel=stable public=stable strategy=replace-ring/);
+    assert.match(scenario.log, /service install 1\.2\.4 home=.*\/install channel=stable public=stable strategy=replace-ring/);
   } finally {
     await scenario.cleanup();
   }

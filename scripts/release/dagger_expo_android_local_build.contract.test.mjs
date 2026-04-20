@@ -26,6 +26,11 @@ test('Dagger module exposes expo-android-local-build function', () => {
     /\byarn\b[\s\S]*\binstall\b/,
     'expected expoAndroidLocalBuild to install workspace deps in-container',
   );
+  assert.match(
+    src,
+    /scripts\/ci\/apt-install-with-retry\.sh/,
+    'expected expoAndroidLocalBuild to use the shared apt-install-with-retry helper for transient mirror failures',
+  );
   assert.ok(!src.includes('withMountedCache("/repo/node_modules"'), 'expected to avoid caching /repo/node_modules (too large)');
   assert.doesNotMatch(
     src,

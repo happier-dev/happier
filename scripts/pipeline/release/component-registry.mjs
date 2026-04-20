@@ -63,7 +63,7 @@ export const versionedComponents = Object.freeze({
   server: {
     id: 'server',
     baselineTagPrefix: 'server-v',
-    changedWhen: ['server', 'shared'],
+    changedWhen: ['server', 'shared', 'cli_stack_shared'],
   },
 });
 

@@ -19,6 +19,7 @@ interface ParityDefinition {
   workflowCommands: readonly string[];
   workflowMode: 'all' | 'any';
   triggerMode: TriggerMode;
+  requiredScriptBodyPatterns?: readonly RegExp[];
 }
 
 export type GovernanceCommandId =
@@ -27,7 +28,9 @@ export type GovernanceCommandId =
   | 'test:policy:self'
   | 'test:policy'
   | 'test:inventory'
-  | 'test:migration:inventory';
+  | 'test:migration:inventory'
+  | 'test:migration:v2-zero:enforce'
+  | 'test:migration:governance';
 
 const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
   {
@@ -170,6 +173,7 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
     workflowCommands: [],
     workflowMode: 'any',
     triggerMode: 'local-only',
+    requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/lib\/\*\.test\.ts/],
   },
   {
     id: 'test:policy',
@@ -194,6 +198,25 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
     workflowCommands: ['yarn test:migration:inventory'],
     workflowMode: 'any',
     triggerMode: 'report-only',
+    requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/validateMigrationInventory\.ts/],
+  },
+  {
+    id: 'test:migration:v2-zero:enforce',
+    rootScriptName: 'test:migration:v2-zero:enforce',
+    docsCommands: ['yarn test:migration:v2-zero:enforce'],
+    workflowCommands: ['yarn test:migration:v2-zero:enforce', 'yarn test:migration:governance'],
+    workflowMode: 'any',
+    triggerMode: 'required',
+    requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/validateV2ZeroInventory\.ts/, /--enforce/],
+  },
+  {
+    id: 'test:migration:governance',
+    rootScriptName: 'test:migration:governance',
+    docsCommands: ['yarn test:migration:governance'],
+    workflowCommands: ['yarn test:migration:governance'],
+    workflowMode: 'any',
+    triggerMode: 'required',
+    requiredScriptBodyPatterns: [/test:migration:v2-zero:enforce/, /test:migration:wire-compat/],
   },
 ]);
 
@@ -256,6 +279,16 @@ export function collectWorkflowScriptParityReport(input: WorkflowScriptParityInp
         laneId: definition.id,
         message: `Missing root script ${definition.rootScriptName}.`,
       });
+    }
+
+    const scriptBody = scripts[definition.rootScriptName] ?? '';
+    for (const requiredPattern of definition.requiredScriptBodyPatterns ?? []) {
+      if (!requiredPattern.test(scriptBody)) {
+        issues.push({
+          laneId: definition.id,
+          message: `Root script ${definition.rootScriptName} is missing required command body ${requiredPattern}.`,
+        });
+      }
     }
 
     for (const command of definition.docsCommands) {

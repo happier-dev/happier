@@ -55,7 +55,7 @@ test('pipeline CLI release can dry-run the public dev lane from the nightly dev 
     assert.match(out, /- runPublishServerRuntime: true/);
     assert.match(out, /- runPublishDocker: true/);
     assert.match(out, /- runPublishCliBinaries: true/);
-    assert.match(out, /- runPublishHstackBinaries: true/);
+    assert.match(out, /- runPublishHstackBinaries: false/);
     assert.match(out, /- runPublishNpm: true/);
     assert.match(out, /- runDeployUi: false/);
     assert.match(out, /- runDeployServer: false/);

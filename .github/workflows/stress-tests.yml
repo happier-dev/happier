@@ -3,15 +3,130 @@ name: CI — Stress Tests
 on:
   workflow_dispatch:
     inputs:
+      target_mode:
+        description: "Stress target mode (light|full-compose|external)"
+        required: true
+        default: "light"
+        type: string
+      base_url:
+        description: "Base URL for external mode"
+        required: false
+        default: ""
+        type: string
       repeat:
-        description: "Repetitions (HAPPIER_E2E_REPEAT)"
+        description: "Repetitions"
         required: true
         default: "10"
         type: string
       seed:
-        description: "Seed (HAPPIER_E2E_SEED, empty = random)"
+        description: "Seed (fixed by default for reproducibility; clear it manually for random)"
         required: true
-        default: ""
+        default: "20260418"
+        type: string
+      flake_retry:
+        description: "Enable flake retry"
+        required: true
+        default: "true"
+        type: string
+      users:
+        description: "Concurrent synthetic users"
+        required: true
+        default: "25"
+        type: string
+      machines_per_user:
+        description: "Synthetic machines per user"
+        required: true
+        default: "1"
+        type: string
+      sessions_per_user:
+        description: "Synthetic sessions per user"
+        required: true
+        default: "1"
+        type: string
+      rpc_listeners_per_user:
+        description: "RPC listeners per user"
+        required: true
+        default: "1"
+        type: string
+      rpc_calls_per_second:
+        description: "RPC calls per second"
+        required: true
+        default: "2"
+        type: string
+      messages_per_second:
+        description: "Messages per second"
+        required: true
+        default: "5"
+        type: string
+      reconnect_rate:
+        description: "Reconnect cycles per second budget"
+        required: true
+        default: "0"
+        type: string
+      duration_ms:
+        description: "Scenario steady-state duration in ms"
+        required: true
+        default: "30000"
+        type: string
+      warmup_ms:
+        description: "Warmup duration in ms"
+        required: true
+        default: "1000"
+        type: string
+      cooldown_ms:
+        description: "Cooldown duration in ms"
+        required: true
+        default: "1000"
+        type: string
+      soak_ms:
+        description: "Optional soak duration in ms"
+        required: true
+        default: "0"
+        type: string
+      api_replicas:
+        description: "Compose API replicas for full-compose"
+        required: true
+        default: "2"
+        type: string
+      worker_replicas:
+        description: "Compose worker replicas for full-compose"
+        required: true
+        default: "1"
+        type: string
+      rolling_restart:
+        description: "Enable rolling restart scenario"
+        required: true
+        default: "false"
+        type: string
+      compose_metrics_enabled:
+        description: "Enable compose metrics scraping"
+        required: true
+        default: "true"
+        type: string
+      metrics_scrape_enabled:
+        description: "Scrape stress metrics into the summary"
+        required: true
+        default: "true"
+        type: string
+      keep_topology_on_failure:
+        description: "Preserve failing full-compose topology for inspection"
+        required: true
+        default: "false"
+        type: string
+      save_artifacts_on_success:
+        description: "Keep artifacts on success"
+        required: true
+        default: "false"
+        type: string
+      socket_transport:
+        description: "Synthetic socket transport for light/external (websocket|polling)"
+        required: true
+        default: "websocket"
+        type: string
+      kill_target:
+        description: "Rolling restart target (api|worker|none)"
+        required: true
+        default: "api"
         type: string
   schedule:
     # Nightly (UTC)
@@ -40,4 +155,4 @@ jobs:
       providers_preset: all
       providers_tier: smoke
       run_stress: true
-      stress_config: ${{ (github.event_name == 'workflow_dispatch' && format('{{\"repeat\":{0},\"seed\":{1}}}', toJson(inputs.repeat), toJson(inputs.seed))) || '{"repeat":"10","seed":""}' }}
+      stress_config: ${{ (github.event_name == 'workflow_dispatch' && toJson(inputs)) || '{"target_mode":"light","base_url":"","repeat":"10","seed":"20260418","flake_retry":"true","users":"25","machines_per_user":"1","sessions_per_user":"1","rpc_listeners_per_user":"1","rpc_calls_per_second":"2","messages_per_second":"5","reconnect_rate":"0","duration_ms":"30000","warmup_ms":"1000","cooldown_ms":"1000","soak_ms":"0","api_replicas":"2","worker_replicas":"1","rolling_restart":"false","compose_metrics_enabled":"true","metrics_scrape_enabled":"true","keep_topology_on_failure":"false","save_artifacts_on_success":"false","socket_transport":"websocket","kill_target":"api"}' }}

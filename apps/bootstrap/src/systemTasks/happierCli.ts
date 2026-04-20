@@ -4,6 +4,7 @@ import {
   ensureLocalFirstPartyComponentCommand,
   resolveExplicitOrInstalledLocalFirstPartyCommand,
 } from '@happier-dev/cli-common/systemTasks';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { parseFirstJsonObject, runCommandCapture } from './taskRuntime.js';
 
@@ -26,12 +27,14 @@ export async function runLocalHappierJsonCommand(params: Readonly<{
   args: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
   allowJsonFailure?: boolean;
+  releaseRing?: PublicReleaseRingId;
 }>): Promise<unknown> {
   const processEnv = params.processEnv ?? process.env;
   const command = await ensureLocalFirstPartyComponentCommand({
     componentId: 'happier-cli',
     processEnv,
     envVarNames: DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
+    releaseRing: params.releaseRing,
   });
 
   const result = await runCommandCapture({

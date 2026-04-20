@@ -6,6 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+const sharedPublishScriptPath = resolve(
+  repoRoot,
+  'scripts',
+  'pipeline',
+  'release',
+  'publishing',
+  'publish-binary-release.mjs',
+);
 
 for (const { channel, rollingTag, versionSuffix } of [
   { channel: 'preview', rollingTag: 'cli-preview', versionSuffix: '-preview.' },
@@ -15,7 +23,9 @@ for (const { channel, rollingTag, versionSuffix } of [
     const out = execFileSync(
       process.execPath,
       [
-        resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-cli-binaries.mjs'),
+        sharedPublishScriptPath,
+        '--product',
+        'cli',
         '--channel',
         channel,
         '--allow-stable',
@@ -50,11 +60,12 @@ for (const { channel, rollingTag, versionSuffix } of [
 }
 
 test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_KEY is invalid', async () => {
-  const scriptPath = resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-cli-binaries.mjs');
   const result = spawnSync(
     process.execPath,
     [
-      scriptPath,
+      sharedPublishScriptPath,
+      '--product',
+      'cli',
       '--channel',
       'preview',
       '--allow-stable',

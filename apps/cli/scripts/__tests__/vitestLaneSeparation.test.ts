@@ -35,7 +35,9 @@ describe('Vitest lane separation', () => {
             readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
         ) as { scripts?: Record<string, string> };
 
-        expect(packageJson.scripts?.['test:unit']).toBe('vitest run --config vitest.config.ts');
+        expect(packageJson.scripts?.['test:unit']).toBe(
+            'node scripts/withNodeHeapLimit.mjs vitest run --config vitest.config.ts',
+        );
         expect(packageJson.scripts?.['test:integration']).toBe(
             'node scripts/runVitestShards.mjs --config vitest.integration.config.ts',
         );
@@ -52,5 +54,57 @@ describe('Vitest lane separation', () => {
         expect(
             existsSync(new URL('../buildOutputs.spawnHooks.test.ts', import.meta.url)),
         ).toBe(false);
+    });
+
+    it('resolves bundled workspace packages from their source roots in the unit lane', () => {
+        const alias = unitConfig.resolve?.alias;
+        expect(Array.isArray(alias)).toBe(true);
+
+        expect(alias).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    find: '@happier-dev/cli-common',
+                    replacement: expect.stringContaining('/packages/cli-common/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/agents',
+                    replacement: expect.stringContaining('/packages/agents/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/protocol',
+                    replacement: expect.stringContaining('/packages/protocol/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/connection-supervisor',
+                    replacement: expect.stringContaining('/packages/connection-supervisor/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/transfers',
+                    replacement: expect.stringContaining('/packages/transfers/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/release-runtime',
+                    replacement: expect.stringContaining('/packages/release-runtime/src'),
+                }),
+            ]),
+        );
+    });
+
+    it('resolves bundled workspace packages from their source roots in the integration lane', () => {
+        const alias = integrationConfig.resolve?.alias;
+        expect(Array.isArray(alias)).toBe(true);
+
+        expect(alias).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    find: '@happier-dev/cli-common',
+                    replacement: expect.stringContaining('/packages/cli-common/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/release-runtime',
+                    replacement: expect.stringContaining('/packages/release-runtime/src'),
+                }),
+            ]),
+        );
     });
 });

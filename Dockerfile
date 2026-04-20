@@ -29,7 +29,7 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/sherpa-native/package.json packages/sherpa-native/
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
-COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
+COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
 
 RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
@@ -62,7 +62,7 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/sherpa-native/package.json packages/sherpa-native/
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
-COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
+COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
 
 RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
@@ -93,7 +93,7 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/sherpa-native/package.json packages/sherpa-native/
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
-COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
+COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
 
 RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
@@ -277,6 +277,127 @@ RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @hap
 RUN yarn workspace @happier-dev/release-runtime postinstall:real
 RUN yarn workspace @happier-dev/server postinstall:real
 RUN yarn workspace @happier-dev/server build
+
+# Compose-backed local stress runs do not need a second copy-heavy runtime stage.
+# Reusing the built workspace directly keeps local rebuilds fast enough to validate fresh code.
+FROM server-builder AS server-stress
+ENV NODE_ENV=production
+ENV PORT=3005
+ENV RUN_MIGRATIONS=1
+RUN node <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+const repoRootDir = '/repo';
+const nodeModulesDir = path.join(repoRootDir, 'node_modules');
+const keepEntries = new Set(['.bin', '.prisma']);
+const visitedPackageJsonPaths = new Set();
+const workspacePackageJsonPaths = new Map([
+  ['@happier-dev/server', path.join(repoRootDir, 'apps/server/package.json')],
+  ['@happier-dev/agents', path.join(repoRootDir, 'packages/agents/package.json')],
+  ['@happier-dev/cli-common', path.join(repoRootDir, 'packages/cli-common/package.json')],
+  ['@happier-dev/protocol', path.join(repoRootDir, 'packages/protocol/package.json')],
+  ['@happier-dev/release-runtime', path.join(repoRootDir, 'packages/release-runtime/package.json')],
+]);
+
+function topLevelEntryForPackage(packageName) {
+  if (packageName.startsWith('@')) {
+    const [scope, entryName] = packageName.split('/');
+    return `${scope}/${entryName}`;
+  }
+  return packageName;
+}
+
+function packageJsonPathCandidate(baseDir, packageName) {
+  if (packageName.startsWith('@')) {
+    const [scope, entryName] = packageName.split('/');
+    return path.join(baseDir, 'node_modules', scope, entryName, 'package.json');
+  }
+  return path.join(baseDir, 'node_modules', packageName, 'package.json');
+}
+
+function packageJsonPathForPackage(fromDir, packageName) {
+  if (workspacePackageJsonPaths.has(packageName)) {
+    return workspacePackageJsonPaths.get(packageName);
+  }
+
+  let currentDir = fromDir;
+  while (true) {
+    const candidatePath = packageJsonPathCandidate(currentDir, packageName);
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir || currentDir === repoRootDir) {
+      break;
+    }
+    currentDir = parentDir;
+  }
+
+  const fallbackPath = packageJsonPathCandidate(repoRootDir, packageName);
+  if (fs.existsSync(fallbackPath)) {
+    return fallbackPath;
+  }
+
+  return null;
+}
+
+function addPackageClosure(fromDir, packageName) {
+  const packageJsonPath = packageJsonPathForPackage(fromDir, packageName);
+  if (!packageJsonPath || visitedPackageJsonPaths.has(packageJsonPath)) {
+    return;
+  }
+
+  visitedPackageJsonPaths.add(packageJsonPath);
+  keepEntries.add(topLevelEntryForPackage(packageName));
+
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  const dependencyNames = new Set([
+    ...Object.keys(packageJson.dependencies || {}),
+    ...Object.keys(packageJson.optionalDependencies || {}),
+    ...Object.keys(packageJson.peerDependencies || {}),
+  ]);
+  const packageDir = path.dirname(packageJsonPath);
+
+  for (const dependencyName of dependencyNames) {
+    addPackageClosure(packageDir, dependencyName);
+  }
+}
+
+const serverPackageJson = JSON.parse(fs.readFileSync(path.join(repoRootDir, 'apps/server/package.json'), 'utf8'));
+for (const dependencyName of [
+  ...Object.keys(serverPackageJson.dependencies || {}),
+  ...Object.keys(serverPackageJson.optionalDependencies || {}),
+]) {
+  addPackageClosure(path.join(repoRootDir, 'apps/server'), dependencyName);
+}
+
+for (const entryName of fs.readdirSync(nodeModulesDir)) {
+  const absoluteEntryPath = path.join(nodeModulesDir, entryName);
+  if (entryName.startsWith('@')) {
+    for (const scopedEntryName of fs.readdirSync(absoluteEntryPath)) {
+      const scopedPath = path.join(absoluteEntryPath, scopedEntryName);
+      if (!keepEntries.has(`${entryName}/${scopedEntryName}`)) {
+        fs.rmSync(scopedPath, { recursive: true, force: true });
+      }
+    }
+    if (fs.readdirSync(absoluteEntryPath).length === 0) {
+      fs.rmSync(absoluteEntryPath, { recursive: true, force: true });
+    }
+    continue;
+  }
+
+  if (!keepEntries.has(entryName)) {
+    fs.rmSync(absoluteEntryPath, { recursive: true, force: true });
+  }
+}
+NODE
+RUN chmod +x /repo/apps/server/scripts/run-server.sh
+RUN mkdir -p /data && chown -R node:node /data
+USER node
+EXPOSE 3005
+CMD ["/repo/apps/server/scripts/run-server.sh"]
 
 FROM node:${NODE_VERSION} AS server
 WORKDIR /repo

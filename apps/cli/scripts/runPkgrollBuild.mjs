@@ -40,10 +40,20 @@ export function resolvePkgrollCliPath() {
   return require.resolve('pkgroll/dist/cli.mjs');
 }
 
+function readPkgrollCliKind(pkgrollCliPath, read = readFileSync) {
+  const source = read(pkgrollCliPath, 'utf8');
+  const prefix = source.slice(0, 64);
+  if (/^#!\/bin\/sh\b/.test(prefix) || /^@echo off\b/i.test(prefix)) {
+    return 'shell-wrapper';
+  }
+  return 'node-module';
+}
+
 export function runPkgrollBuild(options = {}) {
   const packageJsonPath = options.packageJsonPath ?? 'package.json';
   const spawn = options.spawn ?? spawnSync;
   const nodeExecutable = options.nodeExecutable ?? process.execPath;
+  const read = options.readFileSync ?? readFileSync;
   const original = readFileSync(packageJsonPath, 'utf8');
   const manifest = JSON.parse(original);
   const pkgrollManifest = `${JSON.stringify(preparePkgrollPackageManifest(manifest), null, 2)}\n`;
@@ -51,6 +61,11 @@ export function runPkgrollBuild(options = {}) {
 
   writeFileSync(packageJsonPath, pkgrollManifest, 'utf8');
   try {
+    if (readPkgrollCliKind(pkgrollCliPath, read) !== 'node-module') {
+      throw new Error(
+        `Local pkgroll install is invalid at ${pkgrollCliPath}: expected a JavaScript entrypoint but found a shell wrapper. Reinstall dependencies before building apps/cli.`,
+      );
+    }
     const result = spawn(nodeExecutable, [pkgrollCliPath], {
       stdio: 'inherit',
     });

@@ -1,4 +1,4 @@
-import { cpSync } from 'node:fs';
+import { cpSync, existsSync } from 'node:fs';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { join, resolve } from 'node:path';
 
@@ -6,6 +6,23 @@ import { createTempDirSync, removeTempDirSync } from '../../../src/testkit/fs/te
 import { ensureDirectorySync, writeTextFileSync } from '../../../src/testkit/fs/fileHelpers';
 
 const runtimeBinFiles = ['happier.mjs', '_resolveRuntimeEntrypoint.mjs', '_prepareRuntimeEntrypoint.mjs'];
+
+function resolveRepoRootForWorkspaceScripts(startDir: string): string {
+  let dir = startDir;
+  for (let i = 0; i < 10; i += 1) {
+    if (existsSync(resolve(dir, 'scripts', 'workspaces', 'syncBundledWorkspacePackages.mjs'))) {
+      return dir;
+    }
+
+    const parent = resolve(dir, '..');
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+
+  return startDir;
+}
 
 export function createCliBinPreflightSandbox(prefix: string): { rootDir: string; cleanup: () => void } {
   const rootDir = createTempDirSync(prefix);
@@ -30,6 +47,20 @@ export function copyCliBinRuntimeFiles(options: {
 
   for (const file of runtimeBinFiles) {
     cpSync(resolve(runtimeBinDir, file), join(options.binDir, file));
+  }
+}
+
+export function copyCliWorkspaceSyncRuntimeFiles(options: {
+  scriptsDir: string;
+  repoRoot?: string;
+}): void {
+  const repoRoot = options.repoRoot ?? resolveRepoRootForWorkspaceScripts(process.cwd());
+  const workspaceScriptsDir = resolve(repoRoot, 'scripts', 'workspaces');
+
+  ensureDirectorySync(options.scriptsDir);
+
+  for (const file of ['syncBundledWorkspacePackages.mjs', 'vendorBundledWorkspaceRuntimeDependenciesFallback.mjs']) {
+    cpSync(resolve(workspaceScriptsDir, file), join(options.scriptsDir, file));
   }
 }
 

@@ -166,3 +166,114 @@ JSON_TAIL
 
   await rm(root, { recursive: true, force: true });
 });
+
+test('install.sh asset lookup handles compact GitHub release JSON', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-compact-asset-lookup-'));
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const unameStubPath = join(binDir, 'uname');
+  await writeFile(
+    unameStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "-s" ]]; then
+  echo Darwin
+  exit 0
+fi
+if [[ "$1" = "-m" ]]; then
+  echo arm64
+  exit 0
+fi
+echo Darwin
+`,
+    'utf8',
+  );
+  await chmod(unameStubPath, 0o755);
+
+  const version = '0.2.2-preview.1775586717.26498';
+  const assetName = `happier-v${version}-darwin-arm64.tar.gz`;
+  const checksumsName = `checksums-happier-v${version}.txt`;
+  const compactReleaseJson = JSON.stringify({
+    assets: [
+      {
+        name: 'darwin-arm64.json',
+        browser_download_url: 'https://example.test/darwin-arm64.json',
+      },
+      {
+        name: assetName,
+        browser_download_url: `https://example.test/${assetName}`,
+      },
+      {
+        name: checksumsName,
+        browser_download_url: `https://example.test/${checksumsName}`,
+      },
+      {
+        name: `${checksumsName}.minisig`,
+        browser_download_url: `https://example.test/${checksumsName}.minisig`,
+      },
+    ],
+  });
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+
+out=""
+url=""
+for ((i=1; i<=$#; i++)); do
+  if [[ "\${!i}" = "-o" ]]; then
+    j=$((i+1))
+    out="\${!j}"
+    continue
+  fi
+  case "\${!i}" in
+    http://*|https://*) url="\${!i}" ;;
+  esac
+done
+if [[ -n "$out" ]]; then
+  if [[ "$url" == *"${checksumsName}" ]]; then
+    printf '%s  %s\\n' "0000000000000000000000000000000000000000000000000000000000000000" "${assetName}" > "$out"
+    exit 0
+  fi
+  : > "$out"
+  exit 0
+fi
+
+printf '%s' '${compactReleaseJson}'
+`,
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_CHANNEL: 'preview',
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NO_PATH_UPDATE: '1',
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_GITHUB_TOKEN: '',
+    GITHUB_TOKEN: '',
+  };
+
+  const res = spawnSync('bash', [installerPath], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  const combined = `${stdout}\n${stderr}`;
+
+  assert.notEqual(res.status, 0, `expected non-zero exit:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.doesNotMatch(combined, /Unable to locate release assets/i, `unexpected asset lookup failure:\n${combined}`);
+  assert.match(combined, /Checksum verification failed/i, `expected checksum failure after parsing compact assets:\n${combined}`);
+
+  await rm(root, { recursive: true, force: true });
+});

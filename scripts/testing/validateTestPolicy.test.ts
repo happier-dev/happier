@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
-import { collectPolicyReport, resolvePolicyExitCode } from './validateTestPolicy.ts';
+import { collectPolicyReport, resolvePolicyExitCode, runTestPolicy } from './validateTestPolicy.ts';
 
 test('resolvePolicyExitCode ignores report-only findings', () => {
   const report = collectPolicyReport([
@@ -45,3 +48,17 @@ test('resolvePolicyExitCode still ignores report-only UI inline mock findings', 
   assert.equal(report.reportOnlyFindings.length, 1);
   assert.equal(resolvePolicyExitCode(report), 0);
 });
+
+test('test:policy fails when an extension violates import boundaries', async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-test-policy-extension-import-boundary-'));
+  mkdirSync(join(rootDir, 'packages/extensions/acme/src'), { recursive: true });
+  writeFileSync(
+    join(rootDir, 'packages/extensions/acme/src/index.ts'),
+    "import { something } from '@/api/types';\nexport const ok = true;\n",
+    'utf8',
+  );
+
+  const report = await runTestPolicy({ rootDir });
+  assert.equal(report.extensionImportBoundaries.ok, false);
+  assert.equal(report.exitCode, 1);
+ });

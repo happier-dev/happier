@@ -110,3 +110,4 @@ _.env.pipeline.production.local
 /authoring-qa-*.png
 /.codex-tmp
 /apps/stack/output
+/apps/ui/src-tauri/vendor

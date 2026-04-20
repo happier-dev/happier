@@ -6,6 +6,12 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  INSTALLER_FILENAMES,
+  INSTALLER_PUBLISH_SPECS,
+  applyInstallerPublishTransform,
+} from './installers/catalog.mjs';
+
 function parseArgs(argv) {
   const kv = new Map();
   const flags = new Set();
@@ -37,19 +43,7 @@ function resolveRepoRoot() {
   return resolve(here, '..', '..', '..');
 }
 
-export const INSTALLER_PUBLISH_SPECS = [
-  { source: 'install.sh', targets: ['install.sh', 'install'] },
-  { source: 'install.sh', targets: ['install-preview.sh', 'install-preview'], transform: 'preview-default-channel' },
-  { source: 'install.sh', targets: ['install-dev.sh', 'install-dev'], transform: 'publicdev-default-channel' },
-  { source: 'install-server', targets: ['install-server'] },
-  { source: 'install-server.sh', targets: ['install-server.sh'] },
-  { source: 'install.ps1', targets: ['install.ps1'] },
-  { source: 'install.ps1', targets: ['install-preview.ps1'], transform: 'preview-default-channel' },
-  { source: 'install.ps1', targets: ['install-dev.ps1'], transform: 'publicdev-default-channel' },
-  { source: 'happier-release.pub', targets: ['happier-release.pub'] },
-];
-
-export const INSTALLER_FILENAMES = INSTALLER_PUBLISH_SPECS.flatMap((spec) => spec.targets);
+export { INSTALLER_FILENAMES, INSTALLER_PUBLISH_SPECS, applyInstallerPublishTransform } from './installers/catalog.mjs';
 
 async function readFileOrNull(path) {
   try {
@@ -66,30 +60,6 @@ function buffersEqual(left, right) {
   if (!left || !right) return false;
   if (left.length !== right.length) return false;
   return left.equals(right);
-}
-
-function applyTransform(contents, transform) {
-  if (!transform) return contents;
-  const raw = contents.toString('utf8');
-  function applyPowerShellChannelDefaultTransform(source, channelDefault) {
-    // Keep the PowerShell transform narrow: only rewrite the Channel param default line,
-    // not unrelated "stable" text that might appear elsewhere in the file.
-    return source.replace(
-      /(^.*\$Channel\s*=\s*\$\(\s*if \(\$env:HAPPIER_CHANNEL\) \{\s*\$env:HAPPIER_CHANNEL\s*\} else \{\s*)"stable"(\s*\}\s*\).*$)/m,
-      `$1"${channelDefault}"$2`,
-    );
-  }
-  if (transform === 'preview-default-channel') {
-    const shellUpdated = raw.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview');
-    const ps1Updated = applyPowerShellChannelDefaultTransform(shellUpdated, 'preview');
-    return Buffer.from(ps1Updated, 'utf8');
-  }
-  if (transform === 'publicdev-default-channel') {
-    const shellUpdated = raw.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev');
-    const ps1Updated = applyPowerShellChannelDefaultTransform(shellUpdated, 'dev');
-    return Buffer.from(ps1Updated, 'utf8');
-  }
-  throw new Error(`[release] unknown installer transform: ${transform}`);
 }
 
 async function fileExists(path) {
@@ -120,7 +90,7 @@ export async function syncInstallers({
     if (!sourceContents) {
       throw new Error(`[release] missing installer source file: ${sourcePath}`);
     }
-    const publishedContents = applyTransform(sourceContents, spec.transform);
+    const publishedContents = applyInstallerPublishTransform(sourceContents, spec.transform);
 
     for (const name of spec.targets) {
       const targetPath = join(targetDir, name);

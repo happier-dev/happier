@@ -12,11 +12,15 @@ async function readJson(relativePath) {
   return JSON.parse(raw);
 }
 
-test('cli-common build scripts resolve TypeScript through the package-manager path instead of a hardcoded repo-root binary', async () => {
+test('cli-common keeps the atomic build entrypoint and resolves typecheck through a shared TypeScript wrapper', async () => {
   const pkg = await readJson('packages/cli-common/package.json');
 
-  assert.match(String(pkg?.scripts?.build ?? ''), /\btsc -p tsconfig\.json\b/);
-  assert.match(String(pkg?.scripts?.typecheck ?? ''), /\btsc --noEmit -p tsconfig\.json\b/);
+  assert.equal(String(pkg?.scripts?.build ?? ''), 'node scripts/build.mjs');
+  assert.match(
+    String(pkg?.scripts?.typecheck ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
+    'cli-common typecheck should use the shared TypeScript wrapper'
+  );
   assert.doesNotMatch(
     String(pkg?.scripts?.build ?? ''),
     /node_modules\/typescript\/bin\/tsc/,
@@ -24,7 +28,60 @@ test('cli-common build scripts resolve TypeScript through the package-manager pa
   );
   assert.doesNotMatch(
     String(pkg?.scripts?.typecheck ?? ''),
-    /node_modules\/typescript\/bin\/tsc/,
-    'cli-common typecheck should not hardcode a repo-root TypeScript binary path'
+    /\btsc\b|node_modules\/typescript\/bin\/tsc/,
+    'cli-common typecheck should not invoke a shell-wrapper TypeScript binary path'
   );
+});
+
+test('workspace build and typecheck scripts use the shared Node-safe TypeScript wrapper instead of bare tsc shell shims', async () => {
+  const agentsPkg = await readJson('packages/agents/package.json');
+  const protocolPkg = await readJson('packages/protocol/package.json');
+  const cliCommonPkg = await readJson('packages/cli-common/package.json');
+  const releaseRuntimePkg = await readJson('packages/release-runtime/package.json');
+
+  assert.match(
+    String(agentsPkg?.scripts?.build ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs -p tsconfig\.json\b/,
+    'agents build should use the shared TypeScript wrapper'
+  );
+  assert.match(
+    String(agentsPkg?.scripts?.typecheck ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
+    'agents typecheck should use the shared TypeScript wrapper'
+  );
+  assert.match(
+    String(protocolPkg?.scripts?.build ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs -p tsconfig\.json\b/,
+    'protocol build should use the shared TypeScript wrapper'
+  );
+  assert.match(
+    String(protocolPkg?.scripts?.typecheck ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
+    'protocol typecheck should use the shared TypeScript wrapper'
+  );
+  assert.match(
+    String(cliCommonPkg?.scripts?.typecheck ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
+    'cli-common typecheck should use the shared TypeScript wrapper'
+  );
+  assert.match(
+    String(releaseRuntimePkg?.scripts?.['build:esm'] ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs -p tsconfig\.json\b/,
+    'release-runtime build:esm should use the shared TypeScript wrapper'
+  );
+
+  for (const [label, script] of [
+    ['agents build', agentsPkg?.scripts?.build],
+    ['agents typecheck', agentsPkg?.scripts?.typecheck],
+    ['protocol build', protocolPkg?.scripts?.build],
+    ['protocol typecheck', protocolPkg?.scripts?.typecheck],
+    ['cli-common typecheck', cliCommonPkg?.scripts?.typecheck],
+    ['release-runtime build:esm', releaseRuntimePkg?.scripts?.['build:esm']],
+  ]) {
+    assert.doesNotMatch(
+      String(script ?? ''),
+      /\btsc\b/,
+      `${label} should not invoke the bare tsc shell shim`
+    );
+  }
 });

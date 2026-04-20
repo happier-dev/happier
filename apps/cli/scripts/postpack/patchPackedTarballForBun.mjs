@@ -66,6 +66,59 @@ function stripInternalWorkspaceDeps(pkgJson) {
   };
 }
 
+function readDeferredVoiceInferenceConfig(pkgJson) {
+  const voiceInference = pkgJson?.happier?.voiceInference;
+  const deferredRuntimePackages = Array.isArray(voiceInference?.deferredRuntimePackages)
+    ? voiceInference.deferredRuntimePackages.map((value) => String(value ?? '').trim()).filter(Boolean)
+    : [];
+  const deferredRuntimeArchiveTargets = Array.isArray(voiceInference?.deferredRuntimeArchiveTargets)
+    ? voiceInference.deferredRuntimeArchiveTargets.map((value) => String(value ?? '').trim()).filter(Boolean)
+    : [];
+
+  if (deferredRuntimePackages.length === 0 || deferredRuntimeArchiveTargets.length === 0) {
+    return null;
+  }
+
+  return {
+    deferredRuntimePackages,
+    deferredRuntimeArchiveTargets,
+  };
+}
+
+function hasCompleteDeferredVoiceInferenceArchiveMatrix({ packageRoot, deferredRuntimeArchiveTargets }) {
+  return deferredRuntimeArchiveTargets.every((target) => (
+    fs.existsSync(path.join(packageRoot, 'tools', 'archives', `voice-inference-runtime-${target}.tar.gz`))
+  ));
+}
+
+function stripDeferredVoiceInferenceDepsIfArchived(pkgJson, { packageRoot }) {
+  const config = readDeferredVoiceInferenceConfig(pkgJson);
+  if (!config) {
+    return pkgJson;
+  }
+
+  if (!hasCompleteDeferredVoiceInferenceArchiveMatrix({
+    packageRoot,
+    deferredRuntimeArchiveTargets: config.deferredRuntimeArchiveTargets,
+  })) {
+    return pkgJson;
+  }
+
+  const deps = pkgJson?.dependencies && typeof pkgJson.dependencies === 'object' ? { ...pkgJson.dependencies } : null;
+  if (!deps) {
+    return pkgJson;
+  }
+
+  for (const packageName of config.deferredRuntimePackages) {
+    delete deps[packageName];
+  }
+
+  return {
+    ...pkgJson,
+    dependencies: deps,
+  };
+}
+
 export async function patchPackedTarballForBun(options = {}) {
   const tarballPath = String(options.tarballPath ?? '').trim() || resolveTarballPathFromEnv(options.env ?? process.env);
   if (!tarballPath) {
@@ -88,7 +141,10 @@ export async function patchPackedTarballForBun(options = {}) {
 
     const pkgJsonRaw = fs.readFileSync(pkgJsonPath, 'utf8');
     const pkgJsonParsed = JSON.parse(pkgJsonRaw);
-    const patched = stripInternalWorkspaceDeps(pkgJsonParsed);
+    const strippedInternal = stripInternalWorkspaceDeps(pkgJsonParsed);
+    const patched = stripDeferredVoiceInferenceDepsIfArchived(strippedInternal, {
+      packageRoot: extractedRoot,
+    });
 
     fs.writeFileSync(pkgJsonPath, `${JSON.stringify(patched, null, 2)}\n`, 'utf8');
 

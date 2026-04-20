@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,5 +43,8 @@ for (const { channel, rollingTag } of [
     assert.match(out, /scripts\/pipeline\/release\/publish-server-runtime\.mjs/);
     // Manifests embed absolute GitHub release URLs; ensure we never emit a double-slash repo placeholder.
     assert.doesNotMatch(out, /https:\/\/github\.com\/\/releases\//);
+
+    const wrapperSource = fs.readFileSync(resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs'), 'utf8');
+    assert.match(wrapperSource, /publishing\/publish-binary-release\.mjs/);
   });
 }

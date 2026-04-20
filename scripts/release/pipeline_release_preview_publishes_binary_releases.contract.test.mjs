@@ -9,7 +9,7 @@ import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './rel
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('release dev to preview can dry-run binary releases for cli + hstack', async () => {
+test('release dev to preview dry-runs CLI binary releases without hstack release signoff', async () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const out = execFileSync(
@@ -44,10 +44,10 @@ test('release dev to preview can dry-run binary releases for cli + hstack', asyn
       },
     );
 
-    assert.match(out, /\[pipeline\] preview version suffix: preview\./);
+    assert.match(out, /\[pipeline\] rolling version suffix: preview\./);
     assert.match(out, /\[pipeline\] dry-run: would run/);
     assert.match(out, /- runPublishCliBinaries: true/);
-    assert.match(out, /- runPublishHstackBinaries: true/);
+    assert.match(out, /- runPublishHstackBinaries: false/);
   } finally {
     stub.cleanup();
   }

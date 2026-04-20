@@ -257,8 +257,9 @@ describe('installRemoteCliDefault', () => {
 });
 
 describe('approveLocalRemoteAuthRequestDefault', () => {
-    it('uses the managed local happier cli runner instead of depending on PATH resolution', async () => {
-        const runLocalHappierJsonCommand = vi.fn(async (params: Readonly<{ args: readonly string[] }>) => {
+    it('uses the selected release-ring local happier runner instead of depending on PATH resolution', async () => {
+        const runLocalHappierJsonCommand = vi.fn(async (params: Readonly<{ args: readonly string[]; releaseRing?: string }>) => {
+            expect(params.releaseRing).toBe('preview');
             expect(params.args).toEqual([
                 'auth',
                 'approve',
@@ -274,7 +275,7 @@ describe('approveLocalRemoteAuthRequestDefault', () => {
 
         await approveLocalRemoteAuthRequestDefault({
             publicKey: 'public-key-123',
-            parsed: createParsedRemoteBootstrapParams(),
+            parsed: createParsedRemoteBootstrapParams('preview'),
         }, {
             runLocalHappierJsonCommand,
         });

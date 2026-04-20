@@ -3,6 +3,8 @@ import { basename, dirname, resolve } from 'node:path';
 
 import { vendorBundledPackageRuntimeDependenciesFallback } from './vendorBundledWorkspaceRuntimeDependenciesFallback.mjs';
 
+const EXTENSIONS_WORKSPACE_PREFIX = 'extensions-';
+
 function stripInternalBundledWorkspaceDependencies(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
 
@@ -248,6 +250,18 @@ function resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFile
   return [...out];
 }
 
+function resolveBundledWorkspaceSourceDir({ repoRoot, workspaceLeaf }) {
+  const leaf = String(workspaceLeaf ?? '').trim();
+  if (!leaf) return '';
+  if (leaf.startsWith(EXTENSIONS_WORKSPACE_PREFIX)) {
+    const extensionId = leaf.slice(EXTENSIONS_WORKSPACE_PREFIX.length);
+    if (extensionId) {
+      return resolve(repoRoot, 'packages', 'extensions', extensionId);
+    }
+  }
+  return resolve(repoRoot, 'packages', leaf);
+}
+
 export function rmDirSafeSync(targetDir, fsOps = {}, { retries = 5, delayMs = 25 } = {}) {
   const rm = fsOps.rmSync ?? rmSync;
   const path = String(targetDir ?? '').trim();
@@ -327,8 +341,10 @@ export function syncBundledWorkspacePackages(opts = {}) {
     : resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFile);
 
   for (const pkg of packages) {
-    const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
-    const srcPackageJsonPath = resolve(repoRoot, 'packages', pkg, 'package.json');
+    const srcPackageDir = resolveBundledWorkspaceSourceDir({ repoRoot, workspaceLeaf: pkg });
+    if (!srcPackageDir) continue;
+    const srcDist = resolve(srcPackageDir, 'dist');
+    const srcPackageJsonPath = resolve(srcPackageDir, 'package.json');
     if (!exists(srcPackageJsonPath)) continue;
 
     for (const hostApp of hostApps) {

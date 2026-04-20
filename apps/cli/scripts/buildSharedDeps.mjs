@@ -3,7 +3,14 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  buildWindowsCmdShimInvocation,
+  execYarn as execYarnCommand,
+  resolveYarnInvocation as resolveYarnCommandInvocation,
+} from '../../../scripts/workspaces/execYarnCommand.mjs';
+import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { syncBundledWorkspacePackages } from '../../../scripts/workspaces/syncBundledWorkspacePackages.mjs';
+import { resolveBundledWorkspaceDependencyBuildOrder } from '../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -30,34 +37,24 @@ function findRepoRoot(startDir) {
 const repoRoot = findRepoRoot(__dirname);
 const DEFAULT_BUILD_LOCK_PATH = resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
 
-function execYarn(args, options) {
-  const { command, args: invocationArgs } = resolveYarnInvocation();
-  return execFileSync(command, [...invocationArgs, ...args], options);
+export function execYarn(args, options = {}) {
+  return execYarnCommand(args, options);
 }
 
-export function resolveYarnInvocation(npmExecPath = process.env.npm_execpath) {
-  const normalizedNpmExecPath = String(npmExecPath ?? '').trim();
-  const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-
-  if (!normalizedNpmExecPath) {
-    return { command: yarnCommand, args: [] };
-  }
-
-  const isNpmCliPath = /(^|[\\/])npm-cli\.js$/i.test(normalizedNpmExecPath);
-  if (isNpmCliPath) {
-    return { command: yarnCommand, args: [] };
-  }
-
-  return { command: process.execPath, args: [normalizedNpmExecPath] };
+export function resolveYarnInvocation(npmExecPath = process.env.npm_execpath, options = {}) {
+  return resolveYarnCommandInvocation(npmExecPath, options);
 }
 
 async function loadCliCommonWorkspacesModule() {
   const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
 
   if (!existsSync(modulePath)) {
-    // `build:shared` is invoked by tests/e2e harnesses that may not have pre-built workspace packages.
-    // Ensure `@happier-dev/cli-common` is compiled before importing its build helpers.
-    execYarn(['-s', 'workspace', '@happier-dev/cli-common', 'build'], { cwd: repoRoot, stdio: 'inherit' });
+    for (const workspaceName of resolveCliBundledWorkspacePackageNames()) {
+      execYarn(['-s', 'workspace', `@happier-dev/${workspaceName}`, 'build'], { cwd: repoRoot, stdio: 'inherit' });
+      if (workspaceName === 'cli-common' && existsSync(modulePath)) {
+        break;
+      }
+    }
   }
 
   if (!existsSync(modulePath)) {
@@ -73,79 +70,59 @@ const {
   vendorBundledPackageRuntimeDependencies,
 } = await loadCliCommonWorkspacesModule();
 const CLI_BUNDLED_HOST_APPS = ['cli'];
-const CLI_SHARED_WORKSPACE_BUILD_ORDER = [
-  'agents',
-  'cli-common',
-  'connection-supervisor',
-  'protocol',
-  'transfers',
-  'release-runtime',
-];
+const EXTENSIONS_WORKSPACE_PREFIX = 'extensions-';
 
-function resolveBundledWorkspacePackageNameFromSrcDir(srcDir) {
-  const normalized = String(srcDir ?? '');
-  const marker = `${resolve(repoRoot, 'packages')}/`;
-  if (!normalized.startsWith(marker)) return null;
-  const rest = normalized.slice(marker.length);
-  const name = rest.split('/')[0] ?? '';
-  return name.trim() || null;
+export function resolveBundledWorkspacePackageDir({ repoRoot, workspaceName }) {
+  const name = String(workspaceName ?? '').trim();
+  if (!name) return '';
+
+  if (name.startsWith(EXTENSIONS_WORKSPACE_PREFIX)) {
+    const extensionId = name.slice(EXTENSIONS_WORKSPACE_PREFIX.length);
+    if (extensionId) {
+      return resolve(repoRoot, 'packages', 'extensions', extensionId);
+    }
+  }
+
+  return resolve(repoRoot, 'packages', name);
+}
+
+export function resolveBundledWorkspaceTsconfigPath({ repoRoot, workspaceName }) {
+  const packageDir = resolveBundledWorkspacePackageDir({ repoRoot, workspaceName });
+  if (!packageDir) return '';
+  return resolve(packageDir, 'tsconfig.json');
 }
 
 function resolveCliBundledWorkspacePackageNames({ exists = existsSync } = {}) {
-  const bundles = resolveWorkspaceBundlesFromPackageJson({
+  return resolveBundledWorkspaceDependencyBuildOrder({
     repoRoot,
     hostPackageDir: resolve(repoRoot, 'apps', 'cli'),
-  });
-
-  const names = [];
-  for (const bundle of bundles) {
-    const name = resolveBundledWorkspacePackageNameFromSrcDir(bundle.srcDir);
-    if (name) names.push(name);
-  }
-
-  // Keep a stable, intention-revealing build order while still deriving the set from the actual bundles.
-  const derived = Array.from(new Set(names));
-  const indexByName = new Map(CLI_SHARED_WORKSPACE_BUILD_ORDER.map((name, index) => [name, index]));
-  derived.sort((left, right) => {
-    const li = indexByName.get(left);
-    const ri = indexByName.get(right);
-    if (li == null && ri == null) return left.localeCompare(right);
-    if (li == null) return 1;
-    if (ri == null) return -1;
-    return li - ri;
-  });
-
-  // Only build packages that look like real repo workspaces.
-  return derived.filter((name) => exists(resolve(repoRoot, 'packages', name, 'tsconfig.json')));
+    existsSync: exists,
+  }).filter((name) => exists(resolveBundledWorkspaceTsconfigPath({ repoRoot, workspaceName: name })));
 }
 
-export function resolveTscBin({ exists } = {}) {
-  const existsImpl = exists ?? existsSync;
-  const isWindows = process.platform === 'win32';
-  const binName = isWindows ? 'tsc.cmd' : 'tsc';
-  const candidates = isWindows
-    ? [
-        // Windows: prefer cmd shims when present.
-        resolve(repoRoot, 'node_modules', '.bin', binName),
-        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
-        // Fallback: allow executing the JS entry via Node if shims are missing.
-        resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
-      ]
-    : [
-        // Prefer the real TypeScript entrypoint over node_modules/.bin symlinks.
-        // On macOS, workspace-hoisted `.bin/*` symlinks can intermittently fail with ENOENT.
-        resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
-        resolve(repoRoot, 'node_modules', '.bin', binName),
-        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
-      ];
+export function resolveTscBin({
+  exists,
+  platform,
+  processExecPath,
+  requireResolve,
+  workspaceDir,
+  repoRoot: repoRootArg,
+} = {}) {
+  const resolvedRepoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : repoRoot;
+  const invocation = resolveTypeScriptCliInvocation({
+    repoRoot: resolvedRepoRoot,
+    workspaceDir: workspaceDir ?? resolve(resolvedRepoRoot, 'apps', 'cli'),
+    processExecPath: processExecPath ?? process.execPath,
+    requireResolve,
+    existsSync: exists ?? existsSync,
+    platform: platform ?? process.platform,
+  });
 
-  for (const candidate of candidates) {
-    if (existsImpl(candidate)) return candidate;
+  if (invocation.command === (processExecPath ?? process.execPath) && invocation.argsPrefix.length > 0) {
+    return invocation.argsPrefix[0];
   }
 
-  return candidates[0];
+  return invocation.command;
 }
 
 const tscBin = resolveTscBin();
@@ -156,8 +133,13 @@ export function runTsc(tsconfigPath, opts) {
   const platform = opts?.platform ?? process.platform;
   try {
     if (platform === 'win32' && (tsc.endsWith('.cmd') || tsc.endsWith('.bat'))) {
-      const command = `"${tsc}" -p "${tsconfigPath}"`;
-      exec('cmd.exe', ['/d', '/s', '/c', command], { stdio: 'inherit' });
+      const wrapped = buildWindowsCmdShimInvocation(tsc, ['-p', tsconfigPath], {
+        comspec: opts?.comspec,
+      });
+      exec(wrapped.command, wrapped.args, {
+        stdio: 'inherit',
+        windowsVerbatimArguments: wrapped.windowsVerbatimArguments,
+      });
     } else {
       // Execute tsc via Node to avoid `.bin/*` symlink spawn issues and shebang portability quirks.
       exec(process.execPath, [tsc, '-p', tsconfigPath], { stdio: 'inherit' });
@@ -224,7 +206,7 @@ export function main() {
   return withBuildSharedDepsLock(async () => {
     const bundledWorkspaceNames = resolveCliBundledWorkspacePackageNames();
     for (const name of bundledWorkspaceNames) {
-      runTsc(resolve(repoRoot, 'packages', name, 'tsconfig.json'));
+      runTsc(resolveBundledWorkspaceTsconfigPath({ repoRoot, workspaceName: name }));
     }
 
     const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');

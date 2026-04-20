@@ -1,4 +1,6 @@
 import { systemTasks } from '@happier-dev/cli-common';
+import { createLocalHappierJsonExecutor } from '@happier-dev/cli-common/systemTasks';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { runLocalHappierJsonCommand } from './happierCli.js';
 
@@ -35,8 +37,29 @@ type AuthWaitSnapshot = Readonly<{
 const DEFAULT_DAEMON_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_DAEMON_READY_POLL_MS = 500;
 
-export async function readActiveRelayProfile(): Promise<ActiveRelayProfile> {
-  const parsed = await runLocalHappierJsonCommand({ args: ['server', 'current', '--json'] });
+type LocalDaemonCliOptions = Readonly<{
+  releaseRing?: PublicReleaseRingId;
+}>;
+
+async function runScopedLocalHappierJsonCommand(
+  args: readonly string[],
+  options: LocalDaemonCliOptions & Readonly<{ allowJsonFailure?: boolean }> = {},
+): Promise<unknown> {
+  if (!options.releaseRing) {
+    return await runLocalHappierJsonCommand({
+      args,
+      ...(typeof options.allowJsonFailure === 'boolean' ? { allowJsonFailure: options.allowJsonFailure } : {}),
+    });
+  }
+
+  const executor = createLocalHappierJsonExecutor({ releaseRing: options.releaseRing });
+  return await executor.runHappierJson(args, {
+    ...(typeof options.allowJsonFailure === 'boolean' ? { allowJsonFailure: options.allowJsonFailure } : {}),
+  });
+}
+
+export async function readActiveRelayProfile(options: LocalDaemonCliOptions = {}): Promise<ActiveRelayProfile> {
+  const parsed = await runScopedLocalHappierJsonCommand(['server', 'current', '--json'], options);
   const active = parsed && typeof parsed === 'object'
     ? (parsed as { data?: { active?: Record<string, unknown> } }).data?.active
     : null;
@@ -52,7 +75,7 @@ export async function readActiveRelayProfile(): Promise<ActiveRelayProfile> {
   if (!serverUrl || !webappUrl) {
     throw new systemTasks.SystemTaskExecutionError(
       'relay_configuration_unavailable',
-      'Could not resolve the currently selected server configuration.',
+      'Could not resolve the currently selected Relay configuration.',
     );
   }
 
@@ -63,9 +86,9 @@ export async function readActiveRelayProfile(): Promise<ActiveRelayProfile> {
   };
 }
 
-export async function readAuthStatus(): Promise<AuthStatusSnapshot> {
-  const parsed = await runLocalHappierJsonCommand({
-    args: ['auth', 'status', '--json'],
+export async function readAuthStatus(options: LocalDaemonCliOptions = {}): Promise<AuthStatusSnapshot> {
+  const parsed = await runScopedLocalHappierJsonCommand(['auth', 'status', '--json'], {
+    ...options,
     allowJsonFailure: true,
   });
   if (!parsed || typeof parsed !== 'object') {
@@ -91,7 +114,7 @@ export async function readAuthStatus(): Promise<AuthStatusSnapshot> {
     }
     throw new systemTasks.SystemTaskExecutionError(
       errorCode || 'auth_status_unavailable',
-      'Could not determine authentication status for the selected server.',
+      'Could not determine authentication status for the selected Relay.',
     );
   }
 
@@ -103,9 +126,8 @@ export async function readAuthStatus(): Promise<AuthStatusSnapshot> {
   };
 }
 
-export async function configureRelay(profile: ActiveRelayProfile): Promise<void> {
-  await runLocalHappierJsonCommand({
-    args: [
+export async function configureRelay(profile: ActiveRelayProfile, options: LocalDaemonCliOptions = {}): Promise<void> {
+  await runScopedLocalHappierJsonCommand([
       'server',
       'set',
       '--server-url',
@@ -114,12 +136,11 @@ export async function configureRelay(profile: ActiveRelayProfile): Promise<void>
       '--webapp-url',
       profile.webappUrl,
       '--json',
-    ],
-  });
+    ], options);
 }
 
-export async function requestAuthPairing(): Promise<AuthRequestSnapshot> {
-  const parsed = await runLocalHappierJsonCommand({ args: ['auth', 'request', '--json'] });
+export async function requestAuthPairing(options: LocalDaemonCliOptions = {}): Promise<AuthRequestSnapshot> {
+  const parsed = await runScopedLocalHappierJsonCommand(['auth', 'request', '--json'], options);
   const publicKey = parsed && typeof parsed === 'object' && typeof (parsed as { publicKey?: unknown }).publicKey === 'string'
     ? (parsed as { publicKey: string }).publicKey.trim()
     : '';
@@ -129,57 +150,53 @@ export async function requestAuthPairing(): Promise<AuthRequestSnapshot> {
   return { publicKey };
 }
 
-export async function approveAuthPairing(publicKey: string): Promise<void> {
-  await runLocalHappierJsonCommand({
-    args: ['auth', 'approve', '--public-key', publicKey, '--json'],
-  });
+export async function approveAuthPairing(publicKey: string, options: LocalDaemonCliOptions = {}): Promise<void> {
+  await runScopedLocalHappierJsonCommand(['auth', 'approve', '--public-key', publicKey, '--json'], options);
 }
 
-export async function waitForAuthPairing(publicKey: string): Promise<AuthWaitSnapshot> {
-  const parsed = await runLocalHappierJsonCommand({
-    args: ['auth', 'wait', '--public-key', publicKey, '--json'],
-  });
+export async function waitForAuthPairing(publicKey: string, options: LocalDaemonCliOptions = {}): Promise<AuthWaitSnapshot> {
+  const parsed = await runScopedLocalHappierJsonCommand(['auth', 'wait', '--public-key', publicKey, '--json'], options);
   const machineId = parsed && typeof parsed === 'object' && typeof (parsed as { machineId?: unknown }).machineId === 'string'
     ? (parsed as { machineId: string }).machineId.trim()
     : null;
   return { machineId: machineId || null };
 }
 
-export async function pairLocalMachineIfNeeded(authStatus: AuthStatusSnapshot): Promise<string | null> {
+export async function pairLocalMachineIfNeeded(authStatus: AuthStatusSnapshot, options: LocalDaemonCliOptions = {}): Promise<string | null> {
   if (!authStatus.authenticated) {
     throw new systemTasks.SystemTaskExecutionError(
       'not_authenticated',
-      'Authenticate this computer with the selected server before continuing.',
+      'Authenticate this computer with the selected Relay before continuing.',
     );
   }
   if (authStatus.machineId) {
     return authStatus.machineId;
   }
 
-  const request = await requestAuthPairing();
-  await approveAuthPairing(request.publicKey);
-  const paired = await waitForAuthPairing(request.publicKey);
+  const request = await requestAuthPairing(options);
+  await approveAuthPairing(request.publicKey, options);
+  const paired = await waitForAuthPairing(request.publicKey, options);
   return paired.machineId;
 }
 
-export async function installService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['service', 'install', '--json'] });
+export async function installService(options: LocalDaemonCliOptions = {}): Promise<void> {
+  await runScopedLocalHappierJsonCommand(['service', 'install', '--json'], options);
 }
 
-export async function startService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['service', 'start', '--json'] });
+export async function startService(options: LocalDaemonCliOptions = {}): Promise<void> {
+  await runScopedLocalHappierJsonCommand(['service', 'start', '--json'], options);
 }
 
-export async function stopService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['service', 'stop', '--json'] });
+export async function stopService(options: LocalDaemonCliOptions = {}): Promise<void> {
+  await runScopedLocalHappierJsonCommand(['service', 'stop', '--json'], options);
 }
 
-export async function restartService(): Promise<void> {
-  await runLocalHappierJsonCommand({ args: ['service', 'restart', '--json'] });
+export async function restartService(options: LocalDaemonCliOptions = {}): Promise<void> {
+  await runScopedLocalHappierJsonCommand(['service', 'restart', '--json'], options);
 }
 
-export async function readDaemonStatus(): Promise<DaemonStatusSnapshot> {
-  const parsed = await runLocalHappierJsonCommand({ args: ['daemon', 'status', '--json'] });
+export async function readDaemonStatus(options: LocalDaemonCliOptions = {}): Promise<DaemonStatusSnapshot> {
+  const parsed = await runScopedLocalHappierJsonCommand(['daemon', 'status', '--json'], options);
   if (!parsed || typeof parsed !== 'object') {
     throw new systemTasks.SystemTaskExecutionError(
       'invalid_cli_response',

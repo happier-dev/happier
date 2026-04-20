@@ -39,6 +39,8 @@ describe('bundleWorkspaceDeps', () => {
           '@happier-dev/agents',
           '@happier-dev/cli-common',
           '@happier-dev/connection-supervisor',
+          '@happier-dev/extension-sdk',
+          '@happier-dev/extensions-claude',
           '@happier-dev/protocol',
           '@happier-dev/transfers',
           '@happier-dev/release-runtime',
@@ -82,6 +84,23 @@ describe('bundleWorkspaceDeps', () => {
       packageName: '@happier-dev/connection-supervisor',
       manifestOverrides: { scripts: { postinstall: 'echo should-not-run' } },
       files: { 'dist/index.js': 'export const q = 4;\n' },
+    });
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/extension-sdk',
+      packageName: '@happier-dev/extension-sdk',
+      manifestOverrides: {
+        scripts: { postinstall: 'echo should-not-run' },
+        devDependencies: { typescript: '^5' },
+      },
+      files: { 'dist/index.js': 'export const sdk = true;\n' },
+    });
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/extensions/claude',
+      packageName: '@happier-dev/extensions-claude',
+      manifestOverrides: { scripts: { postinstall: 'echo should-not-run' } },
+      files: { 'dist/index.js': 'export const bundledExtension = true;\n' },
     });
     writeWorkspacePackageFixture({
       repoRoot,
@@ -141,6 +160,12 @@ describe('bundleWorkspaceDeps', () => {
     const bundledConnectionSupervisorPkgJson = JSON.parse(
       readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'connection-supervisor', 'package.json'), 'utf8'),
     );
+    const bundledExtensionSdkPkgJson = JSON.parse(
+      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'extension-sdk', 'package.json'), 'utf8'),
+    );
+    const bundledExtensionPkgJson = JSON.parse(
+      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'extensions-claude', 'package.json'), 'utf8'),
+    );
     const bundledTransfersPkgJson = JSON.parse(
       readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'transfers', 'package.json'), 'utf8'),
     );
@@ -160,6 +185,15 @@ describe('bundleWorkspaceDeps', () => {
 
     expect(bundledConnectionSupervisorPkgJson.scripts).toBeUndefined();
     expect(bundledConnectionSupervisorPkgJson.name).toBe('@happier-dev/connection-supervisor');
+
+    expect(bundledExtensionSdkPkgJson.scripts).toBeUndefined();
+    expect(bundledExtensionSdkPkgJson.devDependencies).toBeUndefined();
+    expect(bundledExtensionSdkPkgJson.name).toBe('@happier-dev/extension-sdk');
+    expect(bundledExtensionSdkPkgJson.dependencies?.['@happier-dev/agents']).toBeUndefined();
+    expect(bundledExtensionSdkPkgJson.dependencies?.['@happier-dev/protocol']).toBeUndefined();
+
+    expect(bundledExtensionPkgJson.scripts).toBeUndefined();
+    expect(bundledExtensionPkgJson.name).toBe('@happier-dev/extensions-claude');
 
     expect(bundledTransfersPkgJson.scripts).toBeUndefined();
     expect(bundledTransfersPkgJson.name).toBe('@happier-dev/transfers');
@@ -221,6 +255,7 @@ describe('bundleWorkspaceDeps', () => {
     for (const pkg of [
       { name: '@happier-dev/agents', workspacePath: 'packages/agents' },
       { name: '@happier-dev/cli-common', workspacePath: 'packages/cli-common' },
+      { name: '@happier-dev/extension-sdk', workspacePath: 'packages/extension-sdk' },
       { name: '@happier-dev/transfers', workspacePath: 'packages/transfers' },
     ]) {
       writeWorkspacePackageFixture({
@@ -296,6 +331,93 @@ describe('bundleWorkspaceDeps', () => {
 
       expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'package.json'))).toBe(true);
       expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'agents', 'package.json'))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails fast if packages/extensions contains extension workspaces that are not declared as bundledDependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-extension-dep-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: [],
+      });
+
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/extensions/acme',
+        packageName: '@happier-dev/extensions-acme',
+        manifestOverrides: { exports: { '.': { default: './dist/index.js' } } },
+        files: { 'dist/index.js': 'export const bundledExtension = true;\n' },
+      });
+
+      await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).rejects.toThrow(
+        'Missing bundled extension workspace dependencies',
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('ignores underscore-prefixed extension workspace directories when validating bundledDependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-extension-dep-underscore-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: [],
+      });
+
+      // `_template` is a scaffolding directory and must never be treated as a shippable bundled extension.
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/extensions/_template',
+        packageName: '@happier-dev/extensions-_template',
+      });
+
+      await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).resolves.toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('preserves non-dist export targets for bundled workspaces', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-nondist-exports-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: ['@happier-dev/release-runtime'],
+      });
+
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/release-runtime',
+        packageName: '@happier-dev/release-runtime',
+        manifestOverrides: {
+          exports: {
+            '.': { default: './dist/index.js' },
+            './releaseRings': {
+              import: './dist/releaseRings.js',
+              require: './releaseRings.cjs',
+              default: './dist/releaseRings.js',
+            },
+          },
+        },
+        files: {
+          'dist/index.js': 'export const release = true;\n',
+          'dist/releaseRings.js': 'export const releaseRings = true;\n',
+          'releaseRings.cjs': 'module.exports = { releaseRings: true };\n',
+        },
+      });
+
+      await bundleWorkspaceDeps({ repoRoot, happyCliDir });
+
+      expect(
+        readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'release-runtime', 'releaseRings.cjs'), 'utf8'),
+      ).toContain('releaseRings');
     } finally {
       cleanup();
     }

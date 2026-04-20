@@ -136,7 +136,9 @@ jobs:
           # Speed up installs: CLI binary publishing does not require UI web-only vendored assets.
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Publish CLI binaries (pipeline)
         env:

@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { relayAccess, systemTasks } from '@happier-dev/cli-common';
+import { parseSetupRepairThisComputerParams } from '@happier-dev/cli-common/systemTasks';
 import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/providers';
 import type { RelayAccessExecutionContext } from '@happier-dev/cli-common/relayAccess';
@@ -40,7 +41,7 @@ import { approveLocalRemoteAuthRequestDefault, installRemoteCliDefault, resolveR
 import { installRemoteCliForManageHostDefault, runRemoteDaemonServiceCommandDefault, runRemoteRelayRuntimeCommandDefault, testRemoteSshConnectionDefault } from './remoteSshManageHostTasks.js';
 import { checkRelayRuntimeHealthDefault, controlRelayRuntimeDefault, installOrUpdateRelayRuntimeDefault, readRelayRuntimeStatusDefault } from './relayRuntimeTasks.js';
 import { createRelayAccessConfigStore } from './relayAccessConfigStore.js';
-import { runCommandCapture } from './taskRuntime.js';
+import { normalizeBootstrapChannel, runCommandCapture } from './taskRuntime.js';
 
 function stableStringify(value: SystemTaskJsonValue): string {
   if (value === null) return 'null';
@@ -89,6 +90,7 @@ type RelayDriftRepairDeps = Readonly<{
     activeRelayUrl: string;
     activeWebappUrl: string;
     activeLocalRelayUrl: string | null;
+    channel?: 'stable' | 'preview' | 'dev' | 'publicdev';
     surface?: string;
   }>, context: Readonly<{
     signal: AbortSignal;
@@ -237,7 +239,7 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
         yield {
           type: 'progress',
           stepId: 'relay.drift.repair.start',
-          message: 'Connecting background service to the selected relay',
+          message: 'Connecting background service to the selected Relay',
         };
 
         const progressEvents: Array<Readonly<{ type: 'progress'; stepId: string; message?: string }>> = [];
@@ -306,7 +308,9 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
 
 function createSetupRepairThisComputerHandler(): systemTasks.SystemTaskExecutionRunner {
   return async function* (params, context) {
-    const deps = createSetupRepairThisComputerDeps(context.signal);
+    const parsed = parseSetupRepairThisComputerParams(params);
+    const releaseRing = parsed.channel ? normalizeBootstrapChannel(parsed.channel).releaseChannel : undefined;
+    const deps = createSetupRepairThisComputerDeps(context.signal, releaseRing);
     const runner = systemTasks.createExecutionRunnerFromKind(
       systemTasks.createSetupRepairThisComputerTaskKind(deps),
     );
@@ -314,14 +318,17 @@ function createSetupRepairThisComputerHandler(): systemTasks.SystemTaskExecution
   };
 }
 
-function createSetupRepairThisComputerDeps(signal: AbortSignal): systemTasks.SetupRepairThisComputerDeps {
+function createSetupRepairThisComputerDeps(
+  signal: AbortSignal,
+  releaseRing?: 'stable' | 'preview' | 'publicdev',
+): systemTasks.SetupRepairThisComputerDeps {
   let cachedRelayProfile: Awaited<ReturnType<typeof readActiveRelayProfile>> | null = null;
   let cachedAuthStatus: AuthStatusSnapshot | null = null;
 
   return {
     async readActiveRelayProfile() {
       if (cachedRelayProfile) return cachedRelayProfileToRepairProfile(cachedRelayProfile);
-      cachedRelayProfile = await readActiveRelayProfile();
+      cachedRelayProfile = await readActiveRelayProfile({ releaseRing });
       return cachedRelayProfileToRepairProfile(cachedRelayProfile);
     },
     async readAuthStatus() {
@@ -332,19 +339,19 @@ function createSetupRepairThisComputerDeps(signal: AbortSignal): systemTasks.Set
       return { authenticated: true, machineId: status.machineId };
     },
     async configureRelay(params) {
-      const profile = cachedRelayProfile ?? await readActiveRelayProfile();
+      const profile = cachedRelayProfile ?? await readActiveRelayProfile({ releaseRing });
       cachedRelayProfile = profile;
       await configureRelay({
         serverUrl: params.relayUrl,
         webappUrl: params.webappUrl,
         localServerUrl: params.activeLocalRelayUrl,
-      });
+      }, { releaseRing });
     },
     async requestAuthPairing() {
-      return await requestAuthPairing();
+      return await requestAuthPairing({ releaseRing });
     },
     async waitForAuthPairing(publicKey) {
-      const result = await waitForAuthPairing(publicKey);
+      const result = await waitForAuthPairing(publicKey, { releaseRing });
       const machineId = String(result.machineId ?? '').trim();
       if (!machineId) {
         throw new systemTasks.SystemTaskExecutionError(
@@ -356,18 +363,18 @@ function createSetupRepairThisComputerDeps(signal: AbortSignal): systemTasks.Set
     },
     async pairLocalMachineIfNeeded() {
       const status = await readCachedAuthStatus();
-      const machineId = await pairLocalMachineIfNeeded(status);
+      const machineId = await pairLocalMachineIfNeeded(status, { releaseRing });
       return machineId ?? '';
     },
     async installDaemonService() {
-      await installService();
+      await installService({ releaseRing });
     },
     async startDaemonService() {
-      await startService();
+      await startService({ releaseRing });
     },
     async waitForReadyDaemon() {
       return await waitForReadyDaemon({
-        readDaemonStatus,
+        readDaemonStatus: async () => await readDaemonStatus({ releaseRing }),
         signal,
       });
     },
@@ -375,7 +382,7 @@ function createSetupRepairThisComputerDeps(signal: AbortSignal): systemTasks.Set
 
   async function readCachedAuthStatus(): Promise<AuthStatusSnapshot> {
     if (cachedAuthStatus) return cachedAuthStatus;
-    cachedAuthStatus = await readAuthStatus();
+    cachedAuthStatus = await readAuthStatus({ releaseRing });
     return cachedAuthStatus;
   }
 
@@ -392,35 +399,36 @@ function createSetupRepairThisComputerDeps(signal: AbortSignal): systemTasks.Set
 function createRelayDriftRepairDeps(override?: Partial<RelayDriftRepairDeps>): RelayDriftRepairDeps {
   return {
     async connectBackgroundService(params, context) {
+      const releaseRing = params.channel ? normalizeBootstrapChannel(params.channel).releaseChannel : undefined;
       context.emitProgress('relay.connectBackgroundService.prepare');
       context.emitProgress('relay.connectBackgroundService.configureRelay');
       await configureRelay({
         serverUrl: params.activeRelayUrl,
         localServerUrl: params.activeLocalRelayUrl,
         webappUrl: params.activeWebappUrl,
-      });
+      }, { releaseRing });
 
-      const authStatus = await readAuthStatus();
+      const authStatus = await readAuthStatus({ releaseRing });
       if (!authStatus.authenticated) {
         throw new systemTasks.SystemTaskExecutionError(
           'not_authenticated',
-          'Authenticate this computer with the selected server before continuing.',
+          'Authenticate this computer with the selected Relay before continuing.',
         );
       }
 
-      const machineId = await repairRelayDriftAuthIfNeeded(authStatus, context.emitProgress);
+      const machineId = await repairRelayDriftAuthIfNeeded(authStatus, context.emitProgress, releaseRing);
 
       context.emitProgress('relay.connectBackgroundService.finish');
-      await installService();
-      await startService();
+      await installService({ releaseRing });
+      await startService({ releaseRing });
       const daemonStatus = await waitForReadyDaemon({
-        readDaemonStatus,
+        readDaemonStatus: async () => await readDaemonStatus({ releaseRing }),
         signal: context.signal,
       });
       if (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth) {
         throw new systemTasks.SystemTaskExecutionError(
           'daemon_service_not_ready',
-          'Background service did not reach a ready state for the selected server.',
+          'Background service did not reach a ready state for the selected Relay.',
         );
       }
 
@@ -439,18 +447,20 @@ function createRelayDriftRepairDeps(override?: Partial<RelayDriftRepairDeps>): R
 async function repairRelayDriftAuthIfNeeded(
   authStatus: AuthStatusSnapshot,
   emitProgress: (stepId: string, message?: string) => void,
+  releaseRing?: 'stable' | 'preview' | 'publicdev',
 ): Promise<string | null> {
   if (authStatus.machineId) {
     return authStatus.machineId;
   }
   emitProgress('relay.connectBackgroundService.authenticate');
-  return await pairLocalMachineIfNeeded(authStatus);
+  return await pairLocalMachineIfNeeded(authStatus, { releaseRing });
 }
 
 function parseRelayConnectBackgroundServiceParams(params: unknown): Readonly<{
   activeRelayUrl: string;
   activeWebappUrl: string;
   activeLocalRelayUrl: string | null;
+  channel?: 'stable' | 'preview' | 'dev' | 'publicdev';
   surface?: string;
 }> {
   if (!params || typeof params !== 'object' || Array.isArray(params)) {
@@ -463,6 +473,9 @@ function parseRelayConnectBackgroundServiceParams(params: unknown): Readonly<{
   const activeRelayUrl = String(record.activeRelayUrl ?? '').trim();
   const activeWebappUrl = String(record.activeWebappUrl ?? '').trim();
   const activeLocalRelayUrlRaw = record.activeLocalRelayUrl;
+  const channel = typeof record.channel === 'string' && record.channel.trim()
+    ? record.channel.trim()
+    : undefined;
   const surface = typeof record.surface === 'string' && record.surface.trim()
     ? record.surface.trim()
     : undefined;
@@ -481,6 +494,7 @@ function parseRelayConnectBackgroundServiceParams(params: unknown): Readonly<{
     activeRelayUrl,
     activeWebappUrl,
     activeLocalRelayUrl,
+    ...(channel ? { channel: channel as 'stable' | 'preview' | 'dev' | 'publicdev' } : {}),
     surface,
   };
 }

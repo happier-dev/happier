@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('install.sh --run setup-relay runs the installed CLI without network', async () => {
+test('install.sh --run setup-relay applies the default relay install arguments without network', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-run-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -40,7 +40,32 @@ happier daemon
 EOF
   exit 0
 fi
+if [[ "$1" = "relay" && "$2" = "--help" ]]; then
+  cat <<'EOF'
+happier relay inspect-target [--json]
+happier relay set <relay-url>
+happier relay host <install|status|start|stop|restart|uninstall>
+EOF
+  exit 0
+fi
 if [[ "$1" = "relay" && "$2" = "host" && "$3" = "install" ]]; then
+  shift 3
+  if [[ " $* " != *" --mode user "* ]]; then
+    echo "missing --mode user" >&2
+    exit 23
+  fi
+  if [[ " $* " != *" --yes "* ]]; then
+    echo "missing --yes" >&2
+    exit 24
+  fi
+  if [[ " $* " != *" --channel stable "* ]]; then
+    echo "missing --channel stable" >&2
+    exit 25
+  fi
+  if [[ " $* " != *" --preserve-active-server "* ]]; then
+    echo "missing --preserve-active-server" >&2
+    exit 26
+  fi
   echo "Relay host installed"
   echo "  http://localhost:53288"
   exit 0
@@ -64,7 +89,7 @@ exit 22
     HAPPIER_NONINTERACTIVE: '1',
   };
 
-  const res = spawnSync('bash', [installerPath, '--run', 'setup-relay', '--', '--mode', 'user', '--yes'], {
+  const res = spawnSync('bash', [installerPath, '--run', 'setup-relay'], {
     env,
     encoding: 'utf8',
   });
@@ -77,7 +102,7 @@ exit 22
   await rm(root, { recursive: true, force: true });
 });
 
-test('install.sh --setup-relay forwards default relay host flags to the CLI', async () => {
+test('install.sh --run setup-relay forwards relay host flags to the installed CLI', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-setup-relay-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -105,6 +130,14 @@ happier relay
 EOF
   exit 0
 fi
+if [[ "$1" = "relay" && "$2" = "--help" ]]; then
+  cat <<'EOF'
+happier relay inspect-target [--json]
+happier relay set <relay-url>
+happier relay host <install|status|start|stop|restart|uninstall>
+EOF
+  exit 0
+fi
 if [[ "$1" = "relay" && "$2" = "host" && "$3" = "install" ]]; then
   shift 3
   if [[ " $* " != *" --mode user "* ]]; then
@@ -118,6 +151,10 @@ if [[ "$1" = "relay" && "$2" = "host" && "$3" = "install" ]]; then
   if [[ " $* " != *" --channel preview "* ]]; then
     echo "missing --channel preview" >&2
     exit 25
+  fi
+  if [[ " $* " != *" --preserve-active-server "* ]]; then
+    echo "missing --preserve-active-server" >&2
+    exit 26
   fi
   echo "ok"
   exit 0
@@ -142,10 +179,14 @@ exit 22
     HAPPIER_CHANNEL: 'preview',
   };
 
-  const res = spawnSync('bash', [installerPath, '--setup-relay'], { env, encoding: 'utf8' });
+  const res = spawnSync(
+    'bash',
+    [installerPath, '--run', 'setup-relay', '--', '--mode', 'user', '--yes', '--channel', 'preview', '--preserve-active-server'],
+    { env, encoding: 'utf8' },
+  );
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
-  assert.equal(res.status, 0, `expected setup-relay to succeed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.equal(res.status, 0, `expected run setup-relay to succeed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
   assert.match(stdout, /ok/);
 
   await rm(root, { recursive: true, force: true });
@@ -279,7 +320,7 @@ exit 22
   await rm(root, { recursive: true, force: true });
 });
 
-test('install.sh --setup-relay fails fast when the CLI does not advertise relay support', async () => {
+test('install.sh --run setup-relay accepts a CLI that advertises relay support through relay --help', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-setup-relay-guard-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -295,7 +336,8 @@ test('install.sh --setup-relay fails fast when the CLI does not advertise relay 
   await writeFile(curlStubPath, '#!/usr/bin/env bash\necho \"curl should not run\" >&2\nexit 88\n', 'utf8');
   await chmod(curlStubPath, 0o755);
 
-  // CLI is present and can run the command, but it does not advertise relay support in `--help`.
+  // CLI is present and can run the command, but the top-level `--help` output does not list relay.
+  // The installer should still accept it if `relay --help` advertises the relay host surface.
   const cliPath = join(installDir, 'cli', 'current', 'happier');
   await writeFile(
     cliPath,
@@ -305,6 +347,14 @@ if [[ "$1" = "--help" ]]; then
   cat <<'EOF'
 happier auth
 happier daemon
+EOF
+  exit 0
+fi
+if [[ "$1" = "relay" && "$2" = "--help" ]]; then
+  cat <<'EOF'
+happier relay inspect-target [--json]
+happier relay set <relay-url>
+happier relay host <install|status|start|stop|restart|uninstall>
 EOF
   exit 0
 fi
@@ -331,11 +381,15 @@ exit 22
     HAPPIER_NONINTERACTIVE: '1',
   };
 
-  const res = spawnSync('bash', [installerPath, '--setup-relay'], { env, encoding: 'utf8' });
+  const res = spawnSync(
+    'bash',
+    [installerPath, '--run', 'setup-relay', '--', '--mode', 'user', '--yes', '--preserve-active-server'],
+    { env, encoding: 'utf8' },
+  );
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
-  assert.notEqual(res.status, 0, `expected setup-relay guard to fail:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
-  assert.match(stderr + stdout, /does not support.*relay/i);
+  assert.equal(res.status, 0, `expected run setup-relay to succeed when relay host help is advertised:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.match(stdout, /relay invoked/);
 
   await rm(root, { recursive: true, force: true });
 });

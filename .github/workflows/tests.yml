@@ -105,6 +105,22 @@ on:
         required: false
         default: true
         type: boolean
+      run_cli_update_continuity:
+        required: false
+        default: false
+        type: boolean
+      run_daemon_continuity:
+        required: false
+        default: false
+        type: boolean
+      run_session_continuity:
+        required: false
+        default: false
+        type: boolean
+      run_release_assets_docker:
+        required: false
+        default: false
+        type: boolean
       run_self_host_systemd:
         required: false
         default: false
@@ -123,7 +139,7 @@ on:
         type: boolean
       stress_config:
         required: false
-        default: '{"repeat":"5","seed":""}'
+        default: '{"target_mode":"light","base_url":"","repeat":"5","seed":"20260418","flake_retry":"true","users":"25","machines_per_user":"1","sessions_per_user":"1","rpc_listeners_per_user":"1","rpc_calls_per_second":"2","messages_per_second":"5","reconnect_rate":"0","duration_ms":"30000","warmup_ms":"1000","cooldown_ms":"1000","soak_ms":"0","api_replicas":"2","worker_replicas":"1","rolling_restart":"false","compose_metrics_enabled":"true","metrics_scrape_enabled":"false","keep_topology_on_failure":"false","save_artifacts_on_success":"false","socket_transport":"websocket","kill_target":"api"}'
         type: string
 
 concurrency:
@@ -140,7 +156,7 @@ jobs:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || (github.event_name == 'workflow_call' && inputs.run_ui_e2e) }}
     name: UI E2E (Playwright)
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
@@ -192,7 +208,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
 
       - name: Install Playwright browsers
         if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
@@ -258,7 +276,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
 
       - name: Install Playwright browsers
         run: npx playwright install chromium
@@ -305,7 +325,9 @@ jobs:
           # Keep this lane mobile-focused (avoid downloading heavy web-only assets).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,tests"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        run: yarn install --frozen-lockfile
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
 
       - name: Install Maestro
         run: |
@@ -351,7 +373,9 @@ jobs:
           npm_config_production: "false"
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,tests"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        run: yarn install --frozen-lockfile
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
 
       - name: Install Maestro
         run: |
@@ -373,7 +397,7 @@ jobs:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_ui }}
     name: UI Tests (unit + integration)
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -397,18 +421,13 @@ jobs:
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
-      - name: Install Sapling
-        run: |
-          bash scripts/ci/install_sapling_ubuntu22.sh
-
-      - name: Verify Sapling CLI
-        run: sl --version
-
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
 
       - name: Run protocol unit tests
         run: yarn workspace @happier-dev/protocol test
@@ -451,7 +470,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run shared package unit tests
         run: |
@@ -495,7 +516,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run unit tests
         run: yarn --cwd apps/server test:unit
@@ -549,7 +572,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Migrate (Postgres)
         env:
@@ -626,18 +651,13 @@ jobs:
           fi
           tmux -V
 
-      - name: Install Sapling
-        run: |
-          bash scripts/ci/install_sapling_ubuntu22.sh
-
-      - name: Verify Sapling CLI
-        run: sl --version
-
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Disable remote logging for CI (avoid hanging test process)
         run: |
@@ -657,7 +677,7 @@ jobs:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_stack }}
     name: Stack Tests (unit + integration)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -678,7 +698,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run unit tests
         run: yarn --cwd apps/stack test:unit
@@ -711,7 +733,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run release contract tests
         run: |
@@ -725,7 +749,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || 'stable' }}
+      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
+      INSTALLERS_SOURCE: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main'))) && 'published-channel' || 'local-build' }}
+      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -735,58 +762,35 @@ jobs:
         with:
           node-version: 22.x
 
-      - name: Verify published installers are synced
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs release-sync-installers --check
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
 
-      # Bootstrap-friendly: this repo can be green before the first GitHub release exists.
-      # Once cli-stable is published, we enforce that the published installer can install it.
-      - name: Detect CLI release tag
-        id: cli_tag
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Run unified installer smoke
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="cli-stable"
-          installer="install.sh"
-          if [ "${INSTALLERS_CHANNEL}" = "preview" ]; then
-            tag="cli-preview"
-            installer="install-preview.sh"
-          fi
-          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
-          code="$(curl -sS -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${api}" || true)"
-          if [ "${code}" = "200" ]; then
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-            echo "installer=${installer}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
-          echo "Skipping installer smoke: ${tag} release tag not found (HTTP ${code})."
-
-      - name: Run CLI installer from isolated temp location
-        if: steps.cli_tag.outputs.tag_exists == 'true'
-        env:
-          HAPPIER_GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          export HOME="$(mktemp -d)"
-          export HAPPIER_INSTALL_DIR="${HOME}/.happier"
-          export HAPPIER_BIN_DIR="${HOME}/.local/bin"
-          export HAPPIER_NONINTERACTIVE=1
-          export HAPPIER_NO_PATH_UPDATE=1
-
-          cp "apps/website/public/${{ steps.cli_tag.outputs.installer }}" /tmp/happier-install.sh
-          chmod +x /tmp/happier-install.sh
-          /tmp/happier-install.sh
-
-          test -x "${HAPPIER_BIN_DIR}/happier"
-          "${HAPPIER_BIN_DIR}/happier" --version
-          "${HAPPIER_BIN_DIR}/happier" --help >/dev/null
+          node scripts/pipeline/run.mjs release-validate \
+            --suite installers-smoke \
+            --platform linux \
+            --source "${INSTALLERS_SOURCE}" \
+            --ref "${INSTALLERS_REF}" \
+            --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-macos:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
@@ -794,7 +798,10 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 25
     env:
-      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || 'stable' }}
+      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
+      INSTALLERS_SOURCE: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main'))) && 'published-channel' || 'local-build' }}
+      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -804,62 +811,46 @@ jobs:
         with:
           node-version: 22.x
 
-      - name: Verify published installers are synced
-        run: node scripts/pipeline/run.mjs release-sync-installers --check
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
 
-      - name: Detect CLI release tag
-        id: cli_tag
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Run unified installer smoke
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="cli-stable"
-          installer="install.sh"
-          if [ "${INSTALLERS_CHANNEL}" = "preview" ]; then
-            tag="cli-preview"
-            installer="install-preview.sh"
-          fi
-          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
-          code="$(curl -sS -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${api}" || true)"
-          if [ "${code}" = "200" ]; then
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-            echo "installer=${installer}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
-          echo "Skipping installer smoke: ${tag} release tag not found (HTTP ${code})."
-
-      - name: Run CLI installer from isolated temp location
-        if: steps.cli_tag.outputs.tag_exists == 'true'
-        env:
-          HAPPIER_GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          export HOME="$(mktemp -d)"
-          export HAPPIER_INSTALL_DIR="${HOME}/.happier"
-          export HAPPIER_BIN_DIR="${HOME}/.local/bin"
-          export HAPPIER_NONINTERACTIVE=1
-          export HAPPIER_NO_PATH_UPDATE=1
-
-          cp "apps/website/public/${{ steps.cli_tag.outputs.installer }}" /tmp/happier-install.sh
-          chmod +x /tmp/happier-install.sh
-          /tmp/happier-install.sh
-
-          test -x "${HAPPIER_BIN_DIR}/happier"
-          "${HAPPIER_BIN_DIR}/happier" --version
-          "${HAPPIER_BIN_DIR}/happier" --help >/dev/null
+          node scripts/pipeline/run.mjs release-validate \
+            --suite installers-smoke \
+            --platform darwin \
+            --source "${INSTALLERS_SOURCE}" \
+            --ref "${INSTALLERS_REF}" \
+            --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-windows:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
     name: Installer Smoke (Windows)
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
-      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || 'stable' }}
+      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
+      INSTALLERS_SOURCE: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main'))) && 'published-channel' || 'local-build' }}
+      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -869,60 +860,36 @@ jobs:
         with:
           node-version: 22.x
 
-      - name: Verify published installers are synced
-        shell: pwsh
-        run: node scripts/pipeline/run.mjs release-sync-installers --check
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
 
-      - name: Detect CLI release tag
-        id: cli_tag
+      - name: Enable Corepack
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Run unified installer smoke
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = "Continue"
-          $tag = "cli-stable"
-          $installer = "install.ps1"
-          if ($env:INSTALLERS_CHANNEL -eq "preview") {
-            $tag = "cli-preview"
-            $installer = "install-preview.ps1"
-          }
-          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            "X-GitHub-Api-Version" = "2022-11-28"
-          }
-          $exists = "false"
-          try {
-            Invoke-RestMethod -Uri $api -Headers $headers | Out-Null
-            $exists = "true"
-          } catch {
-            Write-Host "Skipping installer smoke: $tag release tag not found."
-          }
-          "tag_exists=$exists" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "installer=$installer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Run CLI installer from isolated temp location
-        shell: pwsh
-        if: steps.cli_tag.outputs.tag_exists == 'true'
-        env:
-          HAPPIER_GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $env:HAPPIER_NONINTERACTIVE = "1"
-          $env:HAPPIER_INSTALL_DIR = Join-Path $env:RUNNER_TEMP ".happier"
-          $env:HAPPIER_BIN_DIR = Join-Path $env:RUNNER_TEMP ".local\bin"
-
-          $scriptPath = Join-Path $env:RUNNER_TEMP "happier-install.ps1"
-          Copy-Item -Path ("apps/website/public/" + "${{ steps.cli_tag.outputs.installer }}") -Destination $scriptPath -Force
-          & $scriptPath
-
-          $binaryPath = Join-Path $env:HAPPIER_BIN_DIR "happier.exe"
-          if (-not (Test-Path $binaryPath)) {
-            throw "Installer did not create $binaryPath"
-          }
-          & $binaryPath --version
-          & $binaryPath --help | Out-Null
+          node scripts/pipeline/run.mjs release-validate `
+            --suite installers-smoke `
+            --platform win32 `
+            --source "$env:INSTALLERS_SOURCE" `
+            --ref "$env:INSTALLERS_REF" `
+            --release-channel "$env:INSTALLERS_RELEASE_CHANNEL"
 
   binary-smoke:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_binary_smoke }}
@@ -954,13 +921,207 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run isolated binary smoke tests
         run: |
+          node scripts/pipeline/run.mjs release-validate \
+            --suite binary-smoke \
+            --platform linux \
+            --source local-build \
+            --ref "."
+
+  cli-update-continuity:
+    if: ${{ inputs.run_cli_update_continuity }}
+    name: Release Validation — CLI Update Continuity (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CLI_UPDATE_FROM_CHANNEL: ${{ inputs.installers_channel }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Run unified CLI update continuity validation
+        env:
+          CI: "1"
+        run: |
           set -euo pipefail
-          timeout --signal=KILL --kill-after=30s 25m node --test apps/stack/scripts/self_host_binary_smoke.integration.test.mjs
-          timeout --signal=KILL --kill-after=30s 45m node --test apps/stack/scripts/release_binary_smoke.integration.test.mjs
+          node scripts/pipeline/run.mjs release-validate \
+            --suite cli-update \
+            --platform linux \
+            --from-source published-channel \
+            --from-ref "${CLI_UPDATE_FROM_CHANNEL}" \
+            --to-source local-build \
+            --to-ref "."
+
+      - name: Upload CLI update continuity artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-update-continuity-artifacts
+          path: .project/logs/e2e
+          if-no-files-found: ignore
+
+  daemon-continuity:
+    if: ${{ inputs.run_daemon_continuity }}
+    name: Release Validation — Daemon Continuity (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Run unified daemon continuity validation
+        env:
+          CI: "1"
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs release-validate \
+            --suite daemon-continuity \
+            --platform linux \
+            --source local-build \
+            --ref "."
+
+      - name: Upload daemon continuity artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-continuity-artifacts
+          path: .project/logs/e2e
+          if-no-files-found: ignore
+
+  session-continuity:
+    if: ${{ inputs.run_session_continuity }}
+    name: Release Validation — Session Continuity (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Run unified session continuity validation
+        env:
+          CI: "1"
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs release-validate \
+            --suite session-continuity \
+            --platform linux \
+            --source local-build \
+            --ref "."
+
+      - name: Upload session continuity artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-continuity-artifacts
+          path: .project/logs/e2e
+          if-no-files-found: ignore
+
+  release-assets-docker:
+    if: ${{ github.event_name == 'workflow_call' && inputs.run_release_assets_docker }}
+    name: Release Assets Docker (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Run unified Docker release-assets validation
+        run: |
+          node scripts/pipeline/run.mjs release-validate \
+            --suite docker-release-assets \
+            --platform linux \
+            --source local-build \
+            --ref "."
 
   self-host-systemd-e2e:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}
@@ -992,7 +1153,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run real systemd self-host E2E
         run: |
@@ -1029,7 +1192,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run real launchd self-host E2E
         run: |
@@ -1066,7 +1231,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run real schtasks self-host E2E
         run: node --test apps/stack/scripts/self_host_schtasks.real.integration.test.mjs
@@ -1105,7 +1272,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run real self-host + daemon E2E
         run: node --test apps/stack/scripts/self_host_daemon.real.integration.test.mjs
@@ -1135,7 +1304,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run governance self-tests
         run: yarn test:wiring:self && yarn test:policy:self
@@ -1144,7 +1315,7 @@ jobs:
         run: yarn test:wiring && yarn test:policy
 
       - name: Run governance inventory reports
-        run: yarn test:inventory && yarn test:migration:inventory
+        run: yarn test:inventory && yarn test:migration:inventory && yarn test:migration:governance
 
       - name: Run typecheck
         run: yarn typecheck
@@ -1217,13 +1388,17 @@ jobs:
           fi
           tmux -V
 
-      - name: Prepare light DB (SQLite) + apply migrations
+      - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Prepare light DB (SQLite) + apply migrations
         run: |
           set -euo pipefail
-          yarn install --frozen-lockfile --ignore-engines
           yarn --cwd apps/server -s migrate:sqlite:deploy
 
       - name: Build CLI
@@ -1423,7 +1598,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run core e2e suite
         env:
@@ -1478,7 +1655,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run core e2e suite (slow)
         env:
@@ -1537,7 +1716,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Install provider CLIs
         env:
@@ -1682,19 +1863,57 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Validate stress config
+        env:
+          STRESS_TARGET_MODE: ${{ fromJSON(inputs.stress_config).target_mode }}
+          STRESS_BASE_URL: ${{ fromJSON(inputs.stress_config).base_url }}
+        run: |
+          set -euo pipefail
+          if [ "${STRESS_TARGET_MODE}" = "external" ] && [ -z "${STRESS_BASE_URL}" ]; then
+            echo "stress_config.base_url is required when target_mode=external" >&2
+            exit 1
+          fi
 
       - name: Run stress suite
         env:
           CI: "1"
-          HAPPIER_E2E_REPEAT: ${{ fromJSON(inputs.stress_config).repeat }}
-          HAPPIER_E2E_SEED: ${{ fromJSON(inputs.stress_config).seed }}
-          HAPPIER_E2E_FLAKE_RETRY: "1"
+          HAPPIER_STRESS_TARGET_MODE: ${{ fromJSON(inputs.stress_config).target_mode }}
+          HAPPIER_STRESS_BASE_URL: ${{ fromJSON(inputs.stress_config).base_url }}
+          HAPPIER_STRESS_REPEAT: ${{ fromJSON(inputs.stress_config).repeat }}
+          HAPPIER_STRESS_SEED: ${{ fromJSON(inputs.stress_config).seed }}
+          HAPPIER_STRESS_FLAKE_RETRY: ${{ fromJSON(inputs.stress_config).flake_retry }}
+          HAPPIER_STRESS_USERS: ${{ fromJSON(inputs.stress_config).users }}
+          HAPPIER_STRESS_MACHINES_PER_USER: ${{ fromJSON(inputs.stress_config).machines_per_user }}
+          HAPPIER_STRESS_SESSIONS_PER_USER: ${{ fromJSON(inputs.stress_config).sessions_per_user }}
+          HAPPIER_STRESS_RPC_LISTENERS_PER_USER: ${{ fromJSON(inputs.stress_config).rpc_listeners_per_user }}
+          HAPPIER_STRESS_RPC_CALLS_PER_SECOND: ${{ fromJSON(inputs.stress_config).rpc_calls_per_second }}
+          HAPPIER_STRESS_MESSAGES_PER_SECOND: ${{ fromJSON(inputs.stress_config).messages_per_second }}
+          HAPPIER_STRESS_RECONNECT_RATE: ${{ fromJSON(inputs.stress_config).reconnect_rate }}
+          HAPPIER_STRESS_DURATION_MS: ${{ fromJSON(inputs.stress_config).duration_ms }}
+          HAPPIER_STRESS_WARMUP_MS: ${{ fromJSON(inputs.stress_config).warmup_ms }}
+          HAPPIER_STRESS_COOLDOWN_MS: ${{ fromJSON(inputs.stress_config).cooldown_ms }}
+          HAPPIER_STRESS_SOAK_MS: ${{ fromJSON(inputs.stress_config).soak_ms }}
+          HAPPIER_STRESS_COMPOSE_API_REPLICAS: ${{ fromJSON(inputs.stress_config).api_replicas }}
+          HAPPIER_STRESS_COMPOSE_WORKER_REPLICAS: ${{ fromJSON(inputs.stress_config).worker_replicas }}
+          HAPPIER_STRESS_EXPECTED_API_REPLICAS: ${{ fromJSON(inputs.stress_config).api_replicas }}
+          HAPPIER_STRESS_EXPECTED_WORKER_REPLICAS: ${{ fromJSON(inputs.stress_config).worker_replicas }}
+          HAPPIER_STRESS_ROLLING_RESTART_ENABLED: ${{ fromJSON(inputs.stress_config).rolling_restart }}
+          HAPPIER_STRESS_KILL_TARGET: ${{ fromJSON(inputs.stress_config).kill_target }}
+          HAPPIER_STRESS_COMPOSE_METRICS_ENABLED: ${{ fromJSON(inputs.stress_config).compose_metrics_enabled }}
+          HAPPIER_STRESS_METRICS_SCRAPE_ENABLED: ${{ fromJSON(inputs.stress_config).metrics_scrape_enabled }}
+          HAPPIER_STRESS_KEEP_TOPOLOGY_ON_FAILURE: ${{ fromJSON(inputs.stress_config).keep_topology_on_failure }}
+          HAPPIER_STRESS_SOCKET_TRANSPORT: ${{ fromJSON(inputs.stress_config).socket_transport }}
+          HAPPIER_E2E_SAVE_ARTIFACTS: ${{ fromJSON(inputs.stress_config).save_artifacts_on_success }}
         run: yarn test:stress
 
-      - name: Upload stress artifacts (on failure)
-        if: failure()
+      - name: Upload stress artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stress-artifacts
           path: .project/logs/e2e
+          if-no-files-found: ignore

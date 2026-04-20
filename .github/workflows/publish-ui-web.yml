@@ -131,7 +131,9 @@ jobs:
           APP_ENV: ${{ steps.channel_meta.outputs.app_env }}
           EXPO_UPDATES_CHANNEL: ${{ steps.channel_meta.outputs.expo_updates_channel }}
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Publish UI web bundle (pipeline)
         env:

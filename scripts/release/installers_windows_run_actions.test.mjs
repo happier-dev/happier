@@ -42,3 +42,21 @@ test('install.ps1 resolves post-install relay actions through the requested lane
     'preview/dev run actions must not fall back to the generic stable happier.exe invoker',
   );
 });
+
+test('install.ps1 applies setup-relay default relay-host arguments for both shortcut and explicit -Run usage', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+  const invokePostInstallAction = raw.match(/function Invoke-PostInstallAction\s*\{[\s\S]*?\n\}/);
+
+  assert.ok(invokePostInstallAction, 'expected Invoke-PostInstallAction to exist');
+  assert.match(
+    invokePostInstallAction[0],
+    /\$setupRelayDefaultArgs\s*=\s*@\("--mode",\s*"user",\s*"--yes",\s*"--channel",\s*\$\(if \(\$Channel -eq "publicdev"\) \{ "dev" \} else \{ \$Channel \}\),\s*"--preserve-active-server"\)/i,
+    'expected setup-relay default args to include preserve-active-server and the normalized channel',
+  );
+  assert.match(
+    invokePostInstallAction[0],
+    /if \(\$runValue -eq "setup-relay" -and \$setupRelayDefaultArgs\.Count -eq 0\) \{\s*\$setupRelayDefaultArgs = @\("--mode", "user", "--yes", "--channel", \$\(if \(\$Channel -eq "publicdev"\) \{ "dev" \} else \{ \$Channel \}\), "--preserve-active-server"\)\s*\}/i,
+    'expected explicit -Run setup-relay to receive the same default relay-host arguments as the setup-relay shortcut',
+  );
+});

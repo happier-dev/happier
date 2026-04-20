@@ -1,27 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
-const serverBaseVersion = JSON.parse(fs.readFileSync(resolve(repoRoot, 'apps', 'server', 'package.json'), 'utf8')).version;
+const sharedPublishScriptPath = resolve(
+  repoRoot,
+  'scripts',
+  'pipeline',
+  'release',
+  'publishing',
+  'publish-binary-release.mjs',
+);
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-for (const { channel, rollingTag } of [
-  { channel: 'preview', rollingTag: 'server-preview' },
-  { channel: 'publicdev', rollingTag: 'server-dev' },
+for (const { channel, rollingTag, versionSuffix } of [
+  { channel: 'preview', rollingTag: 'server-preview', versionSuffix: '-preview.' },
+  { channel: 'publicdev', rollingTag: 'server-dev', versionSuffix: '-dev.' },
 ]) {
   test(`publish-server-runtime pipeline publishes server-v* version tags alongside rolling tags for ${channel} (dry-run)`, async () => {
     const out = execFileSync(
       process.execPath,
       [
-        resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs'),
+        sharedPublishScriptPath,
+        '--product',
+        'server',
         '--channel',
         channel,
         '--allow-stable',
@@ -48,18 +52,20 @@ for (const { channel, rollingTag } of [
 
     assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b`));
     assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b[^\\n]*--generate-notes\\s+false\\b`));
-    assert.match(out, new RegExp(`--tag\\s+server-v${escapeRegExp(serverBaseVersion)}-${rollingTag.split('-')[1]}\\.\\d+\\.\\d+\\b`));
-    assert.match(out, new RegExp(`--tag\\s+server-v${escapeRegExp(serverBaseVersion)}-[^\\s"]+[^\n]*--generate-notes\\s+true\\b`));
+    assert.match(out, /--tag\s+server-v/);
+    assert.match(out, new RegExp(`server-v[^\\s"]*${versionSuffix.replace('.', '\\.')}[^\\s"]*`));
+    assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
     assert.match(out, /clean artifacts dir: dist\/release-assets\/server|ensure clean artifacts dir: dist\/release-assets\/server/i);
   });
 }
 
 test('publish-server-runtime fails fast with helpful message when MINISIGN_SECRET_KEY is invalid', async () => {
-  const scriptPath = resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs');
   const result = spawnSync(
     process.execPath,
     [
-      scriptPath,
+      sharedPublishScriptPath,
+      '--product',
+      'server',
       '--channel',
       'preview',
       '--allow-stable',

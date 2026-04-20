@@ -55,6 +55,8 @@ else
   echo "Neither sha256sum nor shasum is available to verify minisign bootstrap." >&2
   exit 1
 fi
+actual_sha="${actual_sha//$'\r'/}"
+actual_sha="${actual_sha#\\}"
 
 if [[ "${actual_sha}" != "${expected_sha}" ]]; then
   echo "minisign bootstrap checksum mismatch (expected ${expected_sha}, got ${actual_sha})." >&2
@@ -95,6 +97,23 @@ if [[ "${os}" == "linux" ]]; then
   esac
   if [[ -n "${linux_arch}" ]]; then
     candidate="${extract_dir}/minisign-linux/${linux_arch}/minisign"
+    if [[ -f "${candidate}" ]]; then
+      bin_path="${candidate}"
+    fi
+  fi
+fi
+if [[ -z "${bin_path}" && ( "${os}" == msys* || "${os}" == mingw* || "${os}" == cygwin* ) ]]; then
+  windows_arch=""
+  case "${arch}" in
+    x86_64|amd64)
+      windows_arch="x86_64"
+      ;;
+    aarch64|arm64)
+      windows_arch="aarch64"
+      ;;
+  esac
+  if [[ -n "${windows_arch}" ]]; then
+    candidate="${extract_dir}/minisign-win64/${windows_arch}/minisign.exe"
     if [[ -f "${candidate}" ]]; then
       bin_path="${candidate}"
     fi

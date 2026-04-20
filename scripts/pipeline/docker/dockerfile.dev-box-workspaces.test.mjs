@@ -8,6 +8,11 @@ test('dev-box Dockerfile includes CLI workspace deps (avoid fetching internal @h
   const dockerfilePath = path.join(repoRoot, 'docker', 'dev-box', 'Dockerfile');
   const raw = fs.readFileSync(dockerfilePath, 'utf8');
 
+  assert.ok(
+    raw.includes('COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry'),
+    'expected dev-box Dockerfile to copy scripts/ci/yarn-install-with-retry.sh into the image',
+  );
+
   // The CLI build scripts reference shared helpers under scripts/workspaces/*.
   assert.ok(
     raw.includes('COPY scripts/workspaces ./scripts/workspaces'),

@@ -3,11 +3,13 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   copyCliBinRuntimeFiles,
+  copyCliWorkspaceSyncRuntimeFiles,
   createCliBinPreflightSandbox,
   runHappierBin,
   writeCliProjectFixture,
   writeNodeModuleStub,
   writeProtocolBundleStub,
+  writeSandboxPackage,
 } from './testkit/cliBinPreflightSandbox';
 
 describe('apps/cli bin/happier.mjs preflight', () => {
@@ -138,11 +140,7 @@ describe('apps/cli bin/happier.mjs preflight', () => {
         'utf8',
       );
       copyCliBinRuntimeFiles({ binDir });
-      writeFileSync(
-        join(scriptsDir, 'syncBundledWorkspacePackages.mjs'),
-        readFileSync(join(process.cwd(), '..', '..', 'scripts', 'workspaces', 'syncBundledWorkspacePackages.mjs'), 'utf8'),
-        'utf8',
-      );
+      copyCliWorkspaceSyncRuntimeFiles({ scriptsDir });
 
       writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'repo', private: true }), 'utf8');
       writeFileSync(join(tmp, 'yarn.lock'), '# lock\n', 'utf8');
@@ -156,11 +154,16 @@ describe('apps/cli bin/happier.mjs preflight', () => {
           'dist/changes.js': 'export const change = true;\n',
         },
       });
-      writeProtocolBundleStub({
+      writeSandboxPackage({
         packageDir: bundledProtocolDir,
-        exportsMap: {
-          '.': './dist/index.js',
-          './changes': './dist/changes.js',
+        manifest: {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          exports: {
+            '.': './dist/index.js',
+          },
         },
       });
 
@@ -193,7 +196,17 @@ describe('apps/cli bin/happier.mjs preflight', () => {
 
       expect(res.status).toBe(0);
       expect(res.stdout).toContain('ok');
+      expect(existsSync(join(bundledProtocolDir, 'dist', 'index.js'))).toBe(true);
       expect(existsSync(join(bundledProtocolDir, 'dist', 'changes.js'))).toBe(true);
+      const bundledPackageJson = JSON.parse(readFileSync(join(bundledProtocolDir, 'package.json'), 'utf8')) as {
+        exports?: Record<string, string>;
+        main?: string;
+      };
+      expect(bundledPackageJson.main).toBe('./dist/index.js');
+      expect(bundledPackageJson.exports).toEqual({
+        '.': './dist/index.js',
+        './changes': './dist/changes.js',
+      });
     } finally {
       cleanup();
     }

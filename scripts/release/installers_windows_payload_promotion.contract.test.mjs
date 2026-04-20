@@ -14,10 +14,22 @@ test('install.ps1 only falls back to direct binary copy for legacy payload insta
 
   assert.match(trimmed, /\$promotionResult\.ExitCode\s*-ne\s*0/i);
   assert.ok(
-    trimmed.includes("$promotionResult.Output -match 'Unknown self subcommand:\\s+__install-payload'"),
-    'expected payload promotion fallback to be gated by the legacy unknown-subcommand case',
+    trimmed.includes('Unknown self subcommand:\\s+__install-payload'),
+    'expected payload promotion fallback to keep the legacy unknown-subcommand compatibility guard',
+  );
+  assert.ok(
+    trimmed.includes('ENOENT: no such file or directory, open'),
+    'expected payload promotion fallback to accept the released Windows payload-promotion ENOENT failure signature',
   );
   assert.match(trimmed, /Payload promotion failed\./i);
+  assert.ok(
+    trimmed.includes('$target = Join-Path $BinDir "$((Resolve-CliShimName)).exe"'),
+    'expected legacy payload fallback to define the managed bin target explicitly',
+  );
+  assert.ok(
+    trimmed.includes('Copy-Item -Path $binary -Destination $target -Force'),
+    'expected legacy payload fallback to copy the extracted binary into the managed bin target',
+  );
   assert.doesNotMatch(
     trimmed,
     /\$promotionResult\.ExitCode\s*-ne\s*0\s*\)\s*\{\s*Write-Warning\s+"Payload promotion failed, falling back to direct binary copy\."/i,

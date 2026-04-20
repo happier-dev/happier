@@ -13,7 +13,7 @@ on:
           - fast
           - custom
       custom_checks:
-        description: "Custom — Comma-separated checks used only when profile=custom (ui,ui_e2e,wsrepl_lima,mobile_e2e_android,mobile_e2e_ios,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
+        description: "Custom — Comma-separated checks used only when profile=custom (ui,ui_e2e,wsrepl_lima,mobile_e2e_android,mobile_e2e_ios,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,cli_update_continuity,daemon_continuity,session_continuity,release_assets_docker,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
         required: true
         default: ""
         type: string
@@ -25,6 +25,7 @@ on:
         options:
           - stable
           - preview
+          - dev
       providers_preset:
         description: "Providers — Preset (when providers enabled)"
         required: true
@@ -67,6 +68,10 @@ jobs:
       run_release_contracts: ${{ steps.flags.outputs.run_release_contracts }}
       run_installers_smoke: ${{ steps.flags.outputs.run_installers_smoke }}
       run_binary_smoke: ${{ steps.flags.outputs.run_binary_smoke }}
+      run_cli_update_continuity: ${{ steps.flags.outputs.run_cli_update_continuity }}
+      run_daemon_continuity: ${{ steps.flags.outputs.run_daemon_continuity }}
+      run_session_continuity: ${{ steps.flags.outputs.run_session_continuity }}
+      run_release_assets_docker: ${{ steps.flags.outputs.run_release_assets_docker }}
       run_self_host_systemd: ${{ steps.flags.outputs.run_self_host_systemd }}
       run_self_host_launchd: ${{ steps.flags.outputs.run_self_host_launchd }}
       run_self_host_schtasks: ${{ steps.flags.outputs.run_self_host_schtasks }}
@@ -111,6 +116,10 @@ jobs:
             run_release_contracts=true
             run_installers_smoke=true
             run_binary_smoke=true
+            run_cli_update_continuity=false
+            run_daemon_continuity=false
+            run_session_continuity=false
+            run_release_assets_docker=false
             run_self_host_systemd=false
             run_self_host_launchd=false
             run_self_host_schtasks=false
@@ -134,6 +143,10 @@ jobs:
             run_release_contracts=true
             run_installers_smoke=true
             run_binary_smoke=true
+            run_cli_update_continuity=false
+            run_daemon_continuity=false
+            run_session_continuity=false
+            run_release_assets_docker=false
             run_self_host_systemd=false
             run_self_host_launchd=false
             run_self_host_schtasks=false
@@ -157,6 +170,10 @@ jobs:
             run_release_contracts=false
             run_installers_smoke=false
             run_binary_smoke=false
+            run_cli_update_continuity=false
+            run_daemon_continuity=false
+            run_session_continuity=false
+            run_release_assets_docker=false
             run_self_host_systemd=false
             run_self_host_launchd=false
             run_self_host_schtasks=false
@@ -180,6 +197,10 @@ jobs:
             if has release_contracts; then run_release_contracts=true; fi
             if has installers_smoke; then run_installers_smoke=true; fi
             if has binary_smoke; then run_binary_smoke=true; fi
+            if has cli_update_continuity; then run_cli_update_continuity=true; fi
+            if has daemon_continuity; then run_daemon_continuity=true; fi
+            if has session_continuity; then run_session_continuity=true; fi
+            if has release_assets_docker; then run_release_assets_docker=true; fi
             if has self_host_systemd; then run_self_host_systemd=true; fi
             if has self_host_launchd; then run_self_host_launchd=true; fi
             if has self_host_schtasks; then run_self_host_schtasks=true; fi
@@ -205,6 +226,10 @@ jobs:
             echo "run_release_contracts=${run_release_contracts}"
             echo "run_installers_smoke=${run_installers_smoke}"
             echo "run_binary_smoke=${run_binary_smoke}"
+            echo "run_cli_update_continuity=${run_cli_update_continuity}"
+            echo "run_daemon_continuity=${run_daemon_continuity}"
+            echo "run_session_continuity=${run_session_continuity}"
+            echo "run_release_assets_docker=${run_release_assets_docker}"
             echo "run_self_host_systemd=${run_self_host_systemd}"
             echo "run_self_host_launchd=${run_self_host_launchd}"
             echo "run_self_host_schtasks=${run_self_host_schtasks}"
@@ -237,6 +262,10 @@ jobs:
       run_installers_smoke: ${{ needs.resolve.outputs.run_installers_smoke == 'true' }}
       installers_channel: ${{ inputs.installers_channel }}
       run_binary_smoke: ${{ needs.resolve.outputs.run_binary_smoke == 'true' }}
+      run_cli_update_continuity: ${{ needs.resolve.outputs.run_cli_update_continuity == 'true' }}
+      run_daemon_continuity: ${{ needs.resolve.outputs.run_daemon_continuity == 'true' }}
+      run_session_continuity: ${{ needs.resolve.outputs.run_session_continuity == 'true' }}
+      run_release_assets_docker: ${{ needs.resolve.outputs.run_release_assets_docker == 'true' }}
       run_self_host_systemd: ${{ needs.resolve.outputs.run_self_host_systemd == 'true' }}
       run_self_host_launchd: ${{ needs.resolve.outputs.run_self_host_launchd == 'true' }}
       run_self_host_schtasks: ${{ needs.resolve.outputs.run_self_host_schtasks == 'true' }}

@@ -17,7 +17,7 @@ import {
 import { buildScpCommand, buildSshCommand, redactSshText } from '../ssh/index.js';
 import {
   ensureLocalFirstPartyComponentCommand,
-} from './localFirstPartyCommand.js';
+} from '@happier-dev/cli-common/systemTasks';
 import { normalizeBootstrapChannel, parseFirstJsonObject, runCommandCapture, type CommandExecutionResult } from './taskRuntime.js';
 
 export type SshConnectionConfig = SystemTaskSshConnectionConfig;

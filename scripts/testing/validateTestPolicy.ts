@@ -1,12 +1,20 @@
 import { pathToFileURL } from 'node:url';
 
 import { collectFileInventory } from './migrations/lib/collectFileInventory.ts';
+import { runValidateExtensionImportBoundaries } from './migrations/validateExtensionImportBoundaries.ts';
 import { collectPolicyFindings, type PolicyFinding } from './lib/testPolicyRules.ts';
 import { type InventoryFile } from './migrations/lib/migrationTypes.ts';
+import { type ValidateExtensionImportBoundariesResult } from './migrations/lib/extensionImportBoundaries.ts';
 
 export interface PolicyReport {
   enforcedFindings: readonly PolicyFinding[];
   reportOnlyFindings: readonly PolicyFinding[];
+}
+
+export interface TestPolicyReport {
+  policy: PolicyReport;
+  extensionImportBoundaries: ValidateExtensionImportBoundariesResult;
+  exitCode: number;
 }
 
 export function collectPolicyReport(files: readonly InventoryFile[]): PolicyReport {
@@ -19,6 +27,10 @@ export function collectPolicyReport(files: readonly InventoryFile[]): PolicyRepo
 
 export function resolvePolicyExitCode(report: PolicyReport): number {
   return report.enforcedFindings.length > 0 ? 1 : 0;
+}
+
+export function resolveTestPolicyExitCode(report: PolicyReport, extensionImportBoundaries: ValidateExtensionImportBoundariesResult): number {
+  return resolvePolicyExitCode(report) === 1 || !extensionImportBoundaries.ok ? 1 : 0;
 }
 
 function printPolicyReport(report: PolicyReport): void {
@@ -42,13 +54,40 @@ function printPolicyReport(report: PolicyReport): void {
   }
 }
 
-export async function main(): Promise<void> {
+function printExtensionImportBoundaryReport(result: ValidateExtensionImportBoundariesResult): void {
+  if (result.ok) {
+    console.log('test:policy extension import boundary: OK.');
+    return;
+  }
+
+  console.error(`test:policy extension import boundary violations: ${result.errors.length}`);
+  for (const error of result.errors) {
+    console.error(`- ${error}`);
+  }
+}
+
+export async function runTestPolicy(options?: { rootDir?: string }): Promise<TestPolicyReport> {
+  const rootDir = options?.rootDir ?? process.cwd();
   const files = collectFileInventory({
+    rootDir,
     include: /\.[cm]?[jt]sx?$/,
   });
-  const report = collectPolicyReport(files);
-  printPolicyReport(report);
-  process.exitCode = resolvePolicyExitCode(report);
+  const policy = collectPolicyReport(files);
+  const extensionImportBoundaries = runValidateExtensionImportBoundaries({ rootDir, inventory: files });
+  const exitCode = resolveTestPolicyExitCode(policy, extensionImportBoundaries);
+
+  return {
+    policy,
+    extensionImportBoundaries,
+    exitCode,
+  };
+}
+
+export async function main(): Promise<void> {
+  const report = await runTestPolicy();
+  printPolicyReport(report.policy);
+  printExtensionImportBoundaryReport(report.extensionImportBoundaries);
+  process.exitCode = report.exitCode;
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

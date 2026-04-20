@@ -86,7 +86,7 @@ test('compute-versioned-component-changes uses stable baselines for production a
   assert.equal(productionParsed.cli_baseline_tag, 'cli-v0.1.0');
 });
 
-test('compute-versioned-component-changes treats cli-common changes as versioned cli and stack changes', async () => {
+test('compute-versioned-component-changes treats cli-common changes as versioned cli, stack, and server changes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-versioned-cli-common-'));
 
   git(dir, ['init']);
@@ -113,5 +113,5 @@ test('compute-versioned-component-changes treats cli-common changes as versioned
   assert.equal(parsed.changed_cli, 'true');
   assert.equal(parsed.changed_stack, 'true');
   assert.equal(parsed.changed_app, 'false');
-  assert.equal(parsed.changed_server, 'false');
+  assert.equal(parsed.changed_server, 'true');
 });

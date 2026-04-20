@@ -75,3 +75,40 @@ test('prepare-local-monorepo commits applied diffs so downstream clones include 
   assert.equal(fs.readFileSync(join(clone, 'c.txt'), 'utf8'), 'untracked\n');
   assert.equal(fs.existsSync(join(clone, 'ignored.txt')), false);
 });
+
+test('prepare-local-monorepo preserves the source origin remote so release dry-runs can fetch refs', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'happier-prepare-local-monorepo-origin-'));
+  const remote = join(tmp, 'remote.git');
+  const src = join(tmp, 'src');
+  const dst = join(tmp, 'dst');
+
+  fs.mkdirSync(remote, { recursive: true });
+  run('git', ['init', '-q', '--bare'], { cwd: remote });
+  run('git', ['clone', '-q', remote, src], { cwd: tmp });
+  run('git', ['config', 'user.name', 'test'], { cwd: src });
+  run('git', ['config', 'user.email', 'test@example.com'], { cwd: src });
+
+  fs.writeFileSync(join(src, 'a.txt'), 'one\n', 'utf8');
+  run('git', ['add', 'a.txt'], { cwd: src });
+  run('git', ['commit', '-m', 'init', '-q'], { cwd: src });
+  run('git', ['branch', '-M', 'main'], { cwd: src });
+  run('git', ['push', '-q', '-u', 'origin', 'main'], { cwd: src });
+
+  run('git', ['checkout', '-q', '-b', 'dev'], { cwd: src });
+  fs.writeFileSync(join(src, 'a.txt'), 'two\n', 'utf8');
+  run('git', ['add', 'a.txt'], { cwd: src });
+  run('git', ['commit', '-m', 'dev', '-q'], { cwd: src });
+  run('git', ['push', '-q', '-u', 'origin', 'dev'], { cwd: src });
+
+  run('git', ['checkout', '-q', 'main'], { cwd: src });
+  run('git', ['checkout', '-q', '-b', 'preview'], { cwd: src });
+  run('git', ['push', '-q', '-u', 'origin', 'preview'], { cwd: src });
+  run('git', ['checkout', '-q', 'dev'], { cwd: src });
+
+  fs.writeFileSync(join(src, 'candidate.txt'), 'candidate\n', 'utf8');
+
+  const res = spawnSync(process.execPath, [prepareScript, '--src', src, '--dst', dst], { encoding: 'utf8' });
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+  assert.equal(spawnSync('git', ['-C', dst, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout.trim(), remote);
+  assert.equal(spawnSync('git', ['-C', dst, 'fetch', 'origin', 'main', 'dev', 'preview'], { encoding: 'utf8' }).status, 0);
+});

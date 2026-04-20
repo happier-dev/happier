@@ -7,18 +7,18 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('tests workflow bounds binary smoke subtests with hard process time limits', async () => {
+test('tests workflow delegates binary smoke to the unified release-validation runner', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
 
   assert.match(
     raw,
-    /timeout\s+--signal=KILL\s+--kill-after=30s\s+25m\s+node\s+--test\s+apps\/stack\/scripts\/self_host_binary_smoke\.integration\.test\.mjs/,
-    'binary smoke workflow should hard-timeout self_host_binary_smoke integration execution',
+    /binary-smoke:[\s\S]*?node scripts\/pipeline\/run\.mjs release-validate[\s\S]*?--suite binary-smoke[\s\S]*?--platform linux[\s\S]*?--source local-build[\s\S]*?--ref "\."/,
+    'binary smoke workflow should call the unified release-validation runner with the local-build smoke suite',
   );
-  assert.match(
+  assert.doesNotMatch(
     raw,
-    /timeout\s+--signal=KILL\s+--kill-after=30s\s+45m\s+node\s+--test\s+apps\/stack\/scripts\/release_binary_smoke\.integration\.test\.mjs/,
-    'binary smoke workflow should allow enough time for release_binary_smoke before hard-timeout',
+    /timeout\s+--signal=KILL\s+--kill-after=30s\s+\d+m\s+node\s+--test\s+apps\/stack\/scripts\//,
+    'binary smoke workflow should not embed inline timeout/node orchestration once the executor owns it',
   );
 });
 

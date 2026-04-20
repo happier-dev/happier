@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { executeSystemTask } from '@happier-dev/cli-common/systemTasks';
+import { executeSystemTask, type BackgroundServiceSetupGuidance } from '@happier-dev/cli-common/systemTasks';
 import { createFakeTailscaleCli } from '@happier-dev/tests/testkit/tailscale/fakeTailscaleCli';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -149,7 +149,7 @@ if (argv[0] === 'auth' && argv[1] === 'wait' && argv.includes('--json')) {
   process.exit(0);
 }
 
-if (command === 'daemon service status --json') {
+if (command === 'daemon service status --json' || command === 'service status --json') {
   const statuses = Array.isArray(state.serviceStatuses) ? state.serviceStatuses : [];
   const next = statuses.length > 0
     ? statuses.shift()
@@ -250,6 +250,57 @@ function restoreEnvVar(key: string, previousValue: string | undefined): void {
   process.env[key] = previousValue;
 }
 
+type LifecycleEventSummary = Readonly<{
+  type: 'progress' | 'prompt';
+  stepId: string;
+}>;
+
+function summarizeSetupLifecycleEvents(events: readonly unknown[]): LifecycleEventSummary[] {
+  const summary: LifecycleEventSummary[] = [];
+
+  for (const event of events) {
+    if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+      continue;
+    }
+
+    const record = event as Record<string, unknown>;
+    if (typeof record.stepId !== 'string') {
+      continue;
+    }
+
+    if (record.type === 'prompt') {
+      summary.push({ type: 'prompt', stepId: record.stepId });
+      continue;
+    }
+
+    if (record.type === 'progress' && !('data' in record)) {
+      summary.push({ type: 'progress', stepId: record.stepId });
+    }
+  }
+
+  return summary;
+}
+
+function createDefaultSetupThisComputerGuidance(
+  overrides: Readonly<Partial<BackgroundServiceSetupGuidance>> = {},
+): BackgroundServiceSetupGuidance {
+  return {
+    targetReleaseChannel: 'stable' as const,
+    targetServerUrl: 'https://relay.example.test',
+    currentHappierHomeDir: null,
+    currentDefaultReleaseChannel: 'stable' as const,
+    managedReleaseChannels: [],
+    manualRelayOwner: null,
+    exactDefaultServiceExists: false,
+    conflictingServices: [],
+    foreignHomeConflictingServices: [],
+    shouldOfferDefaultReleaseChannelSwitch: false,
+    shouldPromptForManualRelayTakeover: false,
+    shouldPromptForServiceReplacement: false,
+    ...overrides,
+  };
+}
+
 async function executeSetupThisComputerTask(): Promise<Awaited<ReturnType<typeof executeSystemTask>>> {
   return await executeSystemTask({
     spec: {
@@ -261,7 +312,11 @@ async function executeSetupThisComputerTask(): Promise<Awaited<ReturnType<typeof
       },
     },
     taskId: 'task_setup_1',
-    registry: createHsetupSystemTaskRegistry(),
+    registry: createHsetupSystemTaskRegistry({
+      setupThisComputer: {
+        readBackgroundServiceSetupGuidance: async () => createDefaultSetupThisComputerGuidance(),
+      },
+    }),
     now: () => 1700000000000,
     emitEvent() {},
   });
@@ -318,7 +373,38 @@ describe('createHsetupSystemTaskRegistry', () => {
           },
         },
         taskId: 'task_setup_release_ring_publicdev',
-        registry: createHsetupSystemTaskRegistry(),
+        registry: createHsetupSystemTaskRegistry({
+          setupThisComputer: {
+            readBackgroundServiceSetupGuidance: async () => createDefaultSetupThisComputerGuidance({
+              targetReleaseChannel: 'preview',
+              currentDefaultReleaseChannel: 'stable',
+              managedReleaseChannels: [
+                {
+                  releaseChannel: 'stable',
+                  label: 'stable',
+                  version: '1.0.0',
+                  installationId: 'stable-install',
+                  installationPath: '/managed/stable',
+                  invokerName: 'happier',
+                  isDefault: true,
+                  onPath: true,
+                },
+                {
+                  releaseChannel: 'preview',
+                  label: 'dev',
+                  version: '2.0.0-dev.1',
+                  installationId: 'dev-install',
+                  installationPath: '/managed/dev',
+                  invokerName: 'hdev',
+                  isDefault: false,
+                  onPath: true,
+                },
+              ],
+              exactDefaultServiceExists: true,
+              shouldOfferDefaultReleaseChannelSwitch: true,
+            }),
+          },
+        }),
         now: () => 1700000000000,
         emitEvent() {},
       });
@@ -329,12 +415,13 @@ describe('createHsetupSystemTaskRegistry', () => {
         ok: false,
         error: {
           code: 'prompt_required',
-          message: 'Make dev the default release-channel before installing the default background service targeting https://relay.example.test?',
+          message: 'Make preview the default release-channel before installing the default background service targeting https://relay.example.test?',
         },
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['server', 'current', '--json'],
         ['auth', 'status', '--json'],
+        ['service', 'status', '--json'],
       ]);
     } finally {
       restoreEnvVar('HAPPIER_HOME_DIR', previousHomeDir);
@@ -367,14 +454,19 @@ describe('createHsetupSystemTaskRegistry', () => {
           },
         },
         taskId: 'task_setup_1',
-        registry: createHsetupSystemTaskRegistry(),
+        registry: createHsetupSystemTaskRegistry({
+          setupThisComputer: {
+            readBackgroundServiceSetupGuidance: async () => createDefaultSetupThisComputerGuidance(),
+          },
+        }),
         now: () => 1700000000000,
         emitEvent(event) {
           events.push(event);
         },
       });
 
-      expect(events).toEqual([
+      expect(summarizeSetupLifecycleEvents(events)).toEqual([
+        expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.ensureCli' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.resolveRelay' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.checkAuth' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.configureRelay' }),
@@ -393,6 +485,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect(fakeCli.readInvocations()).toEqual([
         ['server', 'current', '--json'],
         ['auth', 'status', '--json'],
+        ['service', 'status', '--json'],
         ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
         ['service', 'install', '--json'],
         ['service', 'start', '--json'],
@@ -437,7 +530,8 @@ describe('createHsetupSystemTaskRegistry', () => {
         },
       });
 
-      expect(events).toEqual([
+      expect(summarizeSetupLifecycleEvents(events)).toEqual([
+        expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.ensureCli' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.resolveRelay' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.checkAuth' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.configureRelay' }),
@@ -498,9 +592,8 @@ describe('createHsetupSystemTaskRegistry', () => {
               machineId: 'machine-local-1',
             }),
           }),
-          readBackgroundServiceSetupGuidance: async () => ({
+          readBackgroundServiceSetupGuidance: async () => createDefaultSetupThisComputerGuidance({
             targetReleaseChannel: 'preview',
-            targetServerUrl: 'https://relay.example.test',
             currentDefaultReleaseChannel: 'stable',
             managedReleaseChannels: [
               {
@@ -524,16 +617,11 @@ describe('createHsetupSystemTaskRegistry', () => {
                 onPath: true,
               },
             ],
-            manualRelayOwner: null,
             exactDefaultServiceExists: true,
-            conflictingServices: [],
             shouldOfferDefaultReleaseChannelSwitch: true,
-            shouldPromptForManualRelayTakeover: false,
-            shouldPromptForServiceReplacement: false,
           }),
           readCurrentRelayOwner: async () => null,
           switchDefaultReleaseChannel: async () => undefined,
-          stopCurrentManualRelayRuntime: async () => undefined,
           uninstallExistingDaemonServices: async () => undefined,
         },
       }),
@@ -605,6 +693,71 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['daemon', 'status', '--json'],
       ]);
     } finally {
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('uses the publicdev release ring when setup.repairThisComputer.v1 specifies channel dev', async () => {
+    const fakeCli = createFakeHappierCli({});
+    const homeDir = join(fakeCli.cliPath, '..');
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const previousRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    try {
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_STACK_REPO_DIR = homeDir;
+      delete process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(homeDir, 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(homeDir, 'invocations.log');
+
+      const stablePath = join(homeDir, 'cli', 'current', 'happier');
+      mkdirSync(join(homeDir, 'cli', 'current'), { recursive: true });
+      writeFileSync(stablePath, `#!/bin/sh\nexit 1\n`);
+      chmodSync(stablePath, 0o755);
+
+      const devPath = join(homeDir, 'cli-dev', 'current', 'happier');
+      mkdirSync(join(homeDir, 'cli-dev', 'current'), { recursive: true });
+      writeFileSync(devPath, readFileSync(fakeCli.cliPath, 'utf8'));
+      chmodSync(devPath, 0o755);
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'setup.repairThisComputer.v1',
+          params: {
+            channel: 'dev',
+          },
+        },
+        taskId: 'task_repair_release_ring_publicdev',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent() {},
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_repair_release_ring_publicdev',
+        ok: true,
+        data: {
+          machineId: 'machine-local-1',
+        },
+      });
+      expect(fakeCli.readInvocations()).toEqual([
+        ['server', 'current', '--json'],
+        ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
+        ['auth', 'status', '--json'],
+        ['service', 'install', '--json'],
+        ['service', 'start', '--json'],
+        ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_HOME_DIR', previousHomeDir);
+      restoreEnvVar('HAPPIER_STACK_REPO_DIR', previousRepoDir);
       restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
       restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
       restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
@@ -731,14 +884,19 @@ describe('createHsetupSystemTaskRegistry', () => {
           },
         },
         taskId: 'task_setup_1',
-        registry: createHsetupSystemTaskRegistry(),
+        registry: createHsetupSystemTaskRegistry({
+          setupThisComputer: {
+            readBackgroundServiceSetupGuidance: async () => createDefaultSetupThisComputerGuidance(),
+          },
+        }),
         now: () => 1700000000000,
         emitEvent(event) {
           events.push(event);
         },
       });
 
-      expect(events).toEqual([
+      expect(summarizeSetupLifecycleEvents(events)).toEqual([
+        expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.ensureCli' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.resolveRelay' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.checkAuth' }),
         expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.configureRelay' }),
@@ -759,6 +917,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect(fakeCli.readInvocations()).toEqual([
         ['server', 'current', '--json'],
         ['auth', 'status', '--json'],
+        ['service', 'status', '--json'],
         ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
         ['auth', 'request', '--json'],
         ['auth', 'wait', '--public-key', 'public-key-local-1', '--json'],
@@ -810,6 +969,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect(fakeCli.readInvocations()).toEqual([
         ['server', 'current', '--json'],
         ['auth', 'status', '--json'],
+        ['service', 'status', '--json'],
         ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
         ['auth', 'request', '--json'],
       ]);
@@ -889,6 +1049,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect(fakeCli.readInvocations()).toEqual([
         ['server', 'current', '--json'],
         ['auth', 'status', '--json'],
+        ['service', 'status', '--json'],
         ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
         ['auth', 'request', '--json'],
         ['auth', 'approve', '--public-key', 'public-key-local-2', '--json'],
@@ -950,7 +1111,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         ok: false,
         error: {
           code: 'daemon_service_not_ready',
-          message: 'Background service did not reach a ready state for the selected server.',
+          message: 'Background service did not reach a ready state for the selected Relay.',
         },
       });
       expect(fakeCli.readInvocations()).toContainEqual(['daemon', 'status', '--json']);
@@ -1590,6 +1751,76 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['daemon', 'status', '--json'],
       ]);
     } finally {
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('uses the publicdev release ring when daemon.service.status.v1 specifies channel dev', async () => {
+    const fakeCli = createFakeHappierCli({});
+    const homeDir = join(fakeCli.cliPath, '..');
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const previousRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    try {
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_STACK_REPO_DIR = homeDir;
+      delete process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(homeDir, 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(homeDir, 'invocations.log');
+
+      const stablePath = join(homeDir, 'cli', 'current', 'happier');
+      mkdirSync(join(homeDir, 'cli', 'current'), { recursive: true });
+      writeFileSync(stablePath, `#!/bin/sh\nexit 1\n`);
+      chmodSync(stablePath, 0o755);
+
+      const devPath = join(homeDir, 'cli-dev', 'current', 'happier');
+      mkdirSync(join(homeDir, 'cli-dev', 'current'), { recursive: true });
+      writeFileSync(devPath, readFileSync(fakeCli.cliPath, 'utf8'));
+      chmodSync(devPath, 0o755);
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'daemon.service.status.v1',
+          params: {
+            target: { kind: 'local' },
+            surface: 'desktop.ui',
+            mode: 'user',
+            channel: 'dev',
+          },
+        },
+        taskId: 'task_daemon_status_release_ring_publicdev',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent() {},
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_daemon_status_release_ring_publicdev',
+        ok: true,
+        data: {
+          serviceInstalled: true,
+          daemonRunning: true,
+          needsAuth: false,
+          machineId: 'machine-local-1',
+          daemonServerUrl: 'https://relay.example.test',
+          daemonComparableKey: null,
+          daemonAccountId: null,
+          daemonMachineRegistered: true,
+        },
+      });
+      expect(fakeCli.readInvocations()).toEqual([
+        ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_HOME_DIR', previousHomeDir);
+      restoreEnvVar('HAPPIER_STACK_REPO_DIR', previousRepoDir);
       restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
       restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
       restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);

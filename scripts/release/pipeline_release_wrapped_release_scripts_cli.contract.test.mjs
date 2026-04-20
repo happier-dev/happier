@@ -13,6 +13,7 @@ const cases = [
   ['release-build-cli-binaries', 'scripts/pipeline/release/build-cli-binaries.mjs'],
   ['release-build-hstack-binaries', 'scripts/pipeline/release/build-hstack-binaries.mjs'],
   ['release-build-server-binaries', 'scripts/pipeline/release/build-server-binaries.mjs'],
+  ['release-prepare-binary-assets', 'scripts/pipeline/release/prepare-binary-assets.mjs'],
   ['release-publish-manifests', 'scripts/pipeline/release/publish-manifests.mjs'],
   ['release-verify-artifacts', 'scripts/pipeline/release/verify-artifacts.mjs'],
   ['release-compute-changed-components', 'scripts/pipeline/release/compute-changed-components.mjs'],
@@ -20,6 +21,7 @@ const cases = [
   ['release-resolve-bump-plan', 'scripts/pipeline/release/resolve-bump-plan.mjs'],
   ['release-compute-deploy-plan', 'scripts/pipeline/release/compute-deploy-plan.mjs'],
   ['release-build-ui-web-bundle', 'scripts/pipeline/release/build-ui-web-bundle.mjs'],
+  ['release-validate', 'scripts/pipeline/release-validation/validate-release.mjs'],
 ];
 
 for (const [subcommand, expectedRelPath] of cases) {

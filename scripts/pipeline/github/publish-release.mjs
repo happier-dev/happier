@@ -180,6 +180,35 @@ function readTagShaViaGithubApi(params) {
 }
 
 /**
+ * @param {{ oldSha: string; sha: string; repo: string; dryRun: boolean; maxCommits: number; tag: string }} params
+ * @returns {{ compareUrl: string; commitCount: string; commits: string }}
+ */
+function collectRollingCompareSummary(params) {
+  const oldSha = String(params.oldSha ?? '').trim();
+  const sha = String(params.sha ?? '').trim();
+  if (!oldSha || !sha || oldSha === sha) {
+    return { compareUrl: '', commitCount: '', commits: '' };
+  }
+
+  const compareRange = `${oldSha}..${sha}`;
+  try {
+    const commitCount = run('git', ['rev-list', '--count', compareRange], { dryRun: params.dryRun }).trim();
+    const commits = run('git', ['log', `--max-count=${params.maxCommits}`, "--pretty=format:- %h %s", compareRange], {
+      dryRun: params.dryRun,
+    }).trim();
+    return {
+      compareUrl: `https://github.com/${params.repo}/compare/${oldSha}...${sha}`,
+      commitCount,
+      commits,
+    };
+  } catch (err) {
+    const detail = formatExecError(err).trim().split('\n')[0] || 'unknown git error';
+    console.log(`::warning::Skipping rolling compare summary for ${params.tag}: ${detail}`);
+    return { compareUrl: '', commitCount: '', commits: '' };
+  }
+}
+
+/**
  * Best-effort update for a rolling tag (force) using the GitHub API.
  * This avoids relying on `git push` auth being wired to GH_TOKEN in CI.
  *
@@ -402,16 +431,14 @@ function main() {
 
   // Update rolling release notes with commit summary.
   if (rollingTag) {
-    let compareUrl = '';
-    let commitCount = '';
-    let commits = '';
-    if (oldSha && oldSha !== sha) {
-      compareUrl = `https://github.com/${repo}/compare/${oldSha}...${sha}`;
-      commitCount = run('git', ['rev-list', '--count', `${oldSha}..${sha}`], { dryRun }).trim();
-      commits = run('git', ['log', `--max-count=${maxCommits}`, "--pretty=format:- %h %s", `${oldSha}..${sha}`], {
-        dryRun,
-      }).trim();
-    }
+    const { compareUrl, commitCount, commits } = collectRollingCompareSummary({
+      oldSha,
+      sha,
+      repo,
+      dryRun,
+      maxCommits,
+      tag,
+    });
 
     const notesPrefix = notes.trim() || 'Rolling release.';
     let body = '';

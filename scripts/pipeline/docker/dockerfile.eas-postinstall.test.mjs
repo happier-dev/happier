@@ -24,6 +24,7 @@ test("Dockerfile deps stages include the root postinstall script (eas-postinstal
   ]) {
     const section = extractStageSection(raw, marker);
     assert.match(section, /COPY scripts\/pipeline\/expo\/eas-postinstall\.mjs scripts\/pipeline\/expo\//);
+    assert.match(section, /COPY scripts\/ci\/yarn-install-with-retry\.sh \/usr\/local\/bin\/yarn-install-with-retry/);
   }
 });
 

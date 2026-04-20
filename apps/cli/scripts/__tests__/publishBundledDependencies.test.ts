@@ -1,10 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 describe('apps/cli package publish contract', () => {
   const cliRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const repoRoot = resolve(cliRoot, '..', '..');
+
+  function readBundledExtensionWorkspacePackageNames(): readonly string[] {
+    const extensionsRoot = resolve(repoRoot, 'packages', 'extensions');
+    if (!existsSync(extensionsRoot)) return [];
+
+    const packageNames: string[] = [];
+    for (const dirent of readdirSync(extensionsRoot, { withFileTypes: true })) {
+      if (!dirent.isDirectory()) continue;
+      // Template/scaffold workspaces are not shipped in published artifacts.
+      if (dirent.name.startsWith('_')) continue;
+      const extensionId = dirent.name;
+      const pkgJsonPath = resolve(extensionsRoot, extensionId, 'package.json');
+      if (!existsSync(pkgJsonPath)) continue;
+
+      const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as { name?: unknown };
+      const expectedPackageName = `@happier-dev/extensions-${extensionId}`;
+      expect(pkgJson.name).toBe(expectedPackageName);
+      packageNames.push(expectedPackageName);
+    }
+
+    packageNames.sort((a, b) => a.localeCompare(b));
+    return packageNames;
+  }
 
   it('declares npm bin entrypoints for the published CLI', () => {
     const cliPackageJsonPath = resolve(cliRoot, 'package.json');
@@ -15,7 +39,6 @@ describe('apps/cli package publish contract', () => {
     expect(cliPackageJson.bin).toEqual(expect.objectContaining({
       happier: './bin/happier.mjs',
       'happier-mcp': './bin/happier-mcp.mjs',
-      'happier-dev': './bin/happier-dev.mjs',
     }));
   });
 
@@ -33,10 +56,18 @@ describe('apps/cli package publish contract', () => {
     expect(bundled).toContain('@happier-dev/agents');
     expect(bundled).toContain('@happier-dev/cli-common');
     expect(bundled).toContain('@happier-dev/connection-supervisor');
+    expect(bundled).toContain('@happier-dev/extension-sdk');
     expect(bundled).toContain('@happier-dev/protocol');
     expect(bundled).toContain('@happier-dev/transfers');
     expect(bundled).toContain('@happier-dev/release-runtime');
     expect(bundled).toContain('tweetnacl');
+
+    for (const extensionPackageName of readBundledExtensionWorkspacePackageNames()) {
+      expect(bundled).toContain(extensionPackageName);
+      // Bundled dependencies should also be declared as dependencies so local tooling and
+      // type/build steps can resolve the workspace packages deterministically.
+      expect(cliPackageJson.dependencies?.[extensionPackageName]).toBeTruthy();
+    }
 
     // External runtime deps used by protocol should be declared on protocol itself
     // (and vendored into the bundled protocol package during `prepack`).
@@ -52,6 +83,7 @@ describe('apps/cli package publish contract', () => {
     expect(cliPackageJson.dependencies?.['tweetnacl']).toBeTruthy();
     expect(cliPackageJson.dependencies?.['base64-js']).toBeFalsy();
     expect(cliPackageJson.dependencies?.['@noble/hashes']).toBeFalsy();
+    expect(cliPackageJson.dependencies?.['@happier-dev/extension-sdk']).toBeTruthy();
 
   });
 

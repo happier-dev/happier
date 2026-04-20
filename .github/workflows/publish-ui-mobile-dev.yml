@@ -130,7 +130,9 @@ jobs:
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
           # Dev lane uses preview-like embedded policy and does not need web-asset vendoring.
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Expo OTA update (dev lane)
         if: inputs.publish_ota
@@ -252,7 +254,9 @@ jobs:
           npm_config_production: "false"
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:
@@ -323,7 +327,9 @@ jobs:
           npm_config_production: "false"
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Setup Xcode (pin)
         uses: ./.github/actions/setup-xcode

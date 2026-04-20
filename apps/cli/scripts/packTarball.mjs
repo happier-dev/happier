@@ -125,7 +125,7 @@ export function packTarball(options = {}) {
   fs.mkdirSync(destDir, { recursive: true });
   fs.mkdirSync(String(env.npm_config_cache), { recursive: true });
 
-  const packArgs = [...npmInvocation.args, 'pack', '--json', '--pack-destination', destDir];
+  const packArgs = [...npmInvocation.args, 'pack', '--json', '--ignore-scripts', '--pack-destination', destDir];
   const result = spawn(npmInvocation.command, packArgs, {
     cwd: packageRoot,
     env,

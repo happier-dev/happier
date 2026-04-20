@@ -53,4 +53,123 @@ describe('patchPackedTarballForBun', () => {
     expect(() => readFileSync(join(extracted, 'package', 'node_modules', '@happier-dev', 'protocol', 'package.json'), 'utf8'))
       .not.toThrow();
   });
+
+  it('removes heavy voice inference runtime dependencies only when the tarball ships the complete deferred archive matrix', async () => {
+    const tmp = createTempDirSync('happier-cli-postpack-voice-runtime-test-');
+    const packageDir = join(tmp, 'package');
+    const tarballPath = join(tmp, 'artifact.tgz');
+    const archivesDir = join(packageDir, 'tools', 'archives');
+
+    mkdirSync(archivesDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      `${JSON.stringify({
+        name: '@happier-dev/cli',
+        version: '0.1.0',
+        dependencies: {
+          '@huggingface/transformers': '^3.8.1',
+          'ffmpeg-static': '5.2.0',
+          'sherpa-onnx-node': '^1.12.38',
+          tweetnacl: '^1.0.3',
+        },
+        happier: {
+          voiceInference: {
+            deferredRuntimePackages: [
+              '@huggingface/transformers',
+              'ffmpeg-static',
+              'sherpa-onnx-node',
+            ],
+            deferredRuntimeArchiveTargets: [
+              'linux-x64',
+              'linux-arm64',
+              'darwin-x64',
+              'darwin-arm64',
+              'windows-x64',
+            ],
+          },
+        },
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    for (const target of ['linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64', 'windows-x64']) {
+      writeFileSync(join(archivesDir, `voice-inference-runtime-${target}.tar.gz`), `${target}\n`, 'utf8');
+    }
+
+    await tar.c({ gzip: true, file: tarballPath, cwd: tmp, portable: true }, ['package']);
+
+    await patchPackedTarballForBun({ tarballPath, env: {} });
+
+    const extracted = createTempDirSync('happier-cli-postpack-voice-runtime-extract-');
+    await tar.x({ file: tarballPath, cwd: extracted, strict: true });
+
+    const patchedPkg = JSON.parse(
+      readFileSync(join(extracted, 'package', 'package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> };
+
+    expect(patchedPkg.dependencies).toEqual({
+      tweetnacl: '^1.0.3',
+    });
+  });
+
+  it('retains heavy voice inference runtime dependencies when the deferred archive matrix is incomplete', async () => {
+    const tmp = createTempDirSync('happier-cli-postpack-voice-runtime-incomplete-test-');
+    const packageDir = join(tmp, 'package');
+    const tarballPath = join(tmp, 'artifact.tgz');
+    const archivesDir = join(packageDir, 'tools', 'archives');
+
+    mkdirSync(archivesDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      `${JSON.stringify({
+        name: '@happier-dev/cli',
+        version: '0.1.0',
+        dependencies: {
+          '@huggingface/transformers': '^3.8.1',
+          'ffmpeg-static': '5.2.0',
+          'sherpa-onnx-node': '^1.12.38',
+          tweetnacl: '^1.0.3',
+        },
+        happier: {
+          voiceInference: {
+            deferredRuntimePackages: [
+              '@huggingface/transformers',
+              'ffmpeg-static',
+              'sherpa-onnx-node',
+            ],
+            deferredRuntimeArchiveTargets: [
+              'linux-x64',
+              'linux-arm64',
+              'darwin-x64',
+              'darwin-arm64',
+              'windows-x64',
+            ],
+          },
+        },
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    for (const target of ['linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64']) {
+      writeFileSync(join(archivesDir, `voice-inference-runtime-${target}.tar.gz`), `${target}\n`, 'utf8');
+    }
+
+    await tar.c({ gzip: true, file: tarballPath, cwd: tmp, portable: true }, ['package']);
+
+    await patchPackedTarballForBun({ tarballPath, env: {} });
+
+    const extracted = createTempDirSync('happier-cli-postpack-voice-runtime-incomplete-extract-');
+    await tar.x({ file: tarballPath, cwd: extracted, strict: true });
+
+    const patchedPkg = JSON.parse(
+      readFileSync(join(extracted, 'package', 'package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> };
+
+    expect(patchedPkg.dependencies).toEqual({
+      '@huggingface/transformers': '^3.8.1',
+      'ffmpeg-static': '5.2.0',
+      'sherpa-onnx-node': '^1.12.38',
+      tweetnacl: '^1.0.3',
+    });
+  });
 });

@@ -259,7 +259,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Test + typecheck
         if: inputs.checks_profile != 'none'
@@ -520,7 +522,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Apply version bumps (single commit)
         id: bumps
@@ -660,9 +664,17 @@ jobs:
       run_tests: false
       release_message: ${{ inputs.release_message }}
 
+  release_verify:
+    name: Release Verification (release-verify.yml)
+    needs: [plan, publish_server_runtime, publish_ui_web, publish_docker, publish_npm]
+    if: ${{ always() && inputs.checks_profile == 'full' && inputs.dry_run != true && needs.plan.result == 'success' && (needs.publish_server_runtime.result == 'success' || needs.publish_server_runtime.result == 'skipped') && (needs.publish_ui_web.result == 'success' || needs.publish_ui_web.result == 'skipped') && (needs.publish_docker.result == 'success' || needs.publish_docker.result == 'skipped') && (needs.publish_npm.result == 'success' || needs.publish_npm.result == 'skipped') }}
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+
   sync_dev:
-    if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
-    needs: [plan, bump_versions_dev, promote_main]
+    if: ${{ inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true') && (needs.release_verify.result == 'success' || needs.release_verify.result == 'skipped') }}
+    needs: [plan, bump_versions_dev, promote_main, release_verify]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:

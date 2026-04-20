@@ -5,9 +5,14 @@
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 import { commandExists, execOrThrow, fileSha256, parseArgs } from './lib/binary-release.mjs';
+import { shouldSmokeTestReleaseArtifact } from './publishing/artifact-smoke-compatibility.mjs';
+import { terminateProcessTreeByPid } from '../../testing/process/processTree.mjs';
+
+const DEFAULT_BINARY_SMOKE_TIMEOUT_MS = 20_000;
+const DEFAULT_SERVER_BINARY_SMOKE_TIMEOUT_MS = 15_000;
 
 function parseChecksums(raw) {
   const lines = String(raw ?? '')
@@ -27,6 +32,92 @@ function fileExists(path) {
   return spawnSync('bash', ['-lc', `test -f "${path.replaceAll('"', '\\"')}"`], { stdio: 'ignore' }).status === 0;
 }
 
+function isServerBinaryCandidate(candidate) {
+  return String(candidate ?? '').startsWith('happier-server');
+}
+
+function formatSmokeOutput(result) {
+  const stdout = String(result?.stdout ?? '').trim();
+  const stderr = String(result?.stderr ?? '').trim();
+  return [stdout, stderr].filter(Boolean).join('\n');
+}
+
+function readTimeoutOverride(rawValue, fallbackMs) {
+  const parsed = Number.parseInt(String(rawValue ?? '').trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallbackMs;
+}
+
+function resolveArtifactSmokeTimeoutMs({ serverBinary }) {
+  return serverBinary
+    ? readTimeoutOverride(process.env.HAPPIER_RELEASE_SERVER_SMOKE_TIMEOUT_MS, DEFAULT_SERVER_BINARY_SMOKE_TIMEOUT_MS)
+    : readTimeoutOverride(process.env.HAPPIER_RELEASE_BINARY_SMOKE_TIMEOUT_MS, DEFAULT_BINARY_SMOKE_TIMEOUT_MS);
+}
+
+async function runSmokeCommand({ command, args, cwd, env, timeoutMs }) {
+  return await new Promise((resolvePromise) => {
+    const child = spawn(command, args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+
+    child.stdout?.setEncoding('utf-8');
+    child.stderr?.setEncoding('utf-8');
+    child.stdout?.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk;
+    });
+
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise(result);
+    };
+
+    child.on('error', (error) => {
+      settle({
+        status: null,
+        signal: null,
+        error,
+        timedOut,
+        stdout,
+        stderr,
+      });
+    });
+
+    child.on('close', (code, signal) => {
+      settle({
+        status: code,
+        signal,
+        error: null,
+        timedOut,
+        stdout,
+        stderr,
+      });
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (Number.isInteger(child.pid) && child.pid > 0) {
+        void terminateProcessTreeByPid(child.pid, {
+          graceMs: 250,
+          pollMs: 25,
+          skipAliveCheck: true,
+        }).catch(() => {});
+      }
+    }, timeoutMs);
+  });
+}
+
 async function smokeTestArchive({ archivePath }) {
   const scratch = await mkdtemp(join(tmpdir(), 'happier-release-smoke-'));
   try {
@@ -36,8 +127,11 @@ async function smokeTestArchive({ archivePath }) {
       throw new Error(`[release] extracted archive is empty: ${archivePath}`);
     }
     const root = join(scratch, roots[0]);
-    const files = await readdir(root);
-    const candidate = files.find((name) => !name.endsWith('.txt') && !name.endsWith('.json'));
+    const entries = await readdir(root, { withFileTypes: true });
+    const candidate = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .find((name) => !name.endsWith('.txt') && !name.endsWith('.json'));
     if (!candidate) {
       throw new Error(`[release] no executable found in archive: ${archivePath}`);
     }
@@ -45,15 +139,27 @@ async function smokeTestArchive({ archivePath }) {
       return;
     }
     const binPath = join(root, candidate);
-    const args = candidate.startsWith('happier-server') ? ['--help'] : ['--version'];
-    const result = spawnSync(binPath, args, {
-      encoding: 'utf-8',
-      timeout: 20_000,
+    const serverBinary = isServerBinaryCandidate(candidate);
+    const args = serverBinary ? [] : ['--version'];
+    const env = serverBinary
+      ? {
+          ...process.env,
+          PORT: '0',
+          METRICS_PORT: '0',
+          HAPPIER_SERVER_LIGHT_DATA_DIR: join(scratch, 'server-light-data'),
+        }
+      : process.env;
+    const result = await runSmokeCommand({
+      command: binPath,
+      args,
+      cwd: root,
+      env,
+      timeoutMs: resolveArtifactSmokeTimeoutMs({ serverBinary }),
     });
-    const timedOut = result.error && result.error.code === 'ETIMEDOUT';
+    const timedOut = result.timedOut === true;
     if (timedOut) {
-      const output = `${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}`;
-      if (candidate.startsWith('happier-server')) {
+      const output = formatSmokeOutput(result);
+      if (serverBinary) {
         if (/ERR_MODULE_NOT_FOUND|Cannot find module/i.test(output)) {
           throw new Error(`[release] smoke test failed for ${archivePath}: ${output.trim()}`);
         }
@@ -65,7 +171,7 @@ async function smokeTestArchive({ archivePath }) {
       throw new Error(`[release] smoke test timed out for ${archivePath}: ${output.trim()}`);
     }
     if ((result.status ?? 1) !== 0) {
-      throw new Error(`[release] smoke test failed for ${archivePath}: ${String(result.stderr ?? '').trim()}`);
+      throw new Error(`[release] smoke test failed for ${archivePath}: ${formatSmokeOutput(result)}`);
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -109,6 +215,7 @@ async function main() {
   if (!flags.has('--skip-smoke')) {
     for (const entry of entries) {
       if (!entry.name.endsWith('.tar.gz')) continue;
+      if (!shouldSmokeTestReleaseArtifact({ archiveName: entry.name })) continue;
       await smokeTestArchive({ archivePath: join(artifactsDir, entry.name) });
     }
   }

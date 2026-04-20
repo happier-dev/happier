@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,6 +41,9 @@ for (const { subcommand, scriptName } of [
       assert.match(out, new RegExp(`\\[pipeline\\] exec: node .*${scriptName.replace('.', '\\.')}`));
       assert.match(out, /"--channel"/);
       assert.match(out, new RegExp(`"${channel}"`));
+
+      const wrapperSource = fs.readFileSync(resolve(repoRoot, 'scripts', 'pipeline', 'release', scriptName), 'utf8');
+      assert.match(wrapperSource, /publishing\/publish-binary-release\.mjs/);
     });
   }
 }

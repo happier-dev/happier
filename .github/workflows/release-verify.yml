@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Target — Channel to verify (preview uses preview ref; production uses main ref by default)"
+        description: "Target — Channel to verify (dev/preview use their channel refs; production uses main ref by default)"
         required: true
         type: choice
         default: preview
         options:
+          - dev
           - preview
           - production
       run_installers_smoke:
@@ -18,6 +19,21 @@ on:
         type: boolean
       run_binary_smoke:
         description: "Verify — Binary smoke (cli/server/self-host)"
+        required: true
+        default: true
+        type: boolean
+      run_cli_update_continuity:
+        description: "Verify — CLI update continuity (published channel -> local build, linux)"
+        required: true
+        default: true
+        type: boolean
+      run_daemon_continuity:
+        description: "Verify — Daemon continuity (local build, linux)"
+        required: true
+        default: true
+        type: boolean
+      run_session_continuity:
+        description: "Verify — Session continuity after server restart (local build, linux)"
         required: true
         default: true
         type: boolean
@@ -51,6 +67,18 @@ on:
         default: true
         type: boolean
       run_binary_smoke:
+        required: false
+        default: true
+        type: boolean
+      run_cli_update_continuity:
+        required: false
+        default: true
+        type: boolean
+      run_daemon_continuity:
+        required: false
+        default: true
+        type: boolean
+      run_session_continuity:
         required: false
         default: true
         type: boolean
@@ -95,8 +123,11 @@ jobs:
       run_providers: false
       run_release_contracts: false
       run_installers_smoke: ${{ inputs.run_installers_smoke }}
-      installers_channel: ${{ inputs.channel == 'production' && 'stable' || 'preview' }}
+      installers_channel: ${{ inputs.channel == 'production' && 'stable' || inputs.channel == 'dev' && 'dev' || 'preview' }}
       run_binary_smoke: ${{ inputs.run_binary_smoke }}
+      run_cli_update_continuity: ${{ inputs.run_cli_update_continuity }}
+      run_daemon_continuity: ${{ inputs.run_daemon_continuity }}
+      run_session_continuity: ${{ inputs.run_session_continuity }}
       run_self_host_systemd: ${{ inputs.run_self_host_systemd }}
       run_self_host_launchd: ${{ inputs.run_self_host_launchd }}
       run_self_host_schtasks: ${{ inputs.run_self_host_schtasks }}

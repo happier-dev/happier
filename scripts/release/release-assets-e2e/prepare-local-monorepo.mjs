@@ -50,6 +50,18 @@ function gitCapture({ repoDir, args }) {
   return String(res.stdout ?? '');
 }
 
+function readRemoteUrl({ repoDir, remoteName = 'origin' }) {
+  const res = spawnSync('git', ['-C', repoDir, 'remote', 'get-url', remoteName], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (res.status !== 0) {
+    return null;
+  }
+  const value = String(res.stdout ?? '').trim();
+  return value.length ? value : null;
+}
+
 function applyDiff({ srcDir, dstDir, args }) {
   const diff = spawnSync('git', ['-C', srcDir, 'diff', '--binary', ...args], {
     encoding: null,
@@ -143,6 +155,16 @@ function ensureMainBranch({ repoDir }) {
   run('git', ['-C', repoDir, 'branch', '-f', 'main', 'HEAD'], { quiet: true });
 }
 
+function preserveSourceOriginRemote({ srcDir, dstDir }) {
+  const srcOrigin = readRemoteUrl({ repoDir: srcDir, remoteName: 'origin' });
+  if (!srcOrigin) return;
+
+  const dstOrigin = readRemoteUrl({ repoDir: dstDir, remoteName: 'origin' });
+  if (!dstOrigin || dstOrigin === srcOrigin) return;
+
+  run('git', ['-C', dstDir, 'remote', 'set-url', 'origin', srcOrigin], { quiet: true });
+}
+
 function commitIfDirty({ repoDir }) {
   const status = gitCapture({ repoDir, args: ['status', '--porcelain=v1'] }).trim();
   if (!status) return false;
@@ -197,6 +219,7 @@ function main() {
   copyGeneratedSourceFiles({ srcDir: src, dstDir: dst });
 
   commitIfDirty({ repoDir: dst });
+  preserveSourceOriginRemote({ srcDir: src, dstDir: dst });
   ensureMainBranch({ repoDir: dst });
 
   const excludePath = join(dst, '.git', 'info', 'exclude');

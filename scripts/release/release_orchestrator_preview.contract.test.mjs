@@ -37,13 +37,31 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   assert.match(raw, /source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'preview' \}\}/);
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'preview' \}\}/);
   assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*none/);
-  assert.match(raw, /sync_dev:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
+  assert.match(
+    raw,
+    /sync_dev:[\s\S]*?if:\s*\$\{\{\s*inputs\.dry_run != true && inputs\.environment == 'production'/,
+  );
   assert.match(
     raw,
     /Compute versioned component changes \(latest release tags\.\.release head\)[\s\S]*?node scripts\/pipeline\/run\.mjs release-compute-versioned-component-changes/,
   );
   assert.match(raw, /VERSIONED_APP_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_app\s*\}\}/);
   assert.match(raw, /VERSIONED_CLI_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_cli\s*\}\}/);
+});
+
+test('release workflow forwards stack npm publishing through the shared publish_npm lane', async () => {
+  const raw = await loadWorkflow('release.yml');
+
+  assert.match(
+    raw,
+    /publish_npm:[\s\S]*?\(needs\.plan\.outputs\.publish_cli == 'true' \|\| needs\.plan\.outputs\.publish_stack == 'true' \|\| needs\.plan\.outputs\.publish_server == 'true'\)/,
+    'release.yml should invoke release-npm when stack publishing is requested',
+  );
+  assert.match(
+    raw,
+    /publish_npm:[\s\S]*?with:[\s\S]*?publish_cli:\s*\$\{\{\s*needs\.plan\.outputs\.publish_cli == 'true'\s*\}\}[\s\S]*?publish_stack:\s*\$\{\{\s*needs\.plan\.outputs\.publish_stack == 'true'\s*\}\}[\s\S]*?publish_server:\s*\$\{\{\s*needs\.plan\.outputs\.publish_server == 'true'\s*\}\}/,
+    'release.yml should forward stack publishing into release-npm instead of dropping the stack path',
+  );
 });
 
 test('release workflow plans preview-to-main promotions from preview instead of dev', async () => {

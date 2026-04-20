@@ -20,3 +20,31 @@ test('install.sh resolves the daemon choice only after the already-installed --r
   assert.notEqual(withDaemonIndex, -1, 'expected WITH_DAEMON resolution');
   assert.ok(withDaemonIndex > invokeInstalledCliIndex, 'expected WITH_DAEMON resolution after the installed CLI fast path');
 });
+
+test('setup-relay shortcut bypasses the installed CLI fast path so the installer can run the latest CLI surface', async () => {
+  const installShPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const installPs1Path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const installSh = await readFile(installShPath, 'utf8');
+  const installPs1 = await readFile(installPs1Path, 'utf8');
+
+  assert.match(
+    installSh,
+    /SETUP_RELAY_SHORTCUT="0"/,
+    'expected install.sh to track whether --setup-relay was used as the shortcut path',
+  );
+  assert.match(
+    installSh,
+    /--setup-relay\)[\s\S]*SETUP_RELAY_SHORTCUT="1"/,
+    'expected install.sh to mark the setup-relay shortcut during argument parsing',
+  );
+  assert.match(
+    installSh,
+    /if \[\[ -n "\$\{INSTALLED_CLI_BIN\}" && ! \( "\$\{SETUP_RELAY_SHORTCUT\}" == "1" && "\$\{RUN_ACTION\}" == "setup-relay" \) \]\]; then/,
+    'expected install.sh to bypass the installed CLI fast path for the setup-relay shortcut',
+  );
+  assert.match(
+    installPs1,
+    /if \(\$Run -and -not \$SetupRelay -and \(\$existing = Resolve-InstalledCliInvoker\)\) \{/,
+    'expected install.ps1 to bypass the installed CLI fast path for the setup-relay shortcut',
+  );
+});

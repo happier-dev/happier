@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { cp, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -42,6 +42,14 @@ export const CLI_STACK_TARGETS = CLI_BINARY_TARGETS;
 export const SERVER_TARGETS = SERVER_BINARY_TARGETS;
 
 let _isGnuTar = null;
+
+function resolveArchiveTarEnv(baseEnv = process.env) {
+  return {
+    ...baseEnv,
+    COPYFILE_DISABLE: '1',
+    COPY_EXTENDED_ATTRIBUTES_DISABLE: '1',
+  };
+}
 
 export function parseArgs(argv) {
   const kv = new Map();
@@ -127,13 +135,99 @@ export async function createDeterministicArchive({ artifactPath, sourcePath, sou
     ]);
     return;
   }
-  await execTarWithRetry([...excludeArgs, '-czf', artifactPath, '-C', sourcePath, sourceName]);
+  await execTarWithRetry(['--no-mac-metadata', ...excludeArgs, '-czf', artifactPath, '-C', sourcePath, sourceName]);
+}
+
+function resolveTargetNodePlatform(target) {
+  return target?.os === 'windows' ? 'win32' : String(target?.os ?? '').trim().toLowerCase();
+}
+
+function normalizePackageConstraintList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => String(entry ?? '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function matchesPackageConstraintList(value, constraints) {
+  if (constraints.length === 0) return true;
+
+  const negative = new Set(constraints.filter((entry) => entry.startsWith('!')).map((entry) => entry.slice(1)));
+  if (negative.has(value)) {
+    return false;
+  }
+
+  const positive = constraints.filter((entry) => !entry.startsWith('!'));
+  if (positive.length === 0) {
+    return true;
+  }
+
+  return positive.includes(value);
+}
+
+function packageDirMatchesTarget(packageJson, target) {
+  const nodePlatform = resolveTargetNodePlatform(target);
+  const targetArch = String(target?.arch ?? '').trim().toLowerCase();
+
+  const osConstraints = normalizePackageConstraintList(packageJson?.os);
+  if (!matchesPackageConstraintList(nodePlatform, osConstraints)) {
+    return false;
+  }
+
+  const cpuConstraints = normalizePackageConstraintList(packageJson?.cpu);
+  if (!matchesPackageConstraintList(targetArch, cpuConstraints)) {
+    return false;
+  }
+
+  return true;
+}
+
+async function sanitizePackagedNodeModulesTree(params) {
+  const stageDir = String(params?.stageDir ?? '').trim();
+  if (!stageDir) return;
+
+  await prunePackagedTreeDirectory({ directoryPath: stageDir, target: params.target });
+}
+
+function isNestedNodeModulesBinDir(path) {
+  return path.includes('/node_modules/.bin') || path.includes('\\node_modules\\.bin');
+}
+
+async function prunePackagedTreeDirectory(params) {
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const childPath = join(params.directoryPath, entry.name);
+
+    if (entry.name === '.bin' && isNestedNodeModulesBinDir(childPath)) {
+      await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
+    const packageJsonPath = join(childPath, 'package.json');
+    const packageJson = await readFile(packageJsonPath, 'utf-8')
+      .then((raw) => JSON.parse(raw))
+      .catch(() => null);
+    if (packageJson && !packageDirMatchesTarget(packageJson, params.target)) {
+      await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
+    await prunePackagedTreeDirectory({
+      directoryPath: childPath,
+      target: params.target,
+    });
+  }
 }
 
 async function execTarWithRetry(args) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      execOrThrow('tar', args);
+      execOrThrow('tar', args, { env: resolveArchiveTarEnv() });
       return;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -266,6 +360,7 @@ export async function packageTargetBinary({
     if (!sourcePath || !targetPath) continue;
     await cp(sourcePath, join(stageDir, targetPath), { recursive: true });
   }
+  await sanitizePackagedNodeModulesTree({ stageDir, target });
   const archiveName = `${artifactStem}.tar.gz`;
   const archivePath = join(outDir, archiveName);
   await createDeterministicArchive({
@@ -286,6 +381,7 @@ export async function packagePreparedTargetBinary({
   const artifactStem = `${product}-v${version}-${target.os}-${target.arch}`;
   const archiveName = `${artifactStem}.tar.gz`;
   const archivePath = join(outDir, archiveName);
+  await sanitizePackagedNodeModulesTree({ stageDir, target });
   await createDeterministicArchive({
     artifactPath: archivePath,
     sourcePath: dirname(stageDir),

@@ -107,6 +107,7 @@ export async function approveLocalRemoteAuthRequestDefault(params: Readonly<{
 }>, deps: Readonly<{
   runLocalHappierJsonCommand?: typeof runLocalHappierJsonCommand;
 }> = {}): Promise<void> {
+  const releaseRing = normalizeBootstrapChannel(params.parsed.channel).releaseChannel;
   const serverUrl = (params.parsed.relay.publicRelayUrl ?? params.parsed.relay.relayUrl).trim();
   const webappUrl = (params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl).trim();
   const localServerUrl = params.parsed.relay.publicRelayUrl
@@ -121,6 +122,7 @@ export async function approveLocalRemoteAuthRequestDefault(params: Readonly<{
   ];
   await (deps.runLocalHappierJsonCommand ?? runLocalHappierJsonCommand)({
     args: ['auth', 'approve', '--public-key', params.publicKey, '--json', '--persist', ...relayArgs],
+    releaseRing,
   });
 }
 

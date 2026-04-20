@@ -2,6 +2,10 @@
   "name": "@happier-dev/cli",
   "version": "0.2.0",
   "description": "Mobile and Web client for Claude Code and Codex",
+  "bin": {
+    "happier": "./bin/happier.mjs",
+    "happier-mcp": "./bin/happier-mcp.mjs"
+  },
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",
   "license": "MIT",
   "type": "module",
@@ -32,14 +36,14 @@
         "default": "./dist/lib.mjs"
       }
     },
-    "./backends/codex/happyMcpStdioBridge": {
+    "./backends/codex/mcp/happierStdioBridge": {
       "require": {
-        "types": "./dist/backends/codex/happyMcpStdioBridge.d.cts",
-        "default": "./dist/backends/codex/happyMcpStdioBridge.cjs"
+        "types": "./dist/backends/codex/mcp/happierStdioBridge.d.cts",
+        "default": "./dist/backends/codex/mcp/happierStdioBridge.cjs"
       },
       "import": {
-        "types": "./dist/backends/codex/happyMcpStdioBridge.d.mts",
-        "default": "./dist/backends/codex/happyMcpStdioBridge.mjs"
+        "types": "./dist/backends/codex/mcp/happierStdioBridge.d.mts",
+        "default": "./dist/backends/codex/mcp/happierStdioBridge.mjs"
       }
     },
     "./mcp/bridges/remoteMcpStdioBridge": {
@@ -80,17 +84,21 @@
     "@happier-dev/agents",
     "@happier-dev/cli-common",
     "@happier-dev/connection-supervisor",
+    "@happier-dev/extension-sdk",
+    "@happier-dev/extensions-claude",
+    "@happier-dev/extensions-codex",
+    "@happier-dev/extensions-opencode",
     "@happier-dev/protocol",
     "@happier-dev/transfers",
     "@happier-dev/release-runtime",
     "tweetnacl"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "build": "node scripts/rmDist.mjs && tsc --noEmit && node scripts/runPkgrollBuild.mjs && node scripts/syncPackageDist.mjs",
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit",
+    "build": "node scripts/rmDist.mjs && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit && node scripts/runPkgrollBuild.mjs && node scripts/syncPackageDist.mjs",
     "test": "$npm_execpath run test:unit",
     "vitest": "$npm_execpath run -s build:shared && vitest",
-    "test:unit": "vitest run --config vitest.config.ts",
+    "test:unit": "node scripts/withNodeHeapLimit.mjs vitest run --config vitest.config.ts",
     "test:integration": "node scripts/runVitestShards.mjs --config vitest.integration.config.ts",
     "test:slow": "vitest run --config vitest.slow.config.ts",
     "start": "$npm_execpath run build && node ./bin/happier.mjs",
@@ -130,14 +138,19 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.34",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.114",
     "@fastify/swagger": "9.7.0",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/connection-supervisor": "0.0.0",
+    "@happier-dev/extension-sdk": "0.0.0",
+    "@happier-dev/extensions-claude": "0.0.0",
+    "@happier-dev/extensions-codex": "0.0.0",
+    "@happier-dev/extensions-opencode": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/transfers": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
+    "ffmpeg-static": "5.2.0",
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@stablelib/base64": "^2.0.1",
@@ -168,6 +181,7 @@
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.0",
     "react-devtools-core": "^6.1.5",
+    "sherpa-onnx-node": "^1.12.38",
     "socket.io-client": "^4.8.1",
     "tar": "^7.5.2",
     "tmp": "^0.2.5",
@@ -197,6 +211,22 @@
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org"
+  },
+  "happier": {
+    "voiceInference": {
+      "deferredRuntimePackages": [
+        "@huggingface/transformers",
+        "ffmpeg-static",
+        "sherpa-onnx-node"
+      ],
+      "deferredRuntimeArchiveTargets": [
+        "linux-x64",
+        "linux-arm64",
+        "darwin-x64",
+        "darwin-arm64",
+        "windows-x64"
+      ]
+    }
   },
   "packageManager": "yarn@1.22.22"
 }

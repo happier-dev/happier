@@ -158,6 +158,65 @@ test('install.sh --uninstall removes installed binary and shim without network',
   await rm(root, { recursive: true, force: true });
 });
 
+test('install.sh --uninstall skips service uninstall when daemon setup is explicitly disabled', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-uninstall-no-daemon-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  const invocationLogPath = join(root, 'service-invocations.log');
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'current'), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'versions', '1.0.0'), { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(curlStubPath, '#!/usr/bin/env bash\necho "curl should not run in --uninstall" >&2\nexit 88\n', 'utf8');
+  await chmod(curlStubPath, 0o755);
+
+  const happierPath = join(installDir, 'bin', 'happier');
+  await writeFile(
+    happierPath,
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> ${JSON.stringify(invocationLogPath)}
+exit 0
+`,
+    'utf8',
+  );
+  await chmod(happierPath, 0o755);
+  await writeFile(join(installDir, 'cli', 'current', 'marker.txt'), 'current', 'utf8');
+  await writeFile(join(installDir, 'cli', 'versions', '1.0.0', 'marker.txt'), 'version', 'utf8');
+  const shimPath = join(outBinDir, 'happier');
+  await symlink(happierPath, shimPath);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_WITH_DAEMON: '0',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--uninstall'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  assert.equal(res.status, 0, `uninstall failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.equal(await readFile(invocationLogPath, 'utf8').catch(() => ''), '');
+
+  const checkShim = spawnSync('bash', ['-lc', `test ! -e "${shimPath.replaceAll('"', '\\"')}"`], { encoding: 'utf8' });
+  assert.equal(checkShim.status, 0, 'expected shim to be removed');
+
+  await rm(root, { recursive: true, force: true });
+});
+
 test('install.sh --reset purges the install directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-reset-'));
   const homeDir = join(root, 'home');

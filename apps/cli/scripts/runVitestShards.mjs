@@ -21,10 +21,18 @@ export function resolveVitestConfigPath(argv) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function spawnVitestRun({ configPath, shardSpec, nodeOptions }) {
+export function resolveVitestForwardArgs(argv) {
+  const idx = argv.indexOf('--config');
+  if (idx === -1) return [];
+  const valueIndex = idx + 1;
+  if (valueIndex >= argv.length) return [];
+  return argv.slice(valueIndex + 1);
+}
+
+function spawnVitestRun({ configPath, shardSpec, nodeOptions, vitestArgs }) {
   return runManagedChildCommand({
     command: 'vitest',
-    args: ['run', '--config', configPath, '--shard', shardSpec],
+    args: ['run', '--config', configPath, ...vitestArgs, '--shard', shardSpec],
     spawnOptions: {
       env: {
         ...process.env,
@@ -51,12 +59,13 @@ async function main(argv) {
   const shardCount = resolveVitestShardCount(process.env);
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
+  const vitestArgs = resolveVitestForwardArgs(argv);
 
   for (let index = 1; index <= shardCount; index += 1) {
     // eslint-disable-next-line no-console
     console.log(`[vitest] shard ${index}/${shardCount}`);
     const shardSpec = `${index}/${shardCount}`;
-    const result = await spawnVitestRun({ configPath, shardSpec, nodeOptions });
+    const result = await spawnVitestRun({ configPath, shardSpec, nodeOptions, vitestArgs });
     if (!result.ok) {
       throw result.error;
     }

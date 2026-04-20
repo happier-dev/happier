@@ -184,7 +184,9 @@ jobs:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
-        run: yarn install --frozen-lockfile --ignore-engines
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       - name: Run release contract tests
         run: yarn -s test:release:contracts
@@ -200,11 +202,7 @@ jobs:
 
       - name: Install minisign (signing + verification)
         if: inputs.publish_runtime_release == true
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y minisign
-          command -v minisign >/dev/null
+        uses: ./.github/actions/bootstrap-minisign
 
       - name: Bump server version (source ref)
         id: bump_server
@@ -234,111 +232,24 @@ jobs:
             --push-ref "${src}" \
             --push-mode auto
 
-      - name: Bootstrap minisign
-        if: inputs.publish_runtime_release == true
-        uses: ./.github/actions/bootstrap-minisign
-
-      - name: Build server runtime binaries
+      - name: Publish server runtime release (pipeline)
         if: inputs.publish_runtime_release == true
         env:
           CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+          ALLOW_STABLE: ${{ inputs.environment == 'production' && 'true' || 'false' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
         run: |
           set -euo pipefail
-          version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          node scripts/pipeline/run.mjs release-build-server-binaries \
-            --channel="${CHANNEL}" \
-            --version="${version}"
-
-      - name: Generate server manifests
-        if: inputs.publish_runtime_release == true
-        env:
-          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-          ASSETS_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.environment == 'production' && 'server-stable' || 'server-preview' }}
-        run: |
-          set -euo pipefail
-          version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          node scripts/pipeline/run.mjs release-publish-manifests \
-            --product=happier-server \
-            --channel="${CHANNEL}" \
-            --version="${version}" \
-            --artifacts-dir="dist/release-assets/server" \
-            --out-dir="dist/release-assets/server/manifests" \
-            --assets-base-url="${ASSETS_BASE_URL}" \
-            --commit-sha="$(git rev-parse HEAD)" \
-            --workflow-run-id="${{ github.run_id }}"
-
-      - name: Verify server release artifacts
-        if: inputs.publish_runtime_release == true
-        env:
-          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-        run: |
-          set -euo pipefail
-          version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt"
-          test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt.minisig"
-          test -f "dist/release-assets/server/manifests/v1/happier-server/${CHANNEL}/latest.json"
-
-      - name: Cryptographic verify server release artifacts
-        if: inputs.publish_runtime_release == true
-        run: |
-          set -euo pipefail
-          version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          node scripts/pipeline/run.mjs release-verify-artifacts \
-            --artifacts-dir="dist/release-assets/server" \
-            --checksums="dist/release-assets/server/checksums-happier-server-v${version}.txt" \
-            --public-key="scripts/release/installers/happier-release.pub" \
-            --skip-smoke
-
-      - name: Publish rolling server release assets
-        if: inputs.publish_runtime_release == true
-        env:
-          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          tag="server-preview"
-          title="Happier Server Preview"
-          prerelease="true"
-          if [ "${CHANNEL}" = "stable" ]; then
-            tag="server-stable"
-            title="Happier Server Stable"
-            prerelease="false"
-          fi
-          node scripts/pipeline/run.mjs github-publish-release \
-            --tag "${tag}" \
-            --title "${title}" \
-            --target-sha "$(git rev-parse HEAD)" \
-            --prerelease "${prerelease}" \
-            --rolling-tag "true" \
-            --generate-notes "false" \
-            --notes "Rolling ${CHANNEL} server runtime release." \
-            --assets-dir "dist/release-assets/server" \
-            --clobber "true" \
-            --prune-assets "true"
-
-      - name: Publish versioned stable server release assets
-        if: inputs.publish_runtime_release == true && inputs.environment == 'production'
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          tag="server-v${version}"
-          title="Happier Server v${version}"
-          node scripts/pipeline/run.mjs github-publish-release \
-            --tag "${tag}" \
-            --title "${title}" \
-            --target-sha "$(git rev-parse HEAD)" \
-            --prerelease "false" \
-            --rolling-tag "false" \
-            --generate-notes "true" \
-            --assets-dir "dist/release-assets/server" \
-            --clobber "true"
+          node scripts/pipeline/run.mjs publish-server-runtime \
+            --channel "${CHANNEL}" \
+            --allow-stable "${ALLOW_STABLE}" \
+            --release-message "" \
+            --run-contracts false \
+            --check-installers false
 
       - name: Resolve deploy branch SHA (before)
         id: deploy_before

@@ -15,8 +15,7 @@ test('dagger expoAndroidLocalBuild uses yarn-install-with-retry to tolerate tran
 
   assert.match(
     src,
-    /docker\/scripts\/yarn-install-with-retry\.sh/,
-    'expected expoAndroidLocalBuild to invoke docker/scripts/yarn-install-with-retry.sh (not raw yarn install)',
+    /scripts\/ci\/yarn-install-with-retry\.sh/,
+    'expected expoAndroidLocalBuild to invoke scripts/ci/yarn-install-with-retry.sh (not raw yarn install)',
   );
 });
-

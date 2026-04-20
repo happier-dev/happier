@@ -913,6 +913,25 @@ function runReleaseWrappedScript({ repoRoot, env, scriptFile, args, dryRun, skip
 }
 
 /**
+ * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean; skipExecOnDryRun?: boolean }} opts
+ */
+function runReleaseValidate({ repoRoot, env, args, dryRun, skipExecOnDryRun = false }) {
+  const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'release-validation', 'validate-release.mjs');
+  const fullArgs = [scriptPath, ...args];
+  if (dryRun) {
+    console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
+    if (skipExecOnDryRun) {
+      return;
+    }
+  }
+  execFileSync(process.execPath, fullArgs, {
+    cwd: repoRoot,
+    env,
+    stdio: 'inherit',
+  });
+}
+
+/**
  * @param {{ repoRoot: string; env: Record<string, string>; scriptRel: string; args: string[] }} opts
  */
 function runJsonScript({ repoRoot, env, scriptRel, args }) {
@@ -992,7 +1011,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           subcommand !== 'release-build-cli-binaries' &&
         subcommand !== 'release-build-hstack-binaries' &&
         subcommand !== 'release-build-server-binaries' &&
+        subcommand !== 'release-prepare-binary-assets' &&
         subcommand !== 'release-publish-manifests' &&
+        subcommand !== 'release-validate' &&
         subcommand !== 'release-verify-artifacts' &&
         subcommand !== 'release-compute-changed-components' &&
         subcommand !== 'release-compute-versioned-component-changes' &&
@@ -1858,12 +1879,59 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       return;
     }
 
+  if (subcommand === 'release-validate') {
+    const {
+      dryRun,
+      secretsSource,
+      keychainService,
+      keychainAccount: keychainAccountRaw,
+      passthrough,
+    } = splitWrappedReleaseArgs(rest);
+    const keychainAccount = keychainAccountRaw.trim() || undefined;
+
+    const { env, sources } = loadPipelineEnv({ repoRoot });
+    const { env: mergedEnv, usedKeychain } = loadSecrets({
+      baseEnv: env,
+      secretsSource,
+      keychainService,
+      keychainAccount,
+    });
+
+    if (sources.length > 0) {
+      console.log(`[pipeline] using env sources: ${sources.join(', ')}`);
+      console.log('[pipeline] warning: env-file mode is for fast local iteration; prefer Keychain bundle for long-term use.');
+    }
+    if (usedKeychain) {
+      console.log(`[pipeline] loaded secrets from Keychain service '${keychainService}'`);
+    }
+
+    if (dryRun) {
+      runReleaseValidate({
+        repoRoot,
+        env: mergedEnv,
+        args: [...passthrough, '--dry-run'],
+        dryRun: true,
+        skipExecOnDryRun: true,
+      });
+      return;
+    }
+
+    runReleaseValidate({
+      repoRoot,
+      env: mergedEnv,
+      args: passthrough,
+      dryRun: false,
+    });
+    return;
+  }
+
       if (
         subcommand === 'release-sync-installers' ||
         subcommand === 'release-bump-version' ||
         subcommand === 'release-build-cli-binaries' ||
         subcommand === 'release-build-hstack-binaries' ||
         subcommand === 'release-build-server-binaries' ||
+        subcommand === 'release-prepare-binary-assets' ||
         subcommand === 'release-publish-manifests' ||
         subcommand === 'release-verify-artifacts' ||
         subcommand === 'release-compute-changed-components' ||
@@ -1893,6 +1961,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 ? 'build-hstack-binaries.mjs'
                 : subcommand === 'release-build-server-binaries'
                   ? 'build-server-binaries.mjs'
+                  : subcommand === 'release-prepare-binary-assets'
+                    ? 'prepare-binary-assets.mjs'
                   : subcommand === 'release-publish-manifests'
                     ? 'publish-manifests.mjs'
                     : subcommand === 'release-verify-artifacts'
