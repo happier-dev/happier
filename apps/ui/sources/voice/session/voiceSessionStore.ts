@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { VoiceSessionSnapshot } from './types';
+import { getVoiceSessionLifecycleController } from './voiceSessionLifecycleControllerStore';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 type VoiceSessionState = VoiceSessionSnapshot & {
@@ -15,6 +16,38 @@ const DEFAULT_SNAPSHOT: VoiceSessionSnapshot = {
   canStop: false,
 };
 
+let cachedCanonicalSnapshot: VoiceSessionSnapshot = DEFAULT_SNAPSHOT;
+
+function isVoiceSessionSnapshotEqual(a: VoiceSessionSnapshot, b: VoiceSessionSnapshot): boolean {
+  return (
+    a.adapterId === b.adapterId
+    && a.sessionId === b.sessionId
+    && a.status === b.status
+    && a.mode === b.mode
+    && a.canStop === b.canStop
+    && a.micMuted === b.micMuted
+    && a.errorCode === b.errorCode
+    && a.errorMessage === b.errorMessage
+  );
+}
+
+function isDefaultSnapshot(snapshot: VoiceSessionSnapshot): boolean {
+  return isVoiceSessionSnapshotEqual(snapshot, DEFAULT_SNAPSHOT);
+}
+
+function readPublishedSnapshot(): VoiceSessionSnapshot {
+  const { setSnapshot: _ignore, ...snapshot } = useVoiceSessionStore.getState();
+  return snapshot;
+}
+
+function finalizeCanonicalSnapshot(nextSnapshot: VoiceSessionSnapshot): VoiceSessionSnapshot {
+  if (isVoiceSessionSnapshotEqual(cachedCanonicalSnapshot, nextSnapshot)) {
+    return cachedCanonicalSnapshot;
+  }
+  cachedCanonicalSnapshot = nextSnapshot;
+  return nextSnapshot;
+}
+
 export const useVoiceSessionStore = create<VoiceSessionState>((set) => ({
   ...DEFAULT_SNAPSHOT,
   setSnapshot: (snapshot) =>
@@ -22,6 +55,7 @@ export const useVoiceSessionStore = create<VoiceSessionState>((set) => ({
       ...snapshot,
       adapterId: normalizeNonEmptyString(snapshot.adapterId),
       sessionId: normalizeNonEmptyString(snapshot.sessionId),
+      ...(snapshot.micMuted === true ? { micMuted: true } : {}),
       // Ensure optional error fields clear when omitted from a later snapshot.
       errorCode: snapshot.errorCode,
       errorMessage: snapshot.errorMessage,
@@ -29,10 +63,45 @@ export const useVoiceSessionStore = create<VoiceSessionState>((set) => ({
 }));
 
 export function getVoiceSessionSnapshot(): VoiceSessionSnapshot {
-  const { setSnapshot: _ignore, ...snapshot } = useVoiceSessionStore.getState();
-  return snapshot;
+  const lifecycleSnapshot = getVoiceSessionLifecycleController()?.getSnapshot();
+  if (lifecycleSnapshot) {
+    return finalizeCanonicalSnapshot(lifecycleSnapshot);
+  }
+
+  const publishedSnapshot = readPublishedSnapshot();
+  if (!isDefaultSnapshot(publishedSnapshot)) {
+    return finalizeCanonicalSnapshot(publishedSnapshot);
+  }
+
+  return finalizeCanonicalSnapshot(DEFAULT_SNAPSHOT);
 }
 
 export function setVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): void {
   useVoiceSessionStore.getState().setSnapshot(snapshot);
+}
+
+export function subscribeToVoiceSessionSnapshot(listener: () => void): () => void {
+  return useVoiceSessionStore.subscribe(() => listener());
+}
+
+export function resetVoiceSessionStoreForTests(): void {
+  cachedCanonicalSnapshot = DEFAULT_SNAPSHOT;
+  useVoiceSessionStore.setState({
+    ...DEFAULT_SNAPSHOT,
+    setSnapshot: useVoiceSessionStore.getState().setSnapshot,
+  }, true);
+}
+
+export async function resetVoiceSessionRuntimeStateForTests(): Promise<void> {
+  const [
+    { resetVoiceSessionLifecycleControllerStoreForTests },
+    { resetVoiceAdapterRegistryForTests },
+  ] = await Promise.all([
+    import('./voiceSessionLifecycleControllerStore'),
+    import('./voiceAdapterRegistry'),
+  ]);
+
+  resetVoiceSessionLifecycleControllerStoreForTests();
+  resetVoiceAdapterRegistryForTests();
+  resetVoiceSessionStoreForTests();
 }

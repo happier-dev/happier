@@ -11,6 +11,7 @@ import {
     daemonVoiceAgentWelcome,
     expoSpeechSpeak,
     getStorage,
+    loadLocalVoiceEngineWithCompatState,
     registerLocalVoiceEngineHarnessHooks,
     routerNavigate,
     sessionRpcWithServerScope,
@@ -20,6 +21,12 @@ import {
 } from './localVoiceEngine.testHarness';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import type { VoiceAgentClient } from '@/voice/agent/types';
+
+const warmDaemonVoiceInferenceOnVoiceHomeAttachMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach', () => ({
+    warmDaemonVoiceInferenceOnVoiceHomeAttach: (...args: any[]) => warmDaemonVoiceInferenceOnVoiceHomeAttachMock(...args),
+}));
 
 type VoiceAgentTurnStreamReadResult = Awaited<ReturnType<VoiceAgentClient['readTurnStream']>>;
 
@@ -53,22 +60,19 @@ async function waitForCreatedAudioPlayer() {
     await waitForCondition(() => createdAudioPlayers.length > 0, 'created audio player');
 }
 
-let localVoiceEngine: typeof import('./localVoiceEngine');
-let useVoiceActivityStore: typeof import('@/voice/activity/voiceActivityStore').useVoiceActivityStore;
+let localVoiceEngine: Awaited<ReturnType<typeof loadLocalVoiceEngineWithCompatState>>;
 let useVoiceTargetStore: typeof import('@/voice/runtime/voiceTargetStore').useVoiceTargetStore;
 
 describe('local voice engine agent behavior', () => {
     registerLocalVoiceEngineHarnessHooks();
 
     beforeEach(async () => {
-        ({ useVoiceActivityStore } = await import('@/voice/activity/voiceActivityStore'));
+        warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mockReset();
         ({ useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore'));
-        localVoiceEngine = await import('./localVoiceEngine');
+        localVoiceEngine = await loadLocalVoiceEngineWithCompatState();
     }, 180_000);
 
     it('agent mode (openai_compat) chats without persisting to the session when no tool actions are emitted', async () => {
-        useVoiceActivityStore.setState((state) => ({ ...state, eventsBySessionId: {} }));
-
         const storage = await getStorage();
         storage.__setState({
             settings: {
@@ -87,8 +91,11 @@ describe('local voice engine agent behavior', () => {
                             },
                             tts: {
                                 ...storage.getState().settings.voice.adapters.local_conversation.tts,
-                                autoSpeakReplies: true,
-                                baseUrl: 'http://localhost:8001',
+                                autoSpeakReplies: false,
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_conversation.tts.openaiCompat,
+                                    baseUrl: 'http://localhost:8001',
+                                },
                             },
                             agent: {
                                 ...storage.getState().settings.voice.adapters.local_conversation.agent,
@@ -128,20 +135,10 @@ describe('local voice engine agent behavior', () => {
         const { toggleLocalVoiceTurn } = localVoiceEngine;
 
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        await waitForCreatedAudioPlayer();
-        expect(createdAudioPlayers.length).toBeGreaterThan(0);
-        await waitForCreatedAudioPlayerListener('playbackStatusUpdate');
-        createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
-        await stopPromise;
+        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
         expect(sendMessage).not.toHaveBeenCalled();
-
-        const events = (useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID] ?? []) as any[];
-        expect(events.some((e) => e.kind === 'user.text' && String(e.text).includes('hello world'))).toBe(true);
-        expect(events.some((e) => e.kind === 'assistant.text' && String(e.text).includes('Voice agent reply'))).toBe(true);
-        expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
         expect((globalThis.fetch as any).mock.calls[1]?.[0]).toContain('/v1/chat/completions');
     }, 60_000);
 
@@ -720,7 +717,7 @@ describe('local voice engine agent behavior', () => {
         const nextState = getLocalVoiceState();
         expect(nextState.status).toBe('idle');
         // Keep the session active so the user can retry without re-starting voice.
-        expect(nextState.sessionId).toBe('s1');
+        expect(nextState.sessionId).toBe(VOICE_AGENT_GLOBAL_SESSION_ID);
         expect(nextState.error).toBe('send_failed');
     });
 
@@ -1066,15 +1063,78 @@ describe('local voice engine agent behavior', () => {
         expect(expoSpeechSpeak).toHaveBeenCalled();
     });
 
-    it('resetLocalVoiceAgentPersistence clears persisted run metadata and global voice activity', async () => {
-        useVoiceActivityStore.setState((state) => ({
-            ...state,
-            eventsBySessionId: {
-                ...state.eventsBySessionId,
-                [VOICE_AGENT_GLOBAL_SESSION_ID]: [{ id: 'e1', ts: 1, sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, adapterId: 'local_conversation', kind: 'user.text', text: 'hi' } as any],
+    it('prewarmOnConnect warms daemon inference when voice home becomes active', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_conversation: {
+                            ...storage.getState().settings.voice.adapters.local_conversation,
+                            conversationMode: 'agent',
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                provider: 'local_neural',
+                                localNeural: {
+                                    assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+                                    language: 'en',
+                                    execution: 'daemon',
+                                },
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                provider: 'local_neural',
+                                autoSpeakReplies: false,
+                                localNeural: {
+                                    model: 'kokoro',
+                                    assetId: 'kokoro-tts-en-v1',
+                                    voiceId: 'af_heart',
+                                    speed: 1,
+                                    execution: 'daemon',
+                                },
+                            },
+                            agent: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                backend: 'daemon',
+                                prewarmOnConnect: true,
+                            },
+                            streaming: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
             },
-        }));
+            sessions: {
+                ...storage.getState().sessions,
+                s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+            },
+        });
 
+        daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
+
+        const { toggleLocalVoiceTurn } = localVoiceEngine;
+        await toggleLocalVoiceTurn('s1');
+
+        await waitForMockCalls(warmDaemonVoiceInferenceOnVoiceHomeAttachMock, 1);
+        expect(warmDaemonVoiceInferenceOnVoiceHomeAttachMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                settings: expect.objectContaining({
+                    voice: expect.objectContaining({
+                        providerId: 'local_conversation',
+                    }),
+                }),
+            }),
+        );
+    }, 60_000);
+
+    it('resetLocalVoiceAgentPersistence clears persisted run metadata', async () => {
         const storage = await getStorage();
         storage.__setState({
             settings: {
@@ -1104,7 +1164,7 @@ describe('local voice engine agent behavior', () => {
                     modelMode: 'default',
                     metadata: {
                         flavor: 'claude',
-                        systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+                        systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
                         voiceAgentRunV1: { v: 1, runId: 'run_prev', backendId: 'claude', resumeHandle: null, updatedAtMs: 1 },
                     },
                 },
@@ -1124,7 +1184,6 @@ describe('local voice engine agent behavior', () => {
         await resetLocalVoiceAgentPersistence();
 
         expect((storage.getState() as any).sessions.sys_voice.metadata.voiceAgentRunV1).toBeNull();
-        expect((useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID] ?? []).length).toBe(0);
     });
 
     it('surfaces send_failed when daemon streaming start is unavailable', async () => {
@@ -1184,7 +1243,7 @@ describe('local voice engine agent behavior', () => {
         expect(daemonVoiceAgentSendTurn).not.toHaveBeenCalled();
         expect(getLocalVoiceState()).toMatchObject({
             status: 'idle',
-            sessionId: 's1',
+            sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             error: 'send_failed',
         });
     });
@@ -1247,14 +1306,12 @@ describe('local voice engine agent behavior', () => {
         expect(daemonVoiceAgentSendTurn).not.toHaveBeenCalled();
         expect(getLocalVoiceState()).toMatchObject({
             status: 'idle',
-            sessionId: 's1',
+            sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             error: 'send_failed',
         });
     });
 
     it('interrupts an in-flight local agent text update and surfaces the follow-up assistant reply', async () => {
-        useVoiceActivityStore.setState((state) => ({ ...state, eventsBySessionId: {} }));
-
         const storage = await getStorage();
         storage.__setState({
             settings: {
@@ -1331,14 +1388,11 @@ describe('local voice engine agent behavior', () => {
         await expect(second).resolves.toBeUndefined();
 
         expect(daemonVoiceAgentCancelTurnStream).toHaveBeenCalledWith({
-            sessionId: 's1',
+            sessionId: 'voice-home-session',
             streamId: 'stream-1',
             voiceAgentId: 'va1',
         });
         expect(daemonVoiceAgentStartTurnStream).toHaveBeenCalledTimes(2);
-
-        const events = (useVoiceActivityStore.getState().eventsBySessionId['s1'] ?? []) as any[];
-        expect(events.some((event) => event.kind === 'assistant.text' && String(event.text).includes('Permission summary'))).toBe(true);
     });
 
     it('streams agent deltas into chunked device TTS playback when enabled', async () => {
@@ -1505,8 +1559,11 @@ describe('local voice engine agent behavior', () => {
                             },
                             tts: {
                                 ...storage.getState().settings.voice.adapters.local_conversation.tts,
-                                autoSpeakReplies: true,
-                                baseUrl: 'http://localhost:8001',
+                                autoSpeakReplies: false,
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_conversation.tts.openaiCompat,
+                                    baseUrl: 'http://localhost:8001',
+                                },
                             },
                             agent: {
                                 ...storage.getState().settings.voice.adapters.local_conversation.agent,

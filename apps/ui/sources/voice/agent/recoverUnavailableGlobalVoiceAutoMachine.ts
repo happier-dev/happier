@@ -6,12 +6,8 @@ import { t } from '@/text';
 import { listPreferredMachineIds } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { promptDaemonUnavailableRetry } from '@/utils/errors/daemonUnavailableAlert';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { findVoiceConversationSessionId } from '@/voice/sessionBinding/voiceConversationSession';
-import { persistVoiceAutoTargetMachineId, readVoiceAutoTargetMachineId } from '@/voice/sessionBinding/voiceAutoTargetMachineSettings';
-import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
-import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-
-import { VOICE_AGENT_GLOBAL_SESSION_ID } from './voiceAgentGlobalSessionId';
+import { resolvePersistedDaemonConversationSessionId } from '@/voice/binding/voiceConversationBindingPersistence';
+import { persistVoiceAutoTargetMachineId, readVoiceAutoTargetMachineId } from '@/voice/persistence/voiceAutoTargetMachineSettings';
 
 type RecoveryDecision =
     | Readonly<{ kind: 'not_applicable' | 'cancel' | 'retry' }>
@@ -26,21 +22,8 @@ function readVoiceAgentSettings(state: any): any | null {
     return state?.settings?.voice?.adapters?.local_conversation?.agent ?? null;
 }
 
-function resolveBoundConversationSessionId(): string | null {
-    return normalizeNonEmptyString(
-        resolveVoiceSessionBindingByControlSessionId({
-            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-            adapterId: 'local_conversation',
-        })?.conversationSessionId,
-    );
-}
-
-function resolveReplaySourceConversationSessionId(state: any): string | null {
-    return (
-        resolveBoundConversationSessionId()
-        ?? findVoiceConversationSessionId(state)
-        ?? null
-    );
+function resolveReplaySourceConversationSessionId(_state: any): string | null {
+    return resolvePersistedDaemonConversationSessionId();
 }
 
 function resolveMachineName(machineId: string | null): string {

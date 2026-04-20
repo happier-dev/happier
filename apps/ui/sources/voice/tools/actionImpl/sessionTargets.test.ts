@@ -24,7 +24,7 @@ let state: any = {
   concurrentSessionListCacheByServerId: {},
 };
 
-vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+vi.mock('@/voice/binding/voiceConversationBindingRuntime', () => ({
   voiceSessionBindingManager: {
     syncTargetSession: (params: any) => syncTargetSession(params),
   },

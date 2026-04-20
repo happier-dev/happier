@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, vi } from 'vitest';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
+import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import type { machineContributionRegistryProjectionDescribe as machineContributionRegistryProjectionDescribeFn } from '@/sync/ops/machineContributionRegistryProjection';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
+
+type MachineContributionRegistryProjectionDescribeFn = typeof machineContributionRegistryProjectionDescribeFn;
 
 export const sendMessage = vi.fn();
 export const daemonVoiceAgentStart = vi.fn();
@@ -22,6 +28,7 @@ export const expoSpeechSpeak = vi.fn();
 export const expoSpeechStop = vi.fn();
 export const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _patch: (metadata: any) => any) => {});
 export const onSessionVisible = vi.fn((_sessionId: string) => {});
+export const refreshSessions = vi.fn(async () => {});
 export const speechRecStart = vi.fn();
 export const speechRecStop = vi.fn();
 export const speechRecAbort = vi.fn();
@@ -62,6 +69,13 @@ export const resolveRuntimeFeatureDecision = vi.fn(async (args: any) => ({
         ...(args?.serverId ? { serverId: String(args.serverId) } : {}),
     },
 }));
+export const machineSpawnNewSession = vi.fn<(...args: any[]) => Promise<{ type: 'success'; sessionId: string }>>();
+export const machineContributionRegistryProjectionDescribe = vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+    async (_machineId: string, _opts?: Readonly<{ serverId?: string | null; timeoutMs?: number | null }>) => ({
+        supported: false,
+        reason: 'not-supported',
+    }),
+);
 
 let platformOs: 'ios' | 'web' = 'ios';
 let nextRecorderPrepareError: Error | null = null;
@@ -109,6 +123,13 @@ export function emitAudioStreamEvent(eventName: string, event: any = {}) {
 }
 
 export const BASE_SETTINGS = {
+    lastUsedAgent: 'codex',
+    recentMachinePaths: [
+        {
+            machineId: 'machine-1',
+            path: '/Users/test/.happier',
+        },
+    ],
     voice: {
         providerId: 'local_conversation',
         privacy: {
@@ -126,7 +147,7 @@ export const BASE_SETTINGS = {
                 billingMode: 'happier',
                 byo: { agentId: null, apiKey: null },
             },
-            local_direct: {
+	            local_direct: {
                 stt: {
                     baseUrl: 'http://localhost:8000',
                     apiKey: null,
@@ -147,11 +168,14 @@ export const BASE_SETTINGS = {
                     kokoro: { assetSetId: null, voiceId: null, speed: null },
                 },
                 networkTimeoutMs: 15_000,
-                handsFree: {
-                    enabled: false,
-                    endpointing: { silenceMs: 450, minSpeechMs: 120 },
-                },
-            },
+	                handsFree: {
+	                    enabled: false,
+	                    endpointing: {
+	                        silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+	                        minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
+	                    },
+	                },
+	            },
             local_conversation: {
                 conversationMode: 'direct_session',
                 stt: {
@@ -174,11 +198,14 @@ export const BASE_SETTINGS = {
                     kokoro: { assetSetId: null, voiceId: null, speed: null },
                 },
                 networkTimeoutMs: 15_000,
-                handsFree: {
-                    enabled: false,
-                    endpointing: { silenceMs: 450, minSpeechMs: 120 },
-                },
-                agent: {
+	                handsFree: {
+	                    enabled: false,
+	                    endpointing: {
+	                        silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+	                        minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
+	                    },
+	                },
+	                agent: {
                     backend: 'daemon',
                     agentSource: 'session',
                     agentId: 'claude',
@@ -227,11 +254,39 @@ export async function flushMicrotasks(turns: number = 1) {
     }
 }
 
+export type LocalVoiceEngineCompatState = Readonly<{
+    status: string;
+    sessionId: string | null;
+    error: string | null;
+}>;
+
+export async function loadLocalVoiceEngineWithCompatState(): Promise<
+    typeof import('./localVoiceEngine') & Readonly<{ getLocalVoiceState: () => LocalVoiceEngineCompatState }>
+> {
+    const localVoiceEngine = await import('./localVoiceEngine');
+    const { deriveLocalVoiceRuntimeProjection } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+    const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+
+    return {
+        ...localVoiceEngine,
+        getLocalVoiceState: () => {
+            const snapshot = getVoiceConversationRuntimeSnapshot();
+            const projection = deriveLocalVoiceRuntimeProjection(snapshot);
+            return {
+                status: projection.compatStatus,
+                sessionId: snapshot.controlSessionId,
+                error: snapshot.error?.reason ?? null,
+            };
+        },
+    };
+}
+
 vi.mock('@/sync/sync', () => ({
     sync: {
         sendMessage,
         ensureSessionVisibleForMessageRoute: vi.fn(async () => {}),
         refreshSessionMessages: vi.fn(async () => {}),
+        refreshSessions: (...args: any[]) => (refreshSessions as any)(...args),
         patchSessionMetadataWithRetry: async (sessionId: string, patch: (metadata: any) => any) => {
             (patchSessionMetadataWithRetry as any)(sessionId, patch);
             const { storage } = await import('@/sync/domains/state/storage');
@@ -275,6 +330,17 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
     subscribeActiveServer: () => () => {},
+}));
+
+vi.mock('@/sync/ops/machines', () => ({
+    machineSpawnNewSession: (...args: any[]) => machineSpawnNewSession(...args),
+}));
+
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    machineContributionRegistryProjectionDescribe: (
+        machineId: Parameters<MachineContributionRegistryProjectionDescribeFn>[0],
+        opts?: Parameters<MachineContributionRegistryProjectionDescribeFn>[1],
+    ) => machineContributionRegistryProjectionDescribe(machineId, opts),
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -460,7 +526,33 @@ vi.mock('@/sync/domains/state/storage', () => {
             subscribers.add(fn);
             return () => subscribers.delete(fn);
         },
-        __setState: (patch: any) => Object.assign(state, patch),
+        __setState: (patch: any) => {
+            const normalizedPatch = { ...patch };
+            if (patch?.sessions && typeof patch.sessions === 'object') {
+                const normalizedSessions: Record<string, any> = {};
+                for (const [id, session] of Object.entries(patch.sessions)) {
+                    if (!session || typeof session !== 'object') {
+                        normalizedSessions[id] = session;
+                        continue;
+                    }
+                    const metadata = (session as any).metadata && typeof (session as any).metadata === 'object'
+                        ? (session as any).metadata
+                        : {};
+                    normalizedSessions[id] = {
+                        ...session,
+                        // Voice runtime paths often need these for session-root target resolution.
+                        metadata: {
+                            host: 'test',
+                            machineId: 'machine-1',
+                            path: `/Users/test/.happier/worktree/${String(id)}`,
+                            ...metadata,
+                        },
+                    };
+                }
+                normalizedPatch.sessions = normalizedSessions;
+            }
+            Object.assign(state, normalizedPatch);
+        },
         __notify: () => subscribers.forEach((fn) => fn()),
         __throwGetStateOnce: (err: unknown) => {
             throwNextGetState = err;
@@ -479,6 +571,10 @@ export function registerLocalVoiceEngineHarnessHooks() {
 
     beforeEach(async () => {
         vi.resetModules();
+        vi.doUnmock('@/voice/runtime/input/LocalVoiceCaptureOwner');
+        vi.doUnmock('@/voice/input/DeviceSttController');
+        vi.doUnmock('@/voice/input/SherpaStreamingSttController');
+        vi.doUnmock('@/voice/runtime/mic/NativeMicSession');
         console.error = (() => {}) as any;
         sendMessage.mockReset();
         daemonVoiceAgentStart.mockReset();
@@ -588,12 +684,58 @@ export function registerLocalVoiceEngineHarnessHooks() {
         daemonVoiceAgentStop.mockResolvedValue({ ok: true });
         sessionExecutionRunStop.mockReset();
         sessionExecutionRunStop.mockResolvedValue({ ok: true });
+        machineContributionRegistryProjectionDescribe.mockReset();
+        machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        machineSpawnNewSession.mockReset();
+        machineSpawnNewSession.mockImplementation(async (args: any) => {
+            const machineId = typeof args?.machineId === 'string' ? args.machineId : 'machine-1';
+            const directory = typeof args?.directory === 'string' ? args.directory : '/Users/test/.happier/voice-agent';
+            const sessionId = 'voice-home-session';
+            const storage = await getStorage();
+            const current: any = storage.getState();
+            if (typeof (storage as any).__setState === 'function') {
+                const existing = current.sessions?.[sessionId];
+                (storage as any).__setState({
+                    ...current,
+                    sessions: {
+                        ...(current.sessions ?? {}),
+                        [sessionId]: existing ?? {
+                            id: sessionId,
+                            active: true,
+                            updatedAt: Date.now(),
+                            metadata: {
+                                ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }),
+                                machineId,
+                                path: directory,
+                                host: 'test',
+                            },
+                        },
+                    },
+                });
+            }
+            return { type: 'success' as const, sessionId };
+        });
 
         const storage = await getStorage();
+        const machine = {
+            id: 'machine-1',
+            active: true,
+            createdAt: Date.now(),
+            metadata: {
+                host: 'test',
+                happyHomeDir: '/Users/test/.happier',
+            },
+        };
         storage.__setState({
             settings: { ...BASE_SETTINGS },
             sessions: {},
             sessionMessages: {},
+            machines: {
+                'machine-1': machine,
+            },
+            machineListByServerId: {
+                'server-a': [machine],
+            },
         });
     });
 

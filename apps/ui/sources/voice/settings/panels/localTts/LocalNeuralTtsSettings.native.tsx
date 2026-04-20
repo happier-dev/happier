@@ -13,9 +13,12 @@ import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets'
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
-import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
+import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
+import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
 
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
 import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
@@ -29,10 +32,14 @@ export function LocalNeuralTtsSettings(props: {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'assetSet' | 'voiceId' | 'speed'>(null);
   const DEFAULT_KOKORO_ASSET_SET_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
+  const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
+    requestedExecution: props.cfgKokoro.execution,
+  }), [props.cfgKokoro.execution]);
 
   const effectiveVoiceId = props.cfgKokoro.voiceId ?? 'af_heart';
   const effectiveSpeed = props.cfgKokoro.speed ?? 1;
   const effectiveAssetSetId = props.cfgKokoro.assetId ?? DEFAULT_KOKORO_ASSET_SET_ID;
+  const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
   const assetSets = React.useMemo(() => getKokoroAssetSetOptions().filter((s) => s.id), []);
   const runtimeSupported = React.useMemo(() => isKokoroRuntimeSupported(), []);
 
@@ -112,6 +119,13 @@ export function LocalNeuralTtsSettings(props: {
 
   return (
     <>
+      <DaemonVoiceInferenceExecutionDropdown
+        execution={executionPolicy.selectableExecution}
+        setExecution={(execution) => props.setKokoro({ ...props.cfgKokoro, execution })}
+        popoverBoundaryRef={props.popoverBoundaryRef}
+        allowDeviceSelection={executionPolicy.allowDeviceSelection}
+      />
+
       {!runtimeSupported ? (
         <Item
           title={t('settingsVoice.local.kokoro.runtime.title')}
@@ -161,60 +175,66 @@ export function LocalNeuralTtsSettings(props: {
         }}
       />
 
-      <Item
-        title={t('settingsVoice.local.kokoro.model.title')}
-        subtitle={t('settingsVoice.local.kokoro.model.subtitleNative')}
-        detail={modelDetail}
-        onPress={() => {
-          if (!runtimeSupported) {
-            fireAndForget((async () => {
-              await Modal.alert(t('common.error'), t('settingsVoice.local.kokoro.alerts.runtimeUnsupported.body'));
-            })(), {
-              tag: 'LocalNeuralTtsSettings.alert.runtimeUnsupported',
-            });
-            return;
-          }
-          if (!manifestUrl) {
-            fireAndForget((async () => {
-              await Modal.alert(
-                t('settingsVoice.local.kokoro.alerts.missingManifest.title'),
-                t('settingsVoice.local.kokoro.alerts.missingManifest.body'),
-              );
-            })(), { tag: 'LocalNeuralTtsSettings.alert.missingManifestUrl' });
-            return;
-          }
-          fireAndForget(prepareModel(), { tag: 'LocalNeuralTtsSettings.prepareModel' });
-        }}
-        rightElement={
-          modelStatus === 'downloading' ? (
-            <Pressable onPress={cancelPrepare} hitSlop={10}>
-              <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-            </Pressable>
-          ) : (
-            <Ionicons name="download-outline" size={20} color={theme.colors.textSecondary} />
-          )
-        }
-        showChevron={false}
-        selected={false}
-      />
+      {usesDaemonExecution ? (
+        <DaemonVoiceInferenceModelSection packId={effectiveAssetSetId} kind="tts" />
+      ) : (
+        <>
+          <Item
+            title={t('settingsVoice.local.kokoro.model.title')}
+            subtitle={t('settingsVoice.local.kokoro.model.subtitleNative')}
+            detail={modelDetail}
+            onPress={() => {
+              if (!runtimeSupported) {
+                fireAndForget((async () => {
+                  await Modal.alert(t('common.error'), t('settingsVoice.local.kokoro.alerts.runtimeUnsupported.body'));
+                })(), {
+                  tag: 'LocalNeuralTtsSettings.alert.runtimeUnsupported',
+                });
+                return;
+              }
+              if (!manifestUrl) {
+                fireAndForget((async () => {
+                  await Modal.alert(
+                    t('settingsVoice.local.kokoro.alerts.missingManifest.title'),
+                    t('settingsVoice.local.kokoro.alerts.missingManifest.body'),
+                  );
+                })(), { tag: 'LocalNeuralTtsSettings.alert.missingManifestUrl' });
+                return;
+              }
+              fireAndForget(prepareModel(), { tag: 'LocalNeuralTtsSettings.prepareModel' });
+            }}
+            rightElement={
+              modelStatus === 'downloading' ? (
+                <Pressable onPress={cancelPrepare} hitSlop={10}>
+                  <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                </Pressable>
+              ) : (
+                <Ionicons name="download-outline" size={20} color={theme.colors.textSecondary} />
+              )
+            }
+            showChevron={false}
+            selected={false}
+          />
 
-      <Item
-        title={t('settingsVoice.local.kokoro.removeAssets.title')}
-        subtitle={t('settingsVoice.local.kokoro.removeAssets.subtitle')}
-        detail={installed ? t('settingsVoice.local.kokoro.removeAssets.detailRemove') : t('settingsVoice.local.kokoro.common.none')}
-        onPress={installed ? clearAssets : undefined}
-        showChevron={false}
-        selected={false}
-      />
+          <Item
+            title={t('settingsVoice.local.kokoro.removeAssets.title')}
+            subtitle={t('settingsVoice.local.kokoro.removeAssets.subtitle')}
+            detail={installed ? t('settingsVoice.local.kokoro.removeAssets.detailRemove') : t('settingsVoice.local.kokoro.common.none')}
+            onPress={installed ? clearAssets : undefined}
+            showChevron={false}
+            selected={false}
+          />
 
-      <Item
-        title={t('settingsVoice.local.kokoro.updates.title')}
-        subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
-        detail={updateDetail}
-        onPress={checkForUpdates}
-        showChevron={false}
-        selected={false}
-      />
+          <Item
+            title={t('settingsVoice.local.kokoro.updates.title')}
+            subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
+            detail={updateDetail}
+            onPress={checkForUpdates}
+            showChevron={false}
+            selected={false}
+          />
+        </>
+      )}
 
       <DropdownMenu
         open={openMenu === 'voiceId'}

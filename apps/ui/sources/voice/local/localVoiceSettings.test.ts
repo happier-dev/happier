@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { isHandsFreeDeviceSttEnabled, resolveLocalSttProvider, resolveLocalVoiceAdapterSettings } from './localVoiceSettings';
+import {
+  isHandsFreeDeviceSttEnabled,
+  parseLocalVoiceSttSettings,
+  parseLocalVoiceTtsSettings,
+  resolveLocalSttProvider,
+  resolveLocalVoiceAdapterSettings,
+} from './localVoiceSettings';
 
 describe('localVoiceSettings', () => {
   it('trims the provider id before selecting the local voice adapter', () => {
@@ -48,5 +54,34 @@ describe('localVoiceSettings', () => {
         },
       }),
     ).toBe(true);
+  });
+
+  it('parses legacy STT and TTS adapter settings through the canonical schemas', () => {
+    expect(
+      parseLocalVoiceSttSettings({
+        useDeviceStt: true,
+        baseUrl: ' http://legacy-stt.example/v1 ',
+      }),
+    ).toMatchObject({
+      provider: 'device',
+      openaiCompat: {
+        baseUrl: 'http://legacy-stt.example/v1',
+      },
+    });
+
+    expect(
+      parseLocalVoiceTtsSettings({
+        baseUrl: ' http://legacy-tts.example/v1 ',
+        model: 'tts-1-hd',
+        voice: 'alloy',
+      }),
+    ).toMatchObject({
+      provider: 'openai_compat',
+      openaiCompat: {
+        baseUrl: 'http://legacy-tts.example/v1',
+        model: 'tts-1-hd',
+        voice: 'alloy',
+      },
+    });
   });
 });

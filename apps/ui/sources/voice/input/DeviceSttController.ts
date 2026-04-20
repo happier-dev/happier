@@ -1,21 +1,31 @@
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
-import { computeTurnEndpointDelayMs, normalizeTurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
+import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
+import { normalizeTurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
+import {
+  createTurnEndpointController,
+  type TurnEndpointController,
+  type TurnEndpointSignal,
+} from '@/voice/runtime/input/TurnEndpointController';
+import {
+  createNativeVadController,
+  type NativeVadController,
+} from '@/voice/runtime/input/NativeVadController';
+import {
+  createWebVadController,
+  type WebVadController,
+} from '@/voice/runtime/input/WebVadController';
+import type { MicSession } from '@/voice/runtime/mic/MicSession';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Platform } from 'react-native';
 
 type DeviceSttStatePatch = {
-  status?: 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
-  sessionId?: string | null;
-  error?: string | null;
+  controlSessionId: string;
+  reason: string;
 };
 
 type DeviceSttHandle = {
   sessionId: string;
   transcript: string;
-  isFinal: boolean;
-  pendingAutoStop: boolean;
-  startedAt: number;
-  autoStopTimer: ReturnType<typeof setTimeout> | null;
   module: any;
   resolveEnd: () => void;
   endPromise: Promise<void>;
@@ -23,86 +33,55 @@ type DeviceSttHandle = {
 };
 
 export type DeviceSttController = Readonly<{
-  clearHandsFreeSession: (sessionId?: string) => void;
-  isHandsFreeSession: (sessionId: string) => boolean;
-  start: (sessionId: string) => Promise<void>;
+  start: (sessionId: string, micSession: MicSession) => Promise<void>;
   stop: (sessionId: string) => Promise<string>;
-  setHandsFreeSession: (sessionId: string | null) => void;
 }>;
 
 export function createDeviceSttController(deps: {
-  setState: (patch: DeviceSttStatePatch) => void;
+  onCaptureStarted: (controlSessionId: string) => void;
+  onCaptureError: (patch: DeviceSttStatePatch) => void;
   getSettings: () => any;
-  canAutoStopTurn: (sessionId: string) => boolean;
-  onAutoStopTurn: (sessionId: string) => void;
+  onEndpointSignal?: (signal: TurnEndpointSignal) => void;
+  endpointController?: TurnEndpointController;
+  nativeVadController?: NativeVadController;
+  webVadController?: WebVadController;
 }): DeviceSttController {
   let handle: DeviceSttHandle | null = null;
-  let handsFreeSessionId: string | null = null;
 
   const isDomRuntime = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined';
   const normalizeSessionId = (sessionId: string | null | undefined): string | null => normalizeNonEmptyString(sessionId);
 
-  const isHandsFreeDeviceSttEnabled = (): boolean => {
+  const resolveAdapterSettings = () => {
     const settings = deps.getSettings();
     const voice = settings?.voice ?? null;
     const providerId = normalizeNonEmptyString(voice?.providerId);
-    const adapter =
-      providerId === 'local_direct'
-        ? voice?.adapters?.local_direct
-        : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
-    const stt = adapter?.stt ?? null;
-    const provider =
-      typeof stt?.provider === 'string'
-        ? stt.provider
-        : stt?.useDeviceStt === true
-          ? 'device'
-          : 'openai_compat';
-    const useDeviceStt = provider === 'device';
-    const handsFreeEnabled = adapter?.handsFree?.enabled === true;
-    return useDeviceStt && handsFreeEnabled;
+    return providerId === 'local_direct'
+      ? voice?.adapters?.local_direct
+      : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
   };
 
-  const clearHandleTimer = () => {
-    if (!handle?.autoStopTimer) return;
-    clearTimeout(handle.autoStopTimer);
-    handle.autoStopTimer = null;
-  };
+  const endpointController = deps.endpointController ?? createTurnEndpointController({
+    onSignal: (signal) => {
+      deps.onEndpointSignal?.(signal);
+    },
+  });
+  const nativeVadController = deps.nativeVadController ?? createNativeVadController({
+    onEndpointSignal: (signal) => {
+      deps.onEndpointSignal?.(signal);
+    },
+  });
+  const webVadController = deps.webVadController ?? createWebVadController({
+    onEndpointSignal: (signal) => {
+      deps.onEndpointSignal?.(signal);
+    },
+  });
 
-  const scheduleHandsFreeStop = (sessionId: string, expectedHandle: DeviceSttHandle) => {
-    if (expectedHandle.autoStopTimer) {
-      clearTimeout(expectedHandle.autoStopTimer);
-      expectedHandle.autoStopTimer = null;
-    }
-
-    const settings = deps.getSettings();
-    const voice = settings?.voice ?? null;
-    const providerId = normalizeNonEmptyString(voice?.providerId);
-    const adapter =
-      providerId === 'local_direct'
-        ? voice?.adapters?.local_direct
-        : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
-    const policy = normalizeTurnEndpointPolicy({
-      silenceMs: adapter?.handsFree?.endpointing?.silenceMs ?? 450,
-      minSpeechMs: adapter?.handsFree?.endpointing?.minSpeechMs ?? 120,
+  const resolveHandsFreeTurnEndpointPolicy = () => {
+    const adapter = resolveAdapterSettings();
+    return normalizeTurnEndpointPolicy({
+      silenceMs: adapter?.handsFree?.endpointing?.silenceMs ?? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+      minSpeechMs: adapter?.handsFree?.endpointing?.minSpeechMs ?? VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
     });
-    const elapsedMs = Date.now() - expectedHandle.startedAt;
-    const waitMs = computeTurnEndpointDelayMs(policy, elapsedMs);
-
-    const triggerStop = () => {
-      expectedHandle.autoStopTimer = null;
-      if (!handle || handle !== expectedHandle || handle.sessionId !== sessionId) return;
-      if (!isHandsFreeDeviceSttEnabled()) return;
-      if (handsFreeSessionId !== sessionId) return;
-      if (!deps.canAutoStopTurn(sessionId)) return;
-      deps.onAutoStopTurn(sessionId);
-    };
-
-    if (waitMs <= 0) {
-      queueMicrotask(triggerStop);
-      return;
-    }
-
-    expectedHandle.autoStopTimer = setTimeout(triggerStop, waitMs);
   };
 
   const cleanupListeners = () => {
@@ -114,28 +93,23 @@ export function createDeviceSttController(deps: {
     }
   };
 
-  const clearHandsFreeSession = (sessionId?: string) => {
-    const normalizedSessionId = normalizeSessionId(sessionId);
-    if (normalizedSessionId && handsFreeSessionId && handsFreeSessionId !== normalizedSessionId) {
-      return;
-    }
-    handsFreeSessionId = null;
-  };
-
-  const start = async (sessionId: string) => {
+  const start = async (sessionId: string, micSession: MicSession) => {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) return;
+    if (!micSession) {
+      throw new Error('mic_session_required');
+    }
 
     const microphonePermission = await requestMicrophonePermission();
     if (!microphonePermission.granted) {
       showMicrophonePermissionDeniedAlert(microphonePermission.canAskAgain);
-      return;
+      throw new Error('mic_permission_denied');
     }
 
     const { ExpoSpeechRecognitionModule } = await import('expo-speech-recognition');
 
     if (typeof ExpoSpeechRecognitionModule?.isRecognitionAvailable === 'function' && !ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
-      deps.setState({ status: 'idle', sessionId: null, error: 'device_stt_unavailable' });
+      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'device_stt_unavailable' });
       return;
     }
 
@@ -145,16 +119,19 @@ export function createDeviceSttController(deps: {
       try {
         const permissionsResponse = await ExpoSpeechRecognitionModule.requestPermissionsAsync?.();
         if (permissionsResponse && permissionsResponse.granted === false) {
-          deps.setState({ status: 'idle', sessionId: null, error: 'device_stt_permission_denied' });
-          return;
+          throw new Error('mic_permission_denied');
         }
       } catch {
         // Permission request best-effort.
       }
     }
 
-    clearHandleTimer();
+    await micSession.ensureActive();
+
     cleanupListeners();
+    endpointController.clearSession();
+    await nativeVadController.stopSession();
+    await webVadController.stopSession();
 
     let resolveEnd: null | (() => void) = null;
     const endPromise = new Promise<void>((resolve) => {
@@ -164,10 +141,6 @@ export function createDeviceSttController(deps: {
     const nextHandle: DeviceSttHandle = {
       sessionId: normalizedSessionId,
       transcript: '',
-      isFinal: false,
-      pendingAutoStop: false,
-      startedAt: Date.now(),
-      autoStopTimer: null,
       module: ExpoSpeechRecognitionModule,
       resolveEnd: () => resolveEnd?.(),
       endPromise,
@@ -175,6 +148,22 @@ export function createDeviceSttController(deps: {
     };
 
     handle = nextHandle;
+    endpointController.startSession(normalizedSessionId);
+    const handsFreeTurnEndpointPolicy = resolveHandsFreeTurnEndpointPolicy();
+    const usesFallbackTurnCapture = Platform.OS === 'web' || isDomRuntime();
+    const usesNativeVad = usesFallbackTurnCapture
+      ? false
+      : await nativeVadController.startSession({
+        sessionId: normalizedSessionId,
+        minSpeechMs: handsFreeTurnEndpointPolicy.minSpeechMs,
+        redemptionMs: handsFreeTurnEndpointPolicy.silenceMs,
+      });
+    const usesWebVad = Platform.OS === 'web' && await webVadController.startSession({
+      sessionId: normalizedSessionId,
+      minSpeechMs: handsFreeTurnEndpointPolicy.minSpeechMs,
+      redemptionMs: handsFreeTurnEndpointPolicy.silenceMs,
+    });
+    const usesVad = usesNativeVad || usesWebVad;
 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
@@ -183,12 +172,12 @@ export function createDeviceSttController(deps: {
         if (!transcript) return;
 
         nextHandle.transcript = transcript;
-        if (event?.isFinal) {
-          nextHandle.isFinal = true;
-          if (!nextHandle.pendingAutoStop && isHandsFreeDeviceSttEnabled()) {
-            nextHandle.pendingAutoStop = true;
-            scheduleHandsFreeStop(normalizedSessionId, nextHandle);
-          }
+        if (event?.isFinal && !usesVad) {
+          endpointController.signalHeuristicTranscriptFinalized({
+            sessionId: normalizedSessionId,
+            transcript,
+            policy: handsFreeTurnEndpointPolicy,
+          });
         }
       })
     );
@@ -215,15 +204,18 @@ export function createDeviceSttController(deps: {
         ...(language ? { lang: language } : {}),
         interimResults: true,
         maxAlternatives: 1,
-        continuous: true,
+        continuous: !usesFallbackTurnCapture,
       } as any);
     } catch (error) {
       handle = null;
-      deps.setState({ status: 'idle', sessionId: null, error: 'device_stt_start_failed' });
+      endpointController.clearSession(normalizedSessionId);
+      await nativeVadController.stopSession(normalizedSessionId);
+      await webVadController.stopSession(normalizedSessionId);
+      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'device_stt_start_failed' });
       throw error;
     }
 
-    deps.setState({ status: 'recording', sessionId: normalizedSessionId, error: null });
+    deps.onCaptureStarted(normalizedSessionId);
   };
 
   const stop = async (sessionId: string): Promise<string> => {
@@ -232,7 +224,9 @@ export function createDeviceSttController(deps: {
       return '';
     }
 
-    clearHandleTimer();
+    endpointController.clearSession(normalizedSessionId);
+    const stopNativeVad = nativeVadController.stopSession(normalizedSessionId);
+    const stopWebVad = webVadController.stopSession(normalizedSessionId);
 
     try {
       handle.module?.stop?.();
@@ -244,9 +238,6 @@ export function createDeviceSttController(deps: {
 
     const text = handle.transcript.trim();
     const subscriptions = handle.subscriptions;
-    if (handle.autoStopTimer) {
-      clearTimeout(handle.autoStopTimer);
-    }
     handle = null;
 
     try {
@@ -254,16 +245,13 @@ export function createDeviceSttController(deps: {
     } catch {
       // ignore
     }
+    await stopNativeVad;
+    await stopWebVad;
 
     return text;
   };
 
   return {
-    clearHandsFreeSession,
-    isHandsFreeSession: (sessionId: string) => handsFreeSessionId === normalizeSessionId(sessionId),
-    setHandsFreeSession: (sessionId: string | null) => {
-      handsFreeSessionId = normalizeSessionId(sessionId);
-    },
     start,
     stop,
   };

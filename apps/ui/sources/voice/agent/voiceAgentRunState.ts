@@ -7,16 +7,13 @@ import { findSessionListLookupSession } from '@/sync/domains/session/listing/ses
 import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import {
+    readPersistedVoiceConversationRuntimeState,
+    resolvePersistedVoiceConversationMetadataSessionId,
+    resolvePersistedDaemonConversationSessionId as resolvePersistedDaemonConversationSessionIdFromBindingPersistence,
+} from '@/voice/binding/voiceConversationBindingPersistence';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-import {
-    findReusableVoiceConversationRuntimeSessionId,
-    findVoiceConversationSessionId,
-} from '@/voice/sessionBinding/voiceConversationSession';
-import {
-    resolveLatestVoiceSessionBinding,
-    resolveVoiceSessionBindingByControlSessionId,
-    resolveVoiceSessionBindingByConversationSessionId,
-} from '@/voice/sessionBinding/resolveVoiceSessionBinding';
 import {
     clearVoiceAgentRunMetadataFromSession,
     readVoiceAgentRunMetadataFromSession,
@@ -74,7 +71,7 @@ export function assertActiveDaemonTargetSession(sessionId: string): void {
 
 export function resolveBoundConversationSessionId(controlSessionId: string): string | null {
     return normalizeNonEmptyString(
-        resolveVoiceSessionBindingByControlSessionId({ controlSessionId })?.conversationSessionId ?? null,
+        voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId })?.conversationSessionId ?? null,
     );
 }
 
@@ -94,33 +91,15 @@ function isReusableDaemonConversationSessionId(sessionId: string | null): sessio
 
 export function resolveBoundTargetSessionId(sessionId: string): string | null {
     return normalizeNonEmptyString(
-        resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId })?.targetSessionId
-        ?? resolveVoiceSessionBindingByConversationSessionId({ conversationSessionId: sessionId })?.targetSessionId
+        voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: sessionId })?.targetSessionId
+        ?? voiceConversationBindingResolver.resolveByConversationSessionId({ conversationSessionId: sessionId })?.targetSessionId
         ?? null,
     );
 }
 
 export function resolvePersistedDaemonConversationSessionId(): string | null {
-    const boundConversationSessionId = resolveBoundConversationSessionId(VOICE_AGENT_GLOBAL_SESSION_ID);
-    if (isReusableDaemonConversationSessionId(boundConversationSessionId)) {
-        return boundConversationSessionId;
-    }
-    const latestBindingConversationSessionId = normalizeNonEmptyString(
-        resolveLatestVoiceSessionBinding({
-            adapterId: 'local_conversation',
-            controlSessionIds: [VOICE_AGENT_GLOBAL_SESSION_ID],
-        })?.conversationSessionId,
-    );
-    if (isReusableDaemonConversationSessionId(latestBindingConversationSessionId)) {
-        return latestBindingConversationSessionId;
-    }
-    const persistedConversationSessionId =
-        findReusableVoiceConversationRuntimeSessionId(storage.getState() as any)
-        ?? findVoiceConversationSessionId(storage.getState() as any);
-    if (isReusableDaemonConversationSessionId(persistedConversationSessionId)) {
-        return persistedConversationSessionId;
-    }
-    return null;
+    const persistedConversationSessionId = resolvePersistedDaemonConversationSessionIdFromBindingPersistence();
+    return isReusableDaemonConversationSessionId(persistedConversationSessionId) ? persistedConversationSessionId : null;
 }
 
 export function resolveVoiceRunMetadataSessionId(
@@ -129,12 +108,11 @@ export function resolveVoiceRunMetadataSessionId(
     conversationSessionId?: string | null,
 ): string | null {
     if (backend !== 'daemon') return null;
-    if (managedSessionId !== VOICE_AGENT_GLOBAL_SESSION_ID) return managedSessionId;
     return normalizeNonEmptyString(
-        conversationSessionId
-        ?? resolveBoundConversationSessionId(managedSessionId)
-        ?? findVoiceConversationSessionId(storage.getState() as any)
-        ?? resolvePersistedDaemonConversationSessionId(),
+        resolvePersistedVoiceConversationMetadataSessionId({
+            managedSessionId,
+            conversationSessionId,
+        }) ?? null,
     );
 }
 
@@ -145,6 +123,8 @@ export async function persistVoiceAgentRunMetadata(
         backendId: string;
         backendTarget: BackendTargetRefV1;
         resumeHandle: VoiceAgentStartParams['resumeHandle'];
+        streamId?: string | null;
+        welcomedEpoch?: number;
     }>,
 ): Promise<void> {
     if (!metadataSessionId) return;
@@ -154,7 +134,47 @@ export async function persistVoiceAgentRunMetadata(
         backendId: params.backendId,
         backendTarget: params.backendTarget,
         resumeHandle: params.resumeHandle ?? null,
+        ...(Object.prototype.hasOwnProperty.call(params, 'streamId') ? { streamId: params.streamId ?? null } : {}),
         updatedAtMs: Date.now(),
+        ...(typeof params.welcomedEpoch === 'number' ? { welcomedEpoch: params.welcomedEpoch } : {}),
+    });
+}
+
+export async function persistVoiceAgentWelcomedEpoch(
+    metadataSessionId: string | null,
+    welcomedEpoch: number,
+): Promise<void> {
+    if (!metadataSessionId) return;
+    const existing = readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId });
+    if (!existing?.backendTarget) return;
+    await writeVoiceAgentRunMetadataToSession({
+        sessionId: metadataSessionId,
+        runId: existing.runId,
+        backendId: existing.backendId,
+        backendTarget: existing.backendTarget,
+        resumeHandle: existing.resumeHandle ?? null,
+        streamId: existing.streamId ?? null,
+        updatedAtMs: Date.now(),
+        welcomedEpoch,
+    });
+}
+
+export async function persistVoiceAgentTurnStreamId(
+    metadataSessionId: string | null,
+    streamId: string | null,
+): Promise<void> {
+    if (!metadataSessionId) return;
+    const existing = readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId });
+    if (!existing?.backendTarget) return;
+    await writeVoiceAgentRunMetadataToSession({
+        sessionId: metadataSessionId,
+        runId: existing.runId,
+        backendId: existing.backendId,
+        backendTarget: existing.backendTarget,
+        resumeHandle: existing.resumeHandle ?? null,
+        streamId,
+        updatedAtMs: Date.now(),
+        welcomedEpoch: existing.welcomedEpoch,
     });
 }
 
@@ -167,10 +187,12 @@ export async function clearStaleDaemonRunState(
     sessionId: string,
     handle: VoiceAgentHandle | null,
 ): Promise<void> {
-    const metadataSessionId = resolveVoiceRunMetadataSessionId(sessionId, 'daemon', handle?.rpcSessionId);
-    const persistedRunMeta = metadataSessionId
-        ? readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId })
-        : null;
+    const persistedRuntimeState = readPersistedVoiceConversationRuntimeState({
+        managedSessionId: sessionId,
+        conversationSessionId: handle?.rpcSessionId,
+    });
+    const metadataSessionId = persistedRuntimeState?.metadataSessionId ?? null;
+    const persistedRunMeta = persistedRuntimeState?.runMetadata ?? null;
     const staleRunId = normalizeNonEmptyString(handle?.voiceAgentId ?? persistedRunMeta?.runId ?? null);
     const staleRpcSessionId =
         normalizeNonEmptyString(handle?.rpcSessionId)

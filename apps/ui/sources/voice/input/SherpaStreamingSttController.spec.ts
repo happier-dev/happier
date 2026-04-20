@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { MicSession } from '@/voice/runtime/mic/MicSession';
 
 const requestMicrophonePermission = vi.fn(async () => ({ granted: true, canAskAgain: true }));
 const showMicrophonePermissionDeniedAlert = vi.fn();
@@ -22,20 +24,27 @@ vi.mock('@/voice/modelPacks/manifests', () => ({
 }));
 
 type AudioFrameListener = (event: any) => void;
+const runtimeAvailability = vi.hoisted(() => ({
+  audioStreamAvailable: true,
+  sherpaAvailable: true,
+}));
 
 let audioFrameListener: AudioFrameListener | null = null;
 const audioStreamStart = vi.fn(async () => ({ streamId: 'stream-1' }));
 const audioStreamStop = vi.fn(async () => {});
 
 vi.mock('@happier-dev/audio-stream-native', () => ({
-  getOptionalHappierAudioStreamNativeModule: () => ({
-    start: audioStreamStart,
-    stop: audioStreamStop,
-    addListener: (eventName: string, cb: AudioFrameListener) => {
-      if (eventName === 'audioFrame') audioFrameListener = cb;
-      return { remove: () => {} };
-    },
-  }),
+  getOptionalHappierAudioStreamNativeModule: () =>
+    runtimeAvailability.audioStreamAvailable
+      ? {
+          start: audioStreamStart,
+          stop: audioStreamStop,
+          addListener: (eventName: string, cb: AudioFrameListener) => {
+            if (eventName === 'audioFrame') audioFrameListener = cb;
+            return { remove: () => {} };
+          },
+        }
+      : null,
 }));
 
 const sherpaStreamingCreate = vi.fn(async () => {});
@@ -50,12 +59,15 @@ const sherpaStreamingPushFrame = vi.fn((params: any) => {
 });
 
 vi.mock('@happier-dev/sherpa-native', () => ({
-  getOptionalHappierSherpaNativeModule: () => ({
-    createStreamingRecognizer: sherpaStreamingCreate,
-    pushAudioFrame: sherpaStreamingPushFrame,
-    finishStreaming: sherpaStreamingFinish,
-    cancel: async () => {},
-  }),
+  getOptionalHappierSherpaNativeModule: () =>
+    runtimeAvailability.sherpaAvailable
+      ? {
+          createStreamingRecognizer: sherpaStreamingCreate,
+          pushAudioFrame: sherpaStreamingPushFrame,
+          finishStreaming: sherpaStreamingFinish,
+          cancel: async () => {},
+        }
+      : null,
 }));
 
 function emitAudioFrame(pcm16leBase64: string) {
@@ -73,13 +85,29 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
+function createMicSession(): MicSession {
+  return {
+    ensureActive: vi.fn(async () => {}),
+    setMuted: vi.fn(),
+    isMuted: vi.fn(() => false),
+    teardown: vi.fn(async () => {}),
+    getStream: vi.fn(() => null),
+  };
+}
+
 describe('SherpaStreamingSttController (native)', () => {
+  beforeEach(() => {
+    runtimeAvailability.audioStreamAvailable = true;
+    runtimeAvailability.sherpaAvailable = true;
+  });
+
   it('serializes pushAudioFrame and drops old frames when queue is full', async () => {
-    const patches: any[] = [];
+    const onCaptureStarted = vi.fn();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
 
     const controller = createSherpaStreamingSttController({
-      setState: (patch) => patches.push(patch),
+      onCaptureStarted,
+      onCaptureError: vi.fn(),
       getSettings: () => ({
         voice: {
           providerId: 'local_direct',
@@ -92,8 +120,8 @@ describe('SherpaStreamingSttController (native)', () => {
       }),
     });
 
-    await controller.start('s1');
-    expect(patches[patches.length - 1]).toEqual({ status: 'recording', sessionId: 's1', error: null });
+    await controller.start('s1', createMicSession());
+    expect(onCaptureStarted).toHaveBeenCalledWith('s1');
     expect(audioStreamStart).toHaveBeenCalled();
     expect(sherpaStreamingCreate).toHaveBeenCalled();
 
@@ -126,12 +154,48 @@ describe('SherpaStreamingSttController (native)', () => {
     expect(seen).not.toContain('frame-3');
   });
 
-  it('normalizes session ids when tracking hands-free state', async () => {
-    const patches: any[] = [];
+  it('emits runtime-owned endpoint signals when Sherpa reports an endpoint', async () => {
+    const onEndpointSignal = vi.fn();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
 
     const controller = createSherpaStreamingSttController({
-      setState: (patch) => patches.push(patch),
+      onCaptureStarted: vi.fn(),
+      onCaptureError: vi.fn(),
+      getSettings: () => ({
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              stt: { provider: 'local_neural', localNeural: { assetId: 'dummy-pack', language: 'en' } },
+            },
+          },
+        },
+      }),
+      onEndpointSignal,
+    });
+
+    await controller.start('s-endpoint', createMicSession());
+    emitAudioFrame('frame-endpoint');
+    await flushMicrotasks();
+
+    pushResolvers.shift()?.({ text: 'hello sherpa', isEndpoint: true });
+    await flushMicrotasks();
+
+    expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's-endpoint',
+      source: 'native_stream',
+      transcript: 'hello sherpa',
+    }));
+  });
+
+  it('ensures an injected mic session is active before starting local-neural streaming STT', async () => {
+    const micSession = createMicSession();
+
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+
+    const controller = createSherpaStreamingSttController({
+      onCaptureStarted: vi.fn(),
+      onCaptureError: vi.fn(),
       getSettings: () => ({
         voice: {
           providerId: 'local_direct',
@@ -144,14 +208,64 @@ describe('SherpaStreamingSttController (native)', () => {
       }),
     });
 
-    controller.setHandsFreeSession(' session-2 ');
-    expect(controller.isHandsFreeSession('session-2')).toBe(true);
+    await controller.start('s-mic', micSession);
 
-    await controller.start(' session-2 ');
-    expect(patches[patches.length - 1]).toEqual({ status: 'recording', sessionId: 'session-2', error: null });
-    expect(controller.isHandsFreeSession(' session-2 ')).toBe(true);
+    expect(micSession.ensureActive).toHaveBeenCalledTimes(1);
+    expect(audioStreamStart).toHaveBeenCalled();
+    expect(sherpaStreamingCreate).toHaveBeenCalled();
+  });
 
-    controller.clearHandsFreeSession(' session-2 ');
-    expect(controller.isHandsFreeSession('session-2')).toBe(false);
+  it('requires a mic session before starting local-neural streaming capture', async () => {
+    requestMicrophonePermission.mockClear();
+    audioStreamStart.mockClear();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+
+    const controller = createSherpaStreamingSttController({
+      onCaptureStarted: vi.fn(),
+      onCaptureError: vi.fn(),
+      getSettings: () => ({
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              stt: { provider: 'local_neural', localNeural: { assetId: 'dummy-pack', language: 'en' } },
+            },
+          },
+        },
+      }),
+    });
+
+    // @ts-expect-error intentional contract violation to verify the runtime guard
+    await expect(controller.start('s-missing-mic')).rejects.toThrow('mic_session_required');
+    expect(requestMicrophonePermission).not.toHaveBeenCalled();
+    expect(audioStreamStart).not.toHaveBeenCalled();
+  });
+
+  it('surfaces missing native runtime through the explicit capture-error callback', async () => {
+    runtimeAvailability.audioStreamAvailable = false;
+    runtimeAvailability.sherpaAvailable = false;
+    const onCaptureError = vi.fn();
+
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({
+      onCaptureStarted: vi.fn(),
+      onCaptureError,
+      getSettings: () => ({
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              stt: { provider: 'local_neural', localNeural: { assetId: 'dummy-pack', language: 'en' } },
+            },
+          },
+        },
+      }),
+    });
+
+    await controller.start('s-runtime-missing', createMicSession());
+    expect(onCaptureError).toHaveBeenCalledWith({
+      controlSessionId: 's-runtime-missing',
+      reason: 'local_neural_stt_unavailable',
+    });
   });
 });

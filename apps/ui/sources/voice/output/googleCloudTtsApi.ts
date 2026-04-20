@@ -43,13 +43,14 @@ export async function fetchGoogleCloudTtsVoiceCatalog(opts: {
   if (!apiKey) return [];
 
   const languageCode = typeof opts.languageCode === 'string' && opts.languageCode.trim() ? opts.languageCode.trim() : '';
-  const query = new URLSearchParams({ key: apiKey });
+  const query = new URLSearchParams();
   if (languageCode) query.set('languageCode', languageCode);
-
-  const url = `https://texttospeech.googleapis.com/v1/voices?${query.toString()}`;
+  const querySuffix = query.toString();
+  const url = `https://texttospeech.googleapis.com/v1/voices${querySuffix ? `?${querySuffix}` : ''}`;
   const init: RequestInit = {
     method: 'GET',
     headers: {
+      'x-goog-api-key': apiKey,
       ...buildGoogleApiKeyRestrictionHeaders({ androidCertSha1: opts.androidCertSha1 ?? null }),
     },
   };

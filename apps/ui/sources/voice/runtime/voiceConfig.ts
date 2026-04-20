@@ -21,6 +21,6 @@ export const VOICE_CONFIG = {
   /** Disable ready event notifications */
   DISABLE_READY_EVENTS: false,
 
-  /** Enable debug logging for voice context updates */
+  /** Enable safe developer diagnostics for voice context updates */
   ENABLE_DEBUG_LOGGING: readAiAutoDebugRemoteLoggingEnabled(),
 } as const;

@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
+import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { getOrCreateWebAudioContext } from '@/voice/output/webAudioContext';
 
 export async function playAudioBytesWithStopper(opts: {

@@ -1,4 +1,4 @@
-import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
+import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 import { streamKokoroWavSentences } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';

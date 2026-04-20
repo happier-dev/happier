@@ -35,7 +35,11 @@ describe('speakGoogleCloudText', () => {
     );
 
     const call = fetchSpy.mock.calls[0]!;
+    const url = String(call[0]);
     const init = call[1] as any;
+    expect(url).not.toContain('key=');
+    expect(url).not.toContain('k');
+    expect(init?.headers?.['x-goog-api-key']).toBe('k');
     const body = JSON.parse(String(init.body));
     expect(body.audioConfig.audioEncoding).toBe('MP3');
 
@@ -45,4 +49,3 @@ describe('speakGoogleCloudText', () => {
     expect(new Uint8Array(played.bytes)).toEqual(new Uint8Array([102, 111, 111]));
   });
 });
-

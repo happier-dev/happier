@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -7,7 +8,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
-import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveContinuousVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 export function VoiceProviderSection(props: {
   voice: VoiceSettings;
@@ -17,12 +18,12 @@ export function VoiceProviderSection(props: {
   const { theme } = useUnistyles();
   const select = (next: VoiceSettings) => props.setVoice(next);
 
-  const providerId = resolveVoiceProviderId(props.voice.providerId);
+  const providerId = resolveContinuousVoiceProviderId(props.voice.providerId);
   const billingMode = props.voice.adapters.realtime_elevenlabs.billingMode;
+  const showLocalMode = Platform.OS !== 'web';
   const isOff = providerId === 'off';
   const isHappier = providerId === 'realtime_elevenlabs' && billingMode === 'happier';
   const isByo = providerId === 'realtime_elevenlabs' && billingMode === 'byo';
-  const isLocal = providerId === 'local_direct' || providerId === 'local_conversation';
 
   return (
     <ItemGroup title={t('settingsVoice.modeTitle')}>
@@ -70,13 +71,17 @@ export function VoiceProviderSection(props: {
         showChevron={false}
       />
 
-      <Item
-        title={t('settingsVoice.mode.local')}
-        subtitle={t('settingsVoice.mode.localSubtitle')}
-        rightElement={isLocal ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} /> : null}
-        onPress={() => select({ ...props.voice, providerId: 'local_conversation' })}
-        showChevron={false}
-      />
+      {showLocalMode ? (
+        <Item
+          title={t('settingsVoice.mode.local')}
+          subtitle={t('settingsVoice.mode.localSubtitle')}
+          rightElement={providerId === 'local_direct' || providerId === 'local_conversation'
+            ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} />
+            : null}
+          onPress={() => select({ ...props.voice, providerId: 'local_conversation' })}
+          showChevron={false}
+        />
+      ) : null}
     </ItemGroup>
   );
 }

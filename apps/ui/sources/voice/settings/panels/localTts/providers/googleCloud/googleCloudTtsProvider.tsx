@@ -13,7 +13,7 @@ import { LANGUAGES, findLanguageByCode, getLanguageDisplayName } from '@/constan
 import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFailureMessage';
 import { speakGoogleCloudText } from '@/voice/output/GoogleCloudTtsController';
 import { fetchGoogleCloudTtsVoiceCatalog, type GoogleCloudTtsVoice } from '@/voice/output/googleCloudTtsApi';
-import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';

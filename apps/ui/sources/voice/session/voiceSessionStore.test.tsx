@@ -1,10 +1,15 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+afterEach(async () => {
+  const { resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
+  await resetVoiceSessionRuntimeStateForTests();
+});
 
 describe('voiceSessionStore', () => {
   it('does not rerender subscribers when setVoiceSessionSnapshot receives an identical snapshot', async () => {
@@ -103,5 +108,114 @@ describe('voiceSessionStore', () => {
 
     expect(getVoiceSessionSnapshot().adapterId).toBe('local_direct');
     expect(getVoiceSessionSnapshot().sessionId).toBe('session-1');
+  });
+
+  it('prefers the lifecycle-controller snapshot over a stale published store snapshot', async () => {
+    vi.resetModules();
+
+    const { getVoiceSessionSnapshot, setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+    const { setVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+
+    const controllerSnapshot = {
+      adapterId: 'local_conversation',
+      sessionId: 'runtime-session',
+      status: 'connected' as const,
+      mode: 'listening' as const,
+      canStop: true,
+    };
+
+    await act(async () => {
+      setVoiceSessionSnapshot({
+        adapterId: 'local_conversation',
+        sessionId: 'stale-session',
+        status: 'disconnected',
+        mode: 'idle',
+        canStop: false,
+      });
+      setVoiceSessionLifecycleController({
+        dispose: () => {},
+        getSnapshot: () => controllerSnapshot,
+        interrupt: vi.fn(async () => {}),
+        sendContextUpdate: vi.fn(() => {}),
+        setConfiguredProviderId: vi.fn(() => {}),
+        setMuted: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+        subscribe: () => () => {},
+        toggle: vi.fn(async () => {}),
+      });
+    });
+
+    expect(getVoiceSessionSnapshot()).toEqual(controllerSnapshot);
+
+    await act(async () => {
+      setVoiceSessionLifecycleController(null);
+    });
+  });
+
+  it('resets the voice session runtime globals between specs', async () => {
+    vi.resetModules();
+
+    const voiceSessionStoreModule = await import('./voiceSessionStore');
+    const { getVoiceSessionSnapshot, setVoiceSessionSnapshot } = voiceSessionStoreModule;
+    const { getVoiceSessionLifecycleController, setVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+    const { getVoiceAdapterRegistry, registerVoiceAdapters } = await import('./voiceAdapterRegistry');
+
+    const activeSnapshot = {
+      adapterId: 'local_direct',
+      sessionId: 'runtime-session',
+      status: 'connected' as const,
+      mode: 'listening' as const,
+      canStop: true,
+    };
+    setVoiceSessionSnapshot({
+      adapterId: null,
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+    });
+    setVoiceSessionLifecycleController({
+      dispose: () => {},
+      getSnapshot: () => activeSnapshot,
+      interrupt: vi.fn(async () => {}),
+      sendContextUpdate: vi.fn(() => {}),
+      setConfiguredProviderId: vi.fn(() => {}),
+      setMuted: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      subscribe: () => () => {},
+      toggle: vi.fn(async () => {}),
+    });
+    registerVoiceAdapters([{
+      id: 'local_direct',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      toggle: vi.fn(async () => {}),
+      interrupt: vi.fn(async () => {}),
+      setMuted: vi.fn(async () => {}),
+      sendContextUpdate: vi.fn(() => {}),
+      getSnapshot: () => activeSnapshot,
+      subscribe: () => () => {},
+    }]);
+
+    expect(getVoiceSessionSnapshot()).toEqual(activeSnapshot);
+    expect(getVoiceSessionLifecycleController()).not.toBeNull();
+    expect(getVoiceAdapterRegistry().list()).toHaveLength(1);
+    expect(voiceSessionStoreModule.resetVoiceSessionRuntimeStateForTests).toBeTypeOf('function');
+
+    if (typeof voiceSessionStoreModule.resetVoiceSessionRuntimeStateForTests !== 'function') {
+      return;
+    }
+
+    await voiceSessionStoreModule.resetVoiceSessionRuntimeStateForTests();
+
+    expect(getVoiceSessionLifecycleController()).toBeNull();
+    expect(getVoiceAdapterRegistry().list()).toHaveLength(0);
+    expect(getVoiceSessionSnapshot()).toEqual({
+      adapterId: null,
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+    });
   });
 });

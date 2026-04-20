@@ -23,16 +23,9 @@ export function isKokoroRuntimeSupported(
 ): boolean {
   const platformOs = overrides.platformOs ?? Platform.OS;
 
-  // On native, Kokoro is supported only through the Sherpa-backed native module.
-  if (platformOs !== 'web') {
-    return typeof overrides.hasNativeModule === 'boolean' ? overrides.hasNativeModule : getHasNativeKokoroModule();
-  }
+  if (platformOs === 'web') return false;
 
-  // On web, Kokoro (via transformers + onnxruntime-web) requires fetch/Response and WebAssembly for the default WASM backend.
-  // If any required runtime primitive is missing, avoid attempting to initialize the runtime.
-  if (typeof globals.fetch !== 'function') return false;
-  if (typeof (globals as any).Response === 'undefined') return false;
-  if (typeof (globals as any).WebAssembly === 'undefined') return false;
-  if (typeof (globals as any).TextEncoder === 'undefined') return false;
-  return true;
+  // On native, Kokoro is supported only through the Sherpa-backed native module.
+  void globals;
+  return typeof overrides.hasNativeModule === 'boolean' ? overrides.hasNativeModule : getHasNativeKokoroModule();
 }

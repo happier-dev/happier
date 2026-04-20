@@ -16,10 +16,11 @@ export class MissingSttBaseUrlError extends Error {
 export async function transcribeRecordedAudioWithHttpStt(params: {
   uri: string;
   settings: any;
+  decryptSecretValue?: (value: unknown) => string | null;
 }): Promise<string | null> {
   const { uri, settings } = params;
   const voice = settings?.voice ?? null;
-  const providerId = voice?.providerId;
+  const providerId = typeof voice?.providerId === 'string' ? voice.providerId.trim() : voice?.providerId;
   const adapter =
     providerId === 'local_direct'
       ? voice?.adapters?.local_direct
@@ -34,7 +35,8 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
     throw new MissingSttBaseUrlError();
   }
 
-  const sttApiKey = openaiCompat?.apiKey ? (sync.decryptSecretValue(openaiCompat.apiKey) ?? null) : null;
+  const decryptSecretValue = params.decryptSecretValue ?? ((value: unknown) => sync.decryptSecretValue(value as any));
+  const sttApiKey = openaiCompat?.apiKey ? (decryptSecretValue(openaiCompat.apiKey) ?? null) : null;
   const sttModel = typeof openaiCompat?.model === 'string' && openaiCompat.model.trim()
     ? openaiCompat.model.trim()
     : 'whisper-1';

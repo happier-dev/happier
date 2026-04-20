@@ -1,8 +1,7 @@
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { storage } from '@/sync/domains/state/storage';
-import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
 import { runVoiceAgentTurnWithTools } from '@/voice/local/runVoiceAgentTurnWithTools';
-import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import { buildVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
 import { captureAssistantTextMessageBaseline } from '@/voice/runtime/waitForNextAssistantTextMessage';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
@@ -369,10 +368,7 @@ export function createVoiceQaController(
 
     try {
       if (provider === 'local_voice_agent') {
-        const binding = resolveVoiceSessionBindingByControlSessionId({
-          controlSessionId: sessionId,
-          adapterId: 'local_conversation',
-        });
+        const binding = deps.getLocalBinding?.(sessionId) ?? null;
         const runtimeSessionId = resolveLocalVoiceQaRuntimeSessionId(binding, sessionId);
         await deps.stopLocal(runtimeSessionId);
       } else {

@@ -1,9 +1,9 @@
-import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
-import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
+import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { speakWithLocalTtsProvider } from '@/voice/backends/tts/runtime';
-import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { parseLocalVoiceTtsSettings, resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 
 export async function speakAssistantText(params: {
+  sessionId?: string | null;
   text: string;
   settings: any;
   networkTimeoutMs: number;
@@ -13,15 +13,10 @@ export async function speakAssistantText(params: {
   const trimmed = params.text.trim();
   if (!trimmed) return;
 
-  const voice = params.settings?.voice ?? null;
-  const providerId = normalizeNonEmptyString(voice?.providerId);
-  const adapter =
-    providerId === 'local_direct'
-      ? voice?.adapters?.local_direct
-      : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
-
-  const tts = VoiceLocalTtsSchema.parse(adapter?.tts ?? {});
+  const { config } = resolveLocalVoiceAdapterSettings(params.settings);
+  const tts = parseLocalVoiceTtsSettings(config?.tts);
   await speakWithLocalTtsProvider({
+    sessionId: params.sessionId ?? null,
     text: trimmed,
     settings: params.settings,
     tts,

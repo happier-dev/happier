@@ -1,4 +1,4 @@
-import { parseModelPackManifest, type ModelPackManifest } from '@/voice/modelPacks/manifest';
+import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
 
 export async function raceWithAbort<T>(signal: AbortSignal, promises: Array<Promise<T>>): Promise<T> {
   if (signal.aborted) throw new Error('aborted');

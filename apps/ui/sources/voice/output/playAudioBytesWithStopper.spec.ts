@@ -1,17 +1,25 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const platformOsMock = vi.hoisted(() => ({ value: 'web' as 'web' | 'ios' }));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
                     Platform: {
-                        OS: 'web',
+                        get OS() {
+                            return platformOsMock.value;
+                        },
                     },
                 }
     );
 });
 
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
+
+afterEach(() => {
+    platformOsMock.value = 'web';
+});
 
 describe('playAudioBytesWithStopper (web)', () => {
   it('uses WebAudio when available', async () => {
@@ -165,5 +173,74 @@ describe('playAudioBytesWithStopper (web)', () => {
 
     expect(pause).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
+  });
+});
+
+describe('playAudioBytesWithStopper (native)', () => {
+  it('uses expo-audio playback on native platforms', async () => {
+    platformOsMock.value = 'ios';
+    vi.spyOn(Date, 'now').mockReturnValue(1234);
+
+    const createAudioPlayer = vi.fn((source: string) => {
+      let listener: ((status: any) => void) | null = null;
+      return {
+        source,
+        addListener: (_event: string, cb: (status: any) => void) => {
+          listener = cb;
+          return { remove: vi.fn() };
+        },
+        play: vi.fn(),
+        remove: vi.fn(),
+        __emit: (status: any) => listener?.(status),
+      };
+    });
+    const deleteAsync = vi.fn(async () => {});
+    const fileWrite = vi.fn(async () => {});
+
+    vi.doMock('expo-audio', () => ({
+      createAudioPlayer,
+    }));
+    vi.doMock('expo-file-system', () => ({
+      Paths: { cache: 'file:///tmp/' },
+      File: class {
+        uri: string;
+        constructor(...uris: any[]) {
+          const [base, name] = uris;
+          this.uri = `${String(base)}${String(name ?? '')}`;
+        }
+        write = fileWrite;
+      },
+      deleteAsync,
+    }));
+
+    let registeredStopper: (() => void) | null = null;
+    const registerPlaybackStopper = (stopper: () => void) => {
+      registeredStopper = stopper;
+      return () => {};
+    };
+
+    try {
+      const promise = playAudioBytesWithStopper({
+        bytes: new Uint8Array([1, 2, 3]).buffer,
+        format: 'wav',
+        registerPlaybackStopper,
+      });
+
+      await vi.waitFor(() => {
+        expect(createAudioPlayer).toHaveBeenCalledTimes(1);
+      });
+      expect(typeof registeredStopper).toBe('function');
+      expect(createAudioPlayer).toHaveBeenCalledWith('file:///tmp/happier-voice-1234.wav');
+
+      (createAudioPlayer.mock.results[0]?.value as { __emit?: (status: any) => void } | undefined)?.__emit?.({
+        didJustFinish: true,
+      });
+
+      await promise;
+
+      expect(deleteAsync).toHaveBeenCalledWith('file:///tmp/happier-voice-1234.wav', { idempotent: true });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

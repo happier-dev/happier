@@ -1,4 +1,3 @@
-import { createVoiceAgentSessionController } from '@/voice/agent/VoiceAgentSessionController';
+import { createVoiceExecutionTransport } from '@/voice/runtime/execution/VoiceExecutionTransport';
 
-export const voiceAgentSessions = createVoiceAgentSessionController();
-
+export const voiceAgentSessions = createVoiceExecutionTransport();

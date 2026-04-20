@@ -13,6 +13,20 @@ import { t } from '@/text';
   }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+const platformOsMock = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
+
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock({
+    Platform: {
+      get OS() {
+        return platformOsMock.value;
+      },
+      select: <T,>(options: { web?: T; default?: T; native?: T; ios?: T; android?: T }) =>
+        options?.[platformOsMock.value] ?? options?.default ?? options?.native ?? options?.ios ?? options?.android,
+    },
+  });
+});
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
@@ -171,6 +185,7 @@ function findDropdownByItemTriggerTitle(
 }
 
 beforeEach(() => {
+  platformOsMock.value = 'ios';
   featureEnabledState['voice.agent'] = true;
   settingsState.current.recentMachinePaths = [{ machineId: 'machine-1', path: '/tmp/repo' }];
   preflightModelsCallSpy.mockClear();
@@ -195,6 +210,16 @@ describe('LocalConversationSection', () => {
         screen.tree.update(<LocalConversationSection voice={nextVoice} setVoice={setVoice} />);
       });
     }).not.toThrow();
+  });
+
+  it('renders the local fallback section on web when realtime remains the active mode', async () => {
+    platformOsMock.value = 'web';
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = withProvider(createLocalConversationVoice(), 'realtime_elevenlabs');
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+
+    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversationMode'))).toBeTruthy();
   });
 
   it('renders a backend dropdown for the voice agent when agentSource=agent', async () => {

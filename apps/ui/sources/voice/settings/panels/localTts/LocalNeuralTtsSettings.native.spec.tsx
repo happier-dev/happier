@@ -73,7 +73,7 @@ vi.mock('@/voice/output/KokoroTtsController', () => ({
   speakKokoroText: vi.fn(),
 }));
 
-vi.mock('@/voice/runtime/VoicePlaybackController', () => ({
+vi.mock('@/voice/runtime/playback/VoicePlaybackController', () => ({
   createVoicePlaybackController: () => ({ registerStopper: () => () => {}, interrupt: vi.fn() }),
 }));
 
@@ -88,7 +88,7 @@ describe('LocalNeuralTtsSettings (native)', () => {
 
     let tree!: ReactTestRenderer;
     tree = (await renderScreen(React.createElement(LocalNeuralTtsSettings, {
-          cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+          cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
           setKokoro: vi.fn(),
           networkTimeoutMs: 1000,
           popoverBoundaryRef: null,

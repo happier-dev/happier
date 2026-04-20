@@ -1,7 +1,7 @@
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { storage } from '@/sync/domains/state/storage';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
-import { applyVoiceSessionTargetSelection } from '@/voice/sessionBinding/applyVoiceSessionTargetSelection';
+import { applyVoiceSessionTargetSelection } from '@/voice/binding/applyVoiceSessionTargetSelection';
 import { resolveVoiceSessionIdFromTitle, resolveVoiceSessionRef } from './sessionReference';
 
 export async function setPrimaryActionSessionId(params: Readonly<{

@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
+vi.mock('@/text', async () => {
+  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+  return createTextModuleMock({
+    translate: (key: string) => `t:${key}`,
+  });
+});
+
 const state: any = {
   settings: {
     backendEnabledByTargetKey: {
@@ -22,6 +29,7 @@ const state: any = {
 };
 
 const getMachineCapabilitiesSnapshot = vi.fn();
+const machineContributionRegistryProjectionDescribeMock = vi.fn(async (..._args: unknown[]): Promise<any> => ({ supported: false, reason: 'not-supported' }));
 
 installVoiceToolActionImplCommonModuleMocks({
   storage: async () => {
@@ -38,6 +46,10 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
   getMachineCapabilitiesSnapshot: (...args: any[]) => getMachineCapabilitiesSnapshot(...args),
 }));
 
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+  machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
+}));
+
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
 }));
@@ -48,6 +60,8 @@ describe('review engine voice tool', () => {
       [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
     };
     getMachineCapabilitiesSnapshot.mockReset();
+    machineContributionRegistryProjectionDescribeMock.mockReset();
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
     getMachineCapabilitiesSnapshot.mockReturnValue({
       response: {
         results: {
@@ -72,6 +86,88 @@ describe('review engine voice tool', () => {
 
     expect(res.items.map((item: any) => item.engineId)).toEqual(expect.arrayContaining(['codex', 'coderabbit']));
     expect(res.items.map((item: any) => item.engineId)).not.toContain('gemini');
+  });
+
+  it('uses the resolved backend catalog title for built-in review engine labels', async () => {
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    const res: any = await listReviewEnginesForVoiceTool({ sessionId: 's1', includeDisabled: true });
+
+    const codex = (res.items ?? []).find((item: any) => item.engineId === 'codex');
+    expect(codex).toBeTruthy();
+    expect(codex.label).toBe('t:agentInput.agent.codex');
+  });
+
+  it('uses daemon merged projection titles for discovered/plugin review engine labels', async () => {
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:coderabbit': {
+            providerId: 'plugin:coderabbit',
+            title: 'CodeRabbit Plugin',
+            subtitle: null,
+            channel: 'plugin',
+            isBuiltIn: false,
+          },
+        },
+        backendsById: {
+          coderabbit: {
+            backendId: 'coderabbit',
+            providerId: 'plugin:coderabbit',
+            title: 'CodeRabbit (plugin)',
+            subtitle: null,
+            providerAgentId: null,
+            iconAgentId: null,
+          },
+        },
+      },
+    });
+
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    const res: any = await listReviewEnginesForVoiceTool({ sessionId: 's1', includeDisabled: true });
+
+    const coderabbit = (res.items ?? []).find((item: any) => item.engineId === 'coderabbit');
+    expect(coderabbit).toBeTruthy();
+    expect(coderabbit.label).toBe('CodeRabbit (plugin)');
+  });
+
+  it('uses canonical backend keys when evaluating enabled state for discovered plugin review engines', async () => {
+    state.settings.backendEnabledByTargetKey = {
+      'backend:coderabbit': false,
+    };
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:coderabbit': {
+            providerId: 'plugin:coderabbit',
+            title: 'CodeRabbit Plugin',
+            subtitle: null,
+            channel: 'plugin',
+            isBuiltIn: false,
+          },
+        },
+        backendsById: {
+          coderabbit: {
+            backendId: 'coderabbit',
+            providerId: 'plugin:coderabbit',
+            title: 'CodeRabbit (plugin)',
+            subtitle: null,
+            providerAgentId: null,
+            iconAgentId: null,
+          },
+        },
+      },
+    });
+
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    const res: any = await listReviewEnginesForVoiceTool({ sessionId: 's1', includeDisabled: true });
+
+    const coderabbit = (res.items ?? []).find((item: any) => item.engineId === 'coderabbit');
+    expect(coderabbit).toBeTruthy();
+    expect(coderabbit.enabled).toBe(false);
   });
 
   it('includes disabled review engines when explicitly requested', async () => {
@@ -105,5 +201,37 @@ describe('review engine voice tool', () => {
     await listReviewEnginesForVoiceTool({ sessionId: 's1' });
 
     expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('lookup-machine', 'server-a');
+  });
+
+  it('uses the owning server of the target session instead of the active server when resolving review engines', async () => {
+    state.sessions.s_owned = {
+      id: 's_owned',
+      metadata: {
+        machineId: 'raw-machine',
+      },
+    };
+    state.sessionListRenderables = {
+      s_owned: {
+        id: 's_owned',
+        updatedAt: 321,
+        metadata: {
+          machineId: 'lookup-machine',
+          path: '/tmp/lookup',
+        },
+      },
+    };
+    state.sessionListIndexByServerId = {
+      'server-owned': [
+        { type: 'session', sessionId: 's_owned', serverId: 'server-owned', serverName: 'Server Owned' },
+      ],
+    };
+
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    await listReviewEnginesForVoiceTool({ sessionId: 's_owned' });
+
+    expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('lookup-machine', 'server-owned');
+    expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('lookup-machine', expect.objectContaining({
+      serverId: 'server-owned',
+    }));
   });
 });

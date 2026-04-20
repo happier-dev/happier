@@ -74,9 +74,9 @@ const OpenAiCompatSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
 
 export const openaiCompatSttProviderSpec: LocalSttProviderSpec = {
   id: 'openai_compat',
-  title: 'OpenAI-compatible endpoint',
-  subtitle: 'Use your own Whisper-compatible transcription server.',
+  title: t('settingsVoice.local.openaiCompatStt.provider.title'),
+  subtitle: t('settingsVoice.local.openaiCompatStt.provider.subtitle'),
   iconName: 'cloud-outline',
-  detail: 'Endpoint',
+  detail: t('settingsVoice.local.openaiCompatStt.provider.detail'),
   Settings: OpenAiCompatSttSettings,
 };

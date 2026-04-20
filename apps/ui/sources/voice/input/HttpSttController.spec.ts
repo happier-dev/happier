@@ -18,9 +18,12 @@ vi.mock('@/sync/sync', () => ({
   sync: { decryptSecretValue: () => 'api-key' },
 }));
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'ios' },
-}));
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock({
+    Platform: { OS: 'ios', select: (spec: Record<string, unknown>) => spec.ios ?? spec.default ?? spec.web },
+  });
+});
 
 vi.mock('expo-audio', () => ({
   RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },

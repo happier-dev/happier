@@ -11,7 +11,10 @@ async function safeSetAudioMode(mode: Partial<VoiceAudioMode>): Promise<void> {
     await AudioModule.setAudioModeAsync(mode as any);
   } catch (error) {
     if (__DEV__) {
-      console.warn('[voiceAudioMode] Failed to set audio mode', { mode, error });
+      console.warn('[voiceAudioMode] Failed to set audio mode', {
+        mode,
+        errorKind: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 }
@@ -37,4 +40,3 @@ export async function disableVoiceBackgroundCallAudioMode(): Promise<void> {
     shouldPlayInBackground: false,
   });
 }
-

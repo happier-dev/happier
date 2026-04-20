@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ensureBound = vi.fn();
 
-vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+vi.mock('@/voice/binding/voiceConversationBindingRuntime', () => ({
   voiceSessionBindingManager: {
     ensureBound: (params: any) => ensureBound(params),
   },

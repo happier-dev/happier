@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installVoiceSurfaceCommonModuleMocks } from './voiceSurfaceTestHelpers';
 
@@ -12,6 +12,16 @@ import { installVoiceSurfaceCommonModuleMocks } from './voiceSurfaceTestHelpers'
 
 function createHostComponentMock(type: string) {
     return (props: any) => React.createElement(type, props, props.children);
+}
+
+async function registerMockedStorageStateBridge() {
+    const { registerStorageStateReader, registerStorageStateSubscribe } = await import('@/sync/domains/state/storageStateReaderBridge');
+    registerStorageStateReader(() => mockedStorage.getState());
+    registerStorageStateSubscribe((listener) => mockedStorage.subscribe(listener));
+}
+
+async function getVoiceConversationBindingStore() {
+    return (await import('@/voice/binding/voiceConversationBindingStore')).voiceSessionBindingStore;
 }
 
 installVoiceSurfaceCommonModuleMocks({
@@ -44,7 +54,8 @@ installVoiceSurfaceCommonModuleMocks({
         return createStorageModuleStub({
             useSetting: () => voiceSettingState.current,
             storage: {
-                getState: () => storageState.current,
+                getState: () => mockedStorage.getState(),
+                subscribe: (listener: () => void) => mockedStorage.subscribe(listener),
             },
         });
     },
@@ -86,19 +97,17 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: createHostComponentMock('Ionicons'),
 }));
 
-const toggleLocalVoiceTurnSpy = vi.fn(async (_sessionId: string) => {});
-vi.mock('@/voice/local/localVoiceEngine', () => ({
-    toggleLocalVoiceTurn: (sessionId: string) => toggleLocalVoiceTurnSpy(sessionId),
+const localVoiceToggleTurnSpy = vi.fn(async (_sessionId: string) => {});
+vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
+    localVoiceRuntimeController: {
+        toggleTurn: (sessionId: string) => localVoiceToggleTurnSpy(sessionId),
+    },
 }));
 
 const routerPushSpy = vi.fn();
 const pathnameState: { current: string } = { current: '/' };
 
-const hydrateSpy = vi.fn(async () => {});
 const featureEnabledState: Record<string, boolean> = { 'voice.agent': true };
-vi.mock('@/voice/persistence/hydrateVoiceAgentActivityFromCarrierSession', () => ({
-    hydrateVoiceAgentActivityFromCarrierSession: () => hydrateSpy(),
-}));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] ?? true,
 }));
@@ -107,6 +116,22 @@ const voiceSettingState: { current: any } = {
     current: { providerId: 'realtime_elevenlabs', ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } },
 };
 const storageState: { current: any } = { current: { sessions: {}, concurrentSessionListCacheByServerId: {} } };
+const storageListeners = new Set<() => void>();
+const mockedStorage = {
+    getState: () => storageState.current,
+    subscribe: (listener: (nextState: any) => void) => {
+        storageListeners.add(listener as () => void);
+        return () => {
+            storageListeners.delete(listener as () => void);
+        };
+    },
+    setState: (nextState: any) => {
+        storageState.current = nextState;
+        for (const listener of storageListeners) {
+            (listener as unknown as (state: any) => void)(storageState.current);
+        }
+    },
+};
 
 const allSessionsState: { current: any[] } = { current: [] };
 vi.mock('@/sync/store/hooks', () => ({
@@ -120,7 +145,7 @@ vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
 }));
 
 const ensureVoiceBindingSpy = vi.fn(async (_params: any): Promise<VoiceSessionBinding | null> => null);
-vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+vi.mock('@/voice/binding/voiceConversationBindingRuntime', () => ({
     voiceSessionBindingManager: {
         ensureBound: (params: any) => ensureVoiceBindingSpy(params),
     },
@@ -165,43 +190,6 @@ describe('VoiceSurface', () => {
     expect(screen.getTextContent()).toContain('settingsVoice.local.conversation.resumability.disabledVoiceAgent');
   });
 
-  it('hydrates the global agent activity feed from the carrier transcript when persistence is enabled', async () => {
-    vi.resetModules();
-    hydrateSpy.mockClear();
-    featureEnabledState['voice.agent'] = true;
-    pathnameState.current = '/';
-    voiceSettingState.current = {
-      providerId: 'local_conversation',
-      ui: { activityFeedEnabled: true, scopeDefault: 'global', surfaceLocation: 'auto' },
-      adapters: {
-        local_conversation: {
-          conversationMode: 'agent',
-          agent: { transcript: { persistenceMode: 'persistent', epoch: 7 } },
-        },
-      },
-    };
-
-    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
-    setVoiceSessionSnapshot({
-      adapterId: 'local_conversation',
-      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      status: 'disconnected',
-      mode: 'idle',
-      canStop: false,
-    });
-
-    const { VoiceSurface } = await import('./VoiceSurface');
-
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }))).tree;
-
-    expect(hydrateSpy).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      tree.unmount();
-    });
-  });
-
   it('renders stop control when connected', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
@@ -221,6 +209,62 @@ describe('VoiceSurface', () => {
     expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.tapToEnd' }).props.disabled).toBe(false);
   });
 
+  it('routes the stop control through voiceSessionManager.stop using the active voice session id', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: {
+        local_conversation: { conversationMode: 'agent' },
+      },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+
+    const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+    const stopSpy = vi.spyOn(voiceSessionManager, 'stop').mockResolvedValue(undefined as any);
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    await pressTestInstanceAsync(
+      screen.findByProps({ accessibilityLabel: 'voiceAssistant.tapToEnd' }),
+      'voiceAssistant.tapToEnd',
+    );
+
+    expect(stopSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
+    expect(stopSpy).not.toHaveBeenCalledWith('');
+    stopSpy.mockRestore();
+  });
+
+  it('exposes a stable listening mode test id when the sidebar voice surface is actively listening', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: 's1',
+      status: 'connected',
+      mode: 'listening',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.findByProps({ testID: 'voice-surface-mode:sidebar:listening' })).toBeTruthy();
+  });
+
   it('opens the hidden voice conversation session from the header icon when a binding exists', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
@@ -230,7 +274,7 @@ describe('VoiceSurface', () => {
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
-    const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
+    const voiceSessionBindingStore = await getVoiceConversationBindingStore();
     voiceSessionBindingStore.getState().bind({
       adapterId: 'realtime_elevenlabs',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -266,7 +310,6 @@ describe('VoiceSurface', () => {
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
-    const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
       adapterId: 'realtime_elevenlabs',
@@ -283,6 +326,7 @@ describe('VoiceSurface', () => {
     expect(screen.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(0);
 
     await act(async () => {
+      const voiceSessionBindingStore = await getVoiceConversationBindingStore();
       voiceSessionBindingStore.getState().bind({
         adapterId: 'realtime_elevenlabs',
         controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -294,6 +338,206 @@ describe('VoiceSurface', () => {
     });
 
     expect(screen.findAllByProps({ accessibilityLabel: 'common.open' }).length).toBeGreaterThan(0);
+  });
+
+  it('refreshes the hidden voice conversation icon when persisted binding metadata hydrates after render', async () => {
+    vi.resetModules();
+    await registerMockedStorageStateBridge();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'realtime_elevenlabs',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+    };
+    allSessionsState.current = [];
+    storageState.current = { sessions: {}, concurrentSessionListCacheByServerId: {} };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(0);
+
+    await act(async () => {
+      const persistedSession = {
+        id: 'persisted-voice-session',
+        updatedAt: 100,
+        metadata: {
+          systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+          summary: { text: 'Voice conversation' },
+          voiceConversationBindingV1: {
+            v: 1,
+            adapterId: 'realtime_elevenlabs',
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            transcriptMode: 'synthetic',
+            targetSessionId: null,
+            updatedAt: 100,
+          },
+        },
+      };
+      allSessionsState.current = [persistedSession];
+      mockedStorage.setState({
+        ...storageState.current,
+        sessions: {
+          'persisted-voice-session': persistedSession,
+        },
+        concurrentSessionListCacheByServerId: {},
+      });
+    });
+
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' }).length).toBeGreaterThan(0);
+  });
+
+  it('refreshes the sidebar transcript projection when persisted binding metadata and transcript messages hydrate through storage only', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'realtime_elevenlabs',
+      ui: { activityFeedEnabled: true, scopeDefault: 'global', surfaceLocation: 'auto' },
+    };
+    allSessionsState.current = [];
+    storageState.current = { sessions: {}, sessionMessages: {}, concurrentSessionListCacheByServerId: {} };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(0);
+
+    await act(async () => {
+      mockedStorage.setState({
+        ...storageState.current,
+        sessions: {
+          'persisted-voice-session': {
+            id: 'persisted-voice-session',
+            updatedAt: 100,
+            metadata: {
+              systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+              summary: { text: 'Voice conversation' },
+              voiceConversationBindingV1: {
+                v: 1,
+                adapterId: 'realtime_elevenlabs',
+                controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                transcriptMode: 'synthetic',
+                targetSessionId: null,
+                updatedAt: 100,
+              },
+            },
+          },
+        },
+        sessionMessages: {
+          'persisted-voice-session': {
+            messages: [
+              { id: 'm1', createdAt: 1, localId: 'm1', isSidechain: false, role: 'user', content: { type: 'text', text: 'first' } },
+              {
+                id: 'm2',
+                createdAt: 2,
+                localId: 'm2',
+                isSidechain: false,
+                role: 'agent',
+                content: [{ type: 'text', text: 'second', uuid: 'u2', parentUUID: null }],
+              },
+            ],
+          },
+        },
+        concurrentSessionListCacheByServerId: {},
+      });
+    });
+
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' }).length).toBeGreaterThan(0);
+    const texts = screen.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
+    expect(texts).toContain('2');
+  });
+
+  it('keeps the sidebar hidden conversation affordance when the current provider no longer matches the persisted binding adapter', async () => {
+    vi.resetModules();
+    await registerMockedStorageStateBridge();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: true, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: {
+        local_conversation: {
+          conversationMode: 'agent',
+        },
+      },
+    };
+    allSessionsState.current = [];
+    storageState.current = { sessions: {}, sessionMessages: {}, concurrentSessionListCacheByServerId: {} };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    await act(async () => {
+      mockedStorage.setState({
+        ...storageState.current,
+        sessions: {
+          'persisted-voice-session': {
+            id: 'persisted-voice-session',
+            updatedAt: 100,
+            metadata: {
+              systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+              summary: { text: 'Voice conversation' },
+              voiceConversationBindingV1: {
+                v: 1,
+                adapterId: 'realtime_elevenlabs',
+                controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                transcriptMode: 'synthetic',
+                targetSessionId: null,
+                updatedAt: 100,
+              },
+            },
+          },
+        },
+        sessionMessages: {
+          'persisted-voice-session': {
+            messages: [
+              { id: 'm1', createdAt: 1, localId: 'm1', isSidechain: false, role: 'user', content: { type: 'text', text: 'first' } },
+              {
+                id: 'm2',
+                createdAt: 2,
+                localId: 'm2',
+                isSidechain: false,
+                role: 'agent',
+                content: [{ type: 'text', text: 'second', uuid: 'u2', parentUUID: null }],
+              },
+            ],
+          },
+        },
+        concurrentSessionListCacheByServerId: {},
+      });
+    });
+
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' }).length).toBeGreaterThan(0);
+    const texts = screen.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
+    expect(texts).toContain('2');
   });
 
   it('shows a human-readable target label instead of a raw target session id in the sidebar', async () => {
@@ -474,6 +718,97 @@ describe('VoiceSurface', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session');
   });
 
+  it('rebinds open-conversation routing through the canonical binding adapter when selected settings drift to another provider', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    routerPushSpy.mockReset();
+    ensureVoiceBindingSpy.mockReset();
+    ensureVoiceBindingSpy.mockResolvedValueOnce({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'persisted-voice-session-s2',
+      transcriptMode: 'native_session',
+      targetSessionId: 's2',
+      updatedAt: 2,
+    });
+    voiceSettingState.current = {
+      providerId: 'realtime_elevenlabs',
+      ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' },
+      adapters: {
+        realtime_elevenlabs: {},
+      },
+    };
+    allSessionsState.current = [
+      {
+        id: 's2',
+        updatedAt: 2,
+        metadata: {
+          summary: { text: 'Selected session' },
+          path: '/tmp/project-s2',
+          host: 'localhost',
+        },
+      },
+      {
+        id: 'persisted-voice-session',
+        updatedAt: 100,
+        metadata: {
+          systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+          summary: { text: 'Voice conversation' },
+          voiceConversationBindingV1: {
+            v: 1,
+            adapterId: 'local_conversation',
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            transcriptMode: 'native_session',
+            targetSessionId: 's1',
+            updatedAt: 1,
+          },
+        },
+      },
+    ];
+    storageState.current = {
+      ...storageState.current,
+      sessions: {
+        s2: allSessionsState.current[0],
+        'persisted-voice-session': allSessionsState.current[1],
+      },
+    };
+
+    const voiceSessionBindingStore = await getVoiceConversationBindingStore();
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'persisted-voice-session',
+      transcriptMode: 'native_session',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    });
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'listening',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's2' }));
+
+    await pressTestInstanceAsync(screen.findByProps({ accessibilityLabel: 'common.open' }), 'common.open');
+
+    expect(ensureVoiceBindingSpy).toHaveBeenCalledWith({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      requestedTargetSessionId: 's2',
+    });
+    expect(ensureVoiceBindingSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ adapterId: 'realtime_elevenlabs' }),
+    );
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session-s2');
+  });
+
   it('does not render the session voice surface inside a hidden voice conversation session', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
@@ -589,7 +924,7 @@ describe('VoiceSurface', () => {
   it('shows a slashed mic and allows barge-in when speaking (local voice)', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
-    toggleLocalVoiceTurnSpy.mockClear();
+    localVoiceToggleTurnSpy.mockClear();
     voiceSettingState.current = {
       providerId: 'local_conversation',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
@@ -621,7 +956,7 @@ describe('VoiceSurface', () => {
     expect(micIcon).toBeTruthy();
 
     await pressTestInstanceAsync(bargeIn, 'voiceSurface.a11y.bargeIn');
-    expect(toggleLocalVoiceTurnSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
+    expect(localVoiceToggleTurnSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
   });
 
   it('renders a cancel-turn control while thinking and calls voiceSessionManager.interrupt', async () => {
@@ -658,6 +993,79 @@ describe('VoiceSurface', () => {
 
     expect(interruptSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
     interruptSpy.mockRestore();
+  });
+
+  it('renders a mute control for an active voice session and routes it through voiceSessionManager.setMuted', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: {
+        local_conversation: { conversationMode: 'agent' },
+      },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'listening',
+      canStop: true,
+    });
+
+    const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+    const setMutedSpy = vi.spyOn(voiceSessionManager, 'setMuted').mockResolvedValue(undefined as any);
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    const mute = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.mute' });
+    expect(mute).toBeTruthy();
+
+    await pressTestInstanceAsync(mute, 'voiceSurface.a11y.mute');
+
+    expect(setMutedSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID, true);
+    setMutedSpy.mockRestore();
+  });
+
+  it('renders an unmute control when the active voice session snapshot is muted', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: {
+        local_conversation: { conversationMode: 'agent' },
+      },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'listening',
+      canStop: true,
+      micMuted: true,
+    });
+
+    const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+    const setMutedSpy = vi.spyOn(voiceSessionManager, 'setMuted').mockResolvedValue(undefined as any);
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    const unmute = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.unmute' });
+    expect(unmute).toBeTruthy();
+
+    await pressTestInstanceAsync(unmute, 'voiceSurface.a11y.unmute');
+
+    expect(setMutedSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID, false);
+    setMutedSpy.mockRestore();
   });
 
   it('starts local voice agent from sidebar using the focused session when one is available', async () => {
@@ -978,7 +1386,7 @@ describe('VoiceSurface', () => {
       },
     };
 
-    const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
+    const voiceSessionBindingStore = await getVoiceConversationBindingStore();
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -1028,6 +1436,33 @@ describe('VoiceSurface', () => {
     expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' }).props.disabled).toBe(false);
   });
 
+  it('keeps the sidebar surface recoverable after a realtime disconnect by exposing stable status and toggle selectors', async () => {
+    vi.resetModules();
+    voiceSettingState.current = {
+      providerId: 'realtime_elevenlabs',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+      errorCode: 'transport_disconnect',
+      errorMessage: 'realtime_transport_disconnected',
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.findByProps({ testID: 'voice-surface-status:sidebar:disconnected' })).toBeTruthy();
+    expect(screen.findByProps({ testID: 'voice-surface-toggle:sidebar' }).props.disabled).toBe(false);
+    expect(screen.getTextContent()).toContain('settingsVoice.local.machineErrors.transport_disconnect');
+  });
+
   it('requires a focused session to start session-scoped providers from the sidebar', async () => {
     vi.resetModules();
     voiceSettingState.current = {
@@ -1052,25 +1487,41 @@ describe('VoiceSurface', () => {
     expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' }).props.disabled).toBe(true);
   });
 
-  it('shows correct sidebar activity count and allows clearing when events exist', async () => {
+  it('shows the sidebar transcript count from the bound hidden conversation session', async () => {
     vi.resetModules();
     voiceSettingState.current = {
       providerId: 'realtime_elevenlabs',
       ui: { activityFeedEnabled: true, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
-    const { useVoiceActivityStore } = await import('@/voice/activity/voiceActivityStore');
-    useVoiceActivityStore.setState((s) => ({
-      ...s,
-      eventsBySessionId: {
-        s1: [
-          { id: 'e1', ts: 1, sessionId: 's1', adapterId: 'realtime_elevenlabs', kind: 'status', status: 'connected', mode: 'idle' },
-        ],
-        s2: [
-          { id: 'e2', ts: 2, sessionId: 's2', adapterId: 'realtime_elevenlabs', kind: 'user.text', text: 'hi' },
-        ],
+    storageState.current = {
+      sessions: {},
+      sessionMessages: {
+        'carrier-s1': {
+          messages: [
+            { id: 'm1', createdAt: 1, localId: 'm1', isSidechain: false, role: 'user', content: { type: 'text', text: 'first' } },
+            {
+              id: 'm2',
+              createdAt: 2,
+              localId: 'm2',
+              isSidechain: false,
+              role: 'agent',
+              content: [{ type: 'text', text: 'second', uuid: 'u2', parentUUID: null }],
+            },
+          ],
+        },
       },
-    }));
+      concurrentSessionListCacheByServerId: {},
+    };
+    const voiceSessionBindingStore = await getVoiceConversationBindingStore();
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'realtime_elevenlabs',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'carrier-s1',
+      transcriptMode: 'synthetic',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    });
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
@@ -1088,42 +1539,66 @@ describe('VoiceSurface', () => {
     // Ensure count is not hard-coded to 0 for sidebar feed.
     const texts = screen.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
     expect(texts).toContain('2');
-
-    const clear = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.clearActivity' });
-    expect(clear.props.disabled).toBe(false);
-
-    await pressTestInstanceAsync(clear, 'voiceSurface.a11y.clearActivity');
-
-    const state = useVoiceActivityStore.getState();
-    expect(state.eventsBySessionId.s1).toEqual([]);
-    expect(state.eventsBySessionId.s2).toEqual([]);
   });
 
-  it('orders sidebar activity events by ts and formats agent label', async () => {
+  it('orders sidebar transcript entries by createdAt and shows note entries from the same projection path', async () => {
     vi.resetModules();
     voiceSettingState.current = {
       providerId: 'realtime_elevenlabs',
       ui: { activityFeedEnabled: true, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
-    const { useVoiceActivityStore } = await import('@/voice/activity/voiceActivityStore');
-    useVoiceActivityStore.setState({
-      eventsBySessionId: {
-        s1: [{ id: 'a', ts: 20, sessionId: 's1', adapterId: 'realtime_elevenlabs', kind: 'assistant.text', text: 'old' }],
-        [VOICE_AGENT_GLOBAL_SESSION_ID]: [
-          { id: 'b', ts: 30, sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, adapterId: 'realtime_elevenlabs', kind: 'assistant.text', text: 'new' },
-          {
-            id: 'b2',
-            ts: 40,
-            sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-            adapterId: 'realtime_elevenlabs',
-            kind: 'error',
-            errorMessage: `Session encryption not found for ${VOICE_AGENT_GLOBAL_SESSION_ID}`,
-          },
-        ],
-        s2: [{ id: 'c', ts: 10, sessionId: 's2', adapterId: 'realtime_elevenlabs', kind: 'assistant.text', text: 'older' }],
+    storageState.current = {
+      sessions: {},
+      sessionMessages: {
+        'carrier-s1': {
+          messages: [
+            {
+              id: 'older',
+              createdAt: 10,
+              localId: 'older',
+              isSidechain: false,
+              role: 'agent',
+              content: [{ type: 'text', text: 'older', uuid: 'u1', parentUUID: null }],
+            },
+            {
+              id: 'new',
+              createdAt: 30,
+              localId: 'new',
+              isSidechain: false,
+              role: 'agent',
+              content: [{ type: 'text', text: 'new', uuid: 'u2', parentUUID: null }],
+            },
+            {
+              id: 'note',
+              createdAt: 40,
+              localId: 'note',
+              isSidechain: false,
+              role: 'agent',
+              content: [{ type: 'text', text: '[Voice] Tool result: sendSessionMessage failed', uuid: 'u3', parentUUID: null }],
+            },
+            {
+              id: 'old',
+              createdAt: 20,
+              localId: 'old',
+              isSidechain: false,
+              role: 'agent',
+              content: [{ type: 'text', text: 'old', uuid: 'u4', parentUUID: null }],
+            },
+          ],
+        },
       },
-    } as any);
+      concurrentSessionListCacheByServerId: {},
+    };
+    const voiceSessionBindingStore = await getVoiceConversationBindingStore();
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'realtime_elevenlabs',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'carrier-s1',
+      transcriptMode: 'synthetic',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    });
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
@@ -1146,11 +1621,11 @@ describe('VoiceSurface', () => {
       .filter((n) => n.props.numberOfLines === 3)
       .map((n) => String(n.props.children ?? ''));
 
-    expect(eventTexts[0]).toContain('[voiceActivity.format.voiceAgent]');
-    expect(eventTexts[0]).toContain('voiceActivity.format.error');
-    expect(eventTexts[0]).not.toContain(VOICE_AGENT_GLOBAL_SESSION_ID);
-    expect(eventTexts[1]).toContain('new');
-    expect(eventTexts[2]).toContain('old');
-    expect(eventTexts[3]).toContain('older');
+    expect(eventTexts).toEqual([
+      '[Voice] Tool result: sendSessionMessage failed',
+      'new',
+      'old',
+      'older',
+    ]);
   });
 });

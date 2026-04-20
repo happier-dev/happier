@@ -74,7 +74,17 @@ const createVoiceAgentPersistenceTestState = (): any => {
       active: true,
       presence: 'online',
       modelMode: 'default',
-      metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+      metadata: {
+        flavor: 'claude',
+        systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+        agentRuntimeFacetsV1: {
+          v: 1,
+          transcriptSource: {
+            supported: true,
+            followLeaseSupported: true,
+          },
+        },
+      },
     },
     s1: {
       id: 's1',
@@ -83,7 +93,16 @@ const createVoiceAgentPersistenceTestState = (): any => {
       active: true,
       presence: 'online',
       modelMode: 'default',
-      metadata: { flavor: 'claude' },
+      metadata: {
+        flavor: 'claude',
+        agentRuntimeFacetsV1: {
+          v: 1,
+          transcriptSource: {
+            supported: true,
+            followLeaseSupported: true,
+          },
+        },
+      },
     },
   };
 
@@ -234,7 +253,7 @@ async function loadVoiceAgentPersistenceHarness() {
     import('@/voice/runtime/voiceTargetStore'),
     import('@/voice/agent/voiceAgentGlobalSessionId'),
     import('./VoiceAgentSessionController'),
-    import('@/voice/sessionBinding/voiceSessionBindingStore'),
+    import('@/voice/binding/voiceConversationBindingStore'),
   ]);
 
   useVoiceTargetStore.setState({
@@ -311,6 +330,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       runId: 'run_1',
       backendId: 'claude',
       resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      transcriptContractVersion: 2,
     });
   });
 
@@ -378,10 +398,11 @@ describe('VoiceAgentSessionController (persistence)', () => {
       runId: 'run_1',
       backendId: 'claude',
       resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      transcriptContractVersion: 2,
     });
   });
 
-  it('restarts a legacy global daemon voice run when persisted metadata predates the hidden transcript contract', async () => {
+  it('does not migrate or stop a legacy global daemon run during startup when persisted metadata predates the hidden transcript contract', async () => {
     state.settings.voice.adapters.local_conversation.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
     state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
       v: 1,
@@ -415,11 +436,11 @@ describe('VoiceAgentSessionController (persistence)', () => {
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
-    expect(sessionExecutionRunStop).toHaveBeenCalledWith('sys_voice', { runId: 'run_legacy' });
+    expect(sessionExecutionRunStop).not.toHaveBeenCalled();
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'sys_voice',
-        existingRunId: null,
+        existingRunId: 'run_legacy',
       }),
     );
   });
@@ -435,6 +456,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       runId: 'run_1',
       backendId: 'claude',
       resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      transcriptContractVersion: 2,
     });
 
     start.mockClear();
@@ -468,6 +490,13 @@ describe('VoiceAgentSessionController (persistence)', () => {
         existingRunId: 'run_1',
       }),
     );
+    expect(state.sessions.s1.metadata.voiceAgentRunV1).toMatchObject({
+      v: 1,
+      runId: 'run_1',
+      backendId: 'claude',
+      resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      transcriptContractVersion: 2,
+    });
   });
 
   it('stops and clears a persisted session-scoped daemon run even after controller recreation', async () => {
@@ -804,6 +833,34 @@ describe('VoiceAgentSessionController (persistence)', () => {
     );
   });
 
+  it('fails closed to a fresh start when provider-resume is configured but runtime publication does not expose transcriptSource', async () => {
+    state.settings.voice.adapters.local_conversation.agent.resumabilityMode = 'provider_resume';
+    delete state.sessions.sys_voice.metadata.agentRuntimeFacetsV1;
+    state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
+      v: 1,
+      runId: 'run_prev',
+      backendId: 'claude',
+      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      updatedAtMs: 1,
+      transcriptContractVersion: 2,
+    };
+
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceAgentSessionController();
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'sys_voice',
+        existingRunId: null,
+        resumeWhenInactive: false,
+        resumeHandle: null,
+      }),
+    );
+  });
+
   it('retries when daemon sendTurn fails with the plain Voice agent not found message', async () => {
     sendTurn
       .mockRejectedValueOnce(new Error('Voice agent not found'))
@@ -842,6 +899,35 @@ describe('VoiceAgentSessionController (persistence)', () => {
     expect(start).toHaveBeenCalledTimes(2);
     expect(welcome).toHaveBeenCalledTimes(1);
     expect(sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists welcomedEpoch after an immediate welcome and suppresses duplicate welcome after controller recreation', async () => {
+    state.settings.voice.adapters.local_conversation.agent.welcome = {
+      enabled: true,
+      mode: 'immediate',
+      templateId: null,
+    };
+    welcome.mockResolvedValue({ assistantText: 'Welcome!' });
+
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+
+    const firstController = createVoiceAgentSessionController();
+    await expect(firstController.ensureRunningAndMaybeWelcome(VOICE_AGENT_GLOBAL_SESSION_ID)).resolves.toBe('Welcome!');
+
+    expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
+      transcriptContractVersion: 2,
+      welcomedEpoch: 1,
+    });
+    expect(welcome).toHaveBeenCalledTimes(1);
+
+    const secondController = createVoiceAgentSessionController();
+    await expect(secondController.ensureRunningAndMaybeWelcome(VOICE_AGENT_GLOBAL_SESSION_ID)).resolves.toBeNull();
+
+    expect(welcome).toHaveBeenCalledTimes(1);
+    expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
+      transcriptContractVersion: 2,
+      welcomedEpoch: 1,
+    });
   });
 
   it('treats the hidden global voice conversation session as resumable and retries it with resumeHandle when the persisted run is not resumable anymore', async () => {

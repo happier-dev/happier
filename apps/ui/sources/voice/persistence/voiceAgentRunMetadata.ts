@@ -1,6 +1,6 @@
 import {
     BackendTargetRefSchema,
-    buildBackendTargetKey,
+    VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION,
     type BackendTargetRefV1,
     type ExecutionRunResumeHandle,
 } from '@happier-dev/protocol';
@@ -12,8 +12,8 @@ import {
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-
-export const VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION = 2;
+import { backendTargetsMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
+export { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION };
 
 export type VoiceAgentRunMetadataV1 = Readonly<{
   v: 1;
@@ -21,8 +21,10 @@ export type VoiceAgentRunMetadataV1 = Readonly<{
   backendId: string;
   backendTarget?: BackendTargetRefV1;
   resumeHandle: ExecutionRunResumeHandle | null;
+  streamId?: string | null;
   updatedAtMs: number;
   transcriptContractVersion?: number;
+  welcomedEpoch?: number;
 }>;
 
 function isVoiceAgentRunMetadataV1(value: unknown): value is VoiceAgentRunMetadataV1 {
@@ -30,6 +32,8 @@ function isVoiceAgentRunMetadataV1(value: unknown): value is VoiceAgentRunMetada
   const v = value as any;
   if (v.v !== 1) return false;
   if (v.backendTarget != null && !BackendTargetRefSchema.safeParse(v.backendTarget).success) return false;
+  if (v.welcomedEpoch != null && (!Number.isFinite(v.welcomedEpoch) || v.welcomedEpoch < 0)) return false;
+  if (v.streamId != null && (typeof v.streamId !== 'string' || v.streamId.trim().length === 0)) return false;
   return (
     typeof v.runId === 'string'
     && v.runId.trim().length > 0
@@ -46,7 +50,7 @@ export function doesVoiceAgentRunMetadataMatchBackendTarget(
 ): boolean {
   if (!metadata) return false;
   if (metadata.backendTarget) {
-    return buildBackendTargetKey(metadata.backendTarget) === buildBackendTargetKey(backendTarget);
+    return backendTargetsMatch(metadata.backendTarget, backendTarget);
   }
 
   if (backendTarget.kind === 'builtInAgent') {
@@ -73,7 +77,9 @@ async function writeVoiceAgentRunMetadata(
     backendId: string;
     backendTarget: BackendTargetRefV1;
     resumeHandle: ExecutionRunResumeHandle | null;
+    streamId?: string | null;
     updatedAtMs: number;
+    welcomedEpoch?: number;
   }>,
 ): Promise<void> {
   const runId = normalizeNonEmptyString(params.runId);
@@ -84,6 +90,19 @@ async function writeVoiceAgentRunMetadata(
       ? Math.floor(params.updatedAtMs)
       : Date.now();
   if (!sessionId || !runId || !backendId || !backendTarget) return;
+  const existing = readVoiceAgentRunMetadata(sessionId);
+  const normalizedStreamId =
+    Object.prototype.hasOwnProperty.call(params, 'streamId')
+      ? normalizeNonEmptyString(params.streamId) ?? null
+      : existing?.runId === runId
+        ? normalizeNonEmptyString(existing?.streamId) ?? null
+        : null;
+  const welcomedEpoch =
+    typeof params.welcomedEpoch === 'number' && Number.isFinite(params.welcomedEpoch) && params.welcomedEpoch >= 0
+      ? Math.floor(params.welcomedEpoch)
+      : typeof existing?.welcomedEpoch === 'number' && Number.isFinite(existing.welcomedEpoch) && existing.welcomedEpoch >= 0
+        ? Math.floor(existing.welcomedEpoch)
+        : undefined;
 
   const payload: VoiceAgentRunMetadataV1 = {
     v: 1,
@@ -91,8 +110,10 @@ async function writeVoiceAgentRunMetadata(
     backendId,
     backendTarget,
     resumeHandle: params.resumeHandle ?? null,
+    streamId: normalizedStreamId,
     updatedAtMs,
     transcriptContractVersion: VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION,
+    ...(typeof welcomedEpoch === 'number' ? { welcomedEpoch } : {}),
   };
 
   await sync.patchSessionMetadataWithRetry(sessionId, (metadata: any) => ({
@@ -121,7 +142,9 @@ export async function writeVoiceAgentRunMetadataToSession(
     backendId: string;
     backendTarget: BackendTargetRefV1;
     resumeHandle: ExecutionRunResumeHandle | null;
+    streamId?: string | null;
     updatedAtMs: number;
+    welcomedEpoch?: number;
   }>,
 ): Promise<void> {
   const sessionId = normalizeNonEmptyString(params.sessionId);

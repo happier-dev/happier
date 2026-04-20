@@ -1,5 +1,5 @@
 import { digest } from '@/platform/digest';
-import type { ModelPackManifest } from '@/voice/modelPacks/manifest';
+import type { ModelPackManifest } from '@happier-dev/protocol';
 
 import type { InstallerFs, Progress } from './types';
 import { filePathParts } from './paths';

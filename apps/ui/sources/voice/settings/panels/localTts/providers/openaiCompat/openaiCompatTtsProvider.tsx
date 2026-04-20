@@ -135,10 +135,10 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
 
 export const openaiCompatTtsProviderSpec: LocalTtsProviderSpec = {
   id: 'openai_compat',
-  title: 'OpenAI-compatible endpoint',
-  subtitle: 'Use your own local/remote OpenAI-compatible TTS server.',
+  title: t('settingsVoice.local.openaiCompatTts.provider.title'),
+  subtitle: t('settingsVoice.local.openaiCompatTts.provider.subtitle'),
   iconName: 'cloud-outline',
-  detail: 'Endpoint',
+  detail: t('settingsVoice.local.openaiCompatTts.provider.detail'),
   Settings: OpenAiCompatTtsSettings,
   test: async ({ cfgTts, networkTimeoutMs, sample }) => {
     const baseUrl = String(cfgTts.openaiCompat.baseUrl ?? '').trim();

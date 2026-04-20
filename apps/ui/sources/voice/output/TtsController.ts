@@ -1,5 +1,5 @@
 import { fetchOpenAiCompatSpeechAudio } from '@/voice/local/fetchOpenAiCompatSpeechAudio';
-import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
+import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 
 export async function speakOpenAiCompatText(opts: {

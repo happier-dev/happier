@@ -26,6 +26,13 @@ describe('fetchGoogleCloudTtsVoiceCatalog', () => {
     });
 
     expect(fetchSpy).toHaveBeenCalled();
+    const call = fetchSpy.mock.calls[0]!;
+    const url = String(call[0]);
+    const init = call[1] as any;
+    expect(url).not.toContain('key=');
+    expect(url).not.toContain(' key ');
+    expect(url).not.toContain('key');
+    expect(init?.headers?.['x-goog-api-key']).toBe('key');
     expect(voices).toEqual([
       {
         name: 'Voice A',

@@ -1,14 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import {
   getStorage,
+  machineContributionRegistryProjectionDescribe,
   registerLocalVoiceEngineHarnessHooks,
 } from './localVoiceEngine.testHarness';
 
 describe('local voice engine agent tool roundtrip', () => {
   registerLocalVoiceEngineHarnessHooks();
+
+  beforeEach(() => {
+    machineContributionRegistryProjectionDescribe.mockReset();
+    machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+  });
 
   it('sends discovery tool results back to the agent for follow-up turns', async () => {
     const storage = await getStorage();
@@ -198,35 +205,39 @@ describe('local voice engine agent tool roundtrip', () => {
     expect(toolResultsCarrier?.content).toContain('"agentId":"claude"');
     expect(toolResultsCarrier?.content).toContain('"label":"Claude"');
     expect(toolResultsCarrier?.content).toContain('"summary":"Available backends:');
-    expect(toolResultsCarrier?.content).not.toContain('connectedServiceName');
-    expect(toolResultsCarrier?.content).not.toContain('connectedServiceId');
+    expect(toolResultsCarrier?.content).not.toContain('uiConnectedService');
     expect(toolResultsCarrier?.content).not.toContain('flavorAliases');
     expect(toolResultsCarrier?.content).not.toContain('supportsModelSelection');
     expect(toolResultsCarrier?.content.length).toBeLessThan(1200);
   });
 
-  it('preserves configured ACP backend target keys in follow-up backend discovery results', async () => {
-    const storage = await getStorage();
-    storage.__setState({
-      settings: {
-        ...storage.getState().settings,
-        backendEnabledByTargetKey: {
-          'agent:claude': false,
-          'agent:codex': false,
-          'agent:opencode': false,
-          'agent:gemini': false,
-          'agent:auggie': false,
-          'agent:qwen': false,
-          'agent:kimi': false,
-          'agent:kilo': false,
-          'agent:kiro': false,
-          'agent:customAcp': false,
-          'agent:pi': false,
-          'agent:copilot': false,
-        },
-        acpCatalogSettingsV1: {
-          v: 2,
-          backends: [
+	  it('preserves configured ACP backend target keys in follow-up backend discovery results', async () => {
+	    const storage = await getStorage();
+	    const reviewBotTargetKey = resolveBackendTargetKeyV2({
+	      kind: 'backend',
+	      backendId: 'review-bot',
+	      configuredBackendId: 'review-bot',
+	    });
+	    storage.__setState({
+	      settings: {
+	        ...storage.getState().settings,
+	        backendEnabledByTargetKey: {
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'opencode' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'auggie' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'qwen' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kimi' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kilo' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kiro' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'ohMyPi' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'pi' })]: false,
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'copilot' })]: false,
+	        },
+	        acpCatalogSettingsV1: {
+	          v: 2,
+	          backends: [
             {
               id: 'review-bot',
               name: 'review-bot',
@@ -323,7 +334,255 @@ describe('local voice engine agent tool roundtrip', () => {
           message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
       );
 
-    expect(toolResultsCarrier?.content).toContain('"label":"Review bot"');
-    expect(toolResultsCarrier?.content).toContain('"targetKey":"acpBackend:review-bot"');
+	    expect(toolResultsCarrier?.content).toContain('"label":"Review bot"');
+	    expect(toolResultsCarrier?.content).toContain(`\"targetKey\":\"${reviewBotTargetKey}\"`);
+	  });
+
+	  it('preserves canonical plugin backend target keys in follow-up backend discovery results', async () => {
+	    const storage = await getStorage();
+	    storage.__setState({
+	      settings: {
+	        ...storage.getState().settings,
+	        backendEnabledByTargetKey: {
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'plugin-review-bot' })]: true,
+	        },
+	        voice: {
+	          ...storage.getState().settings.voice,
+          providerId: 'local_conversation',
+          adapters: {
+            ...storage.getState().settings.voice.adapters,
+            local_conversation: {
+              ...storage.getState().settings.voice.adapters.local_conversation,
+              conversationMode: 'agent',
+              stt: {
+                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                baseUrl: 'http://localhost:8000',
+              },
+              tts: {
+                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                autoSpeakReplies: false,
+                baseUrl: 'http://localhost:8001',
+              },
+              agent: {
+                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                backend: 'openai_compat',
+                openaiCompat: {
+                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                  chatBaseUrl: 'http://localhost:8002',
+                  chatApiKey: null,
+                  chatModel: 'fast-model',
+                  commitModel: 'commit-model',
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    machineContributionRegistryProjectionDescribe.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:review-bot': {
+            id: 'plugin:review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot Plugin',
+            subtitle: undefined,
+            channel: 'plugin',
+            isBuiltIn: false,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+        backendsById: {
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            backendId: 'plugin-review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot (plugin)',
+            subtitle: undefined,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+      },
+    });
+
+    const actionBlock = [
+      '<voice_actions>',
+      JSON.stringify({
+        actions: [{ t: 'listAgentBackends', args: { machineId: 'm1', includeDisabled: true } }],
+      }),
+      '</voice_actions>',
+    ].join('\n');
+
+    (globalThis.fetch as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ text: 'list the available plugin backends' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
+      });
+
+    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
+      String(call?.[0] ?? '').includes('/chat/completions'),
+    );
+
+    const toolResultsCarrier = chatCalls
+      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
+      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
+      .find(
+        (message: any) =>
+          message?.role === 'user' &&
+          typeof message?.content === 'string' &&
+          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
+      );
+
+    expect(toolResultsCarrier?.content).toContain('"label":"Review Bot (plugin)"');
+    expect(toolResultsCarrier?.content).toContain('"targetKey":"backend:plugin-review-bot"');
+    expect(toolResultsCarrier?.content).toContain('"agentId":"claude"');
+  });
+
+  it('round-trips canonical plugin backend targets into plugin model discovery follow-up turns', async () => {
+	    const storage = await getStorage();
+	    storage.__setState({
+	      settings: {
+	        ...storage.getState().settings,
+	        backendEnabledByTargetKey: {
+	          [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'plugin-review-bot' })]: true,
+	        },
+	        voice: {
+	          ...storage.getState().settings.voice,
+          providerId: 'local_conversation',
+          adapters: {
+            ...storage.getState().settings.voice.adapters,
+            local_conversation: {
+              ...storage.getState().settings.voice.adapters.local_conversation,
+              conversationMode: 'agent',
+              stt: {
+                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                baseUrl: 'http://localhost:8000',
+              },
+              tts: {
+                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                autoSpeakReplies: false,
+                baseUrl: 'http://localhost:8001',
+              },
+              agent: {
+                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                backend: 'openai_compat',
+                openaiCompat: {
+                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                  chatBaseUrl: 'http://localhost:8002',
+                  chatApiKey: null,
+                  chatModel: 'fast-model',
+                  commitModel: 'commit-model',
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    machineContributionRegistryProjectionDescribe.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:review-bot': {
+            id: 'plugin:review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot Plugin',
+            subtitle: undefined,
+            channel: 'plugin',
+            isBuiltIn: false,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+        backendsById: {
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            backendId: 'plugin-review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot (plugin)',
+            subtitle: undefined,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+      },
+    });
+
+    const actionBlock = [
+      '<voice_actions>',
+      JSON.stringify({
+        actions: [
+          { t: 'listAgentBackends', args: { machineId: 'm1', includeDisabled: true } },
+          {
+            t: 'listAgentModels',
+            args: {
+              agentId: 'claude',
+              backendTargetKey: 'backend:plugin-review-bot',
+              machineId: 'm1',
+              limit: 2,
+            },
+          },
+        ],
+      }),
+      '</voice_actions>',
+    ].join('\n');
+
+    (globalThis.fetch as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ text: 'list plugin backends and the plugin models' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
+      });
+
+    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
+      String(call?.[0] ?? '').includes('/chat/completions'),
+    );
+
+    const toolResultsCarrier = chatCalls
+      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
+      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
+      .find(
+        (message: any) =>
+          message?.role === 'user' &&
+          typeof message?.content === 'string' &&
+          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
+      );
+
+    expect(toolResultsCarrier?.content).toContain('"targetKey":"backend:plugin-review-bot"');
+    expect(toolResultsCarrier?.content).toContain('"agentId":"claude"');
+    expect(toolResultsCarrier?.content).toContain('"t":"listAgentModels"');
+    expect(toolResultsCarrier?.content).toContain('Available Plugin review bot models');
   });
 });

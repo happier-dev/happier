@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 const trackPermissionResponse = vi.fn();
@@ -298,7 +297,6 @@ describe('voice tool handlers', () => {
     refreshFromActiveServer.mockReset();
     applySettingsLocal.mockReset();
     teleportVoiceAgentToSessionRoot.mockReset();
-    useVoiceActivityStore.setState((state) => ({ ...state, eventsBySessionId: {} }));
     useVoiceTargetStore.getState().setPrimaryActionSessionId(null);
     useVoiceTargetStore.getState().setTrackedSessionIds([]);
   });
@@ -313,9 +311,6 @@ describe('voice tool handlers', () => {
 
     expect(JSON.parse(result)).toMatchObject({ ok: true });
     expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', message: 'hi' }));
-
-    const events = (useVoiceActivityStore.getState().eventsBySessionId['s1'] ?? []) as any[];
-    expect(events.some((e) => e.kind === 'action.executed' && e.action === 'sendSessionMessage')).toBe(true);
   });
 
   it('can start a review via review.start action (intent-specific)', async () => {
@@ -514,7 +509,7 @@ describe('voice tool handlers', () => {
 
     await tools.spawnSession({ path: '/tmp/s1', agentId: 'codex', modelId: 'gpt-5' });
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex' },
       modelId: 'gpt-5',
       modelUpdatedAt: expect.any(Number),
     }));

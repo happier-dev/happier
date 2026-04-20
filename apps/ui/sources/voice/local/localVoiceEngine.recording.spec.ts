@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     getStorage,
+    loadLocalVoiceEngineWithCompatState,
     registerLocalVoiceEngineHarnessHooks,
     setNextRecorderPrepareError,
 } from './localVoiceEngine.testHarness';
@@ -12,7 +13,7 @@ describe('local voice engine recording lifecycle', () => {
     it('cleans up and reports an error when recording initialization fails', async () => {
         setNextRecorderPrepareError(new Error('prepare failed'));
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await expect(toggleLocalVoiceTurn('s1')).rejects.toThrow('prepare failed');
         expect(getLocalVoiceState().status).toBe('idle');
         expect(getLocalVoiceState().error).toBe('recording_start_failed');
@@ -39,7 +40,7 @@ describe('local voice engine recording lifecycle', () => {
             },
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
         await expect(toggleLocalVoiceTurn('s1')).rejects.toThrow('missing_stt_base_url');
 
@@ -51,7 +52,7 @@ describe('local voice engine recording lifecycle', () => {
     it('resets to idle when STT request throws (network error)', async () => {
         (globalThis.fetch as any).mockRejectedValueOnce(new Error('network down'));
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
         await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
 
@@ -89,7 +90,7 @@ describe('local voice engine recording lifecycle', () => {
             });
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
 
         const stopPromise = toggleLocalVoiceTurn('s1');
@@ -98,5 +99,60 @@ describe('local voice engine recording lifecycle', () => {
 
         expect(getLocalVoiceState().status).toBe('idle');
         expect(getLocalVoiceState().error).toBe('stt_failed');
+    });
+
+    it('delegates recorder-backed mic ownership to LocalVoiceCaptureOwner instead of concrete recorder creation in localVoiceEngine', async () => {
+        const startCapture = vi.fn(async () => {});
+
+        vi.doMock('@/voice/input/DeviceSttController', () => ({
+            createDeviceSttController: () => {
+                throw new Error('localVoiceEngine should not create DeviceSttController directly');
+            },
+        }));
+        vi.doMock('@/voice/input/SherpaStreamingSttController', () => ({
+            createSherpaStreamingSttController: () => {
+                throw new Error('localVoiceEngine should not create SherpaStreamingSttController directly');
+            },
+        }));
+        vi.doMock('@/voice/runtime/mic/NativeMicSession', () => ({
+            createNativeMicSession: () => ({
+                ensureActive: async () => {},
+                setMuted: () => {},
+                isMuted: () => false,
+                teardown: async () => {},
+                getStream: () => null,
+            }),
+            createExpoAudioRecordingMicSession: () => {
+                throw new Error('localVoiceEngine should not create NativeMicSession directly');
+            },
+        }));
+        vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
+            createLocalVoiceCaptureOwner: () => ({
+                resolveManualBargeInAction: vi.fn(() => ({
+                    kind: 'start_capture',
+                    sessionId: 's1',
+                    provider: 'recorded_audio',
+                    handsFree: false,
+                })),
+                resolveEndpointSignalAction: vi.fn(() => ({ kind: 'ignore', reason: 'not_recording' })),
+                startCapture,
+                stopCapture: vi.fn(async () => ({ provider: 'recorded_audio', uri: 'file:///tmp/rec.m4a' })),
+                clearHandsFree: vi.fn(),
+                stopSession: vi.fn(async () => {}),
+            }),
+        }));
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
+        await toggleLocalVoiceTurn('s1');
+
+        expect(startCapture).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 's1',
+            provider: 'recorded_audio',
+        }));
+        expect(getLocalVoiceState()).toMatchObject({
+            status: 'recording',
+            sessionId: 's1',
+            error: null,
+        });
     });
 });

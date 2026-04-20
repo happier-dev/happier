@@ -90,7 +90,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('findVoiceConversationSessionId picks the newest hidden system voice conversation session', async () => {
-    const { findVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { findVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions = {
       s1: { id: 's1', updatedAt: 5, metadata: { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
@@ -102,7 +102,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('ensureVoiceConversationSessionId spawns and then marks the session as a hidden voice conversation', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
     refreshSessions.mockImplementation(async () => {
@@ -122,7 +122,7 @@ describe('voiceConversationSession', () => {
         machineId: 'm1',
         directory: '/tmp/.happier/voice-agent',
         approvedNewDirectoryCreation: true,
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'backend', backendId: 'claude' },
         serverId: 'server-a',
         transcriptStorage: 'persisted',
       }),
@@ -132,7 +132,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('waits briefly for a late-hydrated global spawn target before failing', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.settings.recentMachinePaths = [];
     state.sessions = {};
@@ -163,7 +163,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('ignores an inactive fixed machine target and falls back to an active recent machine path', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.machines = {
       m_stale: { id: 'm_stale', active: false, metadata: { host: 'stale', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/stale', homeDir: '/home/u' } },
@@ -196,7 +196,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('falls back to a recent path when the fixed machine target metadata is not hydrated yet', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.machines = {};
     state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'fixed';
@@ -229,7 +229,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('ignores stale inactive recent-machine candidates and falls back to an active machine for voice home', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.machines = {
       m_stale: {
@@ -276,7 +276,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('prefers the sticky auto-selected voice machine over a newer recent machine path', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.machines = {
       m_recent: {
@@ -320,7 +320,7 @@ describe('voiceConversationSession', () => {
   it('falls back to an available recent machine path when a sticky auto-selected voice machine is unavailable', async () => {
     vi.useFakeTimers();
     try {
-      const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+      const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
       state.machines = {
         m_sticky: {
@@ -364,7 +364,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('resolves the voice-home spawn target from the active server machine list when the machine record map is empty', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.machines = {};
     state.machineListByServerId = {
@@ -408,7 +408,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('ensureVoiceConversationSessionForSessionRoot spawns a hidden voice conversation session in the session project root', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user = {
       id: 's_user',
@@ -443,7 +443,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('recovers a late-created hidden voice conversation session after a session-root spawn timeout', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user = {
       id: 's_user',
@@ -487,7 +487,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('reuses an active hidden voice session only for the same session root', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user_a = {
       id: 's_user_a',
@@ -537,7 +537,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('reuses an active hidden voice session for the same session root', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user = {
       id: 's_user',
@@ -569,7 +569,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('surfaces the underlying spawn error when creating a hidden voice conversation session for a target root fails', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user = {
       id: 's_user',
@@ -590,7 +590,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('fails fast when the target root machine daemon is offline', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user = {
       id: 's_user',
@@ -623,7 +623,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('does not reuse an inactive hidden voice home session as the runtime anchor', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.stale_voice = {
       id: 'stale_voice',
@@ -658,7 +658,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('hydrates a missing target session before spawning a hidden voice conversation session for its root', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     ensureSessionVisibleForMessageRoute.mockImplementation(async (sessionId: string) => {
       if (sessionId !== 's_remote') throw new Error(`unexpected session ${sessionId}`);
@@ -691,7 +691,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('does not reuse an inactive hidden voice session for a target root', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.s_user = {
       id: 's_user',
@@ -733,7 +733,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('retires an existing direct-linked voice conversation session and spawns a persisted replacement', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.sessions.legacy_direct = {
       id: 'legacy_direct',
@@ -779,7 +779,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('applies single-root policy by retiring older voice conversation sessions', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.settings.voice.adapters.local_conversation.agent.rootSessionPolicy = 'single';
     state.sessions = {
@@ -806,7 +806,7 @@ describe('voiceConversationSession', () => {
   });
 
   it('applies keep-warm policy by keeping only maxWarmRoots voice conversation sessions', async () => {
-    const { ensureVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
+    const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.settings.voice.adapters.local_conversation.agent.rootSessionPolicy = 'keep_warm';
     state.settings.voice.adapters.local_conversation.agent.maxWarmRoots = 2;

@@ -1,5 +1,5 @@
-import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
-import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 
 export async function ensureDefaultLocalVoiceQaBinding(params: Readonly<{
   controlSessionId: string;

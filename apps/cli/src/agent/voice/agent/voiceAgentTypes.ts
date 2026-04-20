@@ -1,4 +1,5 @@
-import type { AgentBackend, AgentId, SessionId } from '@/agent/core/AgentBackend';
+import type { AgentId } from '@/agent/core/AgentBackend';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
 import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
 
@@ -6,6 +7,11 @@ export type PermissionPolicy = 'no_tools' | 'read_only';
 export type Verbosity = 'short' | 'balanced';
 
 export type VoiceAgentStartParams = Readonly<{
+  /**
+   * Optional stable id to use as the voice-agent instance key. When omitted, a
+   * random id is generated.
+   */
+  voiceAgentId?: string;
   agentId: AgentId;
   profileId?: string | null;
   contextSessionId?: string | null;
@@ -73,7 +79,7 @@ export type BackendFactory = (opts: {
   modelId: string;
   permissionPolicy: PermissionPolicy;
   start?: Readonly<{ intent: 'voice_agent' }>;
-}) => AgentBackend;
+}) => ExecutionRunHostRuntime;
 
 export type ResolveVoiceSystemAppendBlocksArgs = Readonly<{
   profileId?: string | null;
@@ -98,12 +104,12 @@ export type VoiceAgentTurnStreamState = {
 export type VoiceAgentInstance = {
   id: string;
   agentId: AgentId;
-  chatBackend: AgentBackend;
-  chatSessionId: SessionId;
+  chatBackend: ExecutionRunHostRuntime;
+  chatSessionId: string;
   commitIsolation: boolean;
-  commitBackend: AgentBackend | null;
-  commitSessionId: SessionId | null;
-  commitResumeSessionId: SessionId | null;
+  commitBackend: ExecutionRunHostRuntime | null;
+  commitSessionId: string | null;
+  commitResumeSessionId: string | null;
   permissionPolicy: PermissionPolicy;
   verbosity: Verbosity;
   chatModelId: string;

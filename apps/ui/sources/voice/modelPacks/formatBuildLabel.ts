@@ -1,4 +1,4 @@
-import type { ModelPackManifest } from '@/voice/modelPacks/manifest';
+import type { ModelPackManifest } from '@happier-dev/protocol';
 
 export function formatModelPackBuildLabel(
   manifest: Pick<ModelPackManifest, 'buildId' | 'publishedAt'> | null | undefined,
@@ -12,4 +12,3 @@ export function formatModelPackBuildLabel(
   if (value.length <= 16) return value;
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
-

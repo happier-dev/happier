@@ -14,7 +14,10 @@ import { formatDownloadProgressDetail } from '@/voice/downloads/downloadProgress
 import { checkModelPackUpdateAvailable, ensureModelPackInstalled, getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/installer.native';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
+import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { getSherpaStreamingSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
+import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
+import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
 
 type Progress = { loaded: number; total: number; file?: string };
 
@@ -25,9 +28,13 @@ export function LocalNeuralSttSettings(props: {
 }) {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'packId' | 'language'>(null);
+  const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
+    requestedExecution: props.cfg.localNeural.execution,
+  }), [props.cfg.localNeural.execution]);
 
   const packOptions = React.useMemo(() => getSherpaStreamingSttPackOptions(), []);
   const effectivePackId = props.cfg.localNeural.assetId ?? packOptions[0]?.id ?? null;
+  const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
 
   const setLocalNeural = (patch: Partial<VoiceLocalSttSettings['localNeural']>) => {
     props.setCfg({
@@ -253,6 +260,13 @@ export function LocalNeuralSttSettings(props: {
 
   return (
     <>
+      <DaemonVoiceInferenceExecutionDropdown
+        execution={executionPolicy.selectableExecution}
+        setExecution={(execution) => setLocalNeural({ execution })}
+        popoverBoundaryRef={props.popoverBoundaryRef}
+        allowDeviceSelection={executionPolicy.allowDeviceSelection}
+      />
+
       <DropdownMenu
         open={openMenu === 'packId'}
         onOpenChange={(next) => setOpenMenu(next ? 'packId' : null)}
@@ -277,49 +291,55 @@ export function LocalNeuralSttSettings(props: {
         }}
       />
 
-      <Item
-        title={t('settingsVoice.local.localNeuralStt.modelFiles.title')}
-        subtitle={t('settingsVoice.local.localNeuralStt.modelFiles.subtitle')}
-        detail={downloadDetail}
-        onPress={() => void prepareModel()}
-        rightElement={
-          modelStatus === 'downloading' ? (
-            <Pressable onPress={cancelPrepare} hitSlop={10}>
-              <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-            </Pressable>
-          ) : (
-            <Ionicons name="download-outline" size={20} color={theme.colors.textSecondary} />
-          )
-        }
-        showChevron={false}
-        selected={false}
-      />
+      {usesDaemonExecution ? (
+        <DaemonVoiceInferenceModelSection packId={effectivePackId} kind="stt" />
+      ) : (
+        <>
+          <Item
+            title={t('settingsVoice.local.localNeuralStt.modelFiles.title')}
+            subtitle={t('settingsVoice.local.localNeuralStt.modelFiles.subtitle')}
+            detail={downloadDetail}
+            onPress={() => void prepareModel()}
+            rightElement={
+              modelStatus === 'downloading' ? (
+                <Pressable onPress={cancelPrepare} hitSlop={10}>
+                  <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                </Pressable>
+              ) : (
+                <Ionicons name="download-outline" size={20} color={theme.colors.textSecondary} />
+              )
+            }
+            showChevron={false}
+            selected={false}
+          />
 
-      <Item
-        title={t('settingsVoice.local.localNeuralStt.removeModelFiles.title')}
-        subtitle={t('settingsVoice.local.localNeuralStt.removeModelFiles.subtitle')}
-        detail={installed ? t('common.remove') : '—'}
-        onPress={installed ? () => void clearAssets() : undefined}
-        showChevron={false}
-        selected={false}
-      />
+          <Item
+            title={t('settingsVoice.local.localNeuralStt.removeModelFiles.title')}
+            subtitle={t('settingsVoice.local.localNeuralStt.removeModelFiles.subtitle')}
+            detail={installed ? t('common.remove') : '—'}
+            onPress={installed ? () => void clearAssets() : undefined}
+            showChevron={false}
+            selected={false}
+          />
 
-      <Item
-        title={t('settingsVoice.local.kokoro.updates.title')}
-        subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
-        detail={
-          updateCheckedRemote
-            ? updateCheckedRemote.updateAvailable
-              ? `${t('settingsVoice.local.kokoro.updates.updateAvailable')}${updateCheckedRemote.build ? ` • ${updateCheckedRemote.build}` : ''}`
-              : updateCheckedRemote.build
-                ? `${t('settingsVoice.local.kokoro.updates.upToDate')} • ${updateCheckedRemote.build}`
-                : t('settingsVoice.local.kokoro.updates.upToDate')
-            : t('settingsVoice.local.kokoro.updates.check')
-        }
-        onPress={() => void checkForUpdates()}
-        showChevron={false}
-        selected={false}
-      />
+          <Item
+            title={t('settingsVoice.local.kokoro.updates.title')}
+            subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
+            detail={
+              updateCheckedRemote
+                ? updateCheckedRemote.updateAvailable
+                  ? `${t('settingsVoice.local.kokoro.updates.updateAvailable')}${updateCheckedRemote.build ? ` • ${updateCheckedRemote.build}` : ''}`
+                  : updateCheckedRemote.build
+                    ? `${t('settingsVoice.local.kokoro.updates.upToDate')} • ${updateCheckedRemote.build}`
+                    : t('settingsVoice.local.kokoro.updates.upToDate')
+                : t('settingsVoice.local.kokoro.updates.check')
+            }
+            onPress={() => void checkForUpdates()}
+            showChevron={false}
+            selected={false}
+          />
+        </>
+      )}
 
       <DropdownMenu
         open={openMenu === 'language'}

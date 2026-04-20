@@ -2,6 +2,7 @@ import { machineSpawnNewSession } from '@/sync/ops/machines';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 
 import { openVoiceSessionSpawnPicker } from '@/voice/pickers/openVoiceSessionSpawnPicker';
 import { resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
@@ -16,10 +17,15 @@ export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?
 
   const state: any = storage.getState();
   const serverId = getActiveServerSnapshot().serverId;
+  const daemonMergedProjectionInputs = await loadDaemonMergedProjectionInputs({
+    machineId: picked.machineId,
+    serverId,
+  });
   const resolvedBackendTarget = resolveVoiceToolSpawnBackendTarget({
     state,
     agentId: normalizeNonEmptyString(params.agentId),
     backendTargetKey: normalizeNonEmptyString(params.backendTargetKey),
+    daemonMergedProjectionInputs,
   });
   if (!resolvedBackendTarget.ok) {
     return { ok: false, errorCode: resolvedBackendTarget.errorCode, errorMessage: resolvedBackendTarget.errorMessage };

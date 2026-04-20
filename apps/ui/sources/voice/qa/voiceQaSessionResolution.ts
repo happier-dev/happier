@@ -1,8 +1,8 @@
 import { storage } from '@/sync/domains/state/storage';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
-import { resolveVoiceOperationalSessionId } from '@/voice/sessionBinding/resolveVoiceOperationalSessionId';
-import { isVoiceConversationSystemSessionMetadata } from '@/voice/sessionBinding/voiceConversationSystemSessionLookup';
-import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import { resolveVoiceOperationalSessionId } from '@/voice/binding/resolveVoiceOperationalSessionId';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
+import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 
 import { useVoiceQaStore, type VoiceQaProvider } from './voiceQaStore';
 

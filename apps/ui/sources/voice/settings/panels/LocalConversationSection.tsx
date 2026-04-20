@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -18,6 +19,7 @@ import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { parseLocalVoiceSttSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { resetGlobalVoiceAgentPersistence } from '@/voice/agent/resetGlobalVoiceAgentPersistence';
@@ -28,7 +30,10 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/store/hooks';
 import { useSetting, useSettings } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
-import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import {
+  resolveContinuousVoiceProviderId,
+  resolveStoredVoiceProviderId,
+} from '@/voice/settings/resolveVoiceProviderId';
 
 function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
   if (value === null) return null;
@@ -66,7 +71,10 @@ export function LocalConversationSection(props: {
   >(null);
 
   const cfg = props.voice.adapters.local_conversation;
-  const enabled = resolveVoiceProviderId(props.voice.providerId) === 'local_conversation';
+  const storedProviderId = resolveStoredVoiceProviderId(props.voice.providerId);
+  const effectiveProviderId = resolveContinuousVoiceProviderId(props.voice.providerId);
+  const enabled = storedProviderId === 'local_conversation'
+    || (Platform.OS === 'web' && effectiveProviderId === 'realtime_elevenlabs');
   const machines = useAllMachines();
   const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
 
@@ -119,11 +127,11 @@ export function LocalConversationSection(props: {
     });
   }, [cfg.agent.machineTargetId, cfg.agent.machineTargetMode, machines, recentMachinePaths]);
 
-  const preflightModels = useNewSessionPreflightModelsState({
-    backendTarget: { kind: 'builtInAgent', agentId: (selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID) as any },
-    selectedMachineId: preflightMachineId,
-    capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
-  });
+	  const preflightModels = useNewSessionPreflightModelsState({
+	    backendTarget: { kind: 'backend', backendId: selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID },
+	    selectedMachineId: preflightMachineId,
+	    capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
+	  });
 
   const selectableModelMenuItems = React.useMemo(() => {
     if (!selectedAgentIdForModelOptions) return [];
@@ -218,12 +226,7 @@ export function LocalConversationSection(props: {
   const setAgent = (patch: Partial<typeof cfg.agent>) => setCfg({ agent: { ...cfg.agent, ...patch } });
   const setStreaming = (patch: Partial<typeof cfg.streaming>) => setCfg({ streaming: { ...cfg.streaming, ...patch } });
 
-  const sttProvider =
-    typeof (cfg.stt as any)?.provider === 'string'
-      ? ((cfg.stt as any).provider as any)
-      : (cfg.stt as any)?.useDeviceStt === true
-        ? 'device'
-        : 'openai_compat';
+  const sttProvider = parseLocalVoiceSttSettings(cfg.stt).provider;
 
   return (
     <>

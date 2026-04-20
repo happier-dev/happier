@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { useVoiceContextSeenStore } from '@/voice/runtime/voiceContextSeenStore';
@@ -22,6 +21,8 @@ vi.mock('@/voice/context/getVoiceContextSinkForSession', () => ({
 }));
 
 import { voiceHooks } from './voiceHooks';
+
+const initialSettings = structuredClone(storage.getState().settings);
 
 function createUserTextMessage(text: string, createdAt: number): Message {
   return {
@@ -60,7 +61,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     getVoiceContextSinkForSession.mockClear();
     storage.setState((s: any) => ({
       ...s,
-      settings: { ...settingsDefaults },
+      settings: structuredClone(initialSettings),
       sessionListRenderables: {},
       sessionListIndexByServerId: {},
       concurrentSessionListCacheByServerId: {},

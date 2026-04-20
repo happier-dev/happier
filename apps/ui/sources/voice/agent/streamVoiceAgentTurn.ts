@@ -11,7 +11,10 @@ export async function streamVoiceAgentTurn(params: Readonly<{
     handle: VoiceAgentHandle;
     userText: string;
     displayUserText: string;
+    resume?: boolean;
     options?: SendTurnOptions;
+    onStreamStarted?: (streamId: string) => void | Promise<void>;
+    onStreamFinished?: () => void | Promise<void>;
 }>): Promise<Readonly<{ assistantText: string; actions: NonNullable<Awaited<ReturnType<VoiceAgentHandle['client']['sendTurn']>>['actions']> }>> {
     const abort = createAbortRacer(params.options?.signal);
     const resolveStreamReadConfig = () => {
@@ -21,12 +24,6 @@ export async function streamVoiceAgentTurn(params: Readonly<{
     };
 
     const streamCfg = resolveStreamReadConfig();
-    const shouldResumeStreamStart = (() => {
-        if (params.handle.backend !== 'daemon') return false;
-        const settings: any = storage.getState().settings;
-        const agentCfg = settings?.voice?.adapters?.local_conversation?.agent ?? null;
-        return agentCfg?.transcript?.persistenceMode === 'persistent' && agentCfg?.resumabilityMode === 'provider_resume';
-    })();
 
     let started: { streamId: string } | null = null;
     try {
@@ -36,8 +33,9 @@ export async function streamVoiceAgentTurn(params: Readonly<{
             voiceAgentId: params.handle.voiceAgentId,
             userText: params.userText,
             displayUserText: params.displayUserText,
-            ...(shouldResumeStreamStart ? { resume: true } : {}),
+            ...(params.resume === true ? { resume: true } : {}),
         });
+        await abort.race(Promise.resolve(params.onStreamStarted?.(started.streamId)));
         abort.throwIfAborted();
 
         let cursor = 0;
@@ -108,6 +106,9 @@ export async function streamVoiceAgentTurn(params: Readonly<{
         }
         throw error;
     } finally {
+        if (started) {
+            await Promise.resolve(params.onStreamFinished?.()).catch(() => {});
+        }
         abort.dispose();
     }
 }

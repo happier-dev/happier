@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { VoiceAdapterController } from './types';
+
+afterEach(async () => {
+    const { resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
+    await resetVoiceSessionRuntimeStateForTests();
+});
 
 describe('voiceAdapterRegistry', () => {
   it('canonicalizes adapter ids and resolves padded lookups', async () => {
@@ -12,6 +17,7 @@ describe('voiceAdapterRegistry', () => {
       stop: async () => {},
       toggle: async () => {},
       interrupt: async () => {},
+      setMuted: async () => {},
       sendContextUpdate: () => {},
       getSnapshot: () => ({
         adapterId: ' adapter_b ',
@@ -40,6 +46,7 @@ describe('voiceAdapterRegistry', () => {
       stop: async () => {},
       toggle: async () => {},
       interrupt: async () => {},
+      setMuted: async () => {},
       sendContextUpdate: () => {},
       getSnapshot: () => ({
         adapterId: null,

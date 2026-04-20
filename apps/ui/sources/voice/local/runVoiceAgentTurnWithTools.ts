@@ -1,6 +1,7 @@
 import { createVoiceToolHandlers } from '@/voice/tools/handlers';
 import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
+import { isAgentId } from '@/agents/catalog/catalog';
 
 type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
 
@@ -23,9 +24,59 @@ export type LocalVoiceAgentToolResultEntry = Readonly<{
   result: unknown;
 }>;
 
-const FOLLOW_UP_RESULT_MAX_ITEMS = 10;
+const FOLLOW_UP_RESULT_MAX_ITEMS = 8;
 const FOLLOW_UP_RESULT_MAX_STRING_LENGTH = 160;
-const FOLLOW_UP_RESULT_OMITTED_KEYS = new Set(['connectedServiceId', 'connectedServiceName', 'flavorAliases']);
+const FOLLOW_UP_RESULT_OMITTED_KEYS = new Set(['uiConnectedService', 'flavorAliases']);
+
+function readBackendIdFromTargetKey(targetKey: string): string | null {
+  const trimmed = String(targetKey ?? '').trim();
+  if (!trimmed.startsWith('backend:')) return null;
+  const rest = trimmed.slice('backend:'.length);
+  const parts = rest.split(':');
+  const backendId = parts[0]?.trim() ?? '';
+  return backendId ? backendId : null;
+}
+
+function selectListItemsForFollowUp(params: Readonly<{
+  rawItems: ReadonlyArray<Record<string, unknown>>;
+  pinnedTargetKeys: ReadonlySet<string>;
+  maxItems: number;
+}>): ReadonlyArray<Record<string, unknown>> {
+  const pinned = new Set<string>(params.pinnedTargetKeys);
+
+  // If there are any non-built-in backends (configured/plugin), pin the first one so we don't
+  // accidentally drop it when we slice down large catalog responses for the follow-up prompt.
+  for (const item of params.rawItems) {
+    const targetKey = typeof item?.targetKey === 'string' ? item.targetKey : '';
+    if (!targetKey) continue;
+    const backendId = readBackendIdFromTargetKey(targetKey);
+    if (backendId && !isAgentId(backendId)) {
+      pinned.add(targetKey);
+      break;
+    }
+  }
+
+  const selected: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+
+  for (const item of params.rawItems) {
+    if (selected.length >= params.maxItems) break;
+    const targetKey = typeof item?.targetKey === 'string' ? item.targetKey : '';
+    if (!targetKey || !pinned.has(targetKey) || seen.has(targetKey)) continue;
+    seen.add(targetKey);
+    selected.push(item);
+  }
+
+  for (const item of params.rawItems) {
+    if (selected.length >= params.maxItems) break;
+    const targetKey = typeof item?.targetKey === 'string' ? item.targetKey : '';
+    if (targetKey && seen.has(targetKey)) continue;
+    if (targetKey) seen.add(targetKey);
+    selected.push(item);
+  }
+
+  return selected;
+}
 
 function compactToolResultValue(value: unknown): unknown {
   if (value == null) return value;
@@ -53,6 +104,16 @@ function compactToolResultValue(value: unknown): unknown {
 }
 
 function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgentToolResultEntry>): ReadonlyArray<LocalVoiceAgentToolResultEntry> {
+  const pinnedBackendTargetKeys = new Set<string>();
+  for (const entry of toolResults) {
+    if (entry.t !== 'listAgentModels') continue;
+    const args = entry.args as { backendTargetKey?: unknown } | null | undefined;
+    const backendTargetKey = typeof args?.backendTargetKey === 'string' ? args.backendTargetKey.trim() : '';
+    if (backendTargetKey) {
+      pinnedBackendTargetKeys.add(backendTargetKey);
+    }
+  }
+
   return toolResults.map((entry) => {
     const humanSummary = resolveVoiceToolResultHumanSummary({
       toolName: entry.t,
@@ -63,18 +124,23 @@ function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgen
 
     if (entry.t === 'listAgentBackends') {
       const result = entry.result;
-      const items = Array.isArray((result as { items?: unknown })?.items)
-        ? ((result as { items: ReadonlyArray<Record<string, unknown>> }).items ?? []).slice(0, FOLLOW_UP_RESULT_MAX_ITEMS).map((item) => {
+      const rawItems = Array.isArray((result as { items?: unknown })?.items)
+        ? ((result as { items: ReadonlyArray<Record<string, unknown>> }).items ?? [])
+        : [];
+      const items = selectListItemsForFollowUp({
+        rawItems,
+        pinnedTargetKeys: pinnedBackendTargetKeys,
+        maxItems: FOLLOW_UP_RESULT_MAX_ITEMS,
+      }).map((item) => {
             const targetKey = typeof item?.targetKey === 'string' ? item.targetKey : '';
             return {
-              ...(targetKey.startsWith('acpBackend:') ? { targetKey } : {}),
+              ...((targetKey.startsWith('acpBackend:') || targetKey.startsWith('backend:')) ? { targetKey } : {}),
               agentId: typeof item?.agentId === 'string' ? item.agentId : '',
               label: typeof item?.label === 'string' ? item.label : '',
               enabled: item?.enabled !== false,
               experimental: item?.experimental === true,
             };
-          })
-        : [];
+          });
 
       return {
         t: entry.t,

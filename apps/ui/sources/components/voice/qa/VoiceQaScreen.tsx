@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -11,15 +11,15 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { storage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
-import { formatVoiceActivityEvent } from '@/voice/activity/formatVoiceActivityEvent';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { createVoiceQaFormatterPrefs, formatVoiceQaSessionLabel } from '@/voice/qa/formatVoiceQaSessionLabel';
+import { voiceQaRecordedAudioController } from '@/voice/qa/voiceQaRecordedAudioController';
 import { useVoiceQaStore } from '@/voice/qa/voiceQaStore';
 import { voiceQaController } from '@/voice/qa/voiceQaController';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { useVoiceSessionStore } from '@/voice/session/voiceSessionStore';
-import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
-import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
+import { selectVoiceTranscriptEntriesForConversationSession } from '@/voice/transcript/voiceTranscriptSelectors';
 
 function getConfiguredProviderLabel(providerId: string): string {
   switch (providerId) {
@@ -69,6 +69,15 @@ type ZustandStore<TState> = Readonly<{
   subscribe: (listener: (state: TState, prevState: TState) => void) => () => void;
 }>;
 
+type RecordedAudioQaStatus =
+  | 'idle'
+  | 'ready'
+  | 'running'
+  | 'success'
+  | 'empty'
+  | 'error'
+  | 'missing_input';
+
 function useStoreSnapshot<TState>(store: ZustandStore<TState>): TState {
   const [snapshot, setSnapshot] = React.useState(() => store.getState());
 
@@ -87,24 +96,53 @@ function normalizeSessionId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeVoiceQaRouteParam(value: unknown): string {
+  if (Array.isArray(value)) {
+    return normalizeVoiceQaRouteParam(value[0]);
+  }
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.trim();
+}
+
 export function VoiceQaScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{
+    voiceQaSessionId?: string | string[];
+    voiceQaRecordedAudioDaemonSttPackId?: string | string[];
+    voiceQaRecordedAudioDaemonMachineId?: string | string[];
+    voiceQaRecordedAudioDaemonBasePath?: string | string[];
+  }>();
   const appState = useStoreSnapshot(storage);
   const voiceSessionState = useStoreSnapshot(useVoiceSessionStore);
   const targetState = useStoreSnapshot(useVoiceTargetStore);
   const qaState = useStoreSnapshot(useVoiceQaStore);
-  const activityState = useStoreSnapshot(useVoiceActivityStore);
   const bindingState = useStoreSnapshot(voiceSessionBindingStore);
   const [sessionId, setSessionId] = React.useState('');
   const [initialContext, setInitialContext] = React.useState('');
   const [prompt, setPrompt] = React.useState('');
   const [contextUpdate, setContextUpdate] = React.useState('');
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
+  const [recordedAudioUri, setRecordedAudioUri] = React.useState('');
+  const [recordedAudioSelectedFileName, setRecordedAudioSelectedFileName] = React.useState<string | null>(null);
+  const [recordedAudioDaemonSttPackId, setRecordedAudioDaemonSttPackId] = React.useState('');
+  const [recordedAudioDaemonMachineId, setRecordedAudioDaemonMachineId] = React.useState('');
+  const [recordedAudioDaemonBasePath, setRecordedAudioDaemonBasePath] = React.useState('');
+  const [recordedAudioQaStatus, setRecordedAudioQaStatus] = React.useState<RecordedAudioQaStatus>('idle');
+  const [recordedAudioResult, setRecordedAudioResult] = React.useState<string | null>(null);
   const sessionIdRef = React.useRef(sessionId);
   const initialContextRef = React.useRef(initialContext);
   const promptRef = React.useRef(prompt);
   const contextUpdateRef = React.useRef(contextUpdate);
+  const recordedAudioObjectUrlRef = React.useRef<string | null>(null);
+  const recordedAudioWebFileRef = React.useRef<File | null>(null);
+  const recordedAudioFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const routeSessionId = normalizeVoiceQaRouteParam(routeParams.voiceQaSessionId);
+  const routeRecordedAudioDaemonSttPackId = normalizeVoiceQaRouteParam(routeParams.voiceQaRecordedAudioDaemonSttPackId);
+  const routeRecordedAudioDaemonMachineId = normalizeVoiceQaRouteParam(routeParams.voiceQaRecordedAudioDaemonMachineId);
+  const routeRecordedAudioDaemonBasePath = normalizeVoiceQaRouteParam(routeParams.voiceQaRecordedAudioDaemonBasePath);
 
   const setSessionIdWithRef = React.useCallback((value: string) => {
     sessionIdRef.current = value;
@@ -122,13 +160,44 @@ export function VoiceQaScreen() {
     contextUpdateRef.current = value;
     setContextUpdate(value);
   }, []);
+  React.useEffect(() => {
+    if (!sessionIdRef.current && routeSessionId) {
+      sessionIdRef.current = routeSessionId;
+      setSessionId(routeSessionId);
+    }
+  }, [routeSessionId]);
+  React.useEffect(() => {
+    if (!recordedAudioDaemonSttPackId && routeRecordedAudioDaemonSttPackId) {
+      setRecordedAudioDaemonSttPackId(routeRecordedAudioDaemonSttPackId);
+    }
+  }, [recordedAudioDaemonSttPackId, routeRecordedAudioDaemonSttPackId]);
+  React.useEffect(() => {
+    if (!recordedAudioDaemonMachineId && routeRecordedAudioDaemonMachineId) {
+      setRecordedAudioDaemonMachineId(routeRecordedAudioDaemonMachineId);
+    }
+  }, [recordedAudioDaemonMachineId, routeRecordedAudioDaemonMachineId]);
+  React.useEffect(() => {
+    if (!recordedAudioDaemonBasePath && routeRecordedAudioDaemonBasePath) {
+      setRecordedAudioDaemonBasePath(routeRecordedAudioDaemonBasePath);
+    }
+  }, [recordedAudioDaemonBasePath, routeRecordedAudioDaemonBasePath]);
+  const releaseRecordedAudioObjectUrl = React.useCallback(() => {
+    const currentObjectUrl = recordedAudioObjectUrlRef.current;
+    if (!currentObjectUrl) return;
+    if (typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(currentObjectUrl);
+    }
+    recordedAudioObjectUrlRef.current = null;
+  }, []);
+  const setRecordedAudioUriWithState = React.useCallback((value: string) => {
+    if (recordedAudioObjectUrlRef.current && recordedAudioObjectUrlRef.current !== value) {
+      releaseRecordedAudioObjectUrl();
+    }
+    setRecordedAudioUri(value);
+  }, [releaseRecordedAudioObjectUrl]);
 
   const voice: any = appState.settings?.voice;
   const effectiveActivitySessionId = qaState.runtimeSessionId ?? qaState.sessionId ?? targetState.primaryActionSessionId ?? targetState.lastFocusedSessionId ?? '';
-  const activityEvents = React.useMemo(
-    () => (effectiveActivitySessionId ? (activityState.eventsBySessionId[effectiveActivitySessionId] ?? []) : []),
-    [effectiveActivitySessionId, activityState.eventsBySessionId],
-  );
 
   const runAction = React.useCallback(async (name: string, action: () => Promise<void>) => {
     setBusyAction(name);
@@ -140,6 +209,66 @@ export function VoiceQaScreen() {
       setBusyAction((current) => (current === name ? null : current));
     }
   }, []);
+  const openRecordedAudioFilePicker = React.useCallback(() => {
+    recordedAudioFileInputRef.current?.click();
+  }, []);
+  const handleRecordedAudioUriChange = React.useCallback((value: string) => {
+    recordedAudioWebFileRef.current = null;
+    setRecordedAudioSelectedFileName(null);
+    setRecordedAudioResult(null);
+    const trimmed = value.trim();
+    setRecordedAudioQaStatus(trimmed ? 'ready' : 'idle');
+    setRecordedAudioUriWithState(value);
+  }, [setRecordedAudioUriWithState]);
+  const handleRecordedAudioFileChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0] ?? null;
+    if (!selectedFile || typeof URL.createObjectURL !== 'function') {
+      return;
+    }
+
+    releaseRecordedAudioObjectUrl();
+    const objectUrl = URL.createObjectURL(selectedFile);
+    recordedAudioObjectUrlRef.current = objectUrl;
+    recordedAudioWebFileRef.current = selectedFile;
+    setRecordedAudioSelectedFileName(selectedFile.name);
+    setRecordedAudioResult(null);
+    setRecordedAudioQaStatus('ready');
+    setRecordedAudioUriWithState(objectUrl);
+    event.target.value = '';
+  }, [releaseRecordedAudioObjectUrl, setRecordedAudioUriWithState]);
+  const runRecordedAudioTranscription = React.useCallback(async () => {
+    const trimmedUri = recordedAudioUri.trim();
+    if (!trimmedUri) {
+      setRecordedAudioResult(null);
+      setRecordedAudioQaStatus('missing_input');
+      return;
+    }
+
+    setRecordedAudioQaStatus('running');
+    setRecordedAudioResult(null);
+    try {
+      const transcription = await voiceQaRecordedAudioController.transcribe({
+        sessionId: sessionIdRef.current,
+        uri: trimmedUri,
+        packId: recordedAudioDaemonSttPackId.trim(),
+        machineId: recordedAudioDaemonMachineId.trim(),
+        basePath: recordedAudioDaemonBasePath.trim(),
+        webFile: recordedAudioWebFileRef.current,
+      });
+      if (transcription) {
+        setRecordedAudioResult(transcription);
+        setRecordedAudioQaStatus('success');
+        return;
+      }
+      setRecordedAudioQaStatus('empty');
+    } catch (error) {
+      setRecordedAudioResult(error instanceof Error ? error.message : 'recorded_audio_transcription_failed');
+      setRecordedAudioQaStatus('error');
+    }
+  }, [recordedAudioDaemonSttPackId, recordedAudioUri]);
+  React.useEffect(() => () => {
+    releaseRecordedAudioObjectUrl();
+  }, [releaseRecordedAudioObjectUrl]);
 
   const configuredProviderId = String(voice?.providerId ?? 'off');
   const configuredProviderLabel = getConfiguredProviderLabel(configuredProviderId);
@@ -151,12 +280,12 @@ export function VoiceQaScreen() {
     if (qaState.runtimeSessionId) return qaState.runtimeSessionId;
     const controlSessionId = qaState.sessionId ?? voiceSessionState.sessionId ?? null;
     if (!controlSessionId) return null;
-    return resolveVoiceSessionBindingByControlSessionId({ controlSessionId })?.conversationSessionId ?? null;
+    return voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId })?.conversationSessionId ?? null;
   }, [bindingState, qaState.runtimeSessionId, qaState.sessionId, voiceSessionState.sessionId]);
   const boundVoiceBinding = React.useMemo(() => {
     const controlSessionId = qaState.sessionId ?? voiceSessionState.sessionId ?? null;
     if (!controlSessionId) return null;
-    return resolveVoiceSessionBindingByControlSessionId({ controlSessionId }) ?? null;
+    return voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId }) ?? null;
   }, [bindingState, qaState.sessionId, voiceSessionState.sessionId]);
   const helperSessionId = React.useMemo(() => {
     const qaTargetSessionId = normalizeSessionId(qaState.targetSessionId);
@@ -198,6 +327,18 @@ export function VoiceQaScreen() {
         fallbackLabel: 'Voice conversation',
       }),
     [formatterPrefs, runtimeSessionId],
+  );
+  const projectedConversationSessionId = React.useMemo(
+    () => normalizeSessionId(boundConversationSessionId) ?? normalizeSessionId(effectiveActivitySessionId),
+    [boundConversationSessionId, effectiveActivitySessionId],
+  );
+  const projectedConversationEntries = React.useMemo(
+    () =>
+      selectVoiceTranscriptEntriesForConversationSession(
+        appState,
+        projectedConversationSessionId,
+      ),
+    [appState, projectedConversationSessionId],
   );
 
   return (
@@ -336,6 +477,82 @@ export function VoiceQaScreen() {
           </View>
         </ItemGroup>
 
+        <ItemGroup title={t('devVoiceQa.recordedAudio.title')}>
+          <View style={styles.groupContent}>
+            <VoiceQaField
+              label={t('devVoiceQa.recordedAudio.uriLabel')}
+              value={recordedAudioUri}
+              onChangeText={handleRecordedAudioUriChange}
+              placeholder={t('devVoiceQa.recordedAudio.uriPlaceholder')}
+              testID="voiceQa.recordedAudio.uriInput"
+            />
+            <VoiceQaField
+              label={t('devVoiceQa.recordedAudio.daemonPackIdLabel')}
+              value={recordedAudioDaemonSttPackId}
+              onChangeText={setRecordedAudioDaemonSttPackId}
+              placeholder={t('devVoiceQa.recordedAudio.daemonPackIdPlaceholder')}
+              testID="voiceQa.recordedAudio.daemonPackIdInput"
+            />
+            <VoiceQaField
+              label={t('devVoiceQa.recordedAudio.daemonMachineIdLabel')}
+              value={recordedAudioDaemonMachineId}
+              onChangeText={setRecordedAudioDaemonMachineId}
+              placeholder={t('devVoiceQa.recordedAudio.daemonMachineIdPlaceholder')}
+              testID="voiceQa.recordedAudio.daemonMachineIdInput"
+            />
+            <VoiceQaField
+              label={t('devVoiceQa.recordedAudio.daemonBasePathLabel')}
+              value={recordedAudioDaemonBasePath}
+              onChangeText={setRecordedAudioDaemonBasePath}
+              placeholder={t('devVoiceQa.recordedAudio.daemonBasePathPlaceholder')}
+              testID="voiceQa.recordedAudio.daemonBasePathInput"
+            />
+            {Platform.OS === 'web' ? (
+              <>
+                <input
+                  ref={recordedAudioFileInputRef}
+                  data-testid="voiceQa.recordedAudio.fileInput"
+                  type="file"
+                  accept="audio/*"
+                  style={{ display: 'none' }}
+                  onChange={handleRecordedAudioFileChange}
+                />
+                <View style={styles.buttonRow}>
+                  <RoundButton
+                    testID="voiceQa.recordedAudio.pickFile"
+                    title={t('devVoiceQa.recordedAudio.chooseFile')}
+                    size="normal"
+                    display="inverted"
+                    onPress={openRecordedAudioFilePicker}
+                  />
+                </View>
+              </>
+            ) : null}
+            <Text testID="voiceQa.recordedAudio.selectedFile" style={[styles.noteText, { color: theme.colors.textSecondary }]}>
+              {recordedAudioSelectedFileName ?? t('devVoiceQa.recordedAudio.noFileSelected')}
+            </Text>
+            <View style={styles.buttonRow}>
+              <RoundButton
+                testID="voiceQa.recordedAudio.transcribe"
+                title={t('devVoiceQa.recordedAudio.transcribe')}
+                size="normal"
+                loading={busyAction === 'recordedAudioTranscription'}
+                onPress={() =>
+                  void runAction('recordedAudioTranscription', async () => {
+                    await runRecordedAudioTranscription();
+                  })
+                }
+              />
+            </View>
+            <Text testID="voiceQa.recordedAudio.status" style={[styles.noteText, { color: theme.colors.textSecondary }]}>
+              {t('devVoiceQa.recordedAudio.statusLabel')}: {recordedAudioQaStatus}
+            </Text>
+            <Text testID="voiceQa.recordedAudio.result" style={[styles.noteText, { color: theme.colors.text }]}>
+              {recordedAudioResult ?? t('devVoiceQa.recordedAudio.noResult')}
+            </Text>
+          </View>
+        </ItemGroup>
+
         <ItemGroup title={t('devVoiceQa.transcriptTitle')}>
           <View style={styles.groupContent}>
             {qaState.entries.length === 0 ? (
@@ -369,12 +586,12 @@ export function VoiceQaScreen() {
 
         <ItemGroup title={t('devVoiceQa.activityTitle')}>
           <View style={styles.groupContent}>
-            {activityEvents.length === 0 ? (
+            {projectedConversationEntries.length === 0 ? (
               <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>{t('devVoiceQa.activityEmpty')}</Text>
             ) : (
-              activityEvents.map((event) => (
-                <Text key={event.id} style={[styles.activityText, { color: theme.colors.text }]} selectable>
-                  {formatVoiceActivityEvent(event)}
+              projectedConversationEntries.map((entry) => (
+                <Text key={entry.id} style={[styles.activityText, { color: theme.colors.text }]} selectable>
+                  {entry.text}
                 </Text>
               ))
             )}

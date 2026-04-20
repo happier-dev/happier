@@ -2,10 +2,10 @@ import * as React from 'react';
 
 import { storage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
-import { findReusableVoiceConversationRuntimeSessionId } from '@/voice/sessionBinding/voiceConversationSystemSessionLookup';
-import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
-import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
+import { findReusableVoiceConversationRuntimeSessionId } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 
 export function useHasGlobalVoiceAgentConversation(): boolean {
     const voiceSessionSnapshot = useVoiceSessionSnapshot();
@@ -28,7 +28,7 @@ export function useHasGlobalVoiceAgentConversation(): boolean {
         ) {
             return true;
         }
-        if (resolveVoiceSessionBindingByControlSessionId({
+        if (voiceConversationBindingResolver.resolveByControlSessionId({
             controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             adapterId: 'local_conversation',
         })) {

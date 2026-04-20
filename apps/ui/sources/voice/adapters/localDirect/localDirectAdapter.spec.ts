@@ -1,22 +1,44 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-type LocalVoiceState = Readonly<{ status: string; sessionId: string | null; error: unknown }>;
-
-const toggleLocalVoiceTurn = vi.fn(async () => {});
+const toggleLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async (_sessionId: string) => {});
 const stopLocalVoiceSession = vi.fn(async () => {});
-const abortLocalVoiceTurn = vi.fn(async (_sessionId: string) => {});
-const getLocalVoiceState = vi.fn<() => LocalVoiceState>(() => ({ status: 'idle', sessionId: null, error: null }));
+const abortLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async (_sessionId: string) => {});
+const setLocalVoiceMuted = vi.fn<(sessionId: string, muted: boolean) => Promise<void>>(async () => {});
 
-vi.mock('@/voice/local/localVoiceEngine', () => ({
-  toggleLocalVoiceTurn,
-  stopLocalVoiceSession,
-  abortLocalVoiceTurn,
-  getLocalVoiceState,
+vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
+  localVoiceRuntimeController: {
+    toggleTurn: (sessionId: string) => toggleLocalVoiceTurn(sessionId),
+    stopSession: () => stopLocalVoiceSession(),
+    abortTurn: (sessionId: string) => abortLocalVoiceTurn(sessionId),
+    setMuted: (sessionId: string, muted: boolean) => setLocalVoiceMuted(sessionId, muted),
+  },
 }));
 
 describe('local direct voice adapter', () => {
-  it('maps idle+sessionId to connected so the status bar can remain stoppable', async () => {
-    getLocalVoiceState.mockReturnValueOnce({ status: 'idle', sessionId: 's1', error: null });
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+    voiceConversationRuntimeMachine.reset();
+  });
+
+  it('projects a disconnected runtime snapshot as a disconnected local session snapshot', async () => {
+    const { createLocalDirectVoiceAdapter } = await import('./localDirectAdapter');
+    const adapter = createLocalDirectVoiceAdapter();
+
+    expect(adapter.getSnapshot()).toEqual({
+      adapterId: 'local_direct',
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+    });
+  });
+
+  it('projects an explicit connected runtime snapshot as a connected local session snapshot', async () => {
+    const { transitionVoiceRuntimeToIdle } = await import('@/voice/runtime/machine/voiceConversationRuntimeHelpers');
+    transitionVoiceRuntimeToIdle({ controlSessionId: 's1' });
+
     const { createLocalDirectVoiceAdapter } = await import('./localDirectAdapter');
     const adapter = createLocalDirectVoiceAdapter();
 
@@ -29,12 +51,25 @@ describe('local direct voice adapter', () => {
     });
   });
 
-  it('delegates toggle to local voice engine', async () => {
+  it('delegates toggle to the local voice runtime controller', async () => {
     const { createLocalDirectVoiceAdapter } = await import('./localDirectAdapter');
     const adapter = createLocalDirectVoiceAdapter();
 
     await adapter.toggle({ sessionId: 's1' });
     expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1');
+  });
+
+  it('keeps adapter toggle translation-only when another local session is already active', async () => {
+    const { transitionVoiceRuntimeToIdle } = await import('@/voice/runtime/machine/voiceConversationRuntimeHelpers');
+    transitionVoiceRuntimeToIdle({ controlSessionId: 's-active' });
+
+    const { createLocalDirectVoiceAdapter } = await import('./localDirectAdapter');
+    const adapter = createLocalDirectVoiceAdapter();
+
+    await adapter.toggle({ sessionId: 's-next' });
+
+    expect(stopLocalVoiceSession).not.toHaveBeenCalled();
+    expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s-next');
   });
 
   it('stop stops the local voice session', async () => {
@@ -55,5 +90,14 @@ describe('local direct voice adapter', () => {
 
     expect(abortLocalVoiceTurn).toHaveBeenCalledWith('s1');
     expect(stopLocalVoiceSession).not.toHaveBeenCalled();
+  });
+
+  it('forwards mute commands to the local voice runtime controller', async () => {
+    const { createLocalDirectVoiceAdapter } = await import('./localDirectAdapter');
+    const adapter = createLocalDirectVoiceAdapter();
+
+    await adapter.setMuted({ sessionId: 's1', muted: true });
+
+    expect(setLocalVoiceMuted).toHaveBeenCalledWith('s1', true);
   });
 });

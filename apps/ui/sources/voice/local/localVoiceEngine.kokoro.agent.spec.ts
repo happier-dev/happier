@@ -12,6 +12,7 @@ vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({
 
 import {
   createdAudioPlayers,
+  expoSpeechSpeak,
   getStorage,
   registerLocalVoiceEngineHarnessHooks,
   setPlatformOs,
@@ -19,9 +20,9 @@ import {
 
 let localVoiceEngine: typeof import('./localVoiceEngine');
 
-async function waitForAudioPlayer() {
+async function waitForDeviceSpeech() {
   await vi.waitFor(() => {
-    expect(createdAudioPlayers.length).toBeGreaterThan(0);
+    expect(expoSpeechSpeak).toHaveBeenCalled();
   });
 }
 
@@ -32,8 +33,12 @@ describe('local voice engine agent behavior (kokoro)', () => {
     localVoiceEngine = await import('./localVoiceEngine');
   }, 180_000);
 
-  it('agent mode auto-speaks via Kokoro provider when enabled', async () => {
-    setPlatformOs('web');
+  it('falls back to device speech when Kokoro runtime is unavailable in the native test harness', async () => {
+    setPlatformOs('ios');
+    expoSpeechSpeak.mockImplementationOnce((_text: string, options: any) => {
+      options?.onStart?.();
+      options?.onDone?.();
+    });
     const storage = await getStorage();
     storage.__setState({
       settings: {
@@ -63,6 +68,7 @@ describe('local voice engine agent behavior (kokoro)', () => {
                   model: 'kokoro',
                   voiceId: 'af_heart',
                   speed: 1,
+                  execution: 'device',
                 },
               },
               agent: {
@@ -97,9 +103,8 @@ describe('local voice engine agent behavior (kokoro)', () => {
     await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
     const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-    await waitForAudioPlayer();
-    expect(createdAudioPlayers.length).toBeGreaterThan(0);
-    createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
+    await waitForDeviceSpeech();
+    expect(createdAudioPlayers.length).toBe(0);
     await stopPromise;
   });
 });

@@ -11,7 +11,7 @@ const ensureBoundSpy = vi.fn(async (_args: any) => ({
   targetSessionId: 's1',
   updatedAt: 1,
 }));
-vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+vi.mock('@/voice/binding/voiceConversationBindingRuntime', () => ({
   voiceSessionBindingManager: {
     ensureBound: (args: any) => ensureBoundSpy(args),
   },

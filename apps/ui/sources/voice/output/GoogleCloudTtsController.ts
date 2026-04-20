@@ -1,7 +1,7 @@
 import { decodeBase64 } from '@/encryption/base64';
 import { fetchWithTimeout } from '@/voice/runtime/fetchWithTimeout';
 import { buildGoogleApiKeyRestrictionHeaders } from '@/voice/runtime/googleApiKeyHeaders';
-import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
+import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 
 export async function speakGoogleCloudText(opts: {
@@ -51,11 +51,12 @@ async function fetchGoogleCloudSpeechAudio(opts: {
   if (opts.speakingRate != null) audioConfig.speakingRate = opts.speakingRate;
   if (opts.pitch != null) audioConfig.pitch = opts.pitch;
 
-  const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(apiKey)}`;
+  const url = 'https://texttospeech.googleapis.com/v1/text:synthesize';
   const init: RequestInit = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
       ...buildGoogleApiKeyRestrictionHeaders({ androidCertSha1: opts.androidCertSha1 ?? null }),
     },
     body: JSON.stringify({

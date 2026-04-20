@@ -6,6 +6,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
+import { parseLocalVoiceSttSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
@@ -31,12 +32,7 @@ export function LocalDirectSection(props: {
     });
   };
 
-  const sttProvider =
-    typeof (cfg.stt as any)?.provider === 'string'
-      ? ((cfg.stt as any).provider as any)
-      : (cfg.stt as any)?.useDeviceStt === true
-        ? 'device'
-        : 'openai_compat';
+  const sttProvider = parseLocalVoiceSttSettings(cfg.stt).provider;
 
   return (
     <>

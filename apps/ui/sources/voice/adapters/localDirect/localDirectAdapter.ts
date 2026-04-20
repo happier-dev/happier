@@ -1,72 +1,33 @@
+import { localVoiceRuntimeController } from '@/voice/local/localVoiceRuntimeController';
+import type { VoiceAdapterController, VoiceSessionSnapshot } from '@/voice/session/types';
+import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot';
 import {
-  abortLocalVoiceTurn,
-  getLocalVoiceState,
-  subscribeLocalVoiceState,
-  stopLocalVoiceSession,
-  toggleLocalVoiceTurn,
-} from '@/voice/local/localVoiceEngine';
-import type { VoiceAdapterController, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
-
-function mapLocalStatus(status: any): { status: VoiceSessionStatus; mode: VoiceSessionMode } {
-  switch (status) {
-    case 'recording':
-      return { status: 'connected', mode: 'listening' };
-    case 'transcribing':
-      return { status: 'connected', mode: 'transcribing' };
-    case 'sending':
-      return { status: 'connected', mode: 'thinking' };
-    case 'speaking':
-      return { status: 'connected', mode: 'speaking' };
-    case 'error':
-      return { status: 'error', mode: 'idle' };
-    case 'idle':
-    default:
-      return { status: 'disconnected', mode: 'idle' };
-  }
-}
+  getVoiceConversationRuntimeSnapshot,
+  useVoiceConversationRuntimeStore,
+} from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
 export function createLocalDirectVoiceAdapter(): VoiceAdapterController {
   const id = 'local_direct';
 
-  const getSnapshot = (): VoiceSessionSnapshot => {
-    const local = getLocalVoiceState();
-    const mapped = (() => {
-      // Local voice keeps the sessionId set while the "call" is active, even when idle.
-      if (local.status === 'idle' && local.sessionId) {
-        return { status: 'connected' as const, mode: 'idle' as const };
-      }
-      return mapLocalStatus(local.status);
-    })();
-    return {
-      adapterId: id,
-      sessionId: local.sessionId,
-      status: mapped.status,
-      mode: mapped.mode,
-      canStop: mapped.status !== 'disconnected',
-      ...(local.error ? { errorCode: local.error, errorMessage: local.error } : {}),
-    };
-  };
-
-  const toggle = async (opts: Readonly<{ sessionId: string }>) => {
-    const snap = getSnapshot();
-    if (snap.sessionId && snap.sessionId !== opts.sessionId && snap.status !== 'disconnected') {
-      await stopLocalVoiceSession();
-    }
-    await toggleLocalVoiceTurn(opts.sessionId);
-  };
+  const getSnapshot = (): VoiceSessionSnapshot => deriveLocalVoiceSessionSnapshot(id, getVoiceConversationRuntimeSnapshot());
 
   const start = async (opts: Readonly<{ sessionId: string; initialContext?: string }>) => {
-    const snap = getSnapshot();
-    if (snap.status !== 'disconnected') return;
-    await toggle({ sessionId: opts.sessionId });
+    void opts.initialContext;
+    await localVoiceRuntimeController.toggleTurn(opts.sessionId);
   };
 
+  const toggle = async (opts: Readonly<{ sessionId: string }>) => start(opts);
+
   const stop = async (_opts: Readonly<{ sessionId: string }>) => {
-    await stopLocalVoiceSession();
+    await localVoiceRuntimeController.stopSession();
   };
 
   const interrupt = async (opts: Readonly<{ sessionId: string }>) => {
-    await abortLocalVoiceTurn(opts.sessionId);
+    await localVoiceRuntimeController.abortTurn(opts.sessionId);
+  };
+
+  const setMuted = async (opts: Readonly<{ sessionId: string; muted: boolean }>) => {
+    await localVoiceRuntimeController.setMuted(opts.sessionId, opts.muted);
   };
 
   return {
@@ -75,8 +36,9 @@ export function createLocalDirectVoiceAdapter(): VoiceAdapterController {
     stop,
     toggle,
     interrupt,
+    setMuted,
     sendContextUpdate: () => {},
     getSnapshot,
-    subscribe: (listener) => subscribeLocalVoiceState(listener),
+    subscribe: (listener) => useVoiceConversationRuntimeStore.subscribe(() => listener()),
   };
 }

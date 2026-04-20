@@ -3,11 +3,11 @@ import { getActionSpec, listActionSpecs } from '@happier-dev/protocol';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
+import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import {
   resolveSessionListLookupSessionServerScopeFromState,
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import { trackPermissionResponse } from '@/track';
-import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -88,6 +88,7 @@ function getPendingRequestsForSession(sessionId: string, session: unknown): Arra
   toolName: string;
   requestKind: AgentRequestKind;
 }>> {
+  const messages = readStoredSessionMessages(storage.getState() as any, sessionId);
   const candidateSession = session && typeof session === 'object'
     ? (session as Parameters<typeof listPendingPermissionRequests>[0])
     : null;
@@ -101,14 +102,14 @@ function getPendingRequestsForSession(sessionId: string, session: unknown): Arra
 
   const permissionRequests = (() => {
     try {
-      return listPendingPermissionRequests(candidateSession);
+      return listPendingPermissionRequests(candidateSession, messages);
     } catch {
       return [];
     }
   })();
   const userActionRequests = (() => {
     try {
-      return listPendingUserActionRequests(candidateSession);
+      return listPendingUserActionRequests(candidateSession, messages);
     } catch {
       return [];
     }
@@ -169,11 +170,6 @@ const VOICE_TOOL_ACTION_ID_BY_TOOL_NAME: Readonly<Record<string, ActionId>> = ((
 export function createVoiceToolHandlers(
   deps: Readonly<{ resolveSessionId: (explicitSessionId?: string | null) => string | null }>,
 ): Readonly<Record<string, (parameters: unknown) => Promise<string>>> {
-  const resolveAdapterId = () => {
-    const settings: any = storage.getState().settings;
-    return (settings?.voice?.providerId ?? 'unknown') as string;
-  };
-
   const resolveSessionIdOrError = (
     explicitSessionId?: string | null,
   ): { ok: true; sessionId: string } | { ok: false; error: string } => {
@@ -211,6 +207,7 @@ export function createVoiceToolHandlers(
   };
 
   const resolvePendingRequestRecord = (
+    sessionId: string,
     session: unknown,
     kind: AgentRequestKind,
     requestId: string,
@@ -219,9 +216,10 @@ export function createVoiceToolHandlers(
       ? session as Parameters<typeof listPendingPermissionRequests>[0]
       : null;
     if (!candidateSession) return null;
+    const messages = readStoredSessionMessages(storage.getState() as any, sessionId);
     const requests = kind === 'user_action'
-      ? listPendingUserActionRequests(candidateSession)
-      : listPendingPermissionRequests(candidateSession);
+      ? listPendingUserActionRequests(candidateSession, messages)
+      : listPendingPermissionRequests(candidateSession, messages);
     return requests.find((request) => request.id === requestId) ?? null;
   };
 
@@ -342,7 +340,6 @@ export function createVoiceToolHandlers(
     const sessionId = resolved.sessionId;
     const session: any = storage.getState().sessions?.[sessionId] ?? null;
     if (!session) {
-      voiceActivityController.appendError(sessionId, resolveAdapterId(), 'session_not_found', 'session_not_found');
       return jsonError('session_not_found', 'session_not_found', { sessionId });
     }
 
@@ -352,7 +349,6 @@ export function createVoiceToolHandlers(
     if (isActiveServer) {
       const encryption = (sync as unknown as { encryption?: { getSessionEncryption?: (id: string) => unknown } }).encryption?.getSessionEncryption?.(sessionId) ?? null;
       if (!encryption) {
-        voiceActivityController.appendError(sessionId, resolveAdapterId(), 'session_not_ready', 'session_not_ready');
         return jsonError('session_not_ready', 'session_not_ready', { sessionId });
       }
     }
@@ -366,22 +362,14 @@ export function createVoiceToolHandlers(
       { surface: 'voice_tool', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
     if (!res.ok) {
-      voiceActivityController.appendError(sessionId, resolveAdapterId(), 'send_failed', 'send_failed');
       return jsonError(res.errorCode ?? 'send_failed', res.error ?? 'send_failed', { sessionId });
     }
 
     const inner: any = res.result;
     if (inner && typeof inner === 'object' && (inner as any).ok === false) {
-      voiceActivityController.appendError(sessionId, resolveAdapterId(), 'send_failed', 'send_failed');
       return jsonError(String((inner as any).errorCode ?? 'send_failed'), String((inner as any).errorMessage ?? 'send_failed'), { sessionId });
     }
 
-    voiceActivityController.appendActionExecuted(
-      sessionId,
-      resolveAdapterId(),
-      'sendSessionMessage',
-      `Sent to session: ${String(message).slice(0, 200)}`,
-    );
     return jsonOk({ status: 'sent', sessionId });
   };
 
@@ -404,9 +392,6 @@ export function createVoiceToolHandlers(
       allowCrossSessionFallback,
     });
     if (!selected.ok) {
-      if (selected.errorCode === 'no_permission_request') {
-        voiceActivityController.appendError(resolved.sessionId, resolveAdapterId(), 'no_permission_request', 'no_permission_request');
-      }
       return jsonError(selected.errorCode, selected.errorCode, { sessionId: resolved.sessionId, ...(selected.payload ?? {}) });
     }
     const sessionId = selected.sessionId;
@@ -423,22 +408,14 @@ export function createVoiceToolHandlers(
     );
 
     if (!res.ok) {
-      voiceActivityController.appendError(sessionId, resolveAdapterId(), 'permission_update_failed', 'permission_update_failed');
       return jsonError('permission_update_failed', 'permission_update_failed', { sessionId, requestId });
     }
     const nestedFailure = getNestedActionFailure((res as any).result);
     if (nestedFailure) {
-      voiceActivityController.appendError(sessionId, resolveAdapterId(), nestedFailure.errorCode, nestedFailure.errorMessage);
       return jsonError(nestedFailure.errorCode, nestedFailure.errorMessage, { sessionId, requestId });
     }
 
     trackPermissionResponse(decision === 'allow');
-    voiceActivityController.appendActionExecuted(
-      sessionId,
-      resolveAdapterId(),
-      'processPermissionRequest',
-      `${decision === 'allow' ? 'Allowed' : 'Denied'} permission request: ${requestId}`,
-    );
     return jsonOk({ status: 'done', sessionId, requestId });
   };
 
@@ -461,9 +438,6 @@ export function createVoiceToolHandlers(
       allowCrossSessionFallback,
     });
     if (!selected.ok) {
-      if (selected.errorCode === 'no_permission_request') {
-        voiceActivityController.appendError(resolved.sessionId, resolveAdapterId(), 'no_permission_request', 'no_permission_request');
-      }
       return jsonError(selected.errorCode, selected.errorCode, { sessionId: resolved.sessionId, ...(selected.payload ?? {}) });
     }
     const sessionId = selected.sessionId;
@@ -482,7 +456,7 @@ export function createVoiceToolHandlers(
     const hasUpdatedPermissions = Object.prototype.hasOwnProperty.call(data, 'updatedPermissions');
     const requestId = selected.requestId;
     const session = ((storage.getState() as any)?.sessions ?? {})?.[sessionId] ?? null;
-    const requestRecord = resolvePendingRequestRecord(session, 'user_action', requestId);
+    const requestRecord = resolvePendingRequestRecord(sessionId, session, 'user_action', requestId);
     const directDecision =
       decision === 'approve'
         ? 'allow'
@@ -513,21 +487,13 @@ export function createVoiceToolHandlers(
       { surface: 'voice_tool', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
     if (!res.ok) {
-      voiceActivityController.appendError(sessionId, resolveAdapterId(), 'permission_update_failed', 'permission_update_failed');
       return jsonError(res.errorCode ?? 'permission_update_failed', res.error ?? 'permission_update_failed', { sessionId, requestId });
     }
     const nestedFailure = getNestedActionFailure((res as any).result);
     if (nestedFailure) {
-      voiceActivityController.appendError(sessionId, resolveAdapterId(), nestedFailure.errorCode, nestedFailure.errorMessage);
       return jsonError(nestedFailure.errorCode, nestedFailure.errorMessage, { sessionId, requestId });
     }
 
-    voiceActivityController.appendActionExecuted(
-      sessionId,
-      resolveAdapterId(),
-      'answerUserActionRequest',
-      `Answered user action request: ${requestId}`,
-    );
     return jsonOk({ status: 'done', sessionId, requestId });
   };
 

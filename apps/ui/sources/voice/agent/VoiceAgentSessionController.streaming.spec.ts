@@ -4,7 +4,7 @@ import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { installVoiceAgentCommonModuleMocks } from '@/voice/agent/voiceAgentTestHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
-import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,6 +34,10 @@ const resolveRuntimeFeatureDecision = vi.fn<(args: any) => Promise<FeatureDecisi
 const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: { forceRefresh?: boolean }) => {});
 const refreshSessionMessages = vi.fn(async (_sessionId: string) => {});
 const ensureVoiceAgentInstallablesBackground = vi.fn(async (_args: unknown) => {});
+const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _updater: (metadata: any) => any) => {});
+const sessionExecutionRunGet = vi.fn(async (..._args: any[]): Promise<any> => ({ run: null }));
+const sessionExecutionRunList = vi.fn(async (..._args: any[]): Promise<any> => ({ runs: [] }));
+const sessionExecutionRunStop = vi.fn(async (..._args: any[]): Promise<any> => ({ ok: true }));
 const buildVoiceInitialContext = vi.fn((sessionId: string, options?: { targetSessionId?: string | null }) => {
   const targetSessionId = typeof options?.targetSessionId === 'string' ? options.targetSessionId.trim() : '';
   if (targetSessionId) return `TARGET_CONTEXT:${sessionId}->${targetSessionId}`;
@@ -187,10 +191,18 @@ vi.mock('@/voice/context/buildVoiceInitialContext', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
+    patchSessionMetadataWithRetry: (sessionId: string, updater: (metadata: any) => any) =>
+      patchSessionMetadataWithRetry(sessionId, updater),
     ensureSessionVisibleForMessageRoute: (sessionId: string, options?: { forceRefresh?: boolean }) =>
       ensureSessionVisibleForMessageRoute(sessionId, options),
     refreshSessionMessages: (sessionId: string) => refreshSessionMessages(sessionId),
   },
+}));
+
+vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+  sessionExecutionRunGet,
+  sessionExecutionRunList,
+  sessionExecutionRunStop,
 }));
 
 vi.mock('@/voice/agent/ensureVoiceAgentInstallablesBackground', () => ({
@@ -266,8 +278,19 @@ describe('VoiceAgentSessionController (streaming)', () => {
     ensureSessionVisibleForMessageRoute.mockReset();
     refreshSessionMessages.mockReset();
     ensureVoiceAgentInstallablesBackground.mockReset();
+    patchSessionMetadataWithRetry.mockReset();
+    sessionExecutionRunGet.mockReset();
+    sessionExecutionRunGet.mockResolvedValue({ run: null });
+    sessionExecutionRunList.mockReset();
+    sessionExecutionRunList.mockResolvedValue({ runs: [] });
+    sessionExecutionRunStop.mockReset();
     buildVoiceInitialContext.mockClear();
-    voiceSessionBindingStore.setState((state) => ({ ...state, bindingsByConversationSessionId: {} }));
+    voiceSessionBindingStore.setState((state) => ({
+      ...state,
+      runtimeBindingsByConversationSessionId: {},
+      persistedBindingsByConversationSessionId: {},
+      bindingsByConversationSessionId: {},
+    }));
     start.mockReset();
     start.mockImplementation(async () => ({ voiceAgentId: 'm1' }));
     startTurnStream.mockClear();
@@ -319,7 +342,9 @@ describe('VoiceAgentSessionController (streaming)', () => {
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
     expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('s1', { forceRefresh: true });
+    expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('voice-hidden-s1', { forceRefresh: true });
     expect(refreshSessionMessages).toHaveBeenCalledWith('s1');
+    expect(refreshSessionMessages).toHaveBeenCalledWith('voice-hidden-s1');
   });
 
   it('refreshes stale bound target state before starting global local voice', async () => {
@@ -506,7 +531,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
     );
   });
 
-  it('injects a one-time welcome instruction into the first user turn when welcome is enabled (on_first_turn)', async () => {
+  it('does not inject a local greeting prompt into the first user turn when welcome mode is on_first_turn', async () => {
     getState.mockImplementation(() => ({
       settings: {
         voice: {
@@ -530,7 +555,22 @@ describe('VoiceAgentSessionController (streaming)', () => {
         },
       },
       sessions: {
-        sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
+        sys_voice: {
+          id: 'sys_voice',
+          active: true,
+          modelMode: 'default',
+          metadata: {
+            flavor: 'claude',
+            systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+            agentRuntimeFacetsV1: {
+              v: 1,
+              transcriptSource: {
+                supported: true,
+                followLeaseSupported: true,
+              },
+            },
+          },
+        },
         s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
       },
       sessionMessages: {},
@@ -541,7 +581,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
 
     expect(startTurnStream).toHaveBeenCalledWith(
       expect.objectContaining({
-        userText: expect.stringContaining('greeting'),
+        userText: 'hello',
       }),
     );
   });
@@ -1491,7 +1531,22 @@ describe('VoiceAgentSessionController (streaming)', () => {
         },
       },
       sessions: {
-        sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
+        sys_voice: {
+          id: 'sys_voice',
+          active: true,
+          modelMode: 'default',
+          metadata: {
+            flavor: 'claude',
+            systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+            agentRuntimeFacetsV1: {
+              v: 1,
+              transcriptSource: {
+                supported: true,
+                followLeaseSupported: true,
+              },
+            },
+          },
+        },
         s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
       },
       sessionMessages: {},
@@ -1502,5 +1557,108 @@ describe('VoiceAgentSessionController (streaming)', () => {
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
     expect(startTurnStream).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
+  });
+
+  it('fails closed and does not pass resume=true to stream_start when runtime publication does not expose transcriptSource', async () => {
+    useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
+
+    getState.mockImplementation(() => ({
+      settings: {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: true,
+                turnReadPollIntervalMs: 50,
+                turnReadMaxEvents: 7,
+                turnStreamTimeoutMs: 1200,
+              },
+              agent: {
+                backend: 'daemon',
+                resumabilityMode: 'provider_resume',
+                providerResume: { fallbackToReplay: false },
+                transcript: { persistenceMode: 'persistent', epoch: 0 },
+              },
+              networkTimeoutMs: 15_000,
+            },
+          },
+        },
+      },
+      sessions: {
+        sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+      },
+      sessionMessages: {},
+    }));
+
+    const controller = createVoiceAgentSessionController();
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
+
+    expect(startTurnStream).toHaveBeenCalledWith(expect.not.objectContaining({ resume: true }));
+  });
+
+  it('fails closed to a fresh daemon start when provider-resume is configured but runtime publication does not expose transcriptSource for a reconciled run', async () => {
+    useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
+    getState.mockImplementation(() => ({
+      settings: {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: true,
+                turnReadPollIntervalMs: 50,
+                turnReadMaxEvents: 7,
+                turnStreamTimeoutMs: 1200,
+              },
+              agent: {
+                backend: 'daemon',
+                resumabilityMode: 'provider_resume',
+                providerResume: { fallbackToReplay: false },
+                transcript: { persistenceMode: 'persistent', epoch: 0 },
+              },
+              networkTimeoutMs: 15_000,
+            },
+          },
+        },
+      },
+      sessions: {
+        sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+      },
+      sessionMessages: {},
+    }));
+    sessionExecutionRunList.mockResolvedValueOnce({
+      runs: [
+        {
+          runId: 'run_reconciled',
+          intent: 'voice_agent',
+          status: 'running',
+          backendId: 'claude',
+          startedAtMs: 20,
+        },
+      ],
+    });
+    sessionExecutionRunGet.mockResolvedValueOnce({
+      run: {
+        runId: 'run_reconciled',
+        backendId: 'claude',
+        transcript: { persistenceMode: 'persistent', epoch: 0 },
+        resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_reconciled' },
+      },
+    });
+
+    const controller = createVoiceAgentSessionController();
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
+
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sys_voice',
+      existingRunId: null,
+      resumeWhenInactive: false,
+      resumeHandle: null,
+    }));
   });
 });

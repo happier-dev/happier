@@ -2,77 +2,49 @@ import * as React from 'react';
 
 import { useSetting } from '@/sync/domains/state/storage';
 import { createBuiltinVoiceAdapters } from '@/voice/adapters/registerBuiltinVoiceAdapters';
-import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveContinuousVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
-import { getVoiceAdapterRegistry, registerVoiceAdapters } from './voiceAdapterRegistry';
+import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
+import { setVoiceSessionLifecycleController } from './voiceSessionLifecycleControllerStore';
+import { registerVoiceAdapters } from './voiceAdapterRegistry';
 import { setVoiceSessionSnapshot } from './voiceSessionStore';
-import type { VoiceSessionSnapshot } from './types';
 
 export function VoiceSessionRuntime(): React.ReactElement | null {
   const voice = useSetting('voice') as any;
-  const providerId = resolveVoiceProviderId(voice?.providerId);
-  const [registered, setRegistered] = React.useState(false);
+  const providerId = resolveContinuousVoiceProviderId(voice?.providerId);
+  const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
 
   // Ensure adapters are registered before the user can interact with voice controls.
   React.useLayoutEffect(() => {
     registerVoiceAdapters(createBuiltinVoiceAdapters());
-    setRegistered(true);
-  }, []);
-
-  const computeSnapshot = React.useCallback((): VoiceSessionSnapshot => {
-    const registry = getVoiceAdapterRegistry();
-    const adapters = registry.list();
-    const snapshots = adapters.map((adapter) => adapter.getSnapshot());
-    if (providerId === null) {
-      return {
+    const controller = createVoiceSessionLifecycleController();
+    controllerRef.current = controller;
+    const syncPublishedSnapshot = () => {
+      setVoiceSessionSnapshot(controller.getSnapshot());
+    };
+    const unsubscribe = controller.subscribe(syncPublishedSnapshot);
+    setVoiceSessionLifecycleController(controller);
+    controller.setConfiguredProviderId(providerId);
+    return () => {
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
+      unsubscribe();
+      setVoiceSessionLifecycleController(null);
+      controller.dispose();
+      setVoiceSessionSnapshot({
         adapterId: null,
         sessionId: null,
         status: 'disconnected',
         mode: 'idle',
         canStop: false,
-      };
-    }
-
-    const preferred =
-      providerId !== 'off'
-        ? snapshots.find((snap) => snap.adapterId === providerId && snap.status !== 'disconnected')
-        : null;
-    const active = preferred ?? snapshots.find((snap) => snap.status !== 'disconnected') ?? null;
-    return active ?? {
-      adapterId: null,
-      sessionId: null,
-      status: 'disconnected',
-      mode: 'idle',
-      canStop: false,
+      });
     };
+  }, []);
+
+  React.useEffect(() => {
+    controllerRef.current?.setConfiguredProviderId(providerId);
   }, [providerId]);
-
-  const publishSnapshot = React.useCallback(() => {
-    setVoiceSessionSnapshot(computeSnapshot());
-  }, [computeSnapshot]);
-
-  React.useEffect(() => {
-    if (!registered) return;
-    publishSnapshot();
-  }, [publishSnapshot, registered]);
-
-  React.useEffect(() => {
-    if (!registered) return;
-    const registry = getVoiceAdapterRegistry();
-    const adapters = registry.list();
-    const unsubs = adapters
-      .map((adapter) => adapter.subscribe?.(publishSnapshot) ?? null)
-      .filter((u): u is () => void => typeof u === 'function');
-    return () => {
-      for (const unsub of unsubs) {
-        try {
-          unsub();
-        } catch {
-          // ignore
-        }
-      }
-    };
-  }, [publishSnapshot, registered]);
 
   return null;
 }

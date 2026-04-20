@@ -37,6 +37,36 @@ interface SessionMetadata {
   [key: string]: any;
 }
 
+type VoiceDebugEvent =
+  | 'voice_contextual_update'
+  | 'voice_text_update'
+  | 'voice_session_started'
+  | 'voice_session_stopped';
+
+function emitVoiceDebugDiagnostic(
+  event: VoiceDebugEvent,
+  params: Readonly<{
+    sessionId?: string | null;
+    payload?: string | null | undefined;
+  }>,
+) {
+  if (!VOICE_CONFIG.ENABLE_DEBUG_LOGGING) return;
+
+  const payload = typeof params.payload === 'string' ? params.payload : '';
+  const normalizedSessionId = String(params.sessionId ?? '').trim();
+
+  // Keep diagnostics content-safe so broad console shipping cannot exfiltrate raw voice context.
+  // eslint-disable-next-line no-console
+  console.debug('[VoiceDebug]', {
+    channel: 'voice',
+    event,
+    sessionId: normalizedSessionId.length > 0 ? normalizedSessionId : null,
+    payloadChars: payload.length,
+    payloadLines: payload.length > 0 ? payload.split('\n').length : 0,
+    hasPayload: payload.length > 0,
+  });
+}
+
 function resolvePolicy(sessionId: string): VoiceSessionUpdatePolicy {
   // NOTE: we deliberately avoid a session-scoped API here; global voice uses explicit target.
   const targetState = resolveEffectiveVoiceTargetState(sessionId);
@@ -59,10 +89,7 @@ function getVoiceContextPrefs(sessionId: string) {
 }
 
 function reportContextualUpdate(sessionId: string, update: string | null | undefined) {
-  if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
-    // eslint-disable-next-line no-console
-    console.log('🎤 Voice: Reporting contextual update:', update);
-  }
+  emitVoiceDebugDiagnostic('voice_contextual_update', { sessionId, payload: update });
   if (!update) return;
   const sink = getVoiceContextSinkForSession(sessionId);
   if (!sink) return;
@@ -70,10 +97,7 @@ function reportContextualUpdate(sessionId: string, update: string | null | undef
 }
 
 function reportTextUpdate(sessionId: string, update: string | null | undefined) {
-  if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
-    // eslint-disable-next-line no-console
-    console.log('🎤 Voice: Reporting text update:', update);
-  }
+  emitVoiceDebugDiagnostic('voice_text_update', { sessionId, payload: update });
   if (!update) return;
   const sink = getVoiceContextSinkForSession(sessionId);
   if (!sink) return;
@@ -247,10 +271,7 @@ export const voiceHooks = {
   },
 
   onVoiceStarted(sessionId: string): string {
-    if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
-      // eslint-disable-next-line no-console
-      console.log('🎤 Voice session started for:', sessionId);
-    }
+    emitVoiceDebugDiagnostic('voice_session_started', { sessionId });
     useVoiceContextSeenStore.getState().clearShownSessions();
     const state: any = storage.getState();
     const normalized = String(sessionId ?? '').trim();
@@ -291,10 +312,7 @@ export const voiceHooks = {
   },
 
   onVoiceStopped() {
-    if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
-      // eslint-disable-next-line no-console
-      console.log('🎤 Voice session stopped');
-    }
+    emitVoiceDebugDiagnostic('voice_session_stopped', {});
     useVoiceContextSeenStore.getState().clearShownSessions();
   },
 };

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+
 const ensureAgentInstallablesBackground = vi.fn(async (_args: unknown) => {});
 const getActiveServerSnapshot = vi.fn(() => ({ serverId: 'server-a' }));
 const storageGetState = vi.fn<() => any>();
@@ -12,11 +14,13 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => getActiveServerSnapshot(),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
   storage: {
     getState: () => storageGetState(),
-  },
-}));
+  } as any,
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 describe('ensureVoiceAgentInstallablesBackground', () => {
   beforeEach(() => {

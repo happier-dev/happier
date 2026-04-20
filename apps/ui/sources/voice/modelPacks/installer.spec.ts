@@ -3,6 +3,57 @@ import { describe, expect, it } from 'vitest';
 import { ensureModelPackInstalled, getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/installer.native';
 
 describe('modelPacks installer (native)', () => {
+  it('rejects pack ids that attempt to escape the model packs root directory', async () => {
+    class Directory {
+      uri: string;
+      exists = true;
+      constructor(...uris: any[]) {
+        const packId = String(uris[uris.length - 1] ?? '');
+        this.uri = `file:///docs/happier/voice/modelPacks/${packId}`;
+      }
+      create() {}
+      delete() {}
+    }
+
+    class File {
+      uri = 'file:///docs/happier/voice/modelPacks/example/pack.json';
+      get exists() {
+        return false;
+      }
+      create() {}
+      writableStream() {
+        return new WritableStream();
+      }
+      async bytes() {
+        return new Uint8Array();
+      }
+      async text() {
+        return '';
+      }
+      write() {}
+      delete() {}
+      arrayBuffer() {
+        return Promise.resolve(new ArrayBuffer(0));
+      }
+    }
+
+    await expect(
+      ensureModelPackInstalled(
+        {
+          packId: '../escape',
+          mode: 'download_if_missing',
+          manifestUrl: 'https://example.com/manifest.json',
+          timeoutMs: 5000,
+          signal: new AbortController().signal,
+        },
+        {
+          fs: { Directory, File, Paths: { document: 'file:///docs/' } } as any,
+          fetch: (async () => ({ ok: false })) as any,
+        },
+      ),
+    ).rejects.toThrow(/model_pack_invalid_pack_id/);
+  });
+
   it('reports progress without exceeding total (streaming body)', async () => {
     const { createHash } = await import('node:crypto');
     const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4])];

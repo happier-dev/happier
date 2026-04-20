@@ -1,4 +1,4 @@
-import type { ModelPackManifest } from '@/voice/modelPacks/manifest';
+import type { ModelPackManifest } from '@happier-dev/protocol';
 
 import type { InstallerFs } from './types';
 
@@ -20,8 +20,21 @@ export function filePathParts(path: string): string[] {
   return parts;
 }
 
+const PACK_ID_FILESYSTEM_SAFE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const PACK_ID_MAX_LENGTH = 256;
+
 export function normalizePackId(packId: string | null): string {
-  return packId && packId.trim().length > 0 ? packId.trim() : 'default';
+  const normalized = packId && packId.trim().length > 0 ? packId.trim() : 'default';
+  if (
+    normalized.length === 0
+    || normalized.length > PACK_ID_MAX_LENGTH
+    || normalized === '.'
+    || normalized === '..'
+    || !PACK_ID_FILESYSTEM_SAFE_RE.test(normalized)
+  ) {
+    throw new Error('model_pack_invalid_pack_id');
+  }
+  return normalized;
 }
 
 export function getPackRootDir(fs: InstallerFs, packId: string): any {
@@ -38,4 +51,3 @@ export function assertManifestPathsSafe(manifest: ModelPackManifest): void {
     filePathParts(f.path);
   }
 }
-

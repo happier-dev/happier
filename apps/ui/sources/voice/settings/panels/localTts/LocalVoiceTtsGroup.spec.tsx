@@ -75,7 +75,7 @@ describe('LocalVoiceTtsGroup', () => {
             provider: 'local_neural',
             autoSpeakReplies: false,
             bargeInEnabled: false,
-            localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+            localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
             openaiCompat: { baseUrl: null, apiKey: null, model: null, voice: null, format: null },
             googleCloud: null,
           } as any,

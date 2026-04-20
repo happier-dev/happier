@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
+type MachineContributionRegistryProjectionDescribeFn =
+  typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
+
+const {
+  machineContributionRegistryProjectionDescribe,
+} = vi.hoisted(() => ({
+  machineContributionRegistryProjectionDescribe: vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+    async () => ({ supported: false, reason: 'not-supported' }),
+  ),
+}));
+
 const machineSpawnNewSession = vi.fn(async (_params: any) => ({ type: 'success', sessionId: 's_new' }));
 const getActiveServerSnapshot = vi.fn(() => ({ serverId: 'server-a' }));
 const resolveEffectiveWindowsRemoteSessionLaunchMode = vi.fn((_params: any) => ({ mode: null }));
@@ -56,6 +67,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => getActiveServerSnapshot(),
 }));
 
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+  machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
+    machineContributionRegistryProjectionDescribe(...args),
+}));
+
 vi.mock('@/voice/runtime/voiceTargetStore', () => ({
   useVoiceTargetStore: {
     getState: () => voiceTargetState,
@@ -77,6 +93,8 @@ describe('spawnSessionForVoiceTool', () => {
     postprocessSpawnedSession.mockClear();
     getActiveServerSnapshot.mockClear();
     resolveEffectiveWindowsRemoteSessionLaunchMode.mockClear();
+    machineContributionRegistryProjectionDescribe.mockReset();
+    machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
     voiceTargetState.primaryActionSessionId = null;
     voiceTargetState.lastFocusedSessionId = null;
   });
@@ -146,7 +164,47 @@ describe('spawnSessionForVoiceTool', () => {
     await spawnSessionForVoiceTool({});
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+    }));
+  });
+
+  it('does not treat the legacy customAcp fallback as permission to select a plugin backend from merged projection truth', async () => {
+    state.settings.lastUsedAgent = 'customAcp';
+    machineContributionRegistryProjectionDescribe.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'acme.review.provider': {
+            id: 'acme.review.provider',
+            providerId: 'acme.review.provider',
+            title: 'Acme Review Provider',
+            channel: 'plugin',
+            isBuiltIn: false,
+            settingsBackendId: 'acme.review.backend',
+          },
+        },
+        backendsById: {
+          'acme.review.backend': {
+            id: 'acme.review.backend',
+            backendId: 'acme.review.backend',
+            providerId: 'acme.review.provider',
+            title: 'Acme Review Backend',
+          },
+        },
+      },
+    });
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({});
+
+    expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith('m1', expect.objectContaining({
+      serverId: 'server-a',
+      timeoutMs: 10_000,
+    }));
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'backend', backendId: 'claude' },
     }));
   });
 
@@ -162,7 +220,7 @@ describe('spawnSessionForVoiceTool', () => {
     await spawnSessionForVoiceTool({});
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex' },
     }));
   });
 
@@ -177,7 +235,7 @@ describe('spawnSessionForVoiceTool', () => {
     } as any);
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
     }));
   });
 
@@ -192,7 +250,58 @@ describe('spawnSessionForVoiceTool', () => {
     } as any);
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+    }));
+  });
+
+  it('accepts a matching legacy configured ACP flavor carrier when a canonical configured backendTargetKey is provided', async () => {
+    state.settings.lastUsedAgent = 'claude';
+    state.settings.lastUsedBackendTarget = { kind: 'builtInAgent', agentId: 'claude' };
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      agentId: 'acp:review-bot',
+      backendTargetKey: 'backend:review-bot:configured:review-bot',
+      path: '/Users/leeroy/projects/happier',
+    } as any);
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+    }));
+  });
+
+  it('rejects the plain legacy customAcp carrier when a canonical configured backendTargetKey is provided', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      agentId: 'customAcp',
+      backendTargetKey: 'backend:review-bot:configured:review-bot',
+      path: '/Users/leeroy/projects/happier',
+    } as any);
+
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'invalid_parameters',
+      errorMessage: 'invalid_parameters',
+    });
+  });
+
+  it('uses a canonical plugin backendTargetKey when the runtime carrier is explicit', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      agentId: 'claude',
+      backendTargetKey: 'backend:plugin-review-bot',
+      path: '/Users/leeroy/projects/happier',
+    } as any);
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'plugin-review-bot',
+        sourceKind: 'built_in',
+      },
     }));
   });
 

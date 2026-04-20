@@ -46,7 +46,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     ),
 }));
 
-vi.mock('@/voice/runtime/VoicePlaybackController', () => ({
+vi.mock('@/voice/runtime/playback/VoicePlaybackController', () => ({
   createVoicePlaybackController: () => ({
     interrupt: vi.fn(),
     registerStopper: () => () => {},
@@ -78,7 +78,7 @@ describe('GoogleCloudTtsSettings', () => {
           cfgTts: {
             provider: 'google_cloud',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-            localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+            localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
             googleCloud: {
               apiKey: { _isSecretValue: true, value: 'k' },
               androidCertSha1: null,
@@ -129,7 +129,7 @@ describe('GoogleCloudTtsSettings', () => {
           cfgTts: {
             provider: 'google_cloud',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-            localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+            localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
             googleCloud: {
               apiKey: { _isSecretValue: true, value: 'k' },
               androidCertSha1: null,

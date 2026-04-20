@@ -5,12 +5,17 @@ import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
+import {
+  createTurnEndpointController,
+  type TurnEndpointController,
+  type TurnEndpointSignal,
+} from '@/voice/runtime/input/TurnEndpointController';
+import type { MicSession } from '@/voice/runtime/mic/MicSession';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 type DeviceSttStatePatch = {
-  status?: 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
-  sessionId?: string | null;
-  error?: string | null;
+  controlSessionId: string;
+  reason: string;
 };
 
 type AudioStreamFrameEvent = {
@@ -46,11 +51,8 @@ type SherpaSttHandle = {
 };
 
 export type SherpaStreamingSttController = Readonly<{
-  clearHandsFreeSession: (sessionId?: string) => void;
-  isHandsFreeSession: (sessionId: string) => boolean;
-  start: (sessionId: string) => Promise<void>;
+  start: (sessionId: string, micSession: MicSession) => Promise<void>;
   stop: (sessionId: string) => Promise<string>;
-  setHandsFreeSession: (sessionId: string | null) => void;
 }>;
 
 function getOptionalAudioStreamModule(): AudioStreamModuleLike | null {
@@ -62,13 +64,20 @@ function getOptionalSherpaNativeModule(): SherpaNativeModuleLike | null {
 }
 
 export function createSherpaStreamingSttController(deps: {
-  setState: (patch: DeviceSttStatePatch) => void;
+  onCaptureStarted: (controlSessionId: string) => void;
+  onCaptureError: (patch: DeviceSttStatePatch) => void;
   getSettings: () => any;
+  onEndpointSignal?: (signal: TurnEndpointSignal) => void;
+  endpointController?: TurnEndpointController;
 }): SherpaStreamingSttController {
   let handle: SherpaSttHandle | null = null;
-  let handsFreeSessionId: string | null = null;
   const MAX_QUEUED_FRAMES = 8;
   const normalizeSessionId = (sessionId: string | null | undefined): string | null => normalizeNonEmptyString(sessionId);
+  const endpointController = deps.endpointController ?? createTurnEndpointController({
+    onSignal: (signal) => {
+      deps.onEndpointSignal?.(signal);
+    },
+  });
 
   const uriToFilePath = (uri: string): string => {
     return uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
@@ -78,6 +87,7 @@ export function createSherpaStreamingSttController(deps: {
     const h = handle;
     if (!h) return;
     handle = null;
+    endpointController.clearSession(h.sessionId);
     try {
       h.abortController.abort();
     } catch {
@@ -106,20 +116,17 @@ export function createSherpaStreamingSttController(deps: {
     }
   };
 
-  const clearHandsFreeSession = (sessionId?: string) => {
-    const normalizedSessionId = normalizeSessionId(sessionId);
-    if (normalizedSessionId && handsFreeSessionId && handsFreeSessionId !== normalizedSessionId) return;
-    handsFreeSessionId = null;
-  };
-
-  const start = async (sessionId: string) => {
+  const start = async (sessionId: string, micSession: MicSession) => {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) return;
+    if (!micSession) {
+      throw new Error('mic_session_required');
+    }
 
     const permission = await requestMicrophonePermission();
     if (!permission.granted) {
       showMicrophonePermissionDeniedAlert(permission.canAskAgain);
-      return;
+      throw new Error('mic_permission_denied');
     }
 
     await clearHandle();
@@ -127,9 +134,11 @@ export function createSherpaStreamingSttController(deps: {
     const audioStream = getOptionalAudioStreamModule();
     const sherpa = getOptionalSherpaNativeModule();
     if (!audioStream || !sherpa) {
-      deps.setState({ status: 'idle', sessionId: null, error: 'local_neural_stt_unavailable' });
+      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'local_neural_stt_unavailable' });
       return;
     }
+
+    await micSession.ensureActive();
 
     const settings = deps.getSettings();
     const voice = settings?.voice ?? null;
@@ -157,7 +166,7 @@ export function createSherpaStreamingSttController(deps: {
     const rawLanguage = normalizedStt?.localNeural?.language;
     const language = typeof rawLanguage === 'string' && rawLanguage.trim() ? rawLanguage.trim() : null;
     if (!packId) {
-      deps.setState({ status: 'idle', sessionId: null, error: 'local_neural_pack_missing' });
+      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'local_neural_pack_missing' });
       return;
     }
 
@@ -174,7 +183,7 @@ export function createSherpaStreamingSttController(deps: {
       });
       packDirUri = installed.packDirUri;
     } catch {
-      deps.setState({ status: 'idle', sessionId: null, error: 'local_neural_pack_not_installed' });
+      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'local_neural_pack_not_installed' });
       return;
     }
 
@@ -205,6 +214,13 @@ export function createSherpaStreamingSttController(deps: {
       if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
       const text = typeof res?.text === 'string' ? res.text : '';
       if (text.trim().length > 0) after.transcript = text.trim();
+      if (res?.isEndpoint === true) {
+        endpointController.signalEndpointDetected({
+          sessionId: normalizedSessionId,
+          source: 'native_stream',
+          transcript: after.transcript,
+        });
+      }
     };
 
     const startPushLoop = (first: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
@@ -269,13 +285,15 @@ export function createSherpaStreamingSttController(deps: {
       queuedFrames: [],
       pushLoop: null,
     };
-    deps.setState({ status: 'recording', sessionId: normalizedSessionId, error: null });
+    endpointController.startSession(normalizedSessionId);
+    deps.onCaptureStarted(normalizedSessionId);
   };
 
   const stop = async (sessionId: string): Promise<string> => {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!handle || !normalizedSessionId || handle.sessionId !== normalizedSessionId) return '';
     const current = handle;
+    endpointController.clearSession(normalizedSessionId);
 
     try {
       current.subscriptions.forEach((s) => s.remove());
@@ -311,11 +329,6 @@ export function createSherpaStreamingSttController(deps: {
   };
 
   return {
-    clearHandsFreeSession,
-    isHandsFreeSession: (sessionId: string) => handsFreeSessionId === normalizeSessionId(sessionId),
-    setHandsFreeSession: (sessionId: string | null) => {
-      handsFreeSessionId = normalizeSessionId(sessionId);
-    },
     start,
     stop,
   };

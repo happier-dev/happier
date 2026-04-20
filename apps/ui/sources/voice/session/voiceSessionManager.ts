@@ -1,112 +1,57 @@
-import type { VoiceAdapterController, VoiceAdapterId, VoiceSessionSnapshot } from './types';
-import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
-import { getVoiceSessionSnapshot, setVoiceSessionSnapshot } from './voiceSessionStore';
+import type { VoiceSessionSnapshot } from './types';
+import { getVoiceSessionSnapshot } from './voiceSessionStore';
+import type { VoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 
 export type VoiceSessionManager = Readonly<{
   toggle: (sessionId: string) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<void>;
+  setMuted: (sessionId: string, muted: boolean) => Promise<void>;
   sendContextUpdate: (sessionId: string, update: string) => void;
   getSnapshot: () => VoiceSessionSnapshot;
 }>;
 
 export function createVoiceSessionManager(deps: Readonly<{
-  resolveActiveAdapterId: () => VoiceAdapterId | 'off';
-  getAdapter: (adapterId: VoiceAdapterId) => VoiceAdapterController | null;
+  getLifecycleController?: () => VoiceSessionLifecycleController | null;
 }>): VoiceSessionManager {
-  const refreshFromAdapter = (adapter: VoiceAdapterController | null) => {
-    if (!adapter) return;
-    setVoiceSessionSnapshot(adapter.getSnapshot());
-  };
-
-  const resolveActiveAdapter = (): VoiceAdapterController | null => {
-    const adapterId = resolveVoiceProviderId(deps.resolveActiveAdapterId());
-    if (adapterId === null || adapterId === 'off') return null;
-    return deps.getAdapter(adapterId);
-  };
-
-  const ensureAdapterSnapshotFallback = (adapterId: VoiceAdapterId, sessionId: string) => {
-    const current = getVoiceSessionSnapshot();
-    if (current.adapterId === adapterId && current.sessionId === sessionId) return;
-    setVoiceSessionSnapshot({
-      adapterId,
-      sessionId,
-      status: 'connecting',
-      mode: 'idle',
-      canStop: true,
-    });
-  };
+  const resolveLifecycleController = (): VoiceSessionLifecycleController | null => deps.getLifecycleController?.() ?? null;
 
   const toggle = async (sessionId: string) => {
-    const snap = getVoiceSessionSnapshot();
-    const adapterId = resolveVoiceProviderId(deps.resolveActiveAdapterId());
-    // If voice is currently active but settings flipped to off, allow toggle to hang up.
-    if (adapterId === null || adapterId === 'off') {
-      if (snap.status !== 'disconnected') {
-        await stop(snap.sessionId ?? sessionId);
-      }
-      return;
-    }
-    const adapter = deps.getAdapter(adapterId);
-    if (!adapter) return;
-
-    // Give UI immediate feedback even if adapter takes time to transition.
-    ensureAdapterSnapshotFallback(adapterId, sessionId);
-
-    await adapter.toggle({ sessionId });
-    refreshFromAdapter(adapter);
+    const lifecycleController = resolveLifecycleController();
+    if (!lifecycleController) return;
+    await lifecycleController.toggle(sessionId);
   };
 
   const stop = async (sessionId: string) => {
-    const snap = getVoiceSessionSnapshot();
-    if (snap.status === 'disconnected') return;
-    if (!snap.adapterId) {
-      setVoiceSessionSnapshot({
-        adapterId: null,
-        sessionId: null,
-        status: 'disconnected',
-        mode: 'idle',
-        canStop: false,
-      });
-      return;
-    }
-
-    const adapter = deps.getAdapter(snap.adapterId);
-    if (!adapter) {
-      setVoiceSessionSnapshot({
-        adapterId: null,
-        sessionId: null,
-        status: 'disconnected',
-        mode: 'idle',
-        canStop: false,
-      });
-      return;
-    }
-
-    await adapter.stop({ sessionId });
-    refreshFromAdapter(adapter);
+    const lifecycleController = resolveLifecycleController();
+    if (!lifecycleController) return;
+    await lifecycleController.stop(sessionId);
   };
 
   const interrupt = async (sessionId: string) => {
-    const snap = getVoiceSessionSnapshot();
-    if (!snap.adapterId) return;
-    const adapter = deps.getAdapter(snap.adapterId);
-    if (!adapter) return;
-    await adapter.interrupt({ sessionId });
-    refreshFromAdapter(adapter);
+    const lifecycleController = resolveLifecycleController();
+    if (!lifecycleController) return;
+    await lifecycleController.interrupt(sessionId);
+  };
+
+  const setMuted = async (sessionId: string, muted: boolean) => {
+    const lifecycleController = resolveLifecycleController();
+    if (!lifecycleController) return;
+    await lifecycleController.setMuted(sessionId, muted);
   };
 
   const sendContextUpdate = (sessionId: string, update: string) => {
-    const adapter = resolveActiveAdapter();
-    if (!adapter) return;
-    adapter.sendContextUpdate({ sessionId, update });
+    const lifecycleController = resolveLifecycleController();
+    if (!lifecycleController) return;
+    lifecycleController.sendContextUpdate(sessionId, update);
   };
 
   return {
     toggle,
     stop,
     interrupt,
+    setMuted,
     sendContextUpdate,
-    getSnapshot: () => getVoiceSessionSnapshot(),
+    getSnapshot: () => resolveLifecycleController()?.getSnapshot() ?? getVoiceSessionSnapshot(),
   };
 }

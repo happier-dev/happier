@@ -81,7 +81,7 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm2',
       directory: '/tmp/s2',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       serverId: 'server-a',
     }));
     expect(refreshSessions).toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     await spawnSessionWithPickerForVoiceTool({});
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
     }));
   });
 
@@ -127,7 +127,7 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     await spawnSessionWithPickerForVoiceTool({});
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex' },
     }));
   });
 
@@ -144,7 +144,29 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     await spawnSessionWithPickerForVoiceTool({ backendTargetKey: 'acpBackend:review-bot' } as any);
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+    }));
+  });
+
+  it('uses a canonical plugin backendTargetKey in picker mode when the runtime carrier is explicit', async () => {
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({
+      agentId: 'claude',
+      backendTargetKey: 'backend:plugin-review-bot',
+    } as any);
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'plugin-review-bot',
+        sourceKind: 'built_in',
+      },
     }));
   });
 });

@@ -2,8 +2,8 @@ import { storage } from '@/sync/domains/state/storage';
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
+import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
 
 export type VoiceTeleportResult =
   | Readonly<{ ok: true }>

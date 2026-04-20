@@ -1523,6 +1523,14 @@ describe('voiceQaController', () => {
   it('stops the active local QA run even if settings switched providers afterwards', async () => {
     const stopLocal = vi.fn(async () => {});
     const stopRealtime = vi.fn(async () => {});
+    const getLocalBinding = vi.fn(() => ({
+      adapterId: 'local_conversation',
+      controlSessionId: '__voice_agent__',
+      conversationSessionId: 'voice-hidden-s1',
+      transcriptMode: 'native_session' as const,
+      targetSessionId: 's1',
+      updatedAt: 1,
+    }));
     const settings = {
       voice: {
         providerId: 'local_conversation',
@@ -1533,6 +1541,7 @@ describe('voiceQaController', () => {
       getSettings: () => settings,
       getVoiceTargetState: () => ({ primaryActionSessionId: 's1', lastFocusedSessionId: null }),
       ensureLocalBinding: vi.fn(async () => null),
+      getLocalBinding,
       ensureLocalRunningAndMaybeWelcome: vi.fn(async () => null),
       sendLocalTurn: vi.fn(async () => ({ assistantText: 'ok', actions: [] })),
       stopLocal,
@@ -1552,7 +1561,8 @@ describe('voiceQaController', () => {
 
     await controller.stop({ sessionId: 's1' });
 
-    expect(stopLocal).toHaveBeenCalledWith('__voice_agent__');
+    expect(getLocalBinding).toHaveBeenCalledWith('__voice_agent__');
+    expect(stopLocal).toHaveBeenCalledWith('voice-hidden-s1');
     expect(stopRealtime).not.toHaveBeenCalled();
   });
 });

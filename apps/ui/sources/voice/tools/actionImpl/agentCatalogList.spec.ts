@@ -1,19 +1,26 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 import {
   readDynamicModelProbeCache,
   resetDynamicModelProbeCacheForTests,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
+import type { MachineContributionRegistryProjectionDescribeResult } from '@/sync/ops/machineContributionRegistryProjection';
+import type { machineCapabilitiesInvoke as machineCapabilitiesInvokeFn } from '@/sync/ops/capabilities';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
-const machineCapabilitiesInvoke = vi.fn();
+type MachineContributionRegistryProjectionDescribeFn = typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
+
+const machineCapabilitiesInvoke = vi.fn<typeof machineCapabilitiesInvokeFn>();
+const machineContributionRegistryProjectionDescribeMock = vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+  async () => ({ supported: false, reason: 'not-supported' }),
+);
 
 const state: any = {
   settings: {
     backendEnabledByTargetKey: {
-      [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
-      [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'team-review' })]: false,
+      [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: false,
+      [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'team-review', configuredBackendId: 'team-review' })]: false,
     },
     acpCatalogSettingsV1: {
       v: 2,
@@ -55,16 +62,23 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
 }));
 
+vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+  machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
+    machineContributionRegistryProjectionDescribeMock(...args),
+}));
+
 vi.mock('@/sync/ops/capabilities', () => ({
-  machineCapabilitiesInvoke: (...args: any[]) => machineCapabilitiesInvoke(...args),
+  machineCapabilitiesInvoke: (...args: Parameters<typeof machineCapabilitiesInvokeFn>) => machineCapabilitiesInvoke(...args),
 }));
 
 describe('agent catalog voice tools', () => {
   beforeEach(() => {
     machineCapabilitiesInvoke.mockReset();
+    machineContributionRegistryProjectionDescribeMock.mockReset();
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
     state.settings.backendEnabledByTargetKey = {
-      [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
-      [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'team-review' })]: false,
+      [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: false,
+      [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'team-review', configuredBackendId: 'team-review' })]: false,
     };
     state.settings.acpCatalogSettingsV1 = {
       v: 2,
@@ -91,23 +105,202 @@ describe('agent catalog voice tools', () => {
     resetDynamicModelProbeCacheForTests();
   });
 
+  it('uses daemon merged projection titles for discovered/plugin backend labels when machineId is provided', async () => {
+    state.settings.backendEnabledByTargetKey = {
+      ...state.settings.backendEnabledByTargetKey,
+      'backend:plugin-review-bot': true,
+    };
+
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:review-bot': {
+            id: 'plugin:review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot Plugin',
+            subtitle: undefined,
+            channel: 'plugin',
+            isBuiltIn: false,
+          },
+        },
+        backendsById: {
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            backendId: 'plugin-review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot (plugin)',
+            subtitle: undefined,
+            providerAgentId: undefined,
+            iconAgentId: undefined,
+          },
+        },
+      },
+    });
+
+    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+    const res: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, machineId: 'm1' } as any);
+    const pluginItem = (res?.items ?? []).find((i: any) => i.targetKey === 'backend:plugin-review-bot');
+    expect(pluginItem).toBeTruthy();
+    expect(pluginItem.label).toBe('Review Bot (plugin)');
+  });
+
+  it('returns a coherent plugin backend item and model-list roundtrip when a runtime carrier is projected', async () => {
+    state.settings.backendEnabledByTargetKey = {
+      ...state.settings.backendEnabledByTargetKey,
+      'backend:plugin-review-bot': true,
+    };
+
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:review-bot': {
+            id: 'plugin:review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot Plugin',
+            subtitle: undefined,
+            channel: 'plugin',
+            isBuiltIn: false,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+        backendsById: {
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            backendId: 'plugin-review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot (plugin)',
+            subtitle: undefined,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+      },
+    });
+
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [
+            { id: 'default', name: 'Default' },
+            { id: 'review-model', name: 'Review Model' },
+          ],
+          supportsFreeform: true,
+        },
+      },
+    });
+
+    const { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const backends: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, machineId: 'm1' } as any);
+    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:plugin-review-bot');
+    expect(pluginItem).toBeTruthy();
+    expect(pluginItem.agentId).toBe('claude');
+    expect(pluginItem.supportsModelSelection).toBe(true);
+
+    const models: any = await listAgentModelsForVoiceTool({
+      agentId: pluginItem.agentId,
+      backendTargetKey: pluginItem.targetKey,
+      machineId: 'm1',
+      limit: 2,
+    });
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
+      'm1',
+      {
+        id: 'cli.claude',
+        method: 'probeModels',
+        params: {
+          timeoutMs: 15_000,
+          backendTarget: { kind: 'builtInAgent', agentId: 'plugin-review-bot' },
+        },
+      },
+      { serverId: 'server-a' },
+    );
+    expect(models).toMatchObject({
+      agentId: 'claude',
+      machineId: 'm1',
+      source: 'preflight',
+      supportsFreeform: true,
+      items: [
+        { modelId: 'default', label: 'Default' },
+        { modelId: 'review-model', label: 'Review Model' },
+      ],
+    });
+  });
+
+  it('does not advertise model selection for plugin backends without a runtime carrier', async () => {
+    state.settings.backendEnabledByTargetKey = {
+      ...state.settings.backendEnabledByTargetKey,
+      'backend:plugin-review-bot': true,
+    };
+
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:review-bot': {
+            id: 'plugin:review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot Plugin',
+            subtitle: undefined,
+            channel: 'plugin',
+            isBuiltIn: false,
+          },
+        },
+        backendsById: {
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            backendId: 'plugin-review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot (plugin)',
+            subtitle: undefined,
+            providerAgentId: undefined,
+            iconAgentId: undefined,
+          },
+        },
+      },
+    });
+
+    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+    const backends: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, machineId: 'm1' } as any);
+    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:plugin-review-bot');
+    expect(pluginItem).toBeTruthy();
+    expect(pluginItem.agentId).toBeUndefined();
+    expect(pluginItem.supportsModelSelection).toBe(false);
+    expect(pluginItem.supportsFreeformModels).toBe(false);
+  });
+
   it('filters disabled backends by default (includeDisabled=false)', async () => {
     const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
     const res: any = await listAgentBackendsForVoiceTool({ includeDisabled: false });
     const targetKeys = (res?.items ?? []).map((i: any) => i.targetKey);
-    expect(targetKeys).not.toContain('agent:gemini');
-    expect(targetKeys).not.toContain('acpBackend:team-review');
+    expect(targetKeys).not.toContain('backend:gemini');
+    expect(targetKeys).not.toContain('backend:team-review:configured:team-review');
   });
 
   it('includes disabled backends when includeDisabled=true', async () => {
     const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
     const res: any = await listAgentBackendsForVoiceTool({ includeDisabled: true });
-    const gemini = (res?.items ?? []).find((i: any) => i.targetKey === 'agent:gemini');
+    const gemini = (res?.items ?? []).find((i: any) => i.targetKey === 'backend:gemini');
     expect(gemini).toBeTruthy();
     expect(gemini.enabled).toBe(false);
-    const configured = (res?.items ?? []).find((i: any) => i.targetKey === 'acpBackend:team-review');
+    expect(gemini.uiConnectedService).toEqual({
+      serviceId: 'gemini',
+      label: 'Google Gemini',
+      connectRoute: null,
+    });
+    const configured = (res?.items ?? []).find((i: any) => i.targetKey === 'backend:team-review:configured:team-review');
     expect(configured).toBeTruthy();
     expect(configured.enabled).toBe(false);
+    expect(configured.agentId).toBeUndefined();
+    expect(configured.uiConnectedService).toBeNull();
   });
 
   it('applies limit to backend and model discovery results', async () => {
@@ -120,16 +313,96 @@ describe('agent catalog voice tools', () => {
     expect(models?.items).toHaveLength(2);
   });
 
+  it('prioritizes enabled plugin backends ahead of disabled built-ins when limiting discovery results', async () => {
+    state.settings.backendEnabledByTargetKey = {
+      'backend:claude': false,
+      'backend:codex': false,
+      'backend:opencode': false,
+      'backend:gemini': false,
+      'backend:auggie': false,
+      'backend:qwen': false,
+      'backend:kimi': false,
+      'backend:kilo': false,
+      'backend:kiro': false,
+      'backend:ohMyPi': false,
+      'backend:pi': false,
+      'backend:copilot': false,
+      'backend:team-review:configured:team-review': false,
+      'backend:plugin-review-bot': true,
+    };
+
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 1,
+        providersById: {
+          'plugin:review-bot': {
+            id: 'plugin:review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot Plugin',
+            subtitle: undefined,
+            channel: 'plugin',
+            isBuiltIn: false,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+        backendsById: {
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            backendId: 'plugin-review-bot',
+            providerId: 'plugin:review-bot',
+            title: 'Review Bot (plugin)',
+            subtitle: undefined,
+            providerAgentId: 'claude',
+            iconAgentId: 'claude',
+          },
+        },
+      },
+    });
+
+    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+    const backends: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, limit: 1, machineId: 'm1' } as any);
+    expect(backends?.items).toMatchObject([
+      {
+        targetKey: 'backend:plugin-review-bot',
+        label: 'Review Bot (plugin)',
+        agentId: 'claude',
+        enabled: true,
+      },
+    ]);
+  });
+
   it('uses curated static model labels instead of returning raw mode ids', async () => {
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
 
     const models: any = await listAgentModelsForVoiceTool({ agentId: 'claude', limit: 3 });
 
-    expect(models?.items?.map((item: any) => item.label)).toEqual([
-      'Default',
-      'Opus 4.6',
-      'Sonnet 4.6',
-    ]);
+    expect(models?.items?.[0]).toMatchObject({ modelId: 'default', label: 'Default' });
+    expect(models?.items?.slice(1).map((item: any) => item.label)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/opus|sonnet/i),
+      ]),
+    );
+    expect(models?.items?.slice(1).every((item: any) => item.label !== item.modelId)).toBe(true);
+  });
+
+  it('uses the explicit compat model fallback for configured ACP backends when no machine probe runs', async () => {
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+
+    const res: any = await listAgentModelsForVoiceTool({
+      backendTargetKey: 'acpBackend:team-review',
+      limit: 3,
+    });
+
+    expect(res).toMatchObject({
+      source: 'static',
+      supportsFreeform: true,
+      items: [
+        { modelId: 'default', label: 'Default' },
+      ],
+    });
+    expect(res).not.toHaveProperty('agentId');
   });
 
   it('prefers dynamic model list from machine preflight when machineId is provided', async () => {
@@ -170,7 +443,7 @@ describe('agent catalog voice tools', () => {
 
     const cacheKey = buildDynamicModelProbeCacheKey({
       machineId: 'm1',
-      targetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' }),
+      targetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }),
       serverId: 'server-a',
       cwd: null,
     });
@@ -247,7 +520,7 @@ describe('agent catalog voice tools', () => {
     expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
       'm1',
       {
-        id: 'cli.customAcp',
+        id: 'cli.configuredAcp',
         method: 'probeModels',
         params: {
           timeoutMs: 15_000,
@@ -257,7 +530,6 @@ describe('agent catalog voice tools', () => {
       { serverId: 'server-a' },
     );
     expect(res).toMatchObject({
-      agentId: 'customAcp',
       machineId: 'm1',
       source: 'preflight',
       supportsFreeform: true,
@@ -266,6 +538,7 @@ describe('agent catalog voice tools', () => {
         { modelId: 'model-review', label: 'Review Model' },
       ],
     });
+    expect(res).not.toHaveProperty('agentId');
   });
 
   it('probes configured ACP backend models through the canonical V2 backendTargetKey', async () => {
@@ -293,7 +566,7 @@ describe('agent catalog voice tools', () => {
     expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
       'm1',
       {
-        id: 'cli.customAcp',
+        id: 'cli.configuredAcp',
         method: 'probeModels',
         params: {
           timeoutMs: 15_000,
@@ -303,7 +576,6 @@ describe('agent catalog voice tools', () => {
       { serverId: 'server-a' },
     );
     expect(res).toMatchObject({
-      agentId: 'customAcp',
       machineId: 'm1',
       source: 'preflight',
       supportsFreeform: true,
@@ -312,6 +584,54 @@ describe('agent catalog voice tools', () => {
         { modelId: 'model-review', label: 'Review Model' },
       ],
     });
+    expect(res).not.toHaveProperty('agentId');
+  });
+
+  it('accepts a matching legacy configured ACP flavor carrier when probing configured backend models', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [
+            { id: 'default', name: 'Default' },
+            { id: 'model-review', name: 'Review Model' },
+          ],
+          supportsFreeform: true,
+        },
+      },
+    });
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const res: any = await listAgentModelsForVoiceTool({
+      agentId: 'acp:team-review',
+      backendTargetKey: 'backend:team-review:configured:team-review',
+      machineId: 'm1',
+      limit: 2,
+    } as any);
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
+      'm1',
+      {
+        id: 'cli.configuredAcp',
+        method: 'probeModels',
+        params: {
+          timeoutMs: 15_000,
+          backendTarget: { kind: 'configuredAcpBackend', backendId: 'team-review' },
+        },
+      },
+      { serverId: 'server-a' },
+    );
+    expect(res).toMatchObject({
+      machineId: 'm1',
+      source: 'preflight',
+      supportsFreeform: true,
+      items: [
+        { modelId: 'default', label: 'Default' },
+        { modelId: 'model-review', label: 'Review Model' },
+      ],
+    });
+    expect(res).not.toHaveProperty('agentId');
   });
 
   it('rejects ambiguous customAcp model lookup without backendTargetKey', async () => {

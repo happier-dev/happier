@@ -1,4 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const platformOsMock = vi.hoisted(() => ({ value: 'ios' }));
+
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock({
+    Platform: {
+      get OS() {
+        return platformOsMock.value;
+      },
+    },
+  });
+});
 
 const speakDeviceTextSpy = vi.fn().mockResolvedValue(undefined);
 const stopDeviceSpeechSpy = vi.fn();
@@ -22,6 +35,38 @@ vi.mock('@/voice/output/GoogleCloudTtsController', () => ({
   speakGoogleCloudText: (...args: any[]) => speakGoogleCloudTextSpy(...args),
 }));
 
+const daemonTtsControllerSpeakSpy = vi.fn().mockResolvedValue(undefined);
+vi.mock('@/voice/runtime/daemonInference/DaemonTtsController', () => ({
+  DaemonTtsController: vi.fn().mockImplementation(() => ({
+    speak: (...args: any[]) => daemonTtsControllerSpeakSpy(...args),
+  })),
+}));
+vi.mock('@/voice/runtime/daemonInference/daemonVoiceInferencePolicy', () => ({
+  resolveLocalNeuralExecutionPolicy: (params: { requestedExecution?: string | null }) => {
+    const requestedExecution = params.requestedExecution ?? 'auto';
+    const selectableExecution = platformOsMock.value === 'web' && requestedExecution === 'device'
+      ? 'daemon'
+      : requestedExecution;
+    return {
+      allowDeviceSelection: platformOsMock.value !== 'web',
+      preferredExecution: selectableExecution === 'auto'
+        ? platformOsMock.value === 'web'
+          ? 'daemon'
+          : 'device'
+        : selectableExecution,
+      requestedExecution,
+      selectableExecution,
+    };
+  },
+  resolveDaemonVoiceInferenceExecution: async (params: { requestedExecution?: string | null }) => {
+    const requestedExecution = params.requestedExecution ?? 'auto';
+    if (platformOsMock.value === 'web') {
+      return requestedExecution === 'device' ? 'daemon' : 'daemon';
+    }
+    return requestedExecution === 'daemon' ? 'daemon' : 'device';
+  },
+}));
+
 const decryptSecretValueSpy = vi.fn<(value: unknown) => string | null>(() => null);
 vi.mock('@/sync/sync', () => ({
   sync: { decryptSecretValue: (value: unknown) => decryptSecretValueSpy(value) },
@@ -30,6 +75,10 @@ vi.mock('@/sync/sync', () => ({
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
 
 describe('speakAssistantText', () => {
+  afterEach(() => {
+    platformOsMock.value = 'ios';
+  });
+
   it('trims the voice provider id before selecting the TTS adapter', async () => {
     speakDeviceTextSpy.mockClear();
     speakOpenAiCompatTextSpy.mockClear();
@@ -198,7 +247,7 @@ describe('speakAssistantText', () => {
               tts: {
                 provider: 'local_neural',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-                localNeural: { model: 'kokoro', assetId: 'kokoro-82m', voiceId: 'af_heart', speed: 1 },
+                localNeural: { model: 'kokoro', assetId: 'kokoro-82m', voiceId: 'af_heart', speed: 1, execution: 'device' },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
               },
@@ -217,6 +266,190 @@ describe('speakAssistantText', () => {
         voiceId: 'af_heart',
       }),
     );
+  });
+
+  it('routes local_neural daemon execution to the daemon TTS controller', async () => {
+    daemonTtsControllerSpeakSpy.mockClear();
+    speakKokoroTextSpy.mockClear();
+
+    const onSpeaking = vi.fn();
+    const registerPlaybackStopper = (_s: () => void) => () => {};
+
+    await speakAssistantText({
+      sessionId: 'session-1',
+      text: 'hello from daemon',
+      settings: {
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              tts: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+                localNeural: {
+                  model: 'kokoro',
+                  assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+                  voiceId: 'af_heart',
+                  speed: 1,
+                  execution: 'daemon',
+                },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+              },
+            },
+          },
+        },
+      },
+      networkTimeoutMs: 15000,
+      registerPlaybackStopper,
+      onSpeaking,
+    });
+
+    expect(daemonTtsControllerSpeakSpy).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1',
+      text: 'hello from daemon',
+      packId: 'kokoro-tts-en-v1',
+      voiceId: 'af_heart',
+    }));
+    expect(speakKokoroTextSpy).not.toHaveBeenCalled();
+  });
+
+  it('falls back to local_neural device runtime when daemon local_neural synthesis fails (native)', async () => {
+    daemonTtsControllerSpeakSpy.mockRejectedValueOnce(new Error('daemon unavailable'));
+    speakDeviceTextSpy.mockClear();
+    speakKokoroTextSpy.mockClear();
+
+    const onSpeaking = vi.fn();
+    const registerPlaybackStopper = (_s: () => void) => () => {};
+
+    await speakAssistantText({
+      sessionId: 'session-1',
+      text: 'hello from daemon fallback',
+      settings: {
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              tts: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+                localNeural: {
+                  model: 'kokoro',
+                  assetId: 'kokoro-tts-en-v1',
+                  voiceId: 'af_heart',
+                  speed: 1,
+                  execution: 'daemon',
+                },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+              },
+            },
+          },
+        },
+      },
+      networkTimeoutMs: 15000,
+      registerPlaybackStopper,
+      onSpeaking,
+    });
+
+    expect(speakKokoroTextSpy).toHaveBeenCalled();
+    expect(speakDeviceTextSpy).not.toHaveBeenCalled();
+  });
+
+  it('clamps web local_neural device execution to the daemon TTS controller', async () => {
+    platformOsMock.value = 'web';
+    speakDeviceTextSpy.mockClear();
+    speakKokoroTextSpy.mockClear();
+    daemonTtsControllerSpeakSpy.mockClear();
+
+    const onSpeaking = vi.fn();
+    const registerPlaybackStopper = (_s: () => void) => () => {};
+
+    await speakAssistantText({
+      text: 'hello from web clamp',
+      settings: {
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              tts: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+                localNeural: {
+                  model: 'kokoro',
+                  assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+                  voiceId: 'af_heart',
+                  speed: 1,
+                  execution: 'device',
+                },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+              },
+            },
+          },
+        },
+      },
+      networkTimeoutMs: 15000,
+      registerPlaybackStopper,
+      onSpeaking,
+    });
+
+    expect(speakKokoroTextSpy).not.toHaveBeenCalled();
+    expect(speakDeviceTextSpy).not.toHaveBeenCalled();
+    expect(daemonTtsControllerSpeakSpy).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'hello from web clamp',
+      packId: 'kokoro-tts-en-v1',
+      voiceId: 'af_heart',
+    }));
+  });
+
+  it('falls back to device TTS when the web-clamped daemon local_neural path fails', async () => {
+    platformOsMock.value = 'web';
+    daemonTtsControllerSpeakSpy.mockRejectedValueOnce(new Error('daemon unavailable'));
+    speakDeviceTextSpy.mockClear();
+    speakKokoroTextSpy.mockClear();
+
+    const onSpeaking = vi.fn();
+    const registerPlaybackStopper = (_s: () => void) => () => {};
+
+    await speakAssistantText({
+      sessionId: 'session-1',
+      text: 'hello from web fallback',
+      settings: {
+        voice: {
+          providerId: 'local_direct',
+          adapters: {
+            local_direct: {
+              tts: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+                localNeural: {
+                  model: 'kokoro',
+                  assetId: 'kokoro-tts-en-v1',
+                  voiceId: 'af_heart',
+                  speed: 1,
+                  execution: 'device',
+                },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+              },
+            },
+          },
+        },
+      },
+      networkTimeoutMs: 15000,
+      registerPlaybackStopper,
+      onSpeaking,
+    });
+
+    expect(daemonTtsControllerSpeakSpy).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1',
+      text: 'hello from web fallback',
+      packId: 'kokoro-tts-en-v1',
+      voiceId: 'af_heart',
+    }));
+    expect(speakKokoroTextSpy).not.toHaveBeenCalled();
+    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello from web fallback', onSpeaking);
   });
 
   it('routes Google Cloud provider to speakGoogleCloudText', async () => {

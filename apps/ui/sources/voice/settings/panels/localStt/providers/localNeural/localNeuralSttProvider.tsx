@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
+import { t } from '@/text';
 import { LocalNeuralSttSettings } from './LocalNeuralSttSettings';
 
 import type { LocalSttProviderSpec } from '../_types';
@@ -18,9 +19,9 @@ const LocalNeuralProviderSettings: LocalSttProviderSpec['Settings'] = (props) =>
 
 export const localNeuralSttProviderSpec: LocalSttProviderSpec = {
   id: 'local_neural',
-  title: 'Local neural (beta)',
-  subtitle: 'Streaming STT via Sherpa-ONNX on native (requires a model download).',
+  title: t('settingsVoice.local.localNeuralStt.provider.title'),
+  subtitle: t('settingsVoice.local.localNeuralStt.provider.subtitle'),
   iconName: 'sparkles-outline',
-  detail: 'Sherpa',
+  detail: t('settingsVoice.local.localNeuralStt.provider.detail'),
   Settings: LocalNeuralProviderSettings,
 };

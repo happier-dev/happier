@@ -8,8 +8,8 @@ describe('modelPacks manifests', () => {
   it('uses static process.env access so Expo can inline EXPO_PUBLIC_* vars', () => {
     const source = fs.readFileSync(new URL('./manifests.ts', import.meta.url), 'utf8');
     expect(source).toContain('process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS');
-    expect(source).toContain('process.env.EXPO_PUBLIC_KOKORO_NATIVE_MANIFESTS');
-    expect(source).toContain('process.env.EXPO_PUBLIC_KOKORO_NATIVE_MANIFEST_URL');
+    expect(source).not.toContain('process.env.EXPO_PUBLIC_KOKORO_NATIVE_MANIFESTS');
+    expect(source).not.toContain('process.env.EXPO_PUBLIC_KOKORO_NATIVE_MANIFEST_URL');
   });
 
   it('falls back to the default Happier assets release when no manifest is configured', () => {
@@ -31,7 +31,7 @@ describe('modelPacks manifests', () => {
     ).toBe('https://example.com/manifest.json');
   });
 
-  it('falls back to legacy Kokoro native env keys when present', () => {
+  it('ignores retired legacy Kokoro native env keys when present', () => {
     expect(
       resolveModelPackManifestUrl({
         packId: 'kokoro-test',
@@ -41,6 +41,8 @@ describe('modelPacks manifests', () => {
           }),
         },
       }),
-    ).toBe('https://example.com/kokoro.json');
+    ).toBe(
+      'https://github.com/happier-dev/happier-assets/releases/download/model-packs/kokoro-test__manifest.json',
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { parseModelPackManifest, type ModelPackManifest } from '@/voice/modelPacks/manifest';
+import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
 
 import { downloadManifestFiles } from './installer/download.native';
 import { getFetch, getFs } from './installer/fs.native';
@@ -234,4 +234,3 @@ export async function removeModelPack(opts: { packId: string | null }, overrides
     // ignore
   }
 }
-

@@ -202,7 +202,7 @@ const settingsAppearanceTranslationExtension = {
   mobileWorkspaceExperienceDescription: 'Escolha como sessões e projetos abrem no celular',
   mobileWorkspaceExperienceOptions: {
     classic: 'Clássico',
-    cockpit: 'Cockpit',
+    cockpit: 'Cabine',
   },
 } as const;
 
@@ -970,6 +970,8 @@ export const pt: TranslationStructure = {
     cancel: "Cancelar",
     skip: "Pular",
     close: "Fechar",
+    maximize: "Maximizar",
+    restore: "Restaurar",
     open: "Abrir",
     name: "Nome",
     blocked: "Bloqueado",
@@ -998,6 +1000,9 @@ export const pt: TranslationStructure = {
     rename: "Renomear",
     remove: "Remover",
     update: "Atualizar",
+    install: "Instalar",
+    enable: "Ativar",
+    disable: "Desativar",
     commit: "Fazer commit",
     history: "Histórico",
       applied: "Aplicado",
@@ -1021,7 +1026,7 @@ export const pt: TranslationStructure = {
     copied: "Copiado",
     copy: "Copiar",
     copyWithLabel: ({ label }: { label: string }) => `Copiar ${label}`,
-        share: "Share",
+        share: "Compartilhar",
     paste: "Colar",
     expand: "Expandir",
     collapse: "Recolher",
@@ -1675,10 +1680,20 @@ export const pt: TranslationStructure = {
 
   settingsPlugins: {
     title: "Catálogo de plugins",
-    subtitle: "Navegue por descritores de plugins curados sem executá-los na interface.",
+    subtitle: "Navegue por descritores de plugins curados e gerencie os plugins instalados neste dispositivo.",
     catalogUrlLabel: "URL do catálogo",
     loadCatalog: "Carregar catálogo",
     emptySubtitle: "Este catálogo não retornou descritores.",
+    detailTitle: "Detalhes do plugin",
+    provenanceTitle: "Origem e confiança",
+    diagnosticsTitle: "Diagnósticos do plugin",
+    registryDiagnosticsTitle: "Diagnósticos do registro",
+    contributionsTitle: "Contribuições projetadas",
+    generationLabel: "Geração",
+    reloadAction: "Recarregar",
+    reloadSubtitle: "Recarregue este plugin e atualize seus descritores projetados.",
+    unsupportedDescriptorField: "Este campo de descritor não é compatível com esta versão do Happier.",
+    noDescriptors: "Nenhum descritor renderizado pelo host foi projetado para esta seção.",
   },
 
   settings: {
@@ -3700,6 +3715,9 @@ export const pt: TranslationStructure = {
       expVoiceAgent: "Agente de voz",
       expVoiceAgentSubtitle:
         "Ativar superfícies de agente de voz com daemon (requer execuções)",
+      expVoiceDaemonInference: "Inferência de voz do daemon",
+      expVoiceDaemonInferenceSubtitle:
+        "Ativar superfícies locais de TTS/STT neural no daemon (requer Agente de voz)",
       expConnectedServices: "Serviços conectados",
       expConnectedServicesSubtitle:
         "Ativar configurações de serviços conectados e vinculações de sessão",
@@ -4529,6 +4547,8 @@ export const pt: TranslationStructure = {
       clearActivity: "Limpar atividade de voz",
       bargeIn: "Interromper",
       cancelTurn: "Cancelar resposta",
+      mute: "Silenciar microfone",
+      unmute: "Ativar microfone",
     },
   },
 
@@ -4581,6 +4601,22 @@ export const pt: TranslationStructure = {
     transcriptEmpty: "Ainda não há transcrição QA.",
     activityTitle: "Atividade de voz",
     activityEmpty: "Ainda não há atividade de voz capturada para a sessão de QA ativa.",
+    recordedAudio: {
+      title: "QA de STT com áudio gravado",
+      uriLabel: "URI do áudio gravado",
+      uriPlaceholder: "file:///recording.wav ou escolha um arquivo web",
+      daemonPackIdLabel: "Substituição do ID do pacote STT do daemon",
+      daemonPackIdPlaceholder: "Opcional: aplique as configurações QA de STT daemon local_neural antes de transcrever",
+      daemonMachineIdLabel: "Substituição do ID da máquina do daemon",
+      daemonMachineIdPlaceholder: "Opcional: prepare um destino de máquina para o ID da sessão de áudio gravado",
+      daemonBasePathLabel: "Substituição do caminho base do daemon",
+      daemonBasePathPlaceholder: "Opcional: prepare o caminho base da máquina para o STT do daemon",
+      chooseFile: "Escolher áudio gravado",
+      noFileSelected: "Nenhum áudio gravado selecionado",
+      transcribe: "Transcrever áudio gravado",
+      statusLabel: "Estado",
+      noResult: "Sem resultado de transcrição",
+    },
   },
 
   server: {
@@ -4878,6 +4914,9 @@ export const pt: TranslationStructure = {
     viewSessionLogSubtitle: "Abrir a cauda do log ao vivo para esta sessão",
     pinSession: "Fixar sessão",
     unpinSession: "Desafixar sessão",
+    openInSplitRight: "Abrir em divisão à direita",
+    openInSplitDown: "Abrir em divisão abaixo",
+    revealInCurrentSplit: "Mostrar na divisão atual",
     copyResumeCommand: "Copiar comando de retomada",
     resumeCommand: ({ sessionId }: { sessionId: string }) =>
       `happier resume ${sessionId}`,
@@ -5009,14 +5048,14 @@ export const pt: TranslationStructure = {
       default: "Padrão",
       readOnly: "Somente leitura",
       acceptEdits: "Aceitar edições",
-      safeYolo: "YOLO seguro",
+      safeYolo: "Auto",
       yolo: "YOLO",
       plan: "Modo de planejamento",
       bypassPermissions: "Modo Yolo",
       badgeAccept: "Aceitar",
       badgePlan: "Plano",
       badgeReadOnly: "Somente leitura",
-      badgeSafeYolo: "YOLO seguro",
+      badgeSafeYolo: "Auto",
       badgeYolo: "YOLO",
       badgeAcceptAllEdits: "Aceitar todas as edições",
       badgeBypassAllPermissions: "Ignorar todas as permissões",
@@ -6667,6 +6706,27 @@ settingsSession: {
           autoSubtitle: "Não fornecer uma dica de idioma.",
         },
       },
+      localNeuralTts: {
+        provider: {
+          title: "Neural local (beta)",
+          subtitle: "TTS neural pelo daemon na web, com pacotes de modelo no dispositivo quando houver suporte.",
+          detail: "Neural local",
+        },
+      },
+      openaiCompatStt: {
+        provider: {
+          title: "Endpoint compatível com OpenAI",
+          subtitle: "Use seu próprio servidor de transcrição compatível com Whisper.",
+          detail: "Servidor",
+        },
+      },
+      openaiCompatTts: {
+        provider: {
+          title: "Endpoint compatível com OpenAI",
+          subtitle: "Use seu próprio servidor TTS local ou remoto compatível com OpenAI.",
+          detail: "Servidor",
+        },
+      },
       kokoro: {
         common: {
           default: "Padrão",
@@ -6687,13 +6747,13 @@ settingsSession: {
         assetPack: {
           title: "Pacote de modelo Kokoro",
           subtitleNative: "Selecione o pacote de recursos para o Kokoro.",
-          subtitleWeb: "Selecione a configuração de runtime para o Kokoro.",
+          subtitleWeb: "Selecione o pacote de modelo do daemon. Kokoro identifica a família do modelo, não um runtime do navegador.",
         },
         model: {
           title: "Modelo Kokoro",
           subtitleNative:
             "Baixe os arquivos necessários para habilitar a síntese no dispositivo.",
-          subtitleWeb: "Baixa sob demanda. Usa WebAssembly (beta).",
+          subtitleWeb: "Gerenciado pelo serviço de pacotes de modelo do daemon de voz.",
         },
         modelStatus: {
           downloading: "Baixando…",
@@ -6745,7 +6805,7 @@ settingsSession: {
           subtitleNative: "Selecione a voz do Kokoro.",
           searchPlaceholder: "Pesquisar vozes",
           titleWeb: "Voz do Kokoro",
-          subtitleWeb: "Escolha a voz no dispositivo usada nas respostas.",
+          subtitleWeb: "Escolha a voz do Kokoro enviada ao daemon para as respostas.",
           loadingVoicesTitle: "Carregando vozes…",
         },
         speed: {
@@ -6755,9 +6815,9 @@ settingsSession: {
         web: {
           warmingUp: "Preparando…",
           clearCache: {
-            confirmTitle: "Limpar cache do Kokoro?",
+            confirmTitle: "Remover arquivos de modelo do daemon?",
             confirmBody:
-              "Isso remove do dispositivo os arquivos baixados do modelo e das vozes do Kokoro.",
+              "Isso remove os arquivos baixados do modelo e das vozes do daemon para este pacote.",
             confirmButton: "Limpar",
           },
           cacheDetail: {
@@ -6765,12 +6825,18 @@ settingsSession: {
             voices: "Vozes",
           },
           cache: {
-            title: "Cache do Kokoro",
-            subtitle: "Gerencie os arquivos do Kokoro baixados neste dispositivo.",
+            title: "Arquivos de modelo do daemon",
+            subtitle: "Gerencie os arquivos de modelo do daemon baixados para este pacote.",
           },
         },
       },
       localNeuralStt: {
+        provider: {
+          title: "Neural local (beta)",
+          subtitle:
+            "STT via daemon na web; os pacotes nativos de streaming Sherpa continuam disponíveis quando houver suporte.",
+          detail: "Motor Sherpa",
+        },
         modelPack: {
           title: "Pacote de modelo",
           subtitle: "Id do pacote de modelo STT em streaming.",
@@ -7084,6 +7150,7 @@ settingsSession: {
       sttModelDescription:
         "Nome do modelo a enviar para o servidor STT (campo compatível com OpenAI).",
       deviceStt: "STT do dispositivo (experimental)",
+      deviceSttDetail: "Dispositivo",
       deviceSttSubtitle:
         "Usar reconhecimento de fala no dispositivo em vez de um endpoint compatível com OpenAI",
       sttProvider: "Provedor STT",
@@ -7124,11 +7191,64 @@ settingsSession: {
       testTtsFailed:
         "TTS test failed. Check your base URL, API key, model, and voice.",
       deviceTts: "TTS do dispositivo (experimental)",
+      deviceTtsDetail: "Dispositivo",
       deviceTtsSubtitle:
         "Usar síntese de fala no dispositivo em vez de um endpoint compatível com OpenAI",
       ttsProvider: "Provedor de TTS",
       ttsProviderSubtitle:
-        "Escolha TTS do dispositivo, um endpoint compatível com OpenAI ou Kokoro (web/desktop)",
+        "Escolha TTS do dispositivo, um endpoint compatível com OpenAI ou TTS neural local com daemon",
+      daemonInference: {
+        execution: {
+          title: "Execução neural local",
+          subtitle: "Escolha se a voz neural local roda no dispositivo ou no seu daemon.",
+          options: { auto: "Automático", device: "Dispositivo", daemon: "Daemon de voz" },
+          optionSubtitles: {
+            auto: "Prefere o caminho de execução recomendado para esta plataforma.",
+            device: "Roda a voz neural local diretamente neste dispositivo quando houver suporte.",
+            daemon: "Roda a voz neural local pelo daemon da sua voice-home.",
+          },
+        },
+        service: {
+          title: "Serviço de inferência do daemon",
+          subtitle: "Status do serviço de inferência do daemon da voice-home.",
+        },
+        model: {
+          title: "Pacote de modelo do daemon",
+          subtitleTts: "Instale e atualize o pacote de modelo TTS do daemon.",
+          subtitleStt: "Instale e atualize o pacote de modelo STT do daemon.",
+        },
+        remove: {
+          title: "Remover arquivos de modelo do daemon",
+          subtitle: "Exclua os arquivos de modelo no daemon para este pacote.",
+          detailInstalled: "Remover arquivos do daemon instalados",
+        },
+        states: {
+          machineUnreachable: "Daemon da voice-home indisponível.",
+          unavailable: "Inferência do daemon indisponível.",
+          runtimeUnavailable: "Runtime do daemon indisponível.",
+          warming: "Aquecendo modelo…",
+          ready: "Pronto",
+          degraded: "Degradado",
+          idle: "Ocioso",
+          installing: "Instalando…",
+          installed: "Instalado",
+          installError: "Falha na instalação",
+          notInstalled: "Não instalado",
+          latencyDemoted: "Latência degradada; usando fala do dispositivo nesta conversa.",
+          fallbackToDevice: "Voltando para fala do dispositivo.",
+        },
+      },
+      machineErrors: {
+        mic_permission_denied: "Permissão do microfone negada.",
+        mic_ended: "A entrada do microfone foi encerrada.",
+        mic_plateau: "O áudio do microfone parou de variar.",
+        transport_disconnect: "A conexão de voz foi desconectada.",
+        provider_error: "O provedor de voz falhou.",
+        audio_context_suspended: "A saída de áudio está suspensa.",
+        stt_timeout: "O tempo para iniciar a escuta expirou.",
+        tts_failed: "A síntese de voz falhou.",
+        turn_aborted: "A interação de voz foi cancelada.",
+      },
 
       autoSpeak: "Auto-reproduzir respostas",
       autoSpeakSubtitle:
@@ -7797,9 +7917,9 @@ settingsSession: {
       likelyAlive: "Provavelmente ativo",
     },
     backgroundServiceModes: {
-      generic: "background service",
-      defaultFollowing: "default background service",
-      legacyPinned: "legacy pinned background service",
+      generic: "serviço em segundo plano",
+      defaultFollowing: "serviço em segundo plano padrão",
+      legacyPinned: "serviço em segundo plano legado fixo",
     },
     backgroundServicePrompt: {
         targetServer: 'Servidor de destino',
@@ -7807,8 +7927,8 @@ settingsSession: {
         existingServices: 'Serviços existentes:',
         running: 'em execução',
     },
-    repairBackgroundServiceAction: "Repair background service",
-    repairBackgroundServiceProgressTitle: "Repairing background service",
+    repairBackgroundServiceAction: "Reparar serviço em segundo plano",
+    repairBackgroundServiceProgressTitle: "Reparando o serviço em segundo plano",
     stopDaemon: "Parar daemon",
     stopDaemonConfirmTitle: "Parar daemon?",
     stopDaemonConfirmBody:
@@ -8132,41 +8252,41 @@ settingsSession: {
     last7Days: "Últimos 7 dias",
     last30Days: "Últimos 30 dias",
     lastYear: "Último ano",
-    costMode: "Cost mode",
-    auto: "Auto",
-    reported: "Reported",
-    estimated: "Estimated",
+    costMode: "Modo de custo",
+    auto: "Automático",
+    reported: "Informado",
+    estimated: "Estimado",
     totalTokens: "Tokens totais",
     totalCost: "Custo total",
     tokens: "Tokens (IA)",
     cost: "Custo",
     usageOverTime: "Uso ao longo do tempo",
     byModel: "Por modelo",
-    insights: "Insights",
-    activity: "Activity",
-            timeline: "Timeline",
-        leaders: "Leaders",
-    activeDays: "Active days",
-    modelsTried: "Models tried",
-    favoriteModelChanges: "Favorite model changes",
-    busiestWindow: "Busiest window",
-    activityCalendarSubtitle: "Calendar heatmap",
-    mostActiveMonths: "Most active months of the selected period",
-    mostActiveWeekdays: "Most active days of the week",
-    mostActiveHours: "Most active hours of the day",
-    events: "events",
-    source: "Source",
-            sessionUsage: "Session usage",
+    insights: "Análises",
+    activity: "Atividade",
+            timeline: "Linha do tempo",
+        leaders: "Líderes",
+    activeDays: "Dias ativos",
+    modelsTried: "Modelos testados",
+    favoriteModelChanges: "Mudanças do modelo favorito",
+    busiestWindow: "Período mais movimentado",
+    activityCalendarSubtitle: "Mapa de calor do calendário",
+    mostActiveMonths: "Meses mais ativos do período selecionado",
+    mostActiveWeekdays: "Dias da semana mais ativos",
+    mostActiveHours: "Horas do dia mais ativas",
+    events: "eventos",
+    source: "Origem",
+            sessionUsage: "Uso da sessão",
         noData: "Nenhum dado de uso disponível",
     summary: {
-      title: "Usage summary",
-      currentStreak: "Current streak",
+      title: "Resumo de uso",
+      currentStreak: "Sequência atual",
       currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
       currentStreakSubtitleForPeriod: ({ count, period }: { count: number; period: string }) => `${count} active days · ${period}`,
-      thisWeek: "This week",
-      thisWeekSubtitle: "Recent momentum",
-      topModel: "Go-to model",
-      engine: "Engine",
+      thisWeek: "Esta semana",
+      thisWeekSubtitle: "Impulso recente",
+      topModel: "Modelo preferido",
+      engine: "Motor",
       export: {
         session: "Sessão",
         period: "Período",

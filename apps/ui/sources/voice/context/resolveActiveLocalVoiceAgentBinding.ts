@@ -1,13 +1,8 @@
-import {
-  announceLocalVoiceAgentAssistantText,
-  appendLocalVoiceAgentContextUpdate,
-  isLocalVoiceAgentActive,
-  sendLocalVoiceAgentTextUpdate,
-} from '@/voice/local/localVoiceEngine';
+import { localVoiceRuntimeController } from '@/voice/local/localVoiceRuntimeController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { resolveVoiceOperationalSessionId } from '@/voice/sessionBinding/resolveVoiceOperationalSessionId';
-import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
-import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
+import { resolveVoiceOperationalSessionId } from '@/voice/binding/resolveVoiceOperationalSessionId';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 
 export type ActiveLocalVoiceAgentBinding = Readonly<{
   binding: VoiceSessionBinding | null;
@@ -19,34 +14,27 @@ export type ActiveLocalVoiceAgentBinding = Readonly<{
 }>;
 
 export function resolveActiveLocalVoiceAgentBinding(): ActiveLocalVoiceAgentBinding | null {
-  const binding = resolveVoiceSessionBindingByControlSessionId({
+  const binding = voiceConversationBindingResolver.resolveByControlSessionId({
     controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
     adapterId: 'local_conversation',
   });
+  if (!binding) {
+    return null;
+  }
+
   const boundSessionId = resolveVoiceOperationalSessionId(binding, VOICE_AGENT_GLOBAL_SESSION_ID);
 
-  if (boundSessionId && isLocalVoiceAgentActive(boundSessionId)) {
+  if (boundSessionId && localVoiceRuntimeController.isAgentActive(boundSessionId)) {
     const announcementSessionId = binding?.conversationSessionId?.trim() || boundSessionId;
     return {
       binding,
       operationalSessionId: boundSessionId,
       announcementSessionId,
-      sendContextualUpdate: (update) => appendLocalVoiceAgentContextUpdate(boundSessionId, update),
-      sendTextUpdate: (update) => sendLocalVoiceAgentTextUpdate(boundSessionId, update),
-      announceAssistantText: (text) => announceLocalVoiceAgentAssistantText(announcementSessionId, text),
+      sendContextualUpdate: (update) => localVoiceRuntimeController.appendAgentContextUpdate(boundSessionId, update),
+      sendTextUpdate: (update) => localVoiceRuntimeController.sendAgentTextUpdate(boundSessionId, update),
+      announceAssistantText: (text) => localVoiceRuntimeController.announceAgentAssistantText(announcementSessionId, text),
     };
   }
 
-  if (!isLocalVoiceAgentActive(VOICE_AGENT_GLOBAL_SESSION_ID)) {
-    return null;
-  }
-
-  return {
-    binding: null,
-    operationalSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-    announcementSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-    sendContextualUpdate: (update) => appendLocalVoiceAgentContextUpdate(VOICE_AGENT_GLOBAL_SESSION_ID, update),
-    sendTextUpdate: (update) => sendLocalVoiceAgentTextUpdate(VOICE_AGENT_GLOBAL_SESSION_ID, update),
-    announceAssistantText: (text) => announceLocalVoiceAgentAssistantText(VOICE_AGENT_GLOBAL_SESSION_ID, text),
-  };
+  return null;
 }

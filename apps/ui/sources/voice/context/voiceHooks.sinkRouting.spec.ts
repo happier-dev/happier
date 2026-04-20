@@ -5,7 +5,8 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { VoiceSession } from '@/realtime/types';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
+import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 
 const { realtimeState, appendLocalVoiceAgentContextUpdate, sendLocalVoiceAgentTextUpdate, announceLocalVoiceAgentAssistantText, isLocalVoiceAgentActive, resolveVoiceBindingByControlSessionId } = vi.hoisted(() => ({
   realtimeState: {
@@ -19,30 +20,31 @@ const { realtimeState, appendLocalVoiceAgentContextUpdate, sendLocalVoiceAgentTe
   resolveVoiceBindingByControlSessionId: vi.fn<(controlSessionId: string) => VoiceSessionBinding | null>(() => null),
 }));
 
-vi.mock('@/realtime/RealtimeSession', () => ({
-  getVoiceSession: () => realtimeState.session,
-  isVoiceSessionStarted: () => realtimeState.started,
+vi.mock('@/voice/runtime/realtime/RealtimeTransport', () => ({
+  realtimeTransport: {
+    getVoiceSession: () => realtimeState.session,
+    isVoiceSessionStarted: () => realtimeState.started,
+  },
 }));
 
-vi.mock('@/voice/local/localVoiceEngine', () => ({
-  isLocalVoiceAgentActive: (sessionId: string) => isLocalVoiceAgentActive(sessionId),
-  appendLocalVoiceAgentContextUpdate: (sessionId: string, update: string) =>
-    appendLocalVoiceAgentContextUpdate(sessionId, update),
-  sendLocalVoiceAgentTextUpdate: (sessionId: string, update: string) =>
-    sendLocalVoiceAgentTextUpdate(sessionId, update),
-  announceLocalVoiceAgentAssistantText: (sessionId: string, text: string) =>
-    announceLocalVoiceAgentAssistantText(sessionId, text),
+vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
+  localVoiceRuntimeController: {
+    isAgentActive: (sessionId: string) => isLocalVoiceAgentActive(sessionId),
+    appendAgentContextUpdate: (sessionId: string, update: string) =>
+      appendLocalVoiceAgentContextUpdate(sessionId, update),
+    sendAgentTextUpdate: (sessionId: string, update: string) =>
+      sendLocalVoiceAgentTextUpdate(sessionId, update),
+    announceAgentAssistantText: (sessionId: string, text: string) =>
+      announceLocalVoiceAgentAssistantText(sessionId, text),
+  },
 }));
 
-vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/voice/sessionBinding/resolveVoiceSessionBinding')>();
-
-  return {
-    ...actual,
-    resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
+vi.mock('@/voice/binding/VoiceConversationBindingResolver', () => ({
+  voiceConversationBindingResolver: {
+    resolveByControlSessionId: (params: { controlSessionId: string }) =>
       resolveVoiceBindingByControlSessionId(params.controlSessionId),
-  };
-});
+  },
+}));
 
 import { voiceHooks } from './voiceHooks';
 
@@ -60,6 +62,13 @@ describe('voiceHooks sink routing', () => {
     voiceHooks.onVoiceStopped();
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
     useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+    setVoiceSessionSnapshot({
+      adapterId: null,
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+    });
 
     storage.setState((state: any) => ({
       ...state,
@@ -98,24 +107,17 @@ describe('voiceHooks sink routing', () => {
     }));
   });
 
-  it('routes ready updates to the local agent as contextual background when deterministic local announcements are available', () => {
+  it('does not route ready updates when local agent mode is selected without a canonical binding', () => {
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
+
     voiceHooks.onReady('s1');
 
-    expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      VOICE_AGENT_GLOBAL_SESSION_ID,
-      expect.stringContaining('# Session: Session summary'),
-    );
-    expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      VOICE_AGENT_GLOBAL_SESSION_ID,
-      expect.stringContaining('Coding assistant finished working in “Session summary”'),
-    );
-    expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalledWith(
-      VOICE_AGENT_GLOBAL_SESSION_ID,
-      expect.stringContaining('Coding assistant finished working in “Session summary”'),
-    );
+    expect(appendLocalVoiceAgentContextUpdate).not.toHaveBeenCalled();
+    expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalled();
   });
 
-  it('prefers active remote voice session over local agent routing', () => {
+  it('does not fall back to a stale remote voice session while local agent mode is selected without a canonical binding', () => {
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
     const sendContextualUpdate = vi.fn();
     const sendTextMessage = vi.fn();
     realtimeState.started = true;
@@ -123,16 +125,34 @@ describe('voiceHooks sink routing', () => {
 
     voiceHooks.onReady('s1');
 
-    expect(sendContextualUpdate).toHaveBeenCalledWith(expect.stringContaining('# Session: Session summary'));
-    expect(sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('Coding assistant finished working in “Session summary”'));
     expect(appendLocalVoiceAgentContextUpdate).not.toHaveBeenCalled();
+    expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalled();
+    expect(sendContextualUpdate).not.toHaveBeenCalled();
+    expect(sendTextMessage).not.toHaveBeenCalled();
   });
 
   it('includes fresh agent-text content in the remote ready-event announcement when available', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'realtime_elevenlabs',
+        },
+      },
+    }));
     const sendContextualUpdate = vi.fn();
     const sendTextMessage = vi.fn();
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: 'realtime-s1',
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
 
     voiceHooks.onReady('s1', [{
       kind: 'agent-text',
@@ -146,10 +166,27 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('falls back to stored recent agent-text content when the ready event arrives without a fresh batch', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'realtime_elevenlabs',
+        },
+      },
+    }));
     const sendContextualUpdate = vi.fn();
     const sendTextMessage = vi.fn();
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: 'realtime-s1',
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
 
     storage.setState((state: any) => ({
       ...state,
@@ -176,12 +213,136 @@ describe('voiceHooks sink routing', () => {
     );
   });
 
+  it('does not route to realtime from selected settings alone while the canonical voice snapshot is disconnected', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'realtime_elevenlabs',
+        },
+      },
+    }));
+    const sendContextualUpdate = vi.fn();
+    const sendTextMessage = vi.fn();
+    realtimeState.started = true;
+    realtimeState.session = { sendContextualUpdate, sendTextMessage };
+
+    voiceHooks.onReady('s1', [{
+      kind: 'agent-text',
+      text: 'Should not route through a disconnected realtime owner.',
+      createdAt: 2,
+    } as any]);
+
+    expect(sendContextualUpdate).not.toHaveBeenCalled();
+    expect(sendTextMessage).not.toHaveBeenCalled();
+  });
+
   it('does not route to agent when agent is inactive', () => {
     isLocalVoiceAgentActive.mockReturnValue(false);
 
     voiceHooks.onReady('s1');
 
     expect(appendLocalVoiceAgentContextUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to a stale remote voice session when local agent mode is selected but inactive', () => {
+    isLocalVoiceAgentActive.mockReturnValue(false);
+    const sendContextualUpdate = vi.fn();
+    const sendTextMessage = vi.fn();
+    realtimeState.started = true;
+    realtimeState.session = { sendContextualUpdate, sendTextMessage };
+
+    voiceHooks.onReady('s1');
+
+    expect(appendLocalVoiceAgentContextUpdate).not.toHaveBeenCalled();
+    expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalled();
+    expect(sendContextualUpdate).not.toHaveBeenCalled();
+    expect(sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it('prefers the active realtime owner over newly selected local-agent settings during ready-event routing', () => {
+    resolveVoiceBindingByControlSessionId.mockReturnValue({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'voice-conversation-1',
+      transcriptMode: 'native_session',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    });
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: 'realtime-s1',
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
+
+    const sendContextualUpdate = vi.fn();
+    const sendTextMessage = vi.fn();
+    realtimeState.started = true;
+    realtimeState.session = { sendContextualUpdate, sendTextMessage };
+
+    voiceHooks.onReady('s1', [{
+      kind: 'agent-text',
+      text: 'The coding assistant finished the review.',
+      createdAt: 1,
+    } as any]);
+
+    expect(sendTextMessage).toHaveBeenCalledWith(
+      expect.stringContaining('The coding assistant finished the review.'),
+    );
+    expect(appendLocalVoiceAgentContextUpdate).not.toHaveBeenCalled();
+    expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalled();
+  });
+
+  it('prefers the active local-agent owner over newly selected realtime settings during ready-event routing', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'realtime_elevenlabs',
+        },
+      },
+    }));
+    resolveVoiceBindingByControlSessionId.mockReturnValue({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'voice-conversation-1',
+      transcriptMode: 'native_session',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    });
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'listening',
+      canStop: true,
+    });
+
+    const sendContextualUpdate = vi.fn();
+    const sendTextMessage = vi.fn();
+    realtimeState.started = true;
+    realtimeState.session = { sendContextualUpdate, sendTextMessage };
+
+    voiceHooks.onReady('s1', [{
+      kind: 'agent-text',
+      text: 'The coding assistant finished the review.',
+      createdAt: 1,
+    } as any]);
+
+    expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
+      'voice-conversation-1',
+      expect.stringContaining('The coding assistant finished the review.'),
+    );
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(sendContextualUpdate).not.toHaveBeenCalled();
   });
 
   it('routes local ready updates to the bound hidden conversation session as contextual background', () => {
@@ -232,10 +393,27 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('interrupts the active target with assistant message content instead of only a contextual update', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'realtime_elevenlabs',
+        },
+      },
+    }));
     const sendContextualUpdate = vi.fn();
     const sendTextMessage = vi.fn();
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: 'realtime-s1',
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
 
     voiceHooks.onMessages('s1', [{
       kind: 'agent-text',
@@ -444,10 +622,27 @@ describe('voiceHooks sink routing', () => {
   });
 
   it('keeps non-target session assistant updates as contextual background updates', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'realtime_elevenlabs',
+        },
+      },
+    }));
     const sendContextualUpdate = vi.fn();
     const sendTextMessage = vi.fn();
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: 'realtime-s1',
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
     useVoiceTargetStore.getState().setPrimaryActionSessionId('other-session');
 
     voiceHooks.onMessages('s1', [{

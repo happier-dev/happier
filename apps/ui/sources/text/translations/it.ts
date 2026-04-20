@@ -152,7 +152,7 @@ const settingsAppearanceTranslationExtension = {
   mobileWorkspaceExperienceDescription: 'Scegli come si aprono sessioni e progetti sul telefono',
   mobileWorkspaceExperienceOptions: {
     classic: 'Classico',
-    cockpit: 'Cockpit',
+    cockpit: 'Cabina',
   },
 } as const;
 
@@ -921,6 +921,8 @@ export const it: TranslationStructure = {
     cancel: "Annulla",
     skip: "Salta",
     close: "Chiudi",
+    maximize: "Massimizza",
+    restore: "Ripristina",
       open: "Apri",
       name: "Nome",
       blocked: "Bloccato",
@@ -948,6 +950,9 @@ export const it: TranslationStructure = {
     rename: "Rinomina",
     remove: "Rimuovi",
     update: "Aggiorna",
+    install: "Installa",
+    enable: "Abilita",
+    disable: "Disabilita",
     commit: "Esegui commit",
     history: "Cronologia",
     applied: "Applicato",
@@ -971,7 +976,7 @@ export const it: TranslationStructure = {
     copied: "Copiato",
     copy: "Copia",
     copyWithLabel: ({ label }: { label: string }) => `Copia ${label}`,
-        share: "Share",
+        share: "Condividi",
     paste: "Incolla",
     expand: "Espandi",
     collapse: "Comprimi",
@@ -1886,10 +1891,20 @@ export const it: TranslationStructure = {
 
     settingsPlugins: {
     title: "Catalogo dei plugin",
-    subtitle: "Sfoglia i descrittori dei plugin curati senza eseguirli nell’interfaccia.",
+    subtitle: "Sfoglia i descrittori dei plugin curati e gestisci i plugin installati su questo dispositivo.",
     catalogUrlLabel: "URL del catalogo",
     loadCatalog: "Carica catalogo",
     emptySubtitle: "Questo catalogo non ha restituito descrittori.",
+    detailTitle: "Dettagli del plugin",
+    provenanceTitle: "Origine e attendibilità",
+    diagnosticsTitle: "Diagnostica del plugin",
+    registryDiagnosticsTitle: "Diagnostica del registro",
+    contributionsTitle: "Contributi proiettati",
+    generationLabel: "Generazione",
+    reloadAction: "Ricarica",
+    reloadSubtitle: "Ricarica questo plugin e aggiorna i descrittori proiettati.",
+    unsupportedDescriptorField: "Questo campo descrittore non è supportato da questa versione di Happier.",
+    noDescriptors: "Per questa sezione non sono stati proiettati descrittori renderizzati dall'host.",
   },
 
   settings: {
@@ -3921,6 +3936,9 @@ export const it: TranslationStructure = {
       expVoiceAgent: "Agente vocale",
       expVoiceAgentSubtitle:
         "Abilita superfici agente vocale supportate dal daemon (richiede esecuzioni)",
+      expVoiceDaemonInference: "Inferenza vocale del daemon",
+      expVoiceDaemonInferenceSubtitle:
+        "Abilita superfici TTS/STT neurali locali del daemon (richiede Agente vocale)",
       expConnectedServices: "Servizi connessi",
       expConnectedServicesSubtitle:
         "Abilita impostazioni servizi connessi e collegamenti di sessione",
@@ -4754,6 +4772,8 @@ export const it: TranslationStructure = {
       clearActivity: "Cancella attività vocale",
       bargeIn: "Interrompi",
       cancelTurn: "Annulla risposta",
+      mute: "Disattiva microfono",
+      unmute: "Riattiva microfono",
     },
   },
 
@@ -4806,6 +4826,22 @@ export const it: TranslationStructure = {
     transcriptEmpty: "Nessuna trascrizione QA.",
     activityTitle: "Attività vocale",
     activityEmpty: "Nessuna attività vocale acquisita per la sessione QA attiva.",
+    recordedAudio: {
+      title: "QA STT con audio registrato",
+      uriLabel: "URI dell'audio registrato",
+      uriPlaceholder: "file:///recording.wav oppure scegli un file web",
+      daemonPackIdLabel: "Override ID pacchetto STT del daemon",
+      daemonPackIdPlaceholder: "Opzionale: applica le impostazioni QA STT daemon local_neural prima della trascrizione",
+      daemonMachineIdLabel: "Override ID macchina del daemon",
+      daemonMachineIdPlaceholder: "Opzionale: prepara un target macchina per l'ID sessione dell'audio registrato",
+      daemonBasePathLabel: "Override percorso base del daemon",
+      daemonBasePathPlaceholder: "Opzionale: prepara il percorso base macchina per lo STT del daemon",
+      chooseFile: "Scegli audio registrato",
+      noFileSelected: "Nessun audio registrato selezionato",
+      transcribe: "Trascrivi audio registrato",
+      statusLabel: "Stato",
+      noResult: "Nessun risultato di trascrizione",
+    },
   },
 
   server: {
@@ -5091,6 +5127,9 @@ export const it: TranslationStructure = {
     viewSessionLogSubtitle: "Apri la coda del log in tempo reale per questa sessione",
     pinSession: "Fissa sessione",
     unpinSession: "Rimuovi fissaggio",
+    openInSplitRight: "Apri in riquadro a destra",
+    openInSplitDown: "Apri in riquadro in basso",
+    revealInCurrentSplit: "Mostra nel riquadro corrente",
     copyResumeCommand: "Copia comando di ripresa",
     resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
     viewMachine: "Visualizza macchina",
@@ -5220,14 +5259,14 @@ export const it: TranslationStructure = {
       default: "Predefinito",
       readOnly: "Sola lettura",
       acceptEdits: "Accetta modifiche",
-      safeYolo: "YOLO sicuro",
+      safeYolo: "Auto",
       yolo: "YOLO",
       plan: "Modalità piano",
       bypassPermissions: "Modalità YOLO",
       badgeAccept: "Accetta",
       badgePlan: "Piano",
       badgeReadOnly: "Sola lettura",
-      badgeSafeYolo: "YOLO sicuro",
+      badgeSafeYolo: "Auto",
       badgeYolo: "YOLO",
       badgeAcceptAllEdits: "Accetta tutte le modifiche",
       badgeBypassAllPermissions: "Bypassa tutti i permessi",
@@ -6876,6 +6915,27 @@ settingsSession: {
           autoSubtitle: "Non fornire un suggerimento sulla lingua.",
         },
       },
+      localNeuralTts: {
+        provider: {
+          title: "Neurale locale (beta)",
+          subtitle: "TTS neurale tramite daemon sul web, con pacchetti modello sul dispositivo dove supportato.",
+          detail: "Neurale locale",
+        },
+      },
+      openaiCompatStt: {
+        provider: {
+          title: "Endpoint compatibile con OpenAI",
+          subtitle: "Usa il tuo server di trascrizione compatibile con Whisper.",
+          detail: "Server",
+        },
+      },
+      openaiCompatTts: {
+        provider: {
+          title: "Endpoint compatibile con OpenAI",
+          subtitle: "Usa il tuo server TTS locale o remoto compatibile con OpenAI.",
+          detail: "Server",
+        },
+      },
       kokoro: {
         common: {
           default: "Predefinito",
@@ -6896,13 +6956,13 @@ settingsSession: {
         assetPack: {
           title: "Pacchetto modello Kokoro",
           subtitleNative: "Seleziona il pacchetto di risorse per Kokoro.",
-          subtitleWeb: "Seleziona la configurazione runtime per Kokoro.",
+          subtitleWeb: "Seleziona il pacchetto modello del daemon. Kokoro identifica la famiglia del modello, non un runtime del browser.",
         },
         model: {
           title: "Modello Kokoro",
           subtitleNative:
             "Scarica i file necessari per abilitare la sintesi sul dispositivo.",
-          subtitleWeb: "Scarica su richiesta. Usa WebAssembly (beta).",
+          subtitleWeb: "Gestito dal servizio model pack del daemon vocale.",
         },
         modelStatus: {
           downloading: "Download in corso…",
@@ -6956,7 +7016,7 @@ settingsSession: {
           subtitleNative: "Seleziona la voce Kokoro.",
           searchPlaceholder: "Cerca voci",
           titleWeb: "Voce Kokoro",
-          subtitleWeb: "Scegli la voce sul dispositivo usata per le risposte.",
+          subtitleWeb: "Scegli la voce Kokoro inviata al daemon per le risposte.",
           loadingVoicesTitle: "Caricamento voci…",
         },
         speed: {
@@ -6966,9 +7026,9 @@ settingsSession: {
         web: {
           warmingUp: "Riscaldamento…",
           clearCache: {
-            confirmTitle: "Svuotare la cache di Kokoro?",
+            confirmTitle: "Rimuovere i file modello del daemon?",
             confirmBody:
-              "Questo rimuove dal dispositivo i file modello e voce Kokoro scaricati.",
+              "Questo rimuove i file modello e voce del daemon scaricati per questo pacchetto.",
             confirmButton: "Svuota",
           },
           cacheDetail: {
@@ -6976,12 +7036,18 @@ settingsSession: {
             voices: "Voci",
           },
           cache: {
-            title: "Cache Kokoro",
-            subtitle: "Gestisci i file Kokoro scaricati su questo dispositivo.",
+            title: "File modello del daemon",
+            subtitle: "Gestisci i file modello del daemon scaricati per questo pacchetto.",
           },
         },
       },
       localNeuralStt: {
+        provider: {
+          title: "Neurale locale (beta)",
+          subtitle:
+            "STT tramite daemon sul web; i pacchetti di streaming Sherpa nativi restano disponibili quando supportati.",
+          detail: "Motore Sherpa",
+        },
         modelPack: {
           title: "Pacchetto modello",
           subtitle: "ID del pacchetto modello STT in streaming.",
@@ -7295,6 +7361,7 @@ settingsSession: {
       sttModelDescription:
         "Nome modello da inviare al server STT (campo compatibile con OpenAI).",
       deviceStt: "STT del dispositivo (sperimentale)",
+      deviceSttDetail: "Dispositivo",
       deviceSttSubtitle:
         "Usa il riconoscimento vocale sul dispositivo invece di un endpoint compatibile con OpenAI",
       sttProvider: "Provider STT",
@@ -7335,11 +7402,64 @@ settingsSession: {
       testTtsFailed:
         "Test TTS non riuscito. Controlla URL base, chiave API, modello e voce.",
       deviceTts: "TTS del dispositivo (sperimentale)",
+      deviceTtsDetail: "Dispositivo",
       deviceTtsSubtitle:
         "Usa la sintesi vocale sul dispositivo invece di un endpoint compatibile con OpenAI",
       ttsProvider: "Provider TTS",
       ttsProviderSubtitle:
-        "Scegli TTS dispositivo, un endpoint compatibile con OpenAI o Kokoro (web/desktop)",
+        "Scegli TTS dispositivo, un endpoint compatibile con OpenAI o TTS neurale locale tramite daemon",
+      daemonInference: {
+        execution: {
+          title: "Esecuzione neurale locale",
+          subtitle: "Scegli se la voce neurale locale viene eseguita sul dispositivo o sul daemon.",
+          options: { auto: "Automatico", device: "Dispositivo", daemon: "Daemon vocale" },
+          optionSubtitles: {
+            auto: "Preferisce il percorso di esecuzione consigliato per questa piattaforma.",
+            device: "Esegue la voce neurale locale direttamente su questo dispositivo quando supportato.",
+            daemon: "Esegue la voce neurale locale tramite il daemon della voice home.",
+          },
+        },
+        service: {
+          title: "Servizio di inferenza del daemon",
+          subtitle: "Stato del servizio di inferenza del daemon della voice home.",
+        },
+        model: {
+          title: "Pacchetto modello del daemon",
+          subtitleTts: "Installa e aggiorna il pacchetto modello TTS del daemon.",
+          subtitleStt: "Installa e aggiorna il pacchetto modello STT del daemon.",
+        },
+        remove: {
+          title: "Rimuovi file modello del daemon",
+          subtitle: "Elimina i file modello lato daemon per questo pacchetto.",
+          detailInstalled: "Rimuovi file daemon installati",
+        },
+        states: {
+          machineUnreachable: "Daemon della voice home non disponibile.",
+          unavailable: "Inferenza del daemon non disponibile.",
+          runtimeUnavailable: "Runtime del daemon non disponibile.",
+          warming: "Riscaldamento modello…",
+          ready: "Pronto",
+          degraded: "Degradato",
+          idle: "Inattivo",
+          installing: "Installazione…",
+          installed: "Installato",
+          installError: "Installazione non riuscita",
+          notInstalled: "Non installato",
+          latencyDemoted: "Latenza degradata; uso della voce del dispositivo per questa conversazione.",
+          fallbackToDevice: "Ripiego alla voce del dispositivo.",
+        },
+      },
+      machineErrors: {
+        mic_permission_denied: "Autorizzazione al microfono negata.",
+        mic_ended: "L'ingresso del microfono si è interrotto.",
+        mic_plateau: "L'audio del microfono si è bloccato.",
+        transport_disconnect: "La connessione vocale si è interrotta.",
+        provider_error: "Il provider vocale ha restituito un errore.",
+        audio_context_suspended: "L'uscita audio è sospesa.",
+        stt_timeout: "Tempo scaduto per l'avvio dell'ascolto.",
+        tts_failed: "La sintesi vocale non è riuscita.",
+        turn_aborted: "Il turno vocale è stato annullato.",
+      },
 
       autoSpeak: "Auto-leggi le risposte",
       autoSpeakSubtitle:
@@ -8006,9 +8126,9 @@ settingsSession: {
       likelyAlive: "Probabilmente attivo",
     },
     backgroundServiceModes: {
-      generic: "background service",
-      defaultFollowing: "default background service",
-      legacyPinned: "legacy pinned background service",
+      generic: "servizio in background",
+      defaultFollowing: "servizio in background predefinito",
+      legacyPinned: "servizio in background legacy fissato",
     },
     backgroundServicePrompt: {
         targetServer: 'Server di destinazione',
@@ -8016,8 +8136,8 @@ settingsSession: {
         existingServices: 'Servizi esistenti:',
         running: 'in esecuzione',
     },
-    repairBackgroundServiceAction: "Repair background service",
-    repairBackgroundServiceProgressTitle: "Repairing background service",
+    repairBackgroundServiceAction: "Ripara il servizio in background",
+    repairBackgroundServiceProgressTitle: "Riparazione del servizio in background",
     stopDaemon: "Arresta daemon",
     stopDaemonConfirmTitle: "Arrestare il daemon?",
     stopDaemonConfirmBody:
@@ -8340,41 +8460,41 @@ settingsSession: {
     last7Days: "Ultimi 7 giorni",
     last30Days: "Ultimi 30 giorni",
     lastYear: "Ultimo anno",
-    costMode: "Cost mode",
-    auto: "Auto",
-    reported: "Reported",
-    estimated: "Estimated",
+    costMode: "Modalità costo",
+    auto: "Automatico",
+    reported: "Segnalato",
+    estimated: "Stimato",
     totalTokens: "Token totali",
     totalCost: "Costo totale",
     tokens: "Token",
     cost: "Costo",
     usageOverTime: "Utilizzo nel tempo",
     byModel: "Per modello",
-    insights: "Insights",
-    activity: "Activity",
-            timeline: "Timeline",
-        leaders: "Leaders",
-    activeDays: "Active days",
-    modelsTried: "Models tried",
-    favoriteModelChanges: "Favorite model changes",
-    busiestWindow: "Busiest window",
-    activityCalendarSubtitle: "Calendar heatmap",
-    mostActiveMonths: "Most active months of the selected period",
-    mostActiveWeekdays: "Most active days of the week",
-    mostActiveHours: "Most active hours of the day",
-    events: "events",
-    source: "Source",
-            sessionUsage: "Session usage",
+    insights: "Approfondimenti",
+    activity: "Attività",
+            timeline: "Cronologia",
+        leaders: "Classifica",
+    activeDays: "Giorni attivi",
+    modelsTried: "Modelli provati",
+    favoriteModelChanges: "Cambi del modello preferito",
+    busiestWindow: "Fascia più intensa",
+    activityCalendarSubtitle: "Mappa di calore del calendario",
+    mostActiveMonths: "Mesi più attivi del periodo selezionato",
+    mostActiveWeekdays: "Giorni della settimana più attivi",
+    mostActiveHours: "Ore del giorno più attive",
+    events: "eventi",
+    source: "Origine",
+            sessionUsage: "Utilizzo della sessione",
         noData: "Nessun dato di utilizzo disponibile",
     summary: {
-      title: "Usage summary",
-      currentStreak: "Current streak",
+      title: "Riepilogo utilizzo",
+      currentStreak: "Serie attuale",
       currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
       currentStreakSubtitleForPeriod: ({ count, period }: { count: number; period: string }) => `${count} active days · ${period}`,
-      thisWeek: "This week",
-      thisWeekSubtitle: "Recent momentum",
-      topModel: "Go-to model",
-      engine: "Engine",
+      thisWeek: "Questa settimana",
+      thisWeekSubtitle: "Slancio recente",
+      topModel: "Modello di riferimento",
+      engine: "Motore",
       export: {
         session: "Sessione",
         period: "Periodo",

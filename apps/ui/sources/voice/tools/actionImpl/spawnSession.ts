@@ -4,6 +4,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
+import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
@@ -69,10 +70,15 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   }
 
   const serverId = getActiveServerSnapshot().serverId;
+  const daemonMergedProjectionInputs = await loadDaemonMergedProjectionInputs({
+    machineId,
+    serverId,
+  });
   const resolvedBackendTarget = resolveVoiceToolSpawnBackendTarget({
     state,
     agentId: normalizeNonEmptyString(params.agentId),
     backendTargetKey: normalizeNonEmptyString(params.backendTargetKey),
+    daemonMergedProjectionInputs,
   });
   if (!resolvedBackendTarget.ok) {
     return { type: 'error', errorCode: resolvedBackendTarget.errorCode, errorMessage: resolvedBackendTarget.errorMessage };

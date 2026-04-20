@@ -28,3 +28,7 @@ export function getVoiceAdapterRegistry(): Registry {
     list: () => controllers,
   };
 }
+
+export function resetVoiceAdapterRegistryForTests(): void {
+  controllers = [];
+}

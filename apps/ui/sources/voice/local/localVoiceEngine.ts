@@ -1,64 +1,175 @@
-import { AudioModule, RecordingPresets } from 'expo-audio';
-
-import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { storage } from '@/sync/domains/state/storage';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@/sync/runtime/rpcErrors';
 import { createDeviceSttController } from '@/voice/input/DeviceSttController';
 import { createSherpaStreamingSttController } from '@/voice/input/SherpaStreamingSttController';
-import { MissingGeminiApiKeyError, MissingSttBaseUrlError, transcribeRecordedAudioWithProvider } from '@/voice/input/transcribeRecordedAudioWithProvider';
+import {
+  MissingGeminiApiKeyError,
+  MissingSttBaseUrlError,
+  recordedAudioTranscriptionController,
+} from '@/voice/runtime/input/recordedAudioTranscriptionController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { findVoiceConversationSessionId } from '@/voice/sessionBinding/voiceConversationSession';
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
-import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
-import { voiceActivityController } from '@/voice/activity/voiceActivityController';
+import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
+import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
+import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
+import { deriveLocalVoiceRuntimeProjection } from '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot';
+import {
+  confirmVoiceCaptureStarted,
+  surfaceRecoverableVoiceCaptureError,
+  transitionVoiceRuntimeToIdle,
+} from '@/voice/runtime/machine/voiceConversationRuntimeHelpers';
+import {
+  createLocalVoiceCaptureOwner,
+  type LocalVoiceCaptureProvider,
+} from '@/voice/runtime/input/LocalVoiceCaptureOwner';
+import type { TurnEndpointSignal } from '@/voice/runtime/input/TurnEndpointController';
+import { createExpoAudioRecordingMicSession } from '@/voice/runtime/mic/NativeMicSession';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
+import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
-import { appendVoiceConversationAssistantText } from '@/voice/sessionBinding/voiceConversationTranscript';
-import {
-  resolveVoiceSessionBindingByControlSessionId,
-  resolveVoiceSessionBindingByConversationSessionId,
-} from '@/voice/sessionBinding/resolveVoiceSessionBinding';
+import { appendVoiceConversationAssistantText } from '@/voice/transcript/voiceConversationTranscript';
+import { realtimeTransport } from '@/voice/runtime/realtime/RealtimeTransport';
+import { warmDaemonVoiceInferenceOnVoiceHomeAttach } from '@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach';
 
-import type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
-import {
-  getLocalVoiceState,
-  patchLocalVoiceState,
-} from './localVoiceState';
 import {
   isHandsFreeDeviceSttEnabled,
   isHandsFreeLocalNeuralSttEnabled,
   isVoiceBargeInEnabled,
+  isLocalVoiceProviderSelected,
+  resolveAdaptiveInterruptionConfig,
   resolveLocalSttProvider,
   resolveLocalVoiceAdapterSettings,
+  resolveLocalConversationControlSessionId,
 } from './localVoiceSettings';
 import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
 
-export type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
-export { getLocalVoiceState, useLocalVoiceStatus, subscribeLocalVoiceState } from './localVoiceState';
-
-let recorder: InstanceType<typeof AudioModule.AudioRecorder> | null = null;
 let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
 
+type EndpointDrivenCaptureProvider = Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>;
+
 const playbackController = createVoicePlaybackController();
-const deviceSttController = createDeviceSttController({
-  setState: patchLocalVoiceState,
+const localVoiceCaptureOwner = createLocalVoiceCaptureOwner({
+  onCaptureStarted: (controlSessionId) => confirmVoiceCaptureStarted(controlSessionId),
+  onCaptureError: (error) => surfaceRecoverableVoiceCaptureError(error),
   getSettings: () => storage.getState().settings as any,
-  canAutoStopTurn: () => !inFlight,
-  onAutoStopTurn: (sessionId: string) => {
-    if (inFlight) return;
-    inFlight = stopDeviceSpeechRecognitionAndSend(sessionId).finally(() => {
-      inFlight = null;
-    });
+  onEndpointSignal: (signal) => {
+    handleRuntimeOwnedEndpointSignal(signal);
   },
+}, {
+  createRecordingMicSession: createExpoAudioRecordingMicSession,
+  createDeviceSttController,
+  createSherpaSttController: createSherpaStreamingSttController,
 });
-const sherpaSttController = createSherpaStreamingSttController({
-  setState: patchLocalVoiceState,
-  getSettings: () => storage.getState().settings as any,
-});
+
+function getCurrentLocalRuntimeCompatState(): Readonly<{
+  sessionId: string | null;
+  status: ReturnType<typeof deriveLocalVoiceRuntimeProjection>['compatStatus'];
+}> {
+  const snapshot = voiceConversationRuntimeMachine.getSnapshot();
+  return {
+    sessionId: snapshot.controlSessionId,
+    status: deriveLocalVoiceRuntimeProjection(snapshot).compatStatus,
+  };
+}
+
+function resolveLocalVoiceCaptureProvider(settings: any): LocalVoiceCaptureProvider {
+  const sttProvider = resolveLocalSttProvider(settings);
+  if (sttProvider === 'device' || sttProvider === 'local_neural') {
+    return sttProvider;
+  }
+  return 'recorded_audio';
+}
+
+async function ensureLocalConversationBindingForSession(settings: any, sessionId: string): Promise<void> {
+  const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
+  if (adapterId !== 'local_conversation' || (config?.conversationMode ?? 'direct_session') !== 'agent') {
+    return;
+  }
+
+  const controlSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  const requestedTargetSessionId =
+    String(sessionId ?? '').trim() === VOICE_AGENT_GLOBAL_SESSION_ID ? null : String(sessionId ?? '').trim();
+  await voiceSessionBindingManager.ensureBound({
+    adapterId: 'local_conversation',
+    controlSessionId,
+    requestedTargetSessionId,
+  });
+}
+
+function isHandsFreeCaptureEnabled(settings: any, provider: LocalVoiceCaptureProvider, config: any): boolean {
+  return provider !== 'recorded_audio' && config?.handsFree?.enabled === true;
+}
+
+function isEndpointDrivenCaptureProvider(provider: LocalVoiceCaptureProvider): provider is EndpointDrivenCaptureProvider {
+  return provider === 'device' || provider === 'local_neural';
+}
+
+function isHandsFreeEndpointLoopEnabled(settings: any, provider: EndpointDrivenCaptureProvider): boolean {
+  return provider === 'device'
+    ? isHandsFreeDeviceSttEnabled(settings)
+    : isHandsFreeLocalNeuralSttEnabled(settings);
+}
+
+async function maybeRearmHandsFreeCapture(
+  followUp: Readonly<{
+    kind: 'none';
+  } | {
+    kind: 'rearm_capture';
+    provider: EndpointDrivenCaptureProvider;
+    sessionId: string;
+  }>,
+): Promise<boolean> {
+  if (followUp.kind !== 'rearm_capture') {
+    return false;
+  }
+
+  await voiceConversationRuntimeMachine.rearmListening({
+    controlSessionId: followUp.sessionId,
+    startListening: () => localVoiceCaptureOwner.startCapture({
+      handsFree: true,
+      provider: followUp.provider,
+      sessionId: followUp.sessionId,
+    }),
+  });
+  return true;
+}
+
+function beginEndpointDrivenStopAndSend(sessionId: string, provider: EndpointDrivenCaptureProvider): void {
+  if (inFlight) {
+    return;
+  }
+
+  const operation = stopSttAndSend(sessionId, provider).finally(() => {
+    if (inFlight === operation) {
+      inFlight = null;
+    }
+  });
+  inFlight = operation;
+}
+
+function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
+  const current = getCurrentLocalRuntimeCompatState();
+  const settings = storage.getState().settings as any;
+  const provider = resolveLocalVoiceCaptureProvider(settings);
+  const endpointAction = localVoiceCaptureOwner.resolveEndpointSignalAction({
+    currentSessionId: current.sessionId,
+    currentStatus: current.status,
+    handsFreeEnabled: isEndpointDrivenCaptureProvider(provider) && isHandsFreeEndpointLoopEnabled(settings, provider),
+    inFlight: inFlight !== null,
+    provider,
+    signal,
+  });
+  if (endpointAction.kind !== 'stop_capture') {
+    return;
+  }
+
+  beginEndpointDrivenStopAndSend(endpointAction.sessionId, endpointAction.provider);
+}
 
 function isUnsupportedVoiceAgentPrewarmError(error: unknown): boolean {
   const carrier: RpcErrorCarrier =
@@ -74,6 +185,62 @@ function isAbortedVoiceTurnError(error: unknown): boolean {
   return error instanceof Error && error.message === 'turn_aborted';
 }
 
+function isMicPermissionDeniedError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('permission_denied');
+}
+
+async function startLocalVoiceCapture(args: Readonly<{
+  sessionId: string;
+  provider: LocalVoiceCaptureProvider;
+  handsFree: boolean;
+  interrupted?: boolean;
+}>): Promise<void> {
+  let startError: unknown = null;
+  const startListening = async () => {
+    try {
+      await localVoiceCaptureOwner.startCapture({
+        sessionId: args.sessionId,
+        provider: args.provider,
+        handsFree: args.handsFree,
+      });
+    } catch (error) {
+      startError = error;
+      throw error;
+    }
+  };
+
+  if (args.interrupted) {
+    await voiceConversationRuntimeMachine.interruptAndRearmListening({
+      controlSessionId: args.sessionId,
+      startListening,
+    });
+  } else {
+    await voiceConversationRuntimeMachine.rearmListening({
+      controlSessionId: args.sessionId,
+      startListening,
+    });
+  }
+
+  if (args.provider !== 'recorded_audio' || !startError) {
+    return;
+  }
+
+  if (isMicPermissionDeniedError(startError)) {
+    transitionVoiceRuntimeToIdle({
+      controlSessionId: args.sessionId,
+      reason: 'mic_permission_denied',
+      kind: 'mic_permission_denied',
+    });
+    return;
+  }
+
+  transitionVoiceRuntimeToIdle({
+    controlSessionId: args.sessionId,
+    reason: 'recording_start_failed',
+  });
+  throw startError;
+}
+
 async function runVoiceTurnWithSendFailureHandling(
   sessionId: string,
   settings: any,
@@ -85,7 +252,10 @@ async function runVoiceTurnWithSendFailureHandling(
     if (isAbortedVoiceTurnError(error)) {
       return;
     }
-    patchLocalVoiceState({ status: 'idle', sessionId, error: 'send_failed' });
+    transitionVoiceRuntimeToIdle({
+      controlSessionId: sessionId,
+      reason: 'send_failed',
+    });
     const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
     const shouldSwallowSendFailure = adapterId === 'local_conversation' && config?.conversationMode === 'agent';
     if (!shouldSwallowSendFailure) {
@@ -95,73 +265,56 @@ async function runVoiceTurnWithSendFailureHandling(
   }
 }
 
-async function startRecording(sessionId: string): Promise<void> {
-  const permission = await requestMicrophonePermission();
-  if (!permission.granted) {
-    showMicrophonePermissionDeniedAlert(permission.canAskAgain);
-    return;
-  }
-
-  const nextRecorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
-  try {
-    await nextRecorder.prepareToRecordAsync();
-    nextRecorder.record();
-    recorder = nextRecorder;
-    patchLocalVoiceState({ status: 'recording', sessionId, error: null });
-  } catch (error) {
-    try {
-      await nextRecorder.stop?.();
-    } catch {
-      // best-effort
-    }
-    recorder = null;
-    patchLocalVoiceState({ status: 'idle', sessionId: null, error: 'recording_start_failed' });
-    throw error;
-  }
-}
-
 async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
-  if (!recorder) {
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
-    return;
-  }
-
-  patchLocalVoiceState({ status: 'transcribing', error: null });
+  voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
   let uri: string | null = null;
   try {
-    await recorder.stop();
-    uri = recorder.uri;
+    const stopped = await localVoiceCaptureOwner.stopCapture({
+      sessionId,
+      provider: 'recorded_audio',
+    });
+    uri = stopped.provider === 'recorded_audio' ? stopped.uri : null;
   } catch {
-    recorder = null;
-    patchLocalVoiceState({ status: 'idle', sessionId, error: 'recording_stop_failed' });
+    transitionVoiceRuntimeToIdle({
+      controlSessionId: sessionId,
+      reason: 'recording_stop_failed',
+    });
     return;
   }
-  recorder = null;
 
   if (!uri) {
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
     return;
   }
 
   const settings = storage.getState().settings as any;
   let text: string | null = null;
   try {
-    text = await transcribeRecordedAudioWithProvider({ uri, settings });
+    text = await recordedAudioTranscriptionController.transcribe({ sessionId, uri, settings });
   } catch (error) {
     if (error instanceof MissingSttBaseUrlError) {
-      patchLocalVoiceState({ status: 'idle', sessionId, error: 'missing_stt_base_url' });
+      transitionVoiceRuntimeToIdle({
+        controlSessionId: sessionId,
+        reason: 'missing_stt_base_url',
+      });
       throw error;
     }
     if (error instanceof MissingGeminiApiKeyError) {
-      patchLocalVoiceState({ status: 'idle', sessionId, error: 'missing_stt_api_key' });
+      transitionVoiceRuntimeToIdle({
+        controlSessionId: sessionId,
+        reason: 'missing_stt_api_key',
+      });
       throw error;
     }
-    patchLocalVoiceState({ status: 'idle', sessionId, error: 'stt_failed' });
+    transitionVoiceRuntimeToIdle({
+      controlSessionId: sessionId,
+      reason: 'stt_failed',
+    });
     return;
   }
 
   if (!text) {
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
     return;
   }
 
@@ -177,69 +330,43 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   );
 }
 
-async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<void> {
-  patchLocalVoiceState({ status: 'transcribing', error: null });
+async function stopSttAndSend(sessionId: string, provider: Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>): Promise<void> {
+  voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
 
-  const text = await deviceSttController.stop(sessionId);
-  if (!text) {
-    if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeDeviceSttEnabled(storage.getState().settings)) {
-      await deviceSttController.start(sessionId);
+  const settings = storage.getState().settings as any;
+  const endpointDecision = await localVoiceCaptureOwner.stopEndpointDrivenCapture({
+    adaptiveConfig: resolveAdaptiveInterruptionConfig(settings),
+    provider,
+    sessionId,
+  });
+
+  if (endpointDecision.kind === 'ignore') {
+    if (await maybeRearmHandsFreeCapture(endpointDecision.followUp)) {
       return;
     }
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
     return;
   }
 
-  const settings = storage.getState().settings as any;
   await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId,
       settings,
-      userText: text,
+      userText: endpointDecision.transcript,
       playbackController,
       voiceAgentSessions,
       signal,
     }),
   );
 
-  if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeDeviceSttEnabled(storage.getState().settings)) {
-    await deviceSttController.start(sessionId);
-  }
-}
-
-async function stopSherpaSpeechRecognitionAndSend(sessionId: string): Promise<void> {
-  patchLocalVoiceState({ status: 'transcribing', error: null });
-
-  const text = await sherpaSttController.stop(sessionId);
-  if (!text) {
-    if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeLocalNeuralSttEnabled(storage.getState().settings)) {
-      await sherpaSttController.start(sessionId);
-      return;
-    }
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+  if (await maybeRearmHandsFreeCapture(endpointDecision.followUp)) {
     return;
-  }
-
-  const settings = storage.getState().settings as any;
-  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
-    sendVoiceTextTurnImpl({
-      sessionId,
-      settings,
-      userText: text,
-      playbackController,
-      voiceAgentSessions,
-      signal,
-    }),
-  );
-
-  if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeLocalNeuralSttEnabled(storage.getState().settings)) {
-    await sherpaSttController.start(sessionId);
   }
 }
 
 export async function stopLocalVoiceAgent(sessionId: string): Promise<void> {
-  deviceSttController.clearHandsFreeSession(sessionId);
-  sherpaSttController.clearHandsFreeSession(sessionId);
+  localVoiceCaptureOwner.clearHandsFree({ sessionId, provider: 'device' });
+  localVoiceCaptureOwner.clearHandsFree({ sessionId, provider: 'local_neural' });
   await voiceAgentSessions.stop(sessionId);
 }
 
@@ -254,18 +381,18 @@ export function isLocalVoiceAgentActive(sessionId: string): boolean {
 }
 
 export function appendLocalVoiceAgentContextUpdate(sessionId: string, update: string): void {
-  voiceAgentSessions.appendContextUpdate(sessionId, update);
+  const settings = storage.getState().settings as any;
+  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  voiceAgentSessions.appendContextUpdate(resolvedSessionId, update);
 }
 
-export function announceLocalVoiceAgentAssistantText(sessionId: string, text: string): void {
+function projectLocalVoiceAgentAssistantText(sessionId: string, text: string): void {
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return;
 
-  voiceActivityController.appendAssistantText(sessionId, 'local_conversation', trimmed);
-
   const binding =
-    resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId })
-    ?? resolveVoiceSessionBindingByConversationSessionId({ conversationSessionId: sessionId })
+    voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: sessionId })
+    ?? voiceConversationBindingResolver.resolveByConversationSessionId({ conversationSessionId: sessionId })
     ?? null;
   const conversationSessionId = typeof binding?.conversationSessionId === 'string' ? binding.conversationSessionId.trim() : '';
   if (!conversationSessionId) return;
@@ -276,14 +403,37 @@ export function announceLocalVoiceAgentAssistantText(sessionId: string, text: st
   });
 }
 
+export function announceLocalVoiceAgentAssistantText(sessionId: string, text: string): void {
+  projectLocalVoiceAgentAssistantText(sessionId, text);
+}
+
+export async function sendLocalVoiceAgentTextTurn(sessionId: string, text: string): Promise<void> {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  const settings = storage.getState().settings as any;
+  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
+    sendVoiceTextTurnImpl({
+      sessionId: resolvedSessionId,
+      settings,
+      userText: trimmed,
+      playbackController,
+      voiceAgentSessions,
+      signal,
+    }),
+  );
+}
+
 export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: string): Promise<void> {
   const text = update.trim();
   if (!text) return;
 
   const settings = storage.getState().settings as any;
+  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
   await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
     sendVoiceTextTurnImpl({
-      sessionId,
+      sessionId: resolvedSessionId,
       settings,
       userText: text,
       playbackController,
@@ -317,45 +467,91 @@ async function runAbortableVoiceTurn(sessionId: string, runner: (signal: AbortSi
   }
 }
 
-export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
-  const current = getLocalVoiceState();
-  if (!current.sessionId) return;
-  if (current.sessionId !== sessionId) return;
-
-  playbackController.interrupt();
-  if (activeTurnAbortController && activeTurnAbortSessionId === sessionId) {
-    try {
-      activeTurnAbortController.abort();
-    } catch {
-      // ignore
+async function settleEndingTransition(
+  controlSessionId: string,
+  nextState: 'connected' | 'disconnected',
+  work: () => Promise<void>,
+): Promise<void> {
+  voiceConversationRuntimeMachine.transitionToEnding({ controlSessionId });
+  try {
+    await work();
+  } finally {
+    if (nextState === 'disconnected') {
+      voiceConversationRuntimeMachine.transitionToDisconnected({ controlSessionId });
+      return;
     }
+    voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId });
   }
+}
 
-  patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
+  const current = getCurrentLocalRuntimeCompatState();
+  const settings = storage.getState().settings as any;
+  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  if (!current.sessionId) return;
+  if (current.sessionId !== resolvedSessionId) return;
+
+  await settleEndingTransition(resolvedSessionId, 'connected', async () => {
+    playbackController.interrupt();
+    if (activeTurnAbortController && activeTurnAbortSessionId === resolvedSessionId) {
+      try {
+        activeTurnAbortController.abort();
+      } catch {
+        // ignore
+      }
+    }
+
+    if (inFlight) {
+      await inFlight.catch(() => {});
+    }
+  });
+}
+
+export async function setLocalVoiceMuted(sessionId: string, muted: boolean): Promise<void> {
+  const current = getCurrentLocalRuntimeCompatState();
+  const settings = storage.getState().settings as any;
+  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  if (!current.sessionId) return;
+  if (current.sessionId !== resolvedSessionId) return;
+
+  await localVoiceCaptureOwner.setMuted({ muted, sessionId: resolvedSessionId });
+  voiceConversationRuntimeMachine.setMuted(muted);
 }
 
 export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
-  const realtimeStatus = (storage.getState() as any)?.realtimeStatus;
-  if (realtimeStatus === 'connected' || realtimeStatus === 'connecting') {
+  const initialSettings = storage.getState().settings as any;
+  if (!isLocalVoiceProviderSelected(initialSettings)) {
+    return;
+  }
+  const controlSessionId = resolveLocalConversationControlSessionId(initialSettings, sessionId);
+
+  const realtimeSessionSnapshot = realtimeTransport.getSessionSnapshot();
+  if (realtimeSessionSnapshot.status === 'connected' || realtimeSessionSnapshot.status === 'connecting') {
     // Avoid audio-session conflicts: local voice should not start while a realtime call is active.
     return;
   }
 
-  const initialState = getLocalVoiceState();
-  const canAttemptBargeIn =
-    initialState.status === 'speaking' && initialState.sessionId === sessionId && isVoiceBargeInEnabled(storage.getState().settings);
-  const shouldNoopWhileSpeaking =
-    initialState.status === 'speaking' && initialState.sessionId === sessionId && !isVoiceBargeInEnabled(storage.getState().settings);
+  const initialState = getCurrentLocalRuntimeCompatState();
+  const { config: initialConfig } = resolveLocalVoiceAdapterSettings(initialSettings);
+  const initialProvider = resolveLocalVoiceCaptureProvider(initialSettings);
+  const initialBargeInDecision = localVoiceCaptureOwner.resolveManualBargeInAction({
+    bargeInEnabled: isVoiceBargeInEnabled(initialSettings),
+    currentSessionId: initialState.sessionId,
+    currentStatus: initialState.status,
+    handsFree: isHandsFreeCaptureEnabled(initialSettings, initialProvider, initialConfig),
+    provider: initialProvider,
+    requestedSessionId: controlSessionId,
+  });
 
-  if (shouldNoopWhileSpeaking) {
+  if (initialBargeInDecision.kind === 'noop' && initialBargeInDecision.reason === 'barge_in_disabled') {
     return;
   }
 
-  if (inFlight && !canAttemptBargeIn) {
+  if (inFlight && initialBargeInDecision.kind !== 'interrupt_and_rearm') {
     await inFlight;
   }
 
-  const current = getLocalVoiceState();
+  const current = getCurrentLocalRuntimeCompatState();
   const prewarmLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
     const { config } = params;
     if (config?.conversationMode !== 'agent' || config?.agent?.prewarmOnConnect !== true) return;
@@ -368,22 +564,23 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
         const canSpeakWelcome = config?.tts?.autoSpeakReplies !== false;
 
         if (welcomeEnabled && welcomeMode === 'immediate' && canSpeakWelcome) {
-          const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(sessionId).catch(() => null);
+          const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(controlSessionId).catch(() => null);
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text) {
-            voiceActivityController.appendAssistantText(sessionId, 'local_conversation', text);
+            projectLocalVoiceAgentAssistantText(controlSessionId, text);
             await speakAssistantText({
+              sessionId,
               text,
               settings: params.settings,
               networkTimeoutMs,
               registerPlaybackStopper: playbackController.registerStopper,
-              onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
+              onSpeaking: () => voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId }),
             });
           }
           return;
         }
 
-        await voiceAgentSessions.ensureRunning(sessionId);
+        await voiceAgentSessions.ensureRunning(controlSessionId);
       })().catch((error) => {
         if (isUnsupportedVoiceAgentPrewarmError(error)) return;
         throw error;
@@ -392,12 +589,33 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
     );
   };
 
-  if (current.status === 'speaking') {
-    if (current.sessionId !== sessionId) {
+  const prewarmDaemonVoiceInferenceOnConnect = (params: Readonly<{ settings: any }>): void => {
+    if (VOICE_RUNTIME_CONFIG_DEFAULTS.daemonInference.warmOnVoiceHomeAttach !== true) {
       return;
     }
 
-    if (!isVoiceBargeInEnabled(storage.getState().settings)) {
+    fireAndForget(
+      warmDaemonVoiceInferenceOnVoiceHomeAttach({
+        settings: params.settings,
+        sessionId: controlSessionId,
+      }),
+    );
+  };
+
+  if (current.status === 'speaking') {
+    const settings = storage.getState().settings as any;
+    const { config } = resolveLocalVoiceAdapterSettings(settings);
+    const provider = resolveLocalVoiceCaptureProvider(settings);
+    const activeControlSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+    const bargeInDecision = localVoiceCaptureOwner.resolveManualBargeInAction({
+      bargeInEnabled: isVoiceBargeInEnabled(settings),
+      currentSessionId: current.sessionId,
+      currentStatus: current.status,
+      handsFree: isHandsFreeCaptureEnabled(settings, provider, config),
+      provider,
+      requestedSessionId: activeControlSessionId,
+    });
+    if (bargeInDecision.kind !== 'interrupt_and_rearm') {
       return;
     }
 
@@ -406,15 +624,15 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
       await inFlight.catch(() => {});
     }
 
-    const settings = storage.getState().settings as any;
-    const { config } = resolveLocalVoiceAdapterSettings(settings);
+    await ensureLocalConversationBindingForSession(settings, sessionId);
     prewarmLocalVoiceAgentOnConnect({ settings, config });
-    const sttProvider = resolveLocalSttProvider(settings);
-    const useDeviceStt = sttProvider === 'device';
-    const useSherpaStt = sttProvider === 'local_neural';
-    deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
-    sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
-    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
+    prewarmDaemonVoiceInferenceOnConnect({ settings });
+    inFlight = startLocalVoiceCapture({
+      sessionId: resolveLocalConversationControlSessionId(settings, bargeInDecision.sessionId),
+      provider: bargeInDecision.provider,
+      handsFree: bargeInDecision.handsFree,
+      interrupted: true,
+    }).finally(() => {
       inFlight = null;
     });
     await inFlight;
@@ -424,13 +642,15 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
   if (current.status === 'idle') {
     const settings = storage.getState().settings as any;
     const { config } = resolveLocalVoiceAdapterSettings(settings);
+    await ensureLocalConversationBindingForSession(settings, sessionId);
     prewarmLocalVoiceAgentOnConnect({ settings, config });
-    const sttProvider = resolveLocalSttProvider(settings);
-    const useDeviceStt = sttProvider === 'device';
-    const useSherpaStt = sttProvider === 'local_neural';
-    deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
-    sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
-    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
+    prewarmDaemonVoiceInferenceOnConnect({ settings });
+    const provider = resolveLocalVoiceCaptureProvider(settings);
+    inFlight = startLocalVoiceCapture({
+      sessionId: controlSessionId,
+      provider,
+      handsFree: isHandsFreeCaptureEnabled(settings, provider, config),
+    }).finally(() => {
       inFlight = null;
     });
     await inFlight;
@@ -438,28 +658,20 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
   }
 
   if (current.status === 'recording') {
-    if (current.sessionId !== sessionId) {
+    const settings = storage.getState().settings as any;
+    const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+    if (current.sessionId !== resolvedSessionId) {
       return;
     }
 
-    const settings = storage.getState().settings as any;
-    const { config } = resolveLocalVoiceAdapterSettings(settings);
-    const sttProvider = resolveLocalSttProvider(settings);
-    const useDeviceStt = sttProvider === 'device';
-    const useSherpaStt = sttProvider === 'local_neural';
-    if (useDeviceStt) {
-      deviceSttController.clearHandsFreeSession();
+    const provider = resolveLocalVoiceCaptureProvider(settings);
+    if (provider === 'device' || provider === 'local_neural') {
+      localVoiceCaptureOwner.clearHandsFree({ provider, sessionId: resolvedSessionId });
     }
 
-    if (useSherpaStt) {
-      sherpaSttController.clearHandsFreeSession();
-    }
-
-    inFlight = (useDeviceStt
-      ? stopDeviceSpeechRecognitionAndSend(sessionId)
-      : useSherpaStt
-        ? stopSherpaSpeechRecognitionAndSend(sessionId)
-        : stopAndSendRecordedTurn(sessionId)).finally(() => {
+    inFlight = (provider === 'recorded_audio'
+      ? stopAndSendRecordedTurn(resolvedSessionId)
+      : stopSttAndSend(resolvedSessionId, provider)).finally(() => {
       inFlight = null;
     });
     await inFlight;
@@ -467,56 +679,32 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
 }
 
 export async function stopLocalVoiceSession(): Promise<void> {
-  const current = getLocalVoiceState();
+  const current = getCurrentLocalRuntimeCompatState();
   if (!current.sessionId) return;
 
-  playbackController.interrupt();
-
   const activeSessionId = current.sessionId;
-  if (activeTurnAbortController && activeTurnAbortSessionId === activeSessionId) {
-    try {
-      activeTurnAbortController.abort();
-    } catch {
-      // ignore
-    }
-    activeTurnAbortController = null;
-    activeTurnAbortSessionId = null;
-  }
+  await settleEndingTransition(activeSessionId, 'disconnected', async () => {
+    playbackController.interrupt();
 
-  // Best-effort stop any recording (we intentionally do not send).
-  if (recorder) {
-    try {
-      await recorder.stop();
-    } catch {
-      // ignore
+    if (activeTurnAbortController && activeTurnAbortSessionId === activeSessionId) {
+      try {
+        activeTurnAbortController.abort();
+      } catch {
+        // ignore
+      }
+      activeTurnAbortController = null;
+      activeTurnAbortSessionId = null;
     }
-    recorder = null;
-  }
 
-  if (typeof activeSessionId === 'string' && activeSessionId.trim().length > 0) {
-    try {
-      await deviceSttController.stop(activeSessionId);
-    } catch {
-      // ignore
+    await localVoiceCaptureOwner.stopSession(activeSessionId);
+    voiceConversationRuntimeMachine.setMuted(false);
+
+    if (typeof activeSessionId === 'string' && activeSessionId.trim().length > 0) {
+      try {
+        await voiceAgentSessions.stop(activeSessionId);
+      } catch {
+        // ignore
+      }
     }
-    deviceSttController.clearHandsFreeSession(activeSessionId);
-
-    try {
-      await sherpaSttController.stop(activeSessionId);
-    } catch {
-      // ignore
-    }
-    sherpaSttController.clearHandsFreeSession(activeSessionId);
-
-    try {
-      await voiceAgentSessions.stop(activeSessionId);
-    } catch {
-      // ignore
-    }
-  } else {
-    deviceSttController.clearHandsFreeSession();
-    sherpaSttController.clearHandsFreeSession();
-  }
-
-  patchLocalVoiceState({ status: 'idle', sessionId: null, error: null });
+  });
 }

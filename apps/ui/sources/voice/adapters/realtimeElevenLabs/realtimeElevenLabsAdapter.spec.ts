@@ -2,14 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 const startRealtimeSession = vi.fn(async () => {});
 const stopRealtimeSession = vi.fn(async () => {});
-const getCurrentRealtimeSessionId = vi.fn(() => {
-  throw new Error('getCurrentRealtimeSessionId should not be called');
-});
+const setRealtimeMicMuted = vi.fn();
+const getRealtimeSessionSnapshot = vi.fn(() => ({
+  adapterId: 'realtime_elevenlabs',
+  sessionId: null,
+  status: 'disconnected',
+  mode: 'idle',
+  canStop: false,
+}));
+const subscribeRealtimeSessionSnapshot = vi.fn(() => () => {});
 const sendTextMessage = vi.fn();
 const sendContextualUpdate = vi.fn();
 const getVoiceSession = vi.fn(() => ({ sendTextMessage, sendContextualUpdate }));
 const isVoiceSessionStarted = vi.fn(() => true);
-const appendVoiceConversationUserText = vi.fn();
 
 const onVoiceStarted = vi.fn(() => 'initial-context');
 const onVoiceStopped = vi.fn();
@@ -19,12 +24,16 @@ const state: any = {
   realtimeMode: 'idle',
 };
 
-vi.mock('@/realtime/RealtimeSession', () => ({
-  startRealtimeSession,
-  stopRealtimeSession,
-  getCurrentRealtimeSessionId,
-  getVoiceSession,
-  isVoiceSessionStarted,
+vi.mock('@/voice/runtime/realtime/RealtimeTransport', () => ({
+  realtimeTransport: {
+    startRealtimeSession,
+    stopRealtimeSession,
+    setMicMuted: setRealtimeMicMuted,
+    getSessionSnapshot: getRealtimeSessionSnapshot,
+    subscribe: subscribeRealtimeSessionSnapshot,
+    getVoiceSession,
+    isVoiceSessionStarted,
+  },
 }));
 
 vi.mock('@/voice/context/voiceHooks', () => ({
@@ -43,17 +52,55 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 });
 
-vi.mock('@/voice/sessionBinding/voiceConversationTranscript', () => ({
-  appendVoiceConversationUserText: (params: any) => appendVoiceConversationUserText(params),
-}));
-
 describe('realtime elevenlabs voice adapter', () => {
   it('does not expose a per-session id in the snapshot', async () => {
+    getRealtimeSessionSnapshot.mockReturnValueOnce({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: null,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
     const adapter = createRealtimeElevenLabsVoiceAdapter();
 
     const snap = adapter.getSnapshot();
     expect(snap.sessionId).toBe(null);
+  });
+
+  it('reads transport-owned realtime snapshot instead of storage realtime state', async () => {
+    state.realtimeStatus = 'disconnected';
+    state.realtimeMode = 'idle';
+    getRealtimeSessionSnapshot.mockReturnValueOnce({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: null,
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
+
+    const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
+    const adapter = createRealtimeElevenLabsVoiceAdapter();
+
+    expect(adapter.getSnapshot()).toMatchObject({
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
+  });
+
+  it('subscribes through the transport-owned realtime snapshot channel', async () => {
+    const unsubscribe = vi.fn();
+    subscribeRealtimeSessionSnapshot.mockReturnValueOnce(unsubscribe);
+
+    const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
+    const adapter = createRealtimeElevenLabsVoiceAdapter();
+    const listener = vi.fn();
+
+    const stop = adapter.subscribe?.(listener);
+
+    expect(subscribeRealtimeSessionSnapshot).toHaveBeenCalledWith(listener);
+    expect(stop).toBe(unsubscribe);
   });
 
   it('starts when disconnected', async () => {
@@ -72,9 +119,17 @@ describe('realtime elevenlabs voice adapter', () => {
     expect(startRealtimeSession).toHaveBeenCalledWith('s1', 'initial-context');
   });
 
-  it('stops when connected', async () => {
-    state.realtimeStatus = 'connected';
-    stopRealtimeSession.mockReset();
+  it('delegates toggle to the start path even when already connected', async () => {
+    getRealtimeSessionSnapshot.mockReturnValueOnce({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: null,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+    startRealtimeSession.mockReset();
+    onVoiceStarted.mockReset();
+    onVoiceStarted.mockReturnValueOnce('initial-context');
     onVoiceStopped.mockReset();
 
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
@@ -82,14 +137,15 @@ describe('realtime elevenlabs voice adapter', () => {
 
     await adapter.toggle({ sessionId: 's1' });
 
-    expect(stopRealtimeSession).toHaveBeenCalledTimes(1);
-    expect(onVoiceStopped).toHaveBeenCalledTimes(1);
+    expect(onVoiceStarted).toHaveBeenCalledWith('s1');
+    expect(startRealtimeSession).toHaveBeenCalledWith('s1', 'initial-context');
+    expect(stopRealtimeSession).not.toHaveBeenCalled();
+    expect(onVoiceStopped).not.toHaveBeenCalled();
   });
 
   it('routes typed sends through the active realtime session when already connected', async () => {
     sendTextMessage.mockReset();
     startRealtimeSession.mockReset();
-    appendVoiceConversationUserText.mockReset();
     isVoiceSessionStarted.mockReturnValueOnce(true);
 
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
@@ -102,17 +158,12 @@ describe('realtime elevenlabs voice adapter', () => {
     });
 
     expect(startRealtimeSession).not.toHaveBeenCalled();
-    expect(appendVoiceConversationUserText).toHaveBeenCalledWith({
-      conversationSessionId: 'carrier-s1',
-      text: 'hello',
-    });
     expect(sendTextMessage).toHaveBeenCalledWith('hello');
   });
 
   it('reopens realtime voice in text-only mode before sending when disconnected', async () => {
     sendTextMessage.mockReset();
     startRealtimeSession.mockReset();
-    appendVoiceConversationUserText.mockReset();
     isVoiceSessionStarted.mockReturnValueOnce(false);
 
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
@@ -125,10 +176,15 @@ describe('realtime elevenlabs voice adapter', () => {
     });
 
     expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, false, { textOnly: true });
-    expect(appendVoiceConversationUserText).toHaveBeenCalledWith({
-      conversationSessionId: 'carrier-s1',
-      text: 'hello',
-    });
     expect(sendTextMessage).toHaveBeenCalledWith('hello');
+  });
+
+  it('routes mute commands through the realtime transport session seam', async () => {
+    const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
+    const adapter = createRealtimeElevenLabsVoiceAdapter();
+
+    await adapter.setMuted({ sessionId: 's1', muted: true });
+
+    expect(setRealtimeMicMuted).toHaveBeenCalledWith(true);
   });
 });

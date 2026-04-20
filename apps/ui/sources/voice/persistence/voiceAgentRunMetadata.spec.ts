@@ -38,6 +38,8 @@ vi.mock('@/sync/sync', () => ({
 describe('voiceAgentRunMetadata', () => {
   const claudeTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
   const codexTarget = { kind: 'builtInAgent', agentId: 'codex' } as const;
+  const claudeBackendTarget = { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } as const;
+  const codexBackendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } as const;
 
   beforeEach(() => {
     vi.resetModules();
@@ -99,8 +101,10 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_2',
       backendTarget: codexTarget,
       backendId: 'codex',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: codexTarget, vendorSessionId: 'vs_2' },
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: codexBackendTarget, vendorSessionId: 'vs_2' },
+      streamId: 'stream_2',
       updatedAtMs: 999,
+      welcomedEpoch: 4,
     });
 
     expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('sys_voice', expect.any(Function));
@@ -109,8 +113,51 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_2',
       backendTarget: codexTarget,
       backendId: 'codex',
+      streamId: 'stream_2',
       updatedAtMs: 999,
+      welcomedEpoch: 4,
     });
+  });
+
+  it('clears a stale persisted streamId when a different runId is written without a stream handoff', async () => {
+    stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1 = {
+      v: 1,
+      runId: 'run_prev',
+      backendTarget: claudeTarget,
+      backendId: 'claude',
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_prev' },
+      streamId: 'stream_prev',
+      updatedAtMs: 10,
+    };
+    patchSessionMetadataWithRetry.mockImplementation(async (sessionId: string, updater: (m: any) => any) => {
+      const current = stateRef.current;
+      const nextMetadata = updater(current.sessions[sessionId].metadata);
+      stateRef.current = {
+          ...current,
+          sessions: {
+              ...current.sessions,
+              [sessionId]: {
+                  ...current.sessions[sessionId],
+                  metadata: nextMetadata,
+              },
+          },
+      };
+    });
+
+    const { writeVoiceAgentRunMetadataToSession } = await import('./voiceAgentRunMetadata');
+    await writeVoiceAgentRunMetadataToSession({
+      sessionId: 'sys_voice',
+      runId: 'run_fresh',
+      backendTarget: claudeTarget,
+      backendId: 'claude',
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_fresh' },
+      updatedAtMs: 20,
+    });
+
+    expect(stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
+      runId: 'run_fresh',
+    });
+    expect((stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1 as any).streamId).toBeNull();
   });
 
 	  it('clears voiceAgentRunV1 by setting it to null', async () => {
@@ -119,7 +166,7 @@ describe('voiceAgentRunMetadata', () => {
 	      runId: 'run_1',
 	      backendTarget: claudeTarget,
 	      backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeTarget, vendorSessionId: 'vs_1' },
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_1' },
       updatedAtMs: 123,
     };
 
@@ -171,8 +218,9 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_session',
       backendTarget: claudeTarget,
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeTarget, vendorSessionId: 'vs_session' },
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_session' },
       updatedAtMs: 456,
+      welcomedEpoch: 3,
     });
 
     expect(readVoiceAgentRunMetadataFromSession({ sessionId: 's1' })).toMatchObject({
@@ -181,6 +229,7 @@ describe('voiceAgentRunMetadata', () => {
       backendTarget: claudeTarget,
       backendId: 'claude',
       updatedAtMs: 456,
+      welcomedEpoch: 3,
     });
 
     await clearVoiceAgentRunMetadataFromSession({ sessionId: 's1' });
@@ -193,7 +242,7 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_raw',
       backendTarget: claudeTarget,
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeTarget, vendorSessionId: 'vs_raw' },
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_raw' },
       updatedAtMs: 111,
     };
     stateRef.current = {
@@ -210,7 +259,7 @@ describe('voiceAgentRunMetadata', () => {
                         runId: 'run_cached',
                         backendTarget: claudeTarget,
                         backendId: 'claude',
-                        resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeTarget, vendorSessionId: 'vs_cached' },
+                        resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_cached' },
                         updatedAtMs: 222,
                     },
                 },
@@ -222,6 +271,24 @@ describe('voiceAgentRunMetadata', () => {
     expect(readVoiceAgentRunMetadataFromSession({ sessionId: 's1' })).toMatchObject({
       runId: 'run_cached',
       updatedAtMs: 222,
+    });
+  });
+
+  it('reads welcomedEpoch from persisted voiceAgentRunV1 metadata when present', async () => {
+    stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1 = {
+      v: 1,
+      runId: 'run_1',
+      backendTarget: claudeTarget,
+      backendId: 'claude',
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_1' },
+      updatedAtMs: 123,
+      welcomedEpoch: 9,
+    };
+
+    const { readVoiceAgentRunMetadataFromSession } = await import('./voiceAgentRunMetadata');
+    expect(readVoiceAgentRunMetadataFromSession({ sessionId: 'sys_voice' })).toMatchObject({
+      runId: 'run_1',
+      welcomedEpoch: 9,
     });
   });
 });

@@ -1,14 +1,60 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, AgentId, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs } from './voiceAgentTypes';
 
-function createDeterministicBackend(label: string): AgentBackend & { getSeenPrompts(): string[] } {
+function asExecutionRunHostRuntime<T extends AgentBackend>(backend: T): T & ExecutionRunHostRuntime {
+  return Object.assign({}, backend, createExecutionRunHostRuntimeFromAgentBackend(backend));
+}
+
+async function readVoiceAgentTurnStreamUntilDone(args: Readonly<{
+  manager: {
+    readTurnStream: (params: Readonly<{
+      voiceAgentId: string;
+      streamId: string;
+      cursor: number;
+      maxEvents?: number;
+    }>) => Promise<{
+      streamId: string;
+      events: Array<{ t: string } & Record<string, unknown>>;
+      nextCursor: number;
+      done: boolean;
+    }>;
+  };
+  voiceAgentId: string;
+  streamId: string;
+  maxEvents?: number;
+  maxReads?: number;
+}>): Promise<Array<{ t: string } & Record<string, unknown>>> {
+  const events: Array<{ t: string } & Record<string, unknown>> = [];
+  let cursor = 0;
+
+  for (let i = 0; i < (args.maxReads ?? 8); i += 1) {
+    const read = await args.manager.readTurnStream({
+      voiceAgentId: args.voiceAgentId,
+      streamId: args.streamId,
+      cursor,
+      ...(typeof args.maxEvents === 'number' ? { maxEvents: args.maxEvents } : {}),
+    });
+    events.push(...read.events);
+    cursor = read.nextCursor;
+    if (read.done) {
+      return events;
+    }
+    await Promise.resolve();
+  }
+
+  return events;
+}
+
+function createDeterministicBackend(label: string): AgentBackend & ExecutionRunHostRuntime & { getSeenPrompts(): string[] } {
   const seenPrompts: string[] = [];
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = `s-${label}`;
 
-  return {
+  return asExecutionRunHostRuntime({
     getSeenPrompts: () => [...seenPrompts],
     onMessage(h) {
       handler = h;
@@ -24,15 +70,15 @@ function createDeterministicBackend(label: string): AgentBackend & { getSeenProm
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
-function createDeltaOnlyBackend(label: string): AgentBackend {
+function createDeltaOnlyBackend(label: string): AgentBackend & ExecutionRunHostRuntime {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = `s-${label}`;
   let n = 0;
 
-  return {
+  return asExecutionRunHostRuntime({
     onMessage(h) {
       handler = h;
     },
@@ -47,14 +93,14 @@ function createDeltaOnlyBackend(label: string): AgentBackend {
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
-function createBlockingBackend(label: string, opts: Readonly<{ waitForSendPrompt: () => Promise<void> }>): AgentBackend {
+function createBlockingBackend(label: string, opts: Readonly<{ waitForSendPrompt: () => Promise<void> }>): AgentBackend & ExecutionRunHostRuntime {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = `s-${label}`;
 
-  return {
+  return asExecutionRunHostRuntime({
     onMessage(h) {
       handler = h;
     },
@@ -69,14 +115,14 @@ function createBlockingBackend(label: string, opts: Readonly<{ waitForSendPrompt
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
-function createMultiDeltaBackend(label: string, deltas: string[]): AgentBackend {
+function createMultiDeltaBackend(label: string, deltas: string[]): AgentBackend & ExecutionRunHostRuntime {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = `s-${label}`;
 
-  return {
+  return asExecutionRunHostRuntime({
     onMessage(h) {
       handler = h;
     },
@@ -92,12 +138,12 @@ function createMultiDeltaBackend(label: string, deltas: string[]): AgentBackend 
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
 function createDelayedCompletionBackend(
   label: string,
-): AgentBackend & { completeCurrentResponse: () => void } {
+): AgentBackend & ExecutionRunHostRuntime & { completeCurrentResponse: () => void } {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = `s-${label}`;
   let lastPrompt = '';
@@ -105,7 +151,7 @@ function createDelayedCompletionBackend(
   let currentResponseDone: Promise<void> | null = null;
   let pendingComplete = false;
 
-  return {
+  return asExecutionRunHostRuntime({
     completeCurrentResponse() {
       pendingComplete = true;
       resolveCurrent?.();
@@ -139,18 +185,18 @@ function createDelayedCompletionBackend(
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
 function createCancelableBlockingBackend(
   label: string,
-): AgentBackend & { wasCancelled: () => boolean } {
+): AgentBackend & ExecutionRunHostRuntime & { wasCancelled: () => boolean } {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = `s-${label}`;
   let resolveCurrent: (() => void) | null = null;
   let cancelled = false;
 
-  return {
+  return asExecutionRunHostRuntime({
     wasCancelled: () => cancelled,
     onMessage(h) {
       handler = h;
@@ -172,14 +218,14 @@ function createCancelableBlockingBackend(
       resolveCurrent = null;
     },
     async dispose() {},
-  };
+  });
 }
 
-function createStaticResponseBackend(label: string, responseText: string): AgentBackend {
+function createStaticResponseBackend(label: string, responseText: string): AgentBackend & ExecutionRunHostRuntime {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = `s-${label}`;
 
-  return {
+  return asExecutionRunHostRuntime({
     onMessage(h) {
       handler = h;
     },
@@ -193,16 +239,16 @@ function createStaticResponseBackend(label: string, responseText: string): Agent
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
-function createPromptCaptureBackend(sequence: Array<{ responseText: string }>): AgentBackend & { prompts: string[] } {
+function createPromptCaptureBackend(sequence: Array<{ responseText: string }>): AgentBackend & ExecutionRunHostRuntime & { prompts: string[] } {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = 's-capture' as SessionId;
   const prompts: string[] = [];
   let idx = 0;
 
-  return {
+  return asExecutionRunHostRuntime({
     prompts,
     onMessage(h) {
       handler = h;
@@ -220,16 +266,16 @@ function createPromptCaptureBackend(sequence: Array<{ responseText: string }>): 
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
-function createBootstrapTimeoutBackend(): AgentBackend & { prompts: string[]; seenTimeouts: number[] } {
+function createBootstrapTimeoutBackend(): AgentBackend & ExecutionRunHostRuntime & { prompts: string[]; seenTimeouts: number[] } {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = 's-bootstrap-timeout' as SessionId;
   const prompts: string[] = [];
   const seenTimeouts: number[] = [];
 
-  return {
+  return asExecutionRunHostRuntime({
     prompts,
     seenTimeouts,
     onMessage(h) {
@@ -248,15 +294,15 @@ function createBootstrapTimeoutBackend(): AgentBackend & { prompts: string[]; se
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
-function createResponseTimeoutCaptureBackend(responseText = 'ok'): AgentBackend & { seenTimeouts: number[] } {
+function createResponseTimeoutCaptureBackend(responseText = 'ok'): AgentBackend & ExecutionRunHostRuntime & { seenTimeouts: number[] } {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = 's-response-timeout-capture' as SessionId;
   const seenTimeouts: number[] = [];
 
-  return {
+  return asExecutionRunHostRuntime({
     seenTimeouts,
     onMessage(h) {
       handler = h;
@@ -274,7 +320,7 @@ function createResponseTimeoutCaptureBackend(responseText = 'ok'): AgentBackend 
     },
     async cancel() {},
     async dispose() {},
-  };
+  });
 }
 
 describe('VoiceAgentManager', () => {
@@ -320,13 +366,13 @@ describe('VoiceAgentManager', () => {
     const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatDispose = vi.fn(async () => {});
-    const chatBackend: AgentBackend = {
+    const chatBackend = asExecutionRunHostRuntime({
       onMessage: () => {},
       startSession: async () => ({ sessionId: 's-chat' }),
       sendPrompt: async () => {},
       cancel: async () => {},
       dispose: chatDispose,
-    };
+    });
 
     const createBackend: BackendFactory = ({ modelId }) => {
       if (modelId === 'commit-model') {
@@ -745,7 +791,7 @@ describe('VoiceAgentManager', () => {
 
     let nowMs = 0;
     let disposedCount = 0;
-    const createBackend: BackendFactory = ({ modelId }) => ({
+    const createBackend: BackendFactory = ({ modelId }) => asExecutionRunHostRuntime({
       onMessage() {},
       async startSession() {
         return { sessionId: `s-${modelId}` };
@@ -793,7 +839,7 @@ describe('VoiceAgentManager', () => {
 
     let nowMs = 0;
     let disposedCount = 0;
-    const createBackend: BackendFactory = ({ modelId }) => ({
+    const createBackend: BackendFactory = ({ modelId }) => asExecutionRunHostRuntime({
       onMessage() {},
       async startSession() {
         return { sessionId: `s-${modelId}` };
@@ -896,22 +942,20 @@ describe('VoiceAgentManager', () => {
     });
 
     const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
-    const read = await manager.readTurnStream({
+    const events = await readVoiceAgentTurnStreamUntilDone({
+      manager,
       voiceAgentId: started.voiceAgentId,
       streamId: stream.streamId,
-      cursor: 0,
       maxEvents: 32,
     });
-
-    expect(read.done).toBe(true);
-    expect(read.events.some((event) => event.t === 'delta')).toBe(true);
-    expect(read.events.some((event) => event.t === 'done')).toBe(true);
+    expect(events.some((event) => event.t === 'delta')).toBe(true);
+    expect(events.some((event) => event.t === 'done')).toBe(true);
 
     await expect(
       manager.readTurnStream({
         voiceAgentId: started.voiceAgentId,
         streamId: stream.streamId,
-        cursor: read.nextCursor,
+        cursor: events.length,
       }),
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_NOT_FOUND' });
   });
@@ -944,18 +988,18 @@ describe('VoiceAgentManager', () => {
     });
 
     const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
-    const read = await manager.readTurnStream({
+    const events = await readVoiceAgentTurnStreamUntilDone({
+      manager,
       voiceAgentId: started.voiceAgentId,
       streamId: stream.streamId,
-      cursor: 0,
       maxEvents: 64,
     });
 
-    const deltaText = read.events.filter((e) => e.t === 'delta').map((e) => (e as any).textDelta).join('');
+    const deltaText = events.filter((e) => e.t === 'delta').map((e) => (e as any).textDelta).join('');
     expect(deltaText).toContain('Hello.');
     expect(deltaText).not.toContain('<voice_actions>');
 
-    const done = read.events.find((e) => e.t === 'done') as any;
+    const done = events.find((e) => e.t === 'done') as any;
     expect(done.assistantText).toBe('I sent that to the coding assistant and am waiting for its update.');
     expect(done.actions?.[0]?.t).toBe('sendSessionMessage');
   });
@@ -984,18 +1028,18 @@ describe('VoiceAgentManager', () => {
     });
 
     const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'teleport now' });
-    const read = await manager.readTurnStream({
+    const events = await readVoiceAgentTurnStreamUntilDone({
+      manager,
       voiceAgentId: started.voiceAgentId,
       streamId: stream.streamId,
-      cursor: 0,
       maxEvents: 64,
     });
 
-    const deltaText = read.events.filter((e) => e.t === 'delta').map((e) => (e as any).textDelta).join('');
+    const deltaText = events.filter((e) => e.t === 'delta').map((e) => (e as any).textDelta).join('');
     expect(deltaText).toContain('Calling the teleport action for that session now.');
     expect(deltaText).not.toContain('<voice_actions>');
 
-    const done = read.events.find((e) => e.t === 'done') as any;
+    const done = events.find((e) => e.t === 'done') as any;
     expect(done.assistantText).toBe('Calling the teleport action for that session now.');
     expect(done.actions).toEqual([{ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } }]);
   });
@@ -1163,8 +1207,9 @@ describe('VoiceAgentManager', () => {
       { responseText: 'reply' },
       { responseText: 'COMMIT_TEXT' },
     ]);
-    const createBackend = vi.fn(() => backend);
-    const manager = new VoiceAgentManager({ createBackend: createBackend as any });
+    const createBackendSpy = vi.fn(() => backend);
+    const createBackend: BackendFactory = () => createBackendSpy();
+    const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
       agentId: 'claude',
@@ -1180,7 +1225,7 @@ describe('VoiceAgentManager', () => {
     const committed = await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 1000 });
 
     expect(committed.commitText).toBe('COMMIT_TEXT');
-    expect(createBackend).toHaveBeenCalledTimes(1);
+    expect(createBackendSpy).toHaveBeenCalledTimes(1);
     expect(backend.prompts.length).toBe(2);
     expect(backend.prompts[1]).toContain('Instruction:');
   });
