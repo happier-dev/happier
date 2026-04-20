@@ -1,7 +1,9 @@
 export {
   CLAUDE_EFFORT_LEVELS,
+  formatClaudeEffortLevelLabel,
   isClaudeEffortMaxSupportedModelId,
   isClaudeEffortSupportedModelId,
+  resolveClaudeDefaultEffortLevelForModelId,
   resolveClaudeEffortLevelsForModelId,
   type ClaudeEffortLevel,
 } from './effort.js';

@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS } from '../types.js';
+import * as providerCliRuntimeModule from './providerCliRuntime.js';
+import { AGENT_IDS, CANONICAL_AGENT_IDS } from '../types.js';
+import { LEGACY_CONFIGURED_BACKEND_SENTINEL_ID } from '../compat/legacyConfiguredBackend.js';
 import {
+  CANONICAL_PROVIDER_CLI_RUNTIME_SPECS,
   getProviderCliRuntimeSpec,
   getProviderCliSetupRecommendedIds,
   getProviderCliSetupSupportedIds,
   PROVIDER_CLI_RUNTIME_SPECS,
 } from './providerCliRuntime.js';
+import { legacyCustomAcpCompat } from '../index.js';
+import { getProviderCliRuntimeSpecForLookupId } from './providerCliRuntimeLookup.js';
 
 describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
   it('marks backend CLIs as system-first by default', () => {
@@ -79,6 +84,7 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
   it('keeps upstream manual install hints on the runtime catalog for vendor-recipe providers', () => {
     expect(JSON.stringify(getProviderCliRuntimeSpec('claude'))).toContain('claude.ai/install.sh');
     expect(JSON.stringify(getProviderCliRuntimeSpec('opencode'))).toContain('opencode.ai/install');
+    expect(JSON.stringify(getProviderCliRuntimeSpec('opencode'))).toContain('npm install -g opencode-ai');
     expect(JSON.stringify(getProviderCliRuntimeSpec('kimi'))).toContain('code.kimi.com/install.sh');
   });
 
@@ -100,7 +106,7 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
       knownUserBinDirSuffixes: ['.local/bin'],
     });
     expect(getProviderCliRuntimeSpec('opencode')).toMatchObject({
-      knownUserBinDirSuffixes: ['.opencode/bin'],
+      knownUserBinDirSuffixes: ['.opencode/bin', 'AppData/Roaming/npm'],
     });
     expect(getProviderCliRuntimeSpec('ohMyPi')).toMatchObject({
       knownUserBinDirSuffixes: ['.bun/bin'],
@@ -124,10 +130,43 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
         win32: [expect.objectContaining({ cmd: 'bun' })],
       },
     });
+    expect(getProviderCliRuntimeSpec('opencode')).toMatchObject({
+      manualInstallKind: 'vendor_recipe',
+      manualInstallRecipes: {
+        win32: [
+          {
+            cmd: 'cmd.exe',
+            args: ['/c', 'npm install -g opencode-ai'],
+          },
+        ],
+      },
+    });
   });
 
-  it('covers every built-in provider', () => {
-    expect(Object.keys(PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual([...AGENT_IDS].sort());
+  it('keeps the shared provider CLI runtime artifact map canonical-only', () => {
+    expect(Object.keys(PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual([...CANONICAL_AGENT_IDS].sort());
+  });
+
+  it('keeps customAcp out of the canonical provider CLI runtime specs while preserving explicit compat lookup', () => {
+    expect(Object.keys(CANONICAL_PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual(
+      [...AGENT_IDS].filter((agentId) => agentId !== LEGACY_CONFIGURED_BACKEND_SENTINEL_ID).sort(),
+    );
+    expect(CANONICAL_PROVIDER_CLI_RUNTIME_SPECS).not.toHaveProperty(LEGACY_CONFIGURED_BACKEND_SENTINEL_ID);
+    expect('LEGACY_CUSTOM_ACP_PROVIDER_CLI_RUNTIME_SPEC' in providerCliRuntimeModule).toBe(false);
+    expect(legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec()).toMatchObject({
+      id: LEGACY_CONFIGURED_BACKEND_SENTINEL_ID,
+      title: 'Custom ACP',
+      binaryName: 'custom-acp',
+      sourcePreferenceDefault: 'system-first',
+      managedInstall: null,
+      manualInstallKind: 'none',
+      acceptsJavaScriptFileOverride: false,
+      docsUrl: null,
+    });
+    expect(getProviderCliRuntimeSpecForLookupId(LEGACY_CONFIGURED_BACKEND_SENTINEL_ID)).toEqual(
+      legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec(),
+    );
+    expect(getProviderCliRuntimeSpecForLookupId('codex')).toEqual(getProviderCliRuntimeSpec('codex'));
   });
 
   it('derives the setup-supported provider list from installable runtime specs', () => {

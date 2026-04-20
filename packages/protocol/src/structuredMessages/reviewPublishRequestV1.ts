@@ -1,13 +1,10 @@
 import { z } from 'zod';
 
 import { ReviewFindingSchema } from '../reviews/ReviewFinding.js';
+import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
 
 export const ReviewPublishRequestV1Schema = z.object({
-  sourceRunRef: z.object({
-    runId: z.string().min(1),
-    callId: z.string().min(1),
-    backendId: z.string().min(1),
-  }).passthrough(),
+  sourceRunRef: ExecutionRunStructuredRunRefSchema,
   findingIds: z.array(z.string().min(1)).min(1),
   publishedFindings: z.array(ReviewFindingSchema).min(1),
   threadRefs: z.array(z.string().min(1)).optional(),

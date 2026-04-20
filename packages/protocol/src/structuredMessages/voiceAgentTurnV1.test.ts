@@ -14,5 +14,23 @@ describe('VoiceAgentTurnV1Schema', () => {
     expect(parsed.v).toBe(1);
     expect(parsed.role).toBe('assistant');
   });
-});
 
+  it('preserves additive fields from newer producers', () => {
+    const parsed = VoiceAgentTurnV1Schema.parse({
+      v: 1,
+      epoch: 3,
+      role: 'assistant',
+      voiceAgentId: 'va_1',
+      ts: 123,
+      futureEnvelope: {
+        kind: 'voice_agent_turn.v2',
+        transcriptEpoch: 4,
+      },
+    });
+
+    expect((parsed as any).futureEnvelope).toEqual({
+      kind: 'voice_agent_turn.v2',
+      transcriptEpoch: 4,
+    });
+  });
+});

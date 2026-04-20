@@ -20,6 +20,32 @@ describe('session_summary_shard.v1 schema', () => {
     expect(parsed.keywords).toHaveLength(2);
   });
 
+  it('defaults additive list fields and preserves unknown fields from newer producers', () => {
+    const now = Date.now();
+    const parsed = SessionSummaryShardV1Schema.parse({
+      v: 1,
+      seqFrom: 10,
+      seqTo: 25,
+      createdAtFromMs: now,
+      createdAtToMs: now + 1,
+      summary: 'We discussed memory search and shard indexing.',
+      revision: 'v2',
+      sourceHint: {
+        kind: 'session_summary_shard.v2',
+        checksum: 'sha256:future',
+      },
+    });
+
+    expect(parsed.keywords).toEqual([]);
+    expect(parsed.entities).toEqual([]);
+    expect(parsed.decisions).toEqual([]);
+    expect((parsed as any).revision).toBe('v2');
+    expect((parsed as any).sourceHint).toEqual({
+      kind: 'session_summary_shard.v2',
+      checksum: 'sha256:future',
+    });
+  });
+
   it('rejects invalid seq ranges', () => {
     const now = Date.now();
     expect(() => SessionSummaryShardV1Schema.parse({
@@ -32,4 +58,3 @@ describe('session_summary_shard.v1 schema', () => {
     })).toThrow();
   });
 });
-

@@ -1,7 +1,7 @@
 import type { OpenCodeBackendMode } from '../../providerSettings/definitions/opencode.js';
 import { normalizeOpenCodeServerBaseUrlExplicit } from '../../providerSettings/definitions/opencode.js';
 import { buildOpenCodeRuntimeDescriptorProviderExtra } from './runtimeDescriptorExtra.js';
-import { normalizeTrimmedString } from '../../sessionControls/runtimeDescriptorShared.js';
+import { normalizeTrimmedString } from '../../runtime/identity/runtimeDescriptorShared.js';
 
 export type BuildOpenCodeAgentRuntimeDescriptorParams = Readonly<{
   backendMode: OpenCodeBackendMode;

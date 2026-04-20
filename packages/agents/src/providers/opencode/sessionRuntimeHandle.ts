@@ -3,7 +3,7 @@ import {
   readOpenCodeExplicitServerBaseUrl,
   type OpenCodeBackendMode,
 } from '../../providerSettings/definitions/opencode.js';
-import { readSessionMetadataRuntimeDescriptor } from '../readSessionMetadataRuntimeDescriptor.js';
+import { readOpenCodeSessionMetadataRuntimeDescriptor } from './readSessionMetadataRuntimeDescriptor.js';
 
 export type OpenCodeSessionAffinity = Readonly<{
   backendMode: OpenCodeBackendMode | null;
@@ -42,7 +42,7 @@ export function readOpenCodeSessionAffinityFromMetadata(metadata: unknown): Open
     };
   }
 
-  const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'opencode');
+  const runtimeDescriptor = readOpenCodeSessionMetadataRuntimeDescriptor(metadata);
   return {
     backendMode: runtimeDescriptor?.backendMode ?? readLegacyOpenCodeBackendMode(metadata),
     serverBaseUrl: runtimeDescriptor?.serverBaseUrl ?? readOpenCodeExplicitServerBaseUrl(
@@ -63,7 +63,7 @@ export function readOpenCodeSessionRuntimeHandleFromMetadata(metadata: unknown):
     };
   }
 
-  const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'opencode');
+  const runtimeDescriptor = readOpenCodeSessionMetadataRuntimeDescriptor(metadata);
   return {
     ...readOpenCodeSessionAffinityFromMetadata(metadata),
     vendorSessionId: runtimeDescriptor?.vendorSessionId ?? readLegacyOpenCodeVendorSessionId(metadata),

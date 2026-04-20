@@ -1,9 +1,9 @@
-import { getProviderRuntimeDescriptorReader } from './runtimeDescriptorReaderRegistry.js';
-import { asRecord } from '../sessionControls/runtimeDescriptorShared.js';
+import { getRuntimeDescriptorReader } from '../runtime/identity/runtimeDescriptorReaderRegistry.js';
 import type {
   SharedRuntimeDescriptorByProviderId,
   SupportedRuntimeDescriptorProviderId,
-} from '../sessionControls/runtimeDescriptorTypes.js';
+} from '../runtime/identity/runtimeDescriptorTypes.js';
+import { asRecord } from '../runtime/identity/runtimeDescriptorShared.js';
 
 export function readSessionMetadataRuntimeDescriptor(
   metadata: unknown,
@@ -23,5 +23,5 @@ export function readSessionMetadataRuntimeDescriptor(
 ): SharedRuntimeDescriptorByProviderId[SupportedRuntimeDescriptorProviderId] | null {
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
-  return getProviderRuntimeDescriptorReader(providerId)(metadataRecord);
+  return getRuntimeDescriptorReader(providerId)(metadataRecord);
 }

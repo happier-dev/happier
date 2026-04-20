@@ -1,5 +1,5 @@
 import { normalizeCodexBackendMode, type CodexBackendMode } from '../../providerSettings/definitions/codex.js';
-import { readSessionMetadataRuntimeDescriptor } from '../readSessionMetadataRuntimeDescriptor.js';
+import { readCodexSessionMetadataRuntimeDescriptor } from './readSessionMetadataRuntimeDescriptor.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -39,7 +39,7 @@ export function resolvePersistedCodexRuntimeIdentity(metadata: unknown): Persist
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
 
-  const genericDescriptor = readSessionMetadataRuntimeDescriptor(metadataRecord, 'codex');
+  const genericDescriptor = readCodexSessionMetadataRuntimeDescriptor(metadataRecord);
   const genericMode = genericDescriptor?.backendMode ?? null;
   if (genericMode) {
     return { backendMode: genericMode };
@@ -78,7 +78,7 @@ export function resolvePersistedCodexVendorSessionId(metadata: unknown): string 
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
 
-  const genericDescriptor = readSessionMetadataRuntimeDescriptor(metadataRecord, 'codex');
+  const genericDescriptor = readCodexSessionMetadataRuntimeDescriptor(metadataRecord);
   const genericVendorSessionId = genericDescriptor?.vendorSessionId ?? '';
   if (genericVendorSessionId) {
     return genericVendorSessionId;

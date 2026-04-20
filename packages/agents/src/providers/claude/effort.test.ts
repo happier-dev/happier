@@ -7,6 +7,12 @@ import {
 } from './effort.js';
 
 describe('claude effort support', () => {
+  it('marks Opus 4.7 as effort+max capable with xhigh support', () => {
+    expect(isClaudeEffortSupportedModelId('claude-opus-4-7')).toBe(true);
+    expect(isClaudeEffortMaxSupportedModelId('claude-opus-4-7')).toBe(true);
+    expect(resolveClaudeEffortLevelsForModelId('claude-opus-4-7')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
   it('marks Opus 4.6 as effort+max capable', () => {
     expect(isClaudeEffortSupportedModelId('claude-opus-4-6')).toBe(true);
     expect(isClaudeEffortMaxSupportedModelId('claude-opus-4-6')).toBe(true);

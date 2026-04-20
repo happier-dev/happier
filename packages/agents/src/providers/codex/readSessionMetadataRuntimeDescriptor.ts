@@ -1,21 +1,28 @@
-import { readAgentRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
+import {
+  readRawRuntimeDescriptorV1FromMetadata,
+  readRuntimeDescriptorV1ForProvider,
+  readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 
 import { normalizeCodexBackendMode } from '../../providerSettings/definitions/codex.js';
 import { readCodexRuntimeDescriptorProviderExtra } from './runtimeDescriptorExtra.js';
 import {
   asRecord,
-  normalizeCodexConnectedServiceFields,
-  normalizeCodexHome,
   normalizeTrimmedString,
-} from '../../sessionControls/runtimeDescriptorShared.js';
-import type { SharedRuntimeDescriptorByProviderId } from '../../sessionControls/runtimeDescriptorTypes.js';
+} from '../../runtime/identity/runtimeDescriptorShared.js';
+import { normalizeCodexConnectedServiceFields, normalizeCodexHome } from './runtimeDescriptorShared.js';
+import type { SharedRuntimeDescriptorByProviderId } from '../../runtime/identity/runtimeDescriptorTypes.js';
 
 export function readCodexSessionMetadataRuntimeDescriptor(
   metadataRecord: Record<string, unknown>,
 ): SharedRuntimeDescriptorByProviderId['codex'] | null {
-  const rawDescriptor = asRecord(metadataRecord.agentRuntimeDescriptorV1);
+  const rawDescriptorInput = readRawRuntimeDescriptorV1FromMetadata(metadataRecord);
+  const rawDescriptor = asRecord(rawDescriptorInput);
   const rawProvider = rawDescriptor?.providerId === 'codex' ? asRecord(rawDescriptor.provider) : null;
-  const descriptor = readAgentRuntimeDescriptorV1ForProvider(metadataRecord.agentRuntimeDescriptorV1, 'codex');
+  const descriptor = readRuntimeDescriptorV1ForProvider(
+    readRuntimeDescriptorV1FromMetadata(metadataRecord) ?? rawDescriptorInput,
+    'codex',
+  );
   const providerExtra = readCodexRuntimeDescriptorProviderExtra(rawProvider?.providerExtra);
   const provider = descriptor?.provider ?? rawProvider;
   if (!provider) return null;

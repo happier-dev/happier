@@ -12,8 +12,10 @@ export const VoiceAgentTurnV1Schema = z.object({
   epoch: z.number().int().min(0),
   role: z.enum(['user', 'assistant']),
   voiceAgentId: z.string().min(1),
+  runId: z.string().min(1).optional(),
+  streamId: z.string().min(1).optional(),
+  requestId: z.string().min(1).optional(),
   ts: z.number().int().min(0),
 }).passthrough();
 
 export type VoiceAgentTurnV1 = z.infer<typeof VoiceAgentTurnV1Schema>;
-

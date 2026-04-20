@@ -1,4 +1,8 @@
-import { readAgentRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
+import {
+  readRawRuntimeDescriptorV1FromMetadata,
+  readRuntimeDescriptorV1ForProvider,
+  readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 
 import {
   normalizeOpenCodeBackendMode,
@@ -6,15 +10,22 @@ import {
   normalizeOpenCodeServerBaseUrlExplicit,
 } from '../../providerSettings/definitions/opencode.js';
 import { readOpenCodeRuntimeDescriptorProviderExtra } from './runtimeDescriptorExtra.js';
-import { asRecord, normalizeTrimmedString } from '../../sessionControls/runtimeDescriptorShared.js';
-import type { SharedRuntimeDescriptorByProviderId } from '../../sessionControls/runtimeDescriptorTypes.js';
+import { asRecord, normalizeTrimmedString } from '../../runtime/identity/runtimeDescriptorShared.js';
+import type { SharedRuntimeDescriptorByProviderId } from '../../runtime/identity/runtimeDescriptorTypes.js';
 
 export function readOpenCodeSessionMetadataRuntimeDescriptor(
-  metadataRecord: Record<string, unknown>,
+  metadata: unknown,
 ): SharedRuntimeDescriptorByProviderId['opencode'] | null {
-  const rawDescriptor = asRecord(metadataRecord.agentRuntimeDescriptorV1);
+  const metadataRecord = asRecord(metadata);
+  if (!metadataRecord) return null;
+
+  const rawDescriptorInput = readRawRuntimeDescriptorV1FromMetadata(metadataRecord);
+  const rawDescriptor = asRecord(rawDescriptorInput);
   const rawProvider = rawDescriptor?.providerId === 'opencode' ? asRecord(rawDescriptor.provider) : null;
-  const descriptor = readAgentRuntimeDescriptorV1ForProvider(metadataRecord.agentRuntimeDescriptorV1, 'opencode');
+  const descriptor = readRuntimeDescriptorV1ForProvider(
+    readRuntimeDescriptorV1FromMetadata(metadataRecord) ?? rawDescriptorInput,
+    'opencode',
+  );
   const providerExtra = readOpenCodeRuntimeDescriptorProviderExtra(rawProvider?.providerExtra);
   const provider = descriptor?.provider ?? rawProvider;
   if (!provider) return null;

@@ -1,4 +1,5 @@
 import { normalizeCodexBackendMode, type CodexBackendMode } from '../../providerSettings/definitions/codex.js';
+import { readCodexRuntimeHandleCompatCarrier } from './runtimeDescriptorCompat.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -26,7 +27,7 @@ export type CodexRuntimeDescriptorProviderExtraRuntimeAffinity = Readonly<{
 
 export type CodexRuntimeDescriptorProviderExtra = Readonly<{
   v: 1;
-  runtimeAffinity?: Readonly<{
+  runtimeHandle?: Readonly<{
     backendMode?: CodexBackendMode;
     vendorSessionId?: string;
     home?: 'user' | 'connectedService';
@@ -57,7 +58,7 @@ export function buildCodexRuntimeDescriptorProviderExtra(
 
   return {
     v: 1,
-    runtimeAffinity: {
+    runtimeHandle: {
       ...(backendMode ? { backendMode } : {}),
       ...(vendorSessionId ? { vendorSessionId } : {}),
       ...(home ? { home } : {}),
@@ -71,22 +72,19 @@ export function buildCodexRuntimeDescriptorProviderExtra(
 export function readCodexRuntimeDescriptorProviderExtra(
   value: unknown,
 ): CodexRuntimeDescriptorProviderExtraRuntimeAffinity | null {
-  const extra = asRecord(value);
-  if (!extra || extra.v !== 1) return null;
+  const runtimeHandle = readCodexRuntimeHandleCompatCarrier(value);
+  if (!runtimeHandle) return null;
 
-  const runtimeAffinity = asRecord(extra.runtimeAffinity);
-  if (!runtimeAffinity) return null;
-
-  const home = normalizeCodexHome(runtimeAffinity.home);
+  const home = normalizeCodexHome(runtimeHandle.home);
   const normalizedRuntimeAffinity = {
-    backendMode: normalizeCodexBackendMode(runtimeAffinity.backendMode),
-    vendorSessionId: normalizeTrimmedString(runtimeAffinity.vendorSessionId),
+    backendMode: normalizeCodexBackendMode(runtimeHandle.backendMode),
+    vendorSessionId: normalizeTrimmedString(runtimeHandle.vendorSessionId),
     home,
-    connectedServiceId: home === 'connectedService' ? normalizeTrimmedString(runtimeAffinity.connectedServiceId) : null,
+    connectedServiceId: home === 'connectedService' ? normalizeTrimmedString(runtimeHandle.connectedServiceId) : null,
     connectedServiceProfileId: home === 'connectedService'
-      ? normalizeTrimmedString(runtimeAffinity.connectedServiceProfileId)
+      ? normalizeTrimmedString(runtimeHandle.connectedServiceProfileId)
       : null,
-    homePath: normalizeTrimmedString(runtimeAffinity.homePath),
+    homePath: normalizeTrimmedString(runtimeHandle.homePath),
   } satisfies CodexRuntimeDescriptorProviderExtraRuntimeAffinity;
 
   if (

@@ -1,4 +1,8 @@
-import { AGENT_IDS, type AgentId } from '../types.js';
+import {
+  CANONICAL_AGENT_IDS,
+  type AgentId,
+  type CanonicalAgentId,
+} from '../types.js';
 
 export type ProviderCliSourcePreference = 'system-first' | 'managed-first';
 export type ProviderCliManualInstallKind = 'command' | 'vendor_recipe' | 'none';
@@ -41,7 +45,7 @@ export type ProviderCliRuntimeSpec = Readonly<{
   docsUrl?: string | null;
 }>;
 
-export const RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP: ReadonlyArray<AgentId> = [
+export const RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP: ReadonlyArray<CanonicalAgentId> = [
   'claude',
   'codex',
   'gemini',
@@ -75,7 +79,7 @@ function cmdInstall(command: string, opts: Readonly<{ requiresAdmin?: boolean; n
   };
 }
 
-export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRuntimeSpec>> = {
+export const CANONICAL_PROVIDER_CLI_RUNTIME_SPECS = {
   claude: {
     id: 'claude',
     title: 'Claude Code CLI',
@@ -114,13 +118,14 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     id: 'opencode',
     title: 'OpenCode CLI',
     binaryName: 'opencode',
-    knownUserBinDirSuffixes: ['.opencode/bin'],
+    knownUserBinDirSuffixes: ['.opencode/bin', 'AppData/Roaming/npm'],
     sourcePreferenceDefault: 'system-first',
     managedInstall: null,
     manualInstallKind: 'vendor_recipe',
     manualInstallRecipes: {
       darwin: [bashCurlPipe('https://opencode.ai/install')],
       linux: [bashCurlPipe('https://opencode.ai/install')],
+      win32: [cmdInstall('npm install -g opencode-ai')],
     },
     acceptsJavaScriptFileOverride: false,
     installGuideUrl: 'https://opencode.ai/docs',
@@ -204,18 +209,6 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     acceptsJavaScriptFileOverride: false,
     docsUrl: 'https://kiro.dev/docs/cli/acp/',
   },
-  customAcp: {
-    id: 'customAcp',
-    title: 'Custom ACP',
-    binaryName: 'custom-acp',
-    knownUserBinDirSuffixes: null,
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: null,
-    manualInstallKind: 'none',
-    manualInstallRecipes: null,
-    acceptsJavaScriptFileOverride: false,
-    docsUrl: null,
-  },
   ohMyPi: {
     id: 'ohMyPi',
     title: 'oh-my-pi CLI',
@@ -286,15 +279,15 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     acceptsJavaScriptFileOverride: false,
     docsUrl: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
   },
-} as const;
+} as const satisfies Record<CanonicalAgentId, ProviderCliRuntimeSpec>;
+
+export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<CanonicalAgentId, ProviderCliRuntimeSpec>> = CANONICAL_PROVIDER_CLI_RUNTIME_SPECS;
 
 export function getProviderCliRuntimeSpec(id: AgentId): ProviderCliRuntimeSpec {
   return PROVIDER_CLI_RUNTIME_SPECS[id];
 }
 
-const PROVIDER_CLI_SETUP_SUPPORTED_IDS: ReadonlyArray<AgentId> = AGENT_IDS.filter(
-  (agentId) => PROVIDER_CLI_RUNTIME_SPECS[agentId].manualInstallKind !== 'none',
-) as ReadonlyArray<AgentId>;
+const PROVIDER_CLI_SETUP_SUPPORTED_IDS: ReadonlyArray<CanonicalAgentId> = CANONICAL_AGENT_IDS;
 
 export function getProviderCliSetupSupportedIds(): ReadonlyArray<AgentId> {
   return [...PROVIDER_CLI_SETUP_SUPPORTED_IDS];

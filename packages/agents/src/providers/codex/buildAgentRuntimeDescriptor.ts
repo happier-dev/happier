@@ -1,6 +1,7 @@
 import type { CodexBackendMode } from '../../providerSettings/definitions/codex.js';
 import { buildCodexRuntimeDescriptorProviderExtra } from './runtimeDescriptorExtra.js';
-import { normalizeCodexHome, normalizeTrimmedString } from '../../sessionControls/runtimeDescriptorShared.js';
+import { normalizeTrimmedString } from '../../runtime/identity/runtimeDescriptorShared.js';
+import { normalizeCodexHome } from './runtimeDescriptorShared.js';
 
 export type BuildCodexAgentRuntimeDescriptorParams = Readonly<{
   backendMode: CodexBackendMode;
@@ -25,7 +26,7 @@ export type CodexAgentRuntimeDescriptorV1 = Readonly<{
       owner: 'codex';
       schemaId: 'codex.agentRuntimeDescriptorExtra';
       v: 1;
-      runtimeAffinity?: {
+      runtimeHandle?: {
         backendMode?: CodexBackendMode;
         vendorSessionId?: string;
         home?: 'user' | 'connectedService';

@@ -1,6 +1,7 @@
 import type { AgentRuntimeKind } from '../../runtimeKinds.js';
 import { normalizeOpenCodeBackendMode } from '../../providerSettings/definitions/opencode.js';
-import { readSessionMetadataRuntimeDescriptor } from '../readSessionMetadataRuntimeDescriptor.js';
+import { asRecord } from '../../runtime/identity/runtimeDescriptorShared.js';
+import { readOpenCodeSessionMetadataRuntimeDescriptor } from './readSessionMetadataRuntimeDescriptor.js';
 import { readOpenCodeSessionAffinityFromMetadata } from './sessionRuntimeHandle.js';
 
 export const OPENCODE_SESSION_CONTROL_ADAPTER = Object.freeze({
@@ -27,6 +28,7 @@ export const OPENCODE_SESSION_CONTROL_ADAPTER = Object.freeze({
     return readOpenCodeSessionAffinityFromMetadata(metadata).backendMode;
   },
   resolveVendorResumeId(metadata: unknown): string | null {
-    return readSessionMetadataRuntimeDescriptor(metadata, 'opencode')?.vendorSessionId ?? null;
+    const metadataRecord = asRecord(metadata);
+    return metadataRecord ? readOpenCodeSessionMetadataRuntimeDescriptor(metadataRecord)?.vendorSessionId ?? null : null;
   },
 });
