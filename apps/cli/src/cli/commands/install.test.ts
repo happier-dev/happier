@@ -1,20 +1,33 @@
-import { access, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import * as tar from 'tar';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { reloadConfiguration } from '@/configuration';
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
-import { loadInstalledPlugins } from '@/extensions/plugins/loader/loadInstalledPlugins';
-import { installPluginFromSource } from '@/extensions/plugins/install/installPluginFromSource';
+import { createPluginStateStore } from '@/extensions/store/state';
+import { loadInstalledPlugins } from '@/extensions/load/installed';
+import { installPluginFromSource } from '@/extensions/install/source';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { materializeSamplePluginFixture } from '@/extensions/plugins/testkit/samplePluginFixture';
+import { materializeSamplePluginFixture } from '@/extensions/testkit/samplePackage';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { runInstallCliCommand } from './install';
+
+const { resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
+  resolveMergedContributionRegistryMock: vi.fn(),
+}));
+
+vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+  return {
+    ...actual,
+    resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
+  };
+});
 
 function makeContext(args: string[]): CommandContext {
   return {
@@ -28,7 +41,6 @@ async function createArchivedSamplePluginFixture(rootName = 'sample-plugin'): Pr
   pluginSourceRoot: string;
   archiveRoot: string;
   archivePath: string;
-  canonicalArchivePath: string;
   rewriteManifestVersion: (version: string) => Promise<void>;
   rebuildArchive: () => Promise<void>;
 }>> {
@@ -54,18 +66,69 @@ async function createArchivedSamplePluginFixture(rootName = 'sample-plugin'): Pr
   };
 
   await rebuildArchive();
-  const canonicalArchivePath = await realpath(archivePath);
   return {
     pluginSourceRoot,
     archiveRoot,
     archivePath,
-    canonicalArchivePath,
     rewriteManifestVersion,
     rebuildArchive,
   } as const;
 }
 
 describe('runInstallCliCommand', () => {
+  beforeEach(() => {
+    resolveMergedContributionRegistryMock.mockReset();
+    resolveMergedContributionRegistryMock.mockResolvedValue({
+      providers: [
+        {
+          id: 'claude',
+          source: 'built-in',
+          definition: {
+            id: 'claude',
+            providerCliRuntime: {
+              kindVersion: 1,
+              id: 'claude',
+              title: 'Claude Code CLI',
+              binaryName: 'claude',
+              sourcePreferenceDefault: 'system-first',
+              managedInstall: {
+                kind: 'managed_package',
+                packageName: '@happier-dev/claude',
+                binaryName: 'claude',
+              },
+              manualInstallKind: 'command',
+              manualInstallRecipes: null,
+              acceptsJavaScriptFileOverride: false,
+            },
+          },
+          runtimeSpec: {
+            kindVersion: 1,
+            id: 'claude',
+            title: 'Claude Code CLI',
+            binaryName: 'claude',
+            sourcePreferenceDefault: 'system-first',
+            managedInstall: {
+              kind: 'managed_package',
+              packageName: '@happier-dev/claude',
+              binaryName: 'claude',
+            },
+            manualInstallKind: 'command',
+            manualInstallRecipes: null,
+            acceptsJavaScriptFileOverride: false,
+          },
+          catalogEntry: null,
+        },
+      ],
+      backends: [],
+      hookRegistrations: [],
+      runtimeAdaptersByBackendId: new Map(),
+      catalogEntriesById: {},
+      providerDefinitionsById: new Map(),
+      backendDefinitionsById: new Map(),
+      pluginDiagnosticsByPluginId: {},
+    });
+  });
+
   it('prints usage for help requests', async () => {
     const log = vi.fn();
 
@@ -78,7 +141,9 @@ describe('runInstallCliCommand', () => {
     });
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install provider <providerId>'));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install plugin <path|archive>'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install plugin <path|archive-url>'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install doctor'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install plugin update <pluginId>'));
   });
 
   it('prints usage for provider help requests', async () => {
@@ -251,7 +316,7 @@ describe('runInstallCliCommand', () => {
     envScope.patch({ HAPPIER_HOME_DIR: home, PATH: process.env.PATH ?? '' });
     reloadConfiguration();
 
-    const { pluginSourceRoot, archivePath, canonicalArchivePath } = await createArchivedSamplePluginFixture();
+    const { pluginSourceRoot, archivePath } = await createArchivedSamplePluginFixture();
 
     try {
       await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']));
@@ -262,7 +327,7 @@ describe('runInstallCliCommand', () => {
       expect(state.plugins['acme.sample']).toMatchObject({
         source: {
           kind: 'archive',
-          locator: canonicalArchivePath,
+          locator: archivePath,
         },
         install: {
           mode: 'managed_install',
@@ -274,11 +339,76 @@ describe('runInstallCliCommand', () => {
       expect(loaded.loadedPlugins[0]).toMatchObject({
         sourceSpec: {
           kind: 'archive',
-          locator: canonicalArchivePath,
+          locator: archivePath,
           installPolicy: 'managed_install',
         },
       });
     } finally {
+      envScope.restore();
+      reloadConfiguration();
+      await removeTempDir(home);
+      await rm(pluginSourceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('installs direct archive URLs through the canonical archive installer and preserves remote provenance', async () => {
+    const home = await createTempDir('happier-plugin-install-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+    reloadConfiguration();
+
+    const { pluginSourceRoot, archivePath } = await createArchivedSamplePluginFixture();
+    const archiveBytes = await readFile(archivePath);
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (url.pathname === '/plugins/acme.sample.tar.gz') {
+        res.writeHead(200, {
+          'content-type': 'application/gzip',
+          'content-length': String(archiveBytes.byteLength),
+        });
+        res.end(archiveBytes);
+        return;
+      }
+
+      res.writeHead(404);
+      res.end('not found');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to bind direct archive install test server');
+    }
+    const archiveUrl = `http://127.0.0.1:${address.port}/plugins/acme.sample.tar.gz?download=1`;
+
+    try {
+      await runInstallCliCommand(makeContext(['install', 'plugin', archiveUrl]));
+
+      const store = createPluginStateStore({ happyHomeDir: home });
+      const state = await store.read();
+      expect(Object.keys(state.plugins)).toEqual(['acme.sample']);
+      expect(state.plugins['acme.sample']).toMatchObject({
+        source: {
+          kind: 'archive',
+          locator: archiveUrl,
+          trustPolicy: 'prompt',
+        },
+        install: {
+          mode: 'managed_install',
+        },
+      });
+
+      const loaded = await loadInstalledPlugins({ happyHomeDir: home });
+      expect(loaded.loadedPlugins.map((plugin) => plugin.manifest.id)).toEqual(['acme.sample']);
+      expect(loaded.loadedPlugins[0]).toMatchObject({
+        sourceSpec: {
+          kind: 'archive',
+          locator: archiveUrl,
+          trustPolicy: 'prompt',
+          installPolicy: 'managed_install',
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
       envScope.restore();
       reloadConfiguration();
       await removeTempDir(home);
@@ -292,7 +422,7 @@ describe('runInstallCliCommand', () => {
     envScope.patch({ HAPPIER_HOME_DIR: home, PATH: process.env.PATH ?? '' });
     reloadConfiguration();
 
-    const { pluginSourceRoot, archivePath, canonicalArchivePath, rewriteManifestVersion, rebuildArchive } = await createArchivedSamplePluginFixture();
+    const { pluginSourceRoot, archivePath, rewriteManifestVersion, rebuildArchive } = await createArchivedSamplePluginFixture();
 
     try {
       await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']));
@@ -319,7 +449,7 @@ describe('runInstallCliCommand', () => {
         },
         sourceSpec: {
           kind: 'archive',
-          locator: canonicalArchivePath,
+          locator: archivePath,
           installPolicy: 'managed_install',
         },
       });

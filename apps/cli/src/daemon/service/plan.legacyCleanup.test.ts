@@ -62,4 +62,32 @@ describe('daemon service legacy cleanup planning', () => {
     expect(plan.filesToRemove).toContain('/var/lib/happier/services/happier-daemon.legacy.service');
     expect(plan.filesToRemove).toContain('/home/tester/.config/systemd/user/happier-daemon.service');
   });
+
+  it('marks legacy Windows scheduled-task cleanup as optional during default-following installs', () => {
+    const plan = planDaemonServiceInstall({
+      platform: 'win32',
+      mode: 'user',
+      channel: 'stable',
+      targetMode: 'default-following',
+      instanceId: 'cloud',
+      userHomeDir: 'C:\\Users\\tester',
+      happierHomeDir: 'C:\\Users\\tester\\.happier',
+      serverUrl: 'http://127.0.0.1:24910',
+      webappUrl: 'http://localhost:24910',
+      publicServerUrl: 'http://localhost:24910',
+      nodePath: 'C:\\Users\\tester\\.happier\\cli\\current\\happier.exe',
+      entryPath: 'C:\\Users\\tester\\.happier\\cli\\current\\happier.exe',
+    });
+
+    expect(plan.commands).toContainEqual({
+      cmd: 'schtasks',
+      args: ['/End', '/TN', 'Happier\\happier-daemon'],
+      ignoreFailure: true,
+    });
+    expect(plan.commands).toContainEqual({
+      cmd: 'schtasks',
+      args: ['/Delete', '/F', '/TN', 'Happier\\happier-daemon'],
+      ignoreFailure: true,
+    });
+  });
 });

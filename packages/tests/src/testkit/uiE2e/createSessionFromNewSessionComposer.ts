@@ -37,6 +37,15 @@ async function waitForCount(
   return (await locator.count()) === expectedCount;
 }
 
+async function clickFirstMachineMatch(page: Page, machineId: string): Promise<boolean> {
+  const exact = page.getByTestId(`new-session-machine:${machineId}`);
+  if ((await exact.count()) === 0) {
+    return false;
+  }
+  await exact.first().click();
+  return true;
+}
+
 export async function openNewSessionMachineSelection(
   params: Readonly<{
     page: Page;
@@ -49,10 +58,13 @@ export async function openNewSessionMachineSelection(
   const routeFallbackWaitMs = params.routeFallbackWaitMs ?? 60_000;
   const machineChip = params.page.getByTestId('agent-input-machine-chip');
   const machineOptions = params.page.locator('[data-testid^="new-session-machine:"]').first();
+  const machineChipCount = await machineChip.count();
 
-  await machineChip.click();
-  if (await waitForCount(params.page, machineOptions, 1, popoverWaitMs)) {
-    return 'picker_open';
+  if (machineChipCount > 0) {
+    await machineChip.click();
+    if (await waitForCount(params.page, machineOptions, 1, popoverWaitMs)) {
+      return 'picker_open';
+    }
   }
 
   await gotoDomContentLoadedWithPathFallback(
@@ -109,17 +121,12 @@ export async function createSessionFromNewSessionComposer(
   params: CreateSessionFromNewSessionComposerParams,
 ): Promise<string> {
   const { page, uiBaseUrl, machineId, prompt } = params;
-  const machineChip = page.getByTestId('agent-input-machine-chip');
 
   await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/new`, '/new');
-  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-  await expect(machineChip).toHaveCount(1, { timeout: 120_000 });
   const machineSelectionResult = await openNewSessionMachineSelection({ page, uiBaseUrl });
   const pickDeadlineMs = Date.now() + 120_000;
   while (true) {
-    const exact = page.getByTestId(`new-session-machine:${machineId}`);
-    if (await exact.count()) {
-      await exact.click();
+    if (await clickFirstMachineMatch(page, machineId)) {
       break;
     }
 

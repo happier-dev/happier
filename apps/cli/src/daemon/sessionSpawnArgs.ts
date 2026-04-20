@@ -1,6 +1,6 @@
-import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
-import { resolveConcreteBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import { normalizeSessionControlPermissionModeForBackendTarget } from '@/backends/catalog';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import { normalizeClaudeHappyCliSessionControlPermissionMode } from '@/backends/claude/utils/permissionMode';
+import { normalizeDaemonBackendTargetV2Input } from './backendTargetRouting';
 
 export function buildHappySessionControlArgs(opts: Readonly<{
   permissionMode?: string;
@@ -11,7 +11,7 @@ export function buildHappySessionControlArgs(opts: Readonly<{
   modelUpdatedAt?: number;
   resume?: string;
   existingSessionId?: string;
-  backendTarget?: BackendTargetRefV2Input;
+  backendTarget?: BackendTargetRefV2;
 }>): string[] {
   const args: string[] = [];
 
@@ -25,9 +25,9 @@ export function buildHappySessionControlArgs(opts: Readonly<{
     args.push('--existing-session', existingSessionId);
   }
 
-  const resolvedBackendTarget = resolveConcreteBackendTargetRefs(opts.backendTarget);
-  const configuredAcpBackendId = resolvedBackendTarget?.backendTarget.kind === 'configuredAcpBackend'
-    ? resolvedBackendTarget.backendTarget.backendId.trim()
+  const backendTarget = normalizeDaemonBackendTargetV2Input(opts.backendTarget);
+  const configuredAcpBackendId = backendTarget?.sourceKind === 'configured'
+    ? (backendTarget.configuredBackendId ?? backendTarget.backendId).trim()
     : '';
   if (configuredAcpBackendId) {
     args.push('--backend', configuredAcpBackendId);
@@ -35,10 +35,10 @@ export function buildHappySessionControlArgs(opts: Readonly<{
 
   const permissionMode = typeof opts.permissionMode === 'string' ? opts.permissionMode.trim() : '';
   if (permissionMode) {
-    args.push('--permission-mode', normalizeSessionControlPermissionModeForBackendTarget({
-      backendTarget: resolvedBackendTarget?.backendTarget ?? undefined,
-      permissionMode,
-    }));
+    const normalizedPermissionMode = backendTarget?.sourceKind === 'built_in' && backendTarget.backendId === 'claude'
+      ? normalizeClaudeHappyCliSessionControlPermissionMode(permissionMode)
+      : permissionMode;
+    args.push('--permission-mode', normalizedPermissionMode);
     if (typeof opts.permissionModeUpdatedAt === 'number') {
       args.push('--permission-mode-updated-at', `${opts.permissionModeUpdatedAt}`);
     }

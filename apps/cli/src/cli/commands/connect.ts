@@ -88,11 +88,10 @@ function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Reado
       `  ${cmd('happier connect --all ...')}    Include experimental providers`,
       `  ${cmd('happier connect <target> --profile <id>')}      Store under a specific profile (default: default)`,
       `  ${cmd('happier connect <target> --paste')}             Headless mode: paste redirect URL`,
-      `  ${cmd('happier connect <target> --device')}            Use device-code auth (Codex)`,
-      `  ${cmd('happier connect codex --api-key')}              Store an OpenAI API key`,
-      `  ${cmd('happier connect claude --api-key')}             Store an Anthropic API key (not Claude subscription)`,
-      `  ${cmd('happier connect claude --setup-token')}         Store a Claude setup-token (default for claude)`,
-      `  ${cmd('happier connect claude --oauth')}               Store Claude subscription OAuth (advanced)`,
+      `  ${cmd('happier connect <target> --device')}            Use device-code auth when available`,
+      `  ${cmd('happier connect <target> --api-key')}           Store a provider API key when supported`,
+      `  ${cmd('happier connect <target> --setup-token')}       Store a provider setup-token when supported`,
+      `  ${cmd('happier connect <target> --oauth')}             Store provider subscription OAuth when supported`,
       `  ${cmd('happier connect <target> --no-open')}           Do not attempt to open a browser`,
       `  ${cmd('happier connect <target> --timeout <seconds>')} Override OAuth timeout`,
       '',
@@ -102,7 +101,7 @@ function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Reado
       '  without exposing credentials locally.',
       '',
       sectionTitle('Examples:'),
-      `  ${cmd(`happier connect ${targets[0]?.id ?? 'gemini'}`)}`,
+      `  ${cmd(`happier connect ${targets[0]?.id ?? '<target>'}`)}`,
       `  ${cmd('happier connect status')}`,
       '',
       sectionTitle('Notes:'),
@@ -337,8 +336,9 @@ async function handleConnectStatus(
     }
 
     console.log('');
+    const exampleVendorId = targets[0]?.id ?? '<vendor>';
     console.log(dim(`To connect a vendor, run: ${cmd('happier connect <vendor>')}`));
-    console.log(dim(`Example: ${cmd('happier connect gemini')}`));
+    console.log(dim(`Example: ${cmd(`happier connect ${exampleVendorId}`)}`));
     console.log('');
 }
 

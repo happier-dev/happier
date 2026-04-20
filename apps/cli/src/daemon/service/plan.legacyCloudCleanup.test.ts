@@ -16,7 +16,7 @@ const baseInstallParams = {
 } as const;
 
 describe('daemon service plan legacy cloud cleanup', () => {
-  it('does not emit legacy cleanup for non-cloud default-following installs', () => {
+  it('emits legacy cleanup for non-cloud default-following installs', () => {
     const plan = planDaemonServiceInstall({
       ...baseInstallParams,
       targetMode: 'default-following',
@@ -31,7 +31,7 @@ describe('daemon service plan legacy cloud cleanup', () => {
           command.args.includes('--now') &&
           command.args.includes('happier-daemon.service'),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('still emits legacy cleanup for cloud default-following installs', () => {

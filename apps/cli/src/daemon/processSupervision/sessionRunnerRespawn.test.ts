@@ -292,6 +292,47 @@ describe('createSessionRunnerRespawnManager', () => {
     expect(spawnSession).toHaveBeenCalledTimes(2);
   });
 
+  it('suppresses respawn retries when spawnSession returns not_authenticated', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn().mockResolvedValue({
+      type: 'error' as const,
+      errorCode: 'not_authenticated',
+      errorMessage: 'expired token',
+    });
+    const logWarn = vi.fn();
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 2,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning: async () => false,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn,
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-stale-auth',
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    expect(logWarn).toHaveBeenCalledWith(
+      '[DAEMON RUN] Respawn suppressed for session sess-stale-auth (auth:not_authenticated)',
+    );
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+  });
+
   it('retries respawn when the running-session preflight throws', async () => {
     vi.useFakeTimers();
     const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));

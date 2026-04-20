@@ -53,7 +53,7 @@ describe('buildHappySessionControlArgs', () => {
   it('normalizes Claude permission mode aliases before passing session-control flags', () => {
     expect(buildHappySessionControlArgs({
       permissionMode: 'safe-yolo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
     })).toEqual(['--permission-mode', 'acceptEdits']);
   });
 
@@ -73,6 +73,17 @@ describe('buildHappySessionControlArgs', () => {
         sourceKind: 'configured',
       } as any,
     })).toEqual(['--backend', 'custom-kiro']);
+  });
+
+  it('uses configuredBackendId for configured ACP targets that still carry the customAcp family marker', () => {
+    expect(buildHappySessionControlArgs({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'customAcp',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      } as never,
+    })).toEqual(['--backend', 'review-bot']);
   });
 
   it('omits backend flag for customAcp placeholder targets', () => {

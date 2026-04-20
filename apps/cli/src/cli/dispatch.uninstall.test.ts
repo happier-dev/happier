@@ -4,11 +4,13 @@ const { uninstallHandlerSpy, defaultHandlerSpy } = vi.hoisted(() => ({
   uninstallHandlerSpy: vi.fn(async () => {}),
   defaultHandlerSpy: vi.fn(async () => {}),
 }));
+const ensureMergedAgentCommandRegistryLoadedSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('@/cli/commandRegistry', () => ({
   commandRegistry: {
     uninstall: uninstallHandlerSpy,
   },
+  ensureMergedAgentCommandRegistryLoaded: ensureMergedAgentCommandRegistryLoadedSpy,
 }));
 
 vi.mock('@/backends/catalog', async (importOriginal) => {
@@ -27,6 +29,7 @@ describe('dispatchCli uninstall command', () => {
   beforeEach(() => {
     uninstallHandlerSpy.mockClear();
     defaultHandlerSpy.mockClear();
+    ensureMergedAgentCommandRegistryLoadedSpy.mockClear();
   });
 
   it('routes happier uninstall through the explicit command handler and does not fall through', async () => {
@@ -42,5 +45,6 @@ describe('dispatchCli uninstall command', () => {
       terminalRuntime: null,
     });
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
+    expect(ensureMergedAgentCommandRegistryLoadedSpy).not.toHaveBeenCalled();
   });
 });

@@ -57,7 +57,7 @@ export async function buildCgroupSelfMigratingHappyCliLaunchSpec(params: Readonl
     filePath: '/bin/sh',
     args: [
       '-lc',
-      'target_dir="$HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR/happier-session-$$.scope" && mkdir -p "$target_dir" && printf "%s\\n" "$$" > "$target_dir/cgroup.procs" && exec "$@"',
+      'target_dir="$HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR/happier-session-$$.scope"; mkdir -p "$target_dir" 2>/dev/null || true; printf "%s\\n" "$$" > "$target_dir/cgroup.procs" 2>/dev/null || true; exec "$@"',
       'sh',
       baseLaunchSpec.filePath,
       ...baseLaunchSpec.args,

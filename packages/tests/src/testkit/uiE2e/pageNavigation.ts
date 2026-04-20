@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 
 export { normalizeLoopbackBaseUrl } from '../network/loopbackBaseUrl';
 import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
+import { normalizeLoopbackBaseUrl } from '../network/loopbackBaseUrl';
 import { dismissSetupWizardIfVisible } from './createAccountAndReachConnectMachineState';
 
 export {
@@ -20,25 +21,44 @@ export async function gotoCommittedWithRetries(page: Page, url: string, timeoutM
 
 async function gotoWithRetries(page: Page, url: string, timeoutMs: number, waitUntil: 'commit' | 'domcontentloaded'): Promise<void> {
   const normalizeUrl = (value: string): string => value.replace(/\/+$/, '');
+  const normalizeLoopbackUrl = (value: string): string => normalizeUrl(normalizeLoopbackBaseUrl(value));
+  const isChromeWebDataErrorNavigation = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('chrome-error://chromewebdata/');
+  };
+  const isInterruptedByAnotherNavigation = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('is interrupted by another navigation');
+  };
   const retryable = (error: unknown): boolean => {
     const message = error instanceof Error ? error.message : String(error);
     return (
       message.includes('net::ERR_NETWORK_CHANGED')
       || message.includes('net::ERR_CONNECTION_REFUSED')
       || message.includes('net::ERR_CONNECTION_RESET')
+      || message.includes('ECONNRESET')
       || message.includes('net::ERR_ABORTED')
+      || message.includes('is interrupted by another navigation')
+      // Chromium navigates to a chrome-error:// page when it cannot reach the target origin.
+      // Treat this as a transient connectivity failure and retry alternate loopback candidates.
+      || message.includes('chrome-error://chromewebdata/')
     );
   };
 
-  const isConnectionRefused = (error: unknown): boolean => {
+  const shouldTryNextCandidateImmediately = (error: unknown): boolean => {
     const message = error instanceof Error ? error.message : String(error);
-    return message.includes('net::ERR_CONNECTION_REFUSED');
+    return (
+      message.includes('net::ERR_CONNECTION_REFUSED')
+      || message.includes('net::ERR_ABORTED')
+      || isInterruptedByAnotherNavigation(error)
+      || isChromeWebDataErrorNavigation(error)
+    );
   };
 
   const isCommittedTimeout = (error: unknown, candidateUrl: string): boolean => {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes('timeout')) return false;
-    return normalizeUrl(page.url()) === normalizeUrl(candidateUrl);
+    return normalizeLoopbackUrl(page.url()) === normalizeLoopbackUrl(candidateUrl);
   };
 
   const start = Date.now();
@@ -58,7 +78,7 @@ async function gotoWithRetries(page: Page, url: string, timeoutMs: number, waitU
         if (waitUntil === 'commit' && isCommittedTimeout(error, candidateUrl)) return;
         if (!retryable(error)) throw error;
         lastRetryableError = error;
-        if (!isConnectionRefused(error)) break;
+        if (!shouldTryNextCandidateImmediately(error)) break;
       }
     }
 
@@ -91,8 +111,12 @@ function normalizePathname(value: string): string {
 export function isGotoTimeoutOnExpectedPath(page: Page, expectedPathname: string, error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (!message.toLowerCase().includes('timeout')) return false;
+  return hasPathname(page.url(), expectedPathname);
+}
+
+export function hasPathname(url: string, expectedPathname: string): boolean {
   try {
-    return normalizePathname(new URL(page.url()).pathname) === normalizePathname(expectedPathname);
+    return normalizePathname(new URL(url).pathname) === normalizePathname(expectedPathname);
   } catch {
     return false;
   }

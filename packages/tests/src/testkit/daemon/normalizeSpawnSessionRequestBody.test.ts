@@ -12,7 +12,7 @@ describe('normalizeSpawnSessionRequestBody', () => {
       directory: '/tmp/workspace',
       agent: 'codex',
       resume: true,
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
     });
   });
 
@@ -22,11 +22,11 @@ describe('normalizeSpawnSessionRequestBody', () => {
     })).toEqual({
       directory: '/tmp/workspace',
       agent: 'claude',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
     });
   });
 
-  it('preserves explicit backendTarget as-is', () => {
+  it('canonicalizes explicit V1 backendTarget carriers to the daemon V2 transport shape', () => {
     expect(normalizeSpawnSessionRequestBody({
       directory: '/tmp/workspace',
       agent: 'customAcp',
@@ -34,7 +34,12 @@ describe('normalizeSpawnSessionRequestBody', () => {
     })).toEqual({
       directory: '/tmp/workspace',
       agent: 'customAcp',
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
     });
   });
 });

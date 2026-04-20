@@ -125,6 +125,36 @@ describe('sessionRegistry', () => {
     expect(typeof parsed.updatedAt).toBe('number');
   });
 
+  it('allows concurrent marker refreshes for the same pid', async () => {
+    const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
+
+    await expect(
+      Promise.all([
+        writeSessionMarker({
+          pid: 12346,
+          happySessionId: 'sess-concurrent-a',
+          startedBy: 'daemon',
+          cwd: '/tmp',
+        }),
+        writeSessionMarker({
+          pid: 12346,
+          happySessionId: 'sess-concurrent-b',
+          startedBy: 'daemon',
+          cwd: '/tmp',
+        }),
+      ]),
+    ).resolves.toHaveLength(2);
+
+    const markers = await listSessionMarkers();
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toEqual(
+      expect.objectContaining({
+        pid: 12346,
+        startedBy: 'daemon',
+      }),
+    );
+  });
+
   it('supports opencode flavor markers', async () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
 

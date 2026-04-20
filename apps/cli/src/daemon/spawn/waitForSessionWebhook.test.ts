@@ -157,7 +157,7 @@ describe('waitForSessionWebhook', () => {
     });
   });
 
-  it('resolves immediately when a canonical existing session id is available', async () => {
+  it('continues waiting for webhook proof when a canonical existing session id hint is available', async () => {
     const pidToAwaiter = new Map<number, (session: any) => void>();
     const pidToSpawnResultResolver = new Map<number, (result: any) => void>();
     const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
@@ -171,12 +171,15 @@ describe('waitForSessionWebhook', () => {
       resolveExistingSessionId: () => 'session-ready-5150',
     });
 
+    expect(pidToAwaiter.has(5150)).toBe(true);
+    expect(pidToSpawnResultResolver.has(5150)).toBe(true);
+    expect(pidToSpawnWebhookTimeout.has(5150)).toBe(true);
+
+    pidToAwaiter.get(5150)?.({ happySessionId: 'session-ready-5150' });
+
     await expect(promise).resolves.toEqual({
       type: 'success',
       sessionId: 'session-ready-5150',
     });
-    expect(pidToAwaiter.has(5150)).toBe(false);
-    expect(pidToSpawnResultResolver.has(5150)).toBe(false);
-    expect(pidToSpawnWebhookTimeout.has(5150)).toBe(false);
   });
 });

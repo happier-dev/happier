@@ -165,4 +165,48 @@ describe('buildBackgroundServiceSetupGuidance', () => {
             },
         }));
     });
+
+    it('treats foreign-home default-following services as a replaceable conflict after explicit confirmation', async () => {
+        const services: HappierService[] = [
+            {
+                id: 'launchd:com.happier.cli.daemon.default',
+                serviceType: 'daemon',
+                platform: 'darwin',
+                backend: 'launchd',
+                label: 'com.happier.cli.daemon.default',
+                targetMode: 'default-following',
+                verification: 'verified',
+                ring: 'stable',
+                instanceId: null,
+                scope: 'user',
+                definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist',
+                executablePath: '/Users/other/.happier/cli/current/happier',
+                happierHomeDir: '/Users/other/.happier',
+                installed: true,
+                running: true,
+            },
+        ];
+
+        expect(buildBackgroundServiceSetupGuidance({
+            services,
+            managedReleaseChannelInventory: {
+                defaultReleaseChannel: 'stable',
+                managedReleaseChannels: [],
+            },
+            currentHappierHomeDir: '/Users/tester/.happier',
+            platform: 'darwin',
+            mode: 'user',
+            targetReleaseChannel: 'stable',
+            targetServerUrl: 'https://relay.example.test',
+        })).toEqual(expect.objectContaining({
+            shouldPromptForServiceReplacement: true,
+            conflictingServices: [],
+            foreignHomeConflictingServices: [
+                expect.objectContaining({
+                    label: 'com.happier.cli.daemon.default',
+                    happierHomeDir: '/Users/other/.happier',
+                }),
+            ],
+        }));
+    });
 });

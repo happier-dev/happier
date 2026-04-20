@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
@@ -24,9 +24,10 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
   terminalRequest: ResolvedTerminalRequest;
   directory: string;
   options: SpawnSessionOptions;
+  trackedSpawnOptions: SpawnSessionOptions;
   normalizedExistingSessionId: string;
   effectiveResume: string;
-  effectiveBackendTarget: BackendTargetRefV1;
+  effectiveBackendTargetV2: BackendTargetRefV2;
   sessionControlArgs: readonly string[];
   directoryCreated: boolean;
   extraEnvForChildWithMessage: Record<string, string>;
@@ -86,7 +87,7 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
   const sessionDesc = resolvedTmuxSessionName || 'current/most recent session';
   params.logDebug(`[DAEMON RUN] Attempting to spawn session in tmux: ${sessionDesc}`);
 
-  const agentSubcommand = resolveDaemonCliSubcommandFromBackendTarget(params.effectiveBackendTarget);
+  const agentSubcommand = resolveDaemonCliSubcommandFromBackendTarget(params.effectiveBackendTargetV2);
   if (!agentSubcommand) {
     return {
       spawnResult: {
@@ -167,7 +168,7 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
     startedBy: 'daemon',
     happySessionId: params.normalizedExistingSessionId || undefined,
     pid: tmuxPid,
-    spawnOptions: params.options,
+    spawnOptions: params.trackedSpawnOptions,
     tmuxSessionId: tmuxResult.sessionId,
     tmuxTmpDir: typeof tmuxTmpDir === 'string' && tmuxTmpDir.trim().length > 0 ? tmuxTmpDir.trim() : undefined,
     vendorResumeId: params.effectiveResume || undefined,

@@ -13,16 +13,44 @@ export type AuthBootstrapCredentials =
         }>;
     }>;
 
+function canonicalizeServerUrlForUiWeb(rawServerUrl: string): string {
+    const trimmed = String(rawServerUrl ?? '').trim().replace(/\/+$/, '');
+    if (!trimmed) return '';
+
+    try {
+        const parsed = new URL(trimmed);
+        const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+        const isLoopback =
+            hostname === '127.0.0.1'
+            || hostname === '::1'
+            || hostname === '[::1]'
+            || hostname === 'localhost'
+            || hostname.endsWith('.localhost');
+
+        const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+        const path = normalizedPath && normalizedPath !== '/' ? normalizedPath : '';
+        const port = parsed.port ? `:${parsed.port}` : '';
+        const auth = parsed.username
+            ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+            : '';
+
+        return `${parsed.protocol}//${auth}${isLoopback ? 'localhost' : hostname}${port}${path}${parsed.search}${parsed.hash}`
+            .replace(/\/+$/, '');
+    } catch {
+        return trimmed;
+    }
+}
+
 function deriveServerIdFromUrl(serverUrl: string): string {
     let hostname = '';
     let port = '';
 
     try {
-        const parsed = new URL(serverUrl);
+        const parsed = new URL(canonicalizeServerUrlForUiWeb(serverUrl));
         hostname = parsed.hostname.toLowerCase();
         port = parsed.port ? `-${parsed.port}` : '';
     } catch {
-        const normalized = String(serverUrl ?? '').trim().toLowerCase();
+        const normalized = canonicalizeServerUrlForUiWeb(serverUrl).toLowerCase();
         hostname = normalized.replace(/^[a-z]+:\/\//, '').replace(/\/+$/, '');
     }
 
@@ -37,10 +65,10 @@ function scopedStorageId(baseId: string, scope: string | null): string {
 
 function defaultServerNameFromUrl(serverUrl: string): string {
     try {
-        const parsed = new URL(serverUrl);
+        const parsed = new URL(canonicalizeServerUrlForUiWeb(serverUrl));
         return parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
     } catch {
-        return String(serverUrl ?? '').trim();
+        return canonicalizeServerUrlForUiWeb(serverUrl) || String(serverUrl ?? '').trim();
     }
 }
 
@@ -50,15 +78,16 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
     storageScope: string;
 }>): AuthBootstrapStorageSnapshot {
     const now = Date.now();
-    const serverId = deriveServerIdFromUrl(params.serverUrl);
+    const canonicalServerUrl = canonicalizeServerUrlForUiWeb(params.serverUrl);
+    const serverId = deriveServerIdFromUrl(canonicalServerUrl);
     const credentialPayload = JSON.stringify(params.credentials);
     const serverState = JSON.stringify({
         activeServerId: serverId,
         servers: {
             [serverId]: {
                 id: serverId,
-                name: defaultServerNameFromUrl(params.serverUrl),
-                serverUrl: params.serverUrl,
+                name: defaultServerNameFromUrl(canonicalServerUrl),
+                serverUrl: canonicalServerUrl || params.serverUrl,
                 createdAt: now,
                 updatedAt: now,
                 lastUsedAt: now,

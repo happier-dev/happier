@@ -141,6 +141,8 @@ export function createUiWebExportStartupStallGuard(params: {
     let markerSeen = false;
     let markerSeenAtMs = 0;
     let lastProgressAtMs = Date.now();
+    let lastStdoutLength = 0;
+    let lastStderrLength = 0;
     let lastExportProgress: ExportProgressSnapshot = {
         fileCount: 0,
         totalBytes: 0,
@@ -186,21 +188,10 @@ export function createUiWebExportStartupStallGuard(params: {
     const tick = async () => {
         if (stopped) return;
 
-        const [stdoutText, stderrText, exportProgress] = await Promise.all([
+        const [stdoutText, stderrText] = await Promise.all([
             readExistingFile(params.stdoutPath),
             readExistingFile(params.stderrPath),
-            readExportProgressSnapshot(params.stagingDir),
         ]);
-
-        if (!markerSeen && (stdoutText.includes(STARTUP_MARKER) || stderrText.includes(STARTUP_MARKER))) {
-            markerSeen = true;
-            markerSeenAtMs = Date.now();
-            lastProgressAtMs = markerSeenAtMs;
-            lastExportProgress = exportProgress;
-            return;
-        }
-
-        if (!markerSeen) return;
 
         if (stderrHasUiWebExportMetroCacheCorruption(stderrText)) {
             const error = createUiWebExportMetroCacheCorruptionError();
@@ -210,10 +201,48 @@ export function createUiWebExportStartupStallGuard(params: {
         }
 
         const now = Date.now();
+        const previousStdoutLength = lastStdoutLength;
+        const previousStderrLength = lastStderrLength;
+        const logsChanged = stdoutText.length !== previousStdoutLength || stderrText.length !== previousStderrLength;
+        lastStdoutLength = stdoutText.length;
+        lastStderrLength = stderrText.length;
+
+        if (!markerSeen) {
+            // Avoid expensive staging scans until Metro startup is confirmed; otherwise marker detection
+            // can be delayed long enough for the hard timeout to win the race.
+            if (stdoutText.includes(STARTUP_MARKER) || stderrText.includes(STARTUP_MARKER)) {
+                markerSeen = true;
+                markerSeenAtMs = Date.now();
+                lastProgressAtMs = markerSeenAtMs;
+                lastExportProgress = await readExportProgressSnapshot(params.stagingDir);
+            }
+            if (logsChanged) {
+                lastProgressAtMs = now;
+                return;
+            }
+            if (now - lastProgressAtMs < timeoutMs) return;
+
+            const error = normalizeAbortReason(
+                new Error(`expo export startup stalled after ${timeoutMs}ms before ${STARTUP_MARKER}; no log output.`),
+                `expo export startup stalled after ${timeoutMs}ms before ${STARTUP_MARKER}; no log output.`,
+            );
+            params.abortController.abort(error);
+            rejectGuard(error);
+            return;
+        }
+
+        const exportProgress = await readExportProgressSnapshot(params.stagingDir);
         const exportProgressChanged = didExportProgressChange(lastExportProgress, exportProgress);
         lastExportProgress = exportProgress;
 
         if (exportProgressChanged) {
+            lastProgressAtMs = now;
+            return;
+        }
+
+        // Before publish output exists, allow stdout/stderr churn to extend the startup window.
+        // Once staging is partial, rely on staging progress only (log churn can mask a frozen export).
+        if (exportProgress.fileCount === 0 && logsChanged) {
             lastProgressAtMs = now;
             return;
         }

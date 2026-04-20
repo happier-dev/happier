@@ -14,9 +14,11 @@ import { resolveMergedContributionRegistry } from '@/extensions/registry/createR
 import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
+import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleCatalogCliCommand';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 
@@ -51,6 +53,24 @@ async function defaultReadAccountSettings(params: { credentials: Credentials }):
 
 async function defaultResolveResumeContributionRegistry(): Promise<ResumeContributionRegistry | null> {
   return await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
+}
+
+function readOptionalNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveConfiguredAcpBackendIdFromMetadata(metadata: Record<string, unknown> | null): string | null {
+  if (!metadata) return null;
+  const configured = readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId;
+  if (configured && configured.trim().length > 0) {
+    return configured.trim();
+  }
+  const flavor = readOptionalNonEmptyString(metadata.flavor);
+  if (!flavor || !flavor.startsWith('acp:')) return null;
+  const backendId = flavor.slice(4).trim();
+  return backendId.length > 0 ? backendId : null;
 }
 
 async function selectResumableSessionId(params: Readonly<{
@@ -100,6 +120,7 @@ export async function handleResumeCommand(
     fetchSessionByIdFn?: FetchSessionByIdFn;
     fetchSessionsPageFn?: FetchSessionsPageFn;
     resolveAgentHandlerFn?: (agentId: CatalogAgentId) => Promise<CommandHandler>;
+    resolveConfiguredAcpCatalogHandlerFn?: () => Promise<CommandHandler>;
     resolveContributionRegistryFn?: ResolveResumeContributionRegistryFn;
     chdirFn?: (nextDir: string) => void;
     canUseInkSelectorFn?: () => boolean;
@@ -123,6 +144,7 @@ export async function handleResumeCommand(
   const fetchSessionByIdFn = deps?.fetchSessionByIdFn ?? fetchSessionById;
   const fetchSessionsPageFn = deps?.fetchSessionsPageFn ?? fetchSessionsPage;
   const resolveAgentHandlerFn = deps?.resolveAgentHandlerFn ?? resolveAgentHandler;
+  const resolveConfiguredAcpCatalogHandlerFn = deps?.resolveConfiguredAcpCatalogHandlerFn ?? (async () => handleConfiguredAcpCatalogCliCommand);
   const resolveContributionRegistryFn = deps?.resolveContributionRegistryFn ?? defaultResolveResumeContributionRegistry;
   const chdirFn = deps?.chdirFn ?? ((nextDir: string) => process.chdir(nextDir));
   const canUseInkSelectorFn = deps?.canUseInkSelectorFn ?? canUseInkSelector;
@@ -210,15 +232,14 @@ export async function handleResumeCommand(
     throw new Error('Session metadata is missing a working directory path.');
   }
 
+  const metadata = tryDecryptSessionMetadata({ credentials, rawSession });
+  const metadataRecord = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : null;
+  const configuredAcpBackendId = resolveConfiguredAcpBackendIdFromMetadata(metadataRecord);
+
   const inferredAgentId = rowModel.agentId;
   if (typeof inferredAgentId !== 'string') {
-    throw new Error(`Unknown agentId: ${String(inferredAgentId)}`);
-  }
-  let agentId: CatalogAgentId;
-  try {
-    requireCatalogEntry(inferredAgentId as CatalogAgentId);
-    agentId = inferredAgentId as CatalogAgentId;
-  } catch {
     throw new Error(`Unknown agentId: ${String(inferredAgentId)}`);
   }
 
@@ -248,13 +269,41 @@ export async function handleResumeCommand(
   try {
     chdirFn(directory);
 
-    const handler = await resolveAgentHandlerFn(agentId);
-    const context: CommandContext = {
-      args: [agentId, '--existing-session', rawSession.id, '--resume', vendorResume.vendorResumeId, '--started-by', 'terminal'],
-      rawArgv: deps?.rawArgv ?? ['happier', 'resume', rawSession.id],
-      terminalRuntime: deps?.terminalRuntime ?? null,
-    };
-    await handler(context);
+    if (configuredAcpBackendId) {
+      const handler = await resolveConfiguredAcpCatalogHandlerFn();
+      const context: CommandContext = {
+        args: [
+          'acp-catalog',
+          '--backend',
+          configuredAcpBackendId,
+          '--existing-session',
+          rawSession.id,
+          '--resume',
+          vendorResume.vendorResumeId,
+          '--started-by',
+          'terminal',
+        ],
+        rawArgv: deps?.rawArgv ?? ['happier', 'resume', rawSession.id],
+        terminalRuntime: deps?.terminalRuntime ?? null,
+      };
+      await handler(context);
+    } else {
+      let agentId: CatalogAgentId;
+      try {
+        requireCatalogEntry(inferredAgentId as CatalogAgentId);
+        agentId = inferredAgentId as CatalogAgentId;
+      } catch {
+        throw new Error(`Unknown agentId: ${String(inferredAgentId)}`);
+      }
+
+      const handler = await resolveAgentHandlerFn(agentId);
+      const context: CommandContext = {
+        args: [agentId, '--existing-session', rawSession.id, '--resume', vendorResume.vendorResumeId, '--started-by', 'terminal'],
+        rawArgv: deps?.rawArgv ?? ['happier', 'resume', rawSession.id],
+        terminalRuntime: deps?.terminalRuntime ?? null,
+      };
+      await handler(context);
+    }
   } catch (error) {
     await attach.cleanup().catch(() => {});
     throw error;

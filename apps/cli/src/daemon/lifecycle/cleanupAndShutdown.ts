@@ -4,6 +4,7 @@ import { logger } from '@/ui/logger';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
 import type { ConnectedServiceQuotasLoopHandle } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
+import type { VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
 import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from '../shutdownPolicy';
 import { publishShutdownStateBestEffort } from './publishShutdownState';
 import type { DaemonShutdownSource } from './shutdown';
@@ -25,6 +26,7 @@ export type CleanupAndShutdownParams = Readonly<{
     machineConnectionStateCleanup: (() => void) | null;
     automationWorker: AutomationWorkerHandle | null;
     memoryWorker: MemoryWorkerHandle | null;
+    voiceInferenceWorker: VoiceInferenceWorkerHandle | null;
     trackedSessionCount: number;
     stopDirectPeerServer: () => Promise<void>;
     stopTailscaleTransferServeLifecycle: () => Promise<void>;
@@ -94,19 +96,8 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
     if (params.memoryWorker) {
         params.memoryWorker.stop();
     }
-
-    // Best-effort cleanup for provider-managed background processes (e.g. shared OpenCode server).
-    // Important: do not tear down shared provider background processes while session runners are still
-    // tracked by this daemon. Some harnesses stop the daemon while externally-started sessions are
-    // still live (e.g. in-flight provider tests). Killing the shared OpenCode server in that state
-    // can wedge or abort those sessions mid-turn.
-    if (params.trackedSessionCount === 0) {
-        try {
-            const { stopSharedManagedOpenCodeServerFromEnvBestEffort } = await import('@/backends/opencode/server/sharedManagedServer');
-            await stopSharedManagedOpenCodeServerFromEnvBestEffort();
-        } catch {
-            // best-effort only
-        }
+    if (params.voiceInferenceWorker) {
+        await params.voiceInferenceWorker.stop();
     }
 
     await params.stopDirectPeerServer();

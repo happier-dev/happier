@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel';
+import { resolveDaemonStateBasenameForRing } from '../../cli/runtime/publicReleaseChannel';
 
 import {
   listPublicReleaseRingCatalogEntries,

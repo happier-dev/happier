@@ -16,9 +16,27 @@ type AppendCommandLogFn = (
   stdout: string,
   stderr: string,
   status: number | null,
+  signal: NodeJS.Signals | null,
 ) => void;
 
 type AppendLogLineFn = (logPath: string, line: string) => void;
+
+function resolveVendorRecipeFailureMessage(params: Readonly<{
+  cmd: string;
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+}>): string {
+  const stderr = params.stderr.trim();
+  if (params.status === 137 || params.signal === 'SIGKILL') {
+    return [
+      `Vendor install was killed while running ${params.cmd}; this often means the machine ran out of memory.`,
+      'Please increase available memory or swap and retry.',
+      stderr ? `Installer output: ${stderr}` : null,
+    ].filter(Boolean).join(' ');
+  }
+  return stderr || `Command failed (${params.status ?? 'unknown'}): ${params.cmd}`;
+}
 
 export type VendorRecipeInstallResult =
   | Readonly<{ ok: true }>
@@ -114,7 +132,7 @@ export async function runVendorRecipeInstall(params: Readonly<{
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
     if (res.error) {
-      appendCommandLog(logPath, c.cmd, c.args, '', res.error.message, res.status ?? null);
+      appendCommandLog(logPath, c.cmd, c.args, '', res.error.message, res.status ?? null, res.signal ?? null);
       if ((res.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
         appendLogLine(logPath, `# vendor recipe timed out after ${timeoutMs}ms`);
         return {
@@ -126,7 +144,8 @@ export async function runVendorRecipeInstall(params: Readonly<{
       return { ok: false, errorCode: 'command-exec-failed', errorMessage: res.error.message };
     }
     const status = typeof res.status === 'number' ? res.status : null;
-    appendCommandLog(logPath, c.cmd, c.args, String(res.stdout ?? ''), String(res.stderr ?? ''), status);
+    const signal = res.signal ?? null;
+    appendCommandLog(logPath, c.cmd, c.args, String(res.stdout ?? ''), String(res.stderr ?? ''), status, signal);
     if (status !== 0) {
       const resolvedAfterFailure = resolveProviderCliCommandForRuntime(runtimeSpec, { processEnv: childEnv });
       if (resolvedAfterFailure) {
@@ -136,11 +155,15 @@ export async function runVendorRecipeInstall(params: Readonly<{
         );
         return { ok: true };
       }
-      const stderr = String(res.stderr ?? '').trim();
       return {
         ok: false,
         errorCode: 'command-failed',
-        errorMessage: stderr || `Command failed (${status ?? 'unknown'}): ${c.cmd}`,
+        errorMessage: resolveVendorRecipeFailureMessage({
+          cmd: c.cmd,
+          status,
+          signal,
+          stderr: String(res.stderr ?? ''),
+        }),
       };
     }
   }

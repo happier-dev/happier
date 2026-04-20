@@ -4,8 +4,21 @@ export function renderServiceRepairPlan(params: Readonly<{
   plan: BackgroundServiceRepairPlan;
   commandPath: string;
 }>): string {
+  const warningLines = params.plan.manualWarnings.length > 0
+    ? [
+        '',
+        'Manual cleanup required:',
+        ...params.plan.manualWarnings.map((warning) => `- ${warning}`),
+      ]
+    : [];
+
   if (params.plan.actions.length === 0) {
-    return 'No background-service repair actions are needed.';
+    return [
+      params.plan.manualWarnings.length > 0
+        ? 'No automatic background-service repair actions are available.'
+        : 'No background-service repair actions are needed.',
+      ...warningLines,
+    ].join('\n');
   }
 
   return [
@@ -18,6 +31,7 @@ export function renderServiceRepairPlan(params: Readonly<{
       return `${index + 1}. Install one default background service on ${action.releaseChannel} (${action.mode})`;
     }),
     '',
-    `Run ${params.commandPath} --yes to apply these actions non-interactively.`,
+    `Run ${params.commandPath} repair --yes to apply these actions non-interactively.`,
+    ...warningLines,
   ].join('\n');
 }

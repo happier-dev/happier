@@ -8,7 +8,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('daemon service installer', () => {
-  it('installs and uninstalls a linux user service (no systemctl)', async () => {
+  it('installs and uninstalls the default-following linux user service (no systemctl)', async () => {
     await withTempDir('happier-service-installer-home-', async (userHomeDir) => {
       const happierHomeDir = join(userHomeDir, '.happier');
       await installDaemonService({
@@ -22,7 +22,7 @@ describe('daemon service installer', () => {
         runCommands: false,
       });
 
-      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.cloud.service'))).toBe(true);
+      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.default.service'))).toBe(true);
 
       await uninstallDaemonService({
         platform: 'linux',
@@ -32,14 +32,14 @@ describe('daemon service installer', () => {
         runCommands: false,
       });
 
-      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.cloud.service'))).toBe(false);
+      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.default.service'))).toBe(false);
     });
   });
 
-  it('installs and uninstalls a darwin LaunchAgent (no launchctl)', async () => {
+  it('installs and uninstalls the default-following darwin LaunchAgent (no launchctl)', async () => {
     await withTempDir('happier-service-installer-home-', async (userHomeDir) => {
       const happierHomeDir = join(userHomeDir, '.happier');
-      const plistPath = join(userHomeDir, 'Library', 'LaunchAgents', 'com.happier.cli.daemon.cloud.plist');
+      const plistPath = join(userHomeDir, 'Library', 'LaunchAgents', 'com.happier.cli.daemon.default.plist');
       await installDaemonService({
         platform: 'darwin',
         uid: 501,
@@ -99,6 +99,8 @@ describe('daemon service installer', () => {
           uid: 123,
           userHomeDir,
           happierHomeDir,
+          targetMode: 'pinned',
+          instanceId: 'company',
           runCommands: false,
         });
 

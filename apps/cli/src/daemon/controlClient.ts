@@ -7,7 +7,7 @@ import { logger } from '@/ui/logger';
 import { clearDaemonState, readDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { projectPath } from '@/projectPath';
-import { readFileSync, statSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { configuration } from '@/configuration';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { resolveComparableCliVersion } from './resolveComparableCliVersion';
@@ -346,11 +346,63 @@ export async function cleanupDaemonState(): Promise<void> {
   }
 }
 
+function readDaemonLockPid(): number | null {
+  try {
+    if (!existsSync(configuration.daemonLockFile)) {
+      return null;
+    }
+
+    const raw = readFileSync(configuration.daemonLockFile, 'utf-8').trim();
+    const pid = Number.parseInt(raw, 10);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      return null;
+    }
+
+    return pid;
+  } catch {
+    return null;
+  }
+}
+
+async function forceKillKnownDaemonPid(pid: number): Promise<void> {
+  const { findHappyProcessByPid } = await import('@/daemon/doctor');
+  const proc = await findHappyProcessByPid(pid);
+  const safeToKill = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
+  if (!safeToKill) {
+    logger.warn(`[CONTROL CLIENT] Refusing to force-kill PID ${pid} (does not look like a happier daemon process)`);
+    await cleanupDaemonState();
+    return;
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM');
+    await waitForProcessDeath(pid, 2000).catch(() => {});
+    try {
+      process.kill(pid, 0);
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // already exited
+    }
+    await cleanupDaemonState();
+    logger.debug('Force killed daemon (SIGTERM/SIGKILL)');
+  } catch (error) {
+    logger.debug('Daemon already dead');
+    await cleanupDaemonState();
+  }
+}
+
 export async function stopDaemon(params: { stopSessions?: boolean } = {}) {
   try {
     const state = await readDaemonState();
     if (!state) {
-      logger.debug('No daemon state found');
+      const lockPid = readDaemonLockPid();
+      if (!lockPid) {
+        logger.debug('No daemon state found');
+        return;
+      }
+
+      logger.debug(`No daemon state found; falling back to daemon lock PID ${lockPid}`);
+      await forceKillKnownDaemonPid(lockPid);
       return;
     }
 
@@ -369,30 +421,7 @@ export async function stopDaemon(params: { stopSessions?: boolean } = {}) {
       logger.debug('HTTP stop failed, will force kill', error);
     }
 
-    const { findHappyProcessByPid } = await import('@/daemon/doctor');
-    const proc = await findHappyProcessByPid(state.pid);
-    const safeToKill = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
-    if (!safeToKill) {
-      logger.warn(`[CONTROL CLIENT] Refusing to force-kill PID ${state.pid} (does not look like a happier daemon process)`);
-      await cleanupDaemonState();
-      return;
-    }
-
-    // Force kill (best-effort; prefer SIGTERM first).
-    try {
-      process.kill(state.pid, 'SIGTERM');
-      await waitForProcessDeath(state.pid, 2000).catch(() => {});
-      try {
-        process.kill(state.pid, 0);
-        process.kill(state.pid, 'SIGKILL');
-      } catch {
-        // already exited
-      }
-      await cleanupDaemonState();
-      logger.debug('Force killed daemon (SIGTERM/SIGKILL)');
-    } catch (error) {
-      logger.debug('Daemon already dead');
-    }
+    await forceKillKnownDaemonPid(state.pid);
   } catch (error) {
     logger.debug('Error stopping daemon', error);
   }

@@ -1,10 +1,9 @@
 import { type AgentId, usesProviderAttachForLocalControl } from '@happier-dev/agents';
 
-import { resolveBackendExecutionSurfaces } from '@/backends/catalog';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { configuration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
-import { evaluateCliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
 import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
@@ -37,6 +36,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
   fetchSessionsPageFn: FetchSessionsPageFn;
   readTerminalAttachmentInfoFn: ReadTerminalAttachmentInfoFn;
 }>): Promise<AttachSelectionModel> {
+  const sessionHostBridge = getSessionHostBridge();
   const page = await params.fetchSessionsPageFn({
     token: params.credentials.token,
     limit: 200,
@@ -52,7 +52,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
       happyHomeDir: configuration.happyHomeDir,
       sessionId: rawSession.id,
     });
-    const eligibility = evaluateCliSessionAttachEligibility({
+    const eligibility = sessionHostBridge.evaluateAttachEligibility({
       credentials: params.credentials,
       rawSession,
       currentMachineId: params.currentMachineId,
@@ -113,7 +113,7 @@ export async function buildAttachSelectionModel(params: Readonly<{
         return { reachable: false, reason: 'Remote reachability probe is unavailable for this session.' };
       }
 
-      const providerAttachOps = (await resolveBackendExecutionSurfaces(remoteProvider.agentId)).attach;
+      const providerAttachOps = (await sessionHostBridge.resolveExecutionSurfaces(remoteProvider.agentId)).attach;
       if (!providerAttachOps?.probeReachability) {
         return { reachable: false, reason: 'Remote reachability probe is unavailable for this provider.' };
       }

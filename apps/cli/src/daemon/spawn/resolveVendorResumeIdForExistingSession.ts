@@ -1,4 +1,8 @@
-import { inferAgentIdFromSessionMetadata, resolveAgentIdFromFlavor, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+  inferAgentIdFromSessionMetadata,
+  resolveCanonicalAgentIdFromFlavor,
+  resolveVendorResumeIdFromSessionMetadata,
+} from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -22,7 +26,7 @@ export function resolveVendorResumeIdForExistingSession(params: Readonly<{
 
   if (!metaRecord) return null;
 
-  const explicitAgentId = resolveAgentIdFromFlavor(params.agent);
+  const explicitAgentId = resolveCanonicalAgentIdFromFlavor(params.agent);
   const agentId = explicitAgentId ?? inferAgentIdFromSessionMetadata(metaRecord);
 
   return resolveVendorResumeIdFromSessionMetadata(agentId, metaRecord);

@@ -12,17 +12,36 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { cp } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 
 import { repoRootDir } from '../paths';
 import { sleep } from '../timing';
 import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
 import { yarnCommand } from './commands';
 import { runLoggedCommand } from './spawnProcess';
+import {
+  CLI_SHARED_DEP_PACKAGE_NAMES,
+  resolveCliBundledWorkspacePackageDir,
+  resolveCliWorkspacePackageDir,
+  type CliSharedDepPackageName,
+} from './workspacePackageResolution';
 
 const ensureDistPromisesByRepoRoot = new Map<string, Promise<string>>();
 const ensureSharedPromisesByRepoRoot = new Map<string, Promise<void>>();
 const DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS = 600_000;
+
+function shouldSkipCliSharedDepsBuildForE2e(env: NodeJS.ProcessEnv): boolean {
+  const raw = (
+    env.HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
+    env.HAPPY_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
+    ''
+  )
+    .toString()
+    .trim()
+    .toLowerCase();
+
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
+}
 
 type CliDistBuildLockOwner = {
   pid: number | null;
@@ -41,6 +60,11 @@ type EnsureCliSharedDepsBuiltOptions = CliDistBuildLockOptions & {
   repoRoot?: string;
   buildTimeoutMs?: number;
   maxBuildAttempts?: number;
+  beforeRepairBundledWorkspaceDistSymlink?: (params: {
+    packageName: CliSharedDepPackageName;
+    workspaceDistDir: string;
+    bundledDistDir: string;
+  }) => void;
   runCommand?: (params: {
     command: string;
     args: string[];
@@ -75,17 +99,6 @@ type CliDistBuildInvocation = {
   args: string[];
   cwd: string;
 };
-
-const CLI_SHARED_DEP_PACKAGE_NAMES = [
-  'agents',
-  'cli-common',
-  'connection-supervisor',
-  'protocol',
-  'transfers',
-  'release-runtime',
-] as const;
-
-type CliSharedDepPackageName = (typeof CLI_SHARED_DEP_PACKAGE_NAMES)[number];
 
 type EnsureCliDistSnapshotOptions = EnsureCliDistBuiltOptions & {
   snapshotDir: string;
@@ -226,14 +239,6 @@ function resolveCliBundledSharedDepsOutputPaths(rootDir: string): string[] {
   return CLI_SHARED_DEP_PACKAGE_NAMES.flatMap((packageName) => resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName));
 }
 
-function resolveCliWorkspacePackageDir(rootDir: string, packageName: CliSharedDepPackageName): string {
-  return resolve(rootDir, 'packages', packageName);
-}
-
-function resolveCliBundledWorkspacePackageDir(rootDir: string, packageName: CliSharedDepPackageName): string {
-  return resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', packageName);
-}
-
 function collectPackageJsonDistPaths(value: unknown, result: Set<string>): void {
   if (typeof value === 'string') {
     if (value.startsWith('./dist/')) {
@@ -270,8 +275,11 @@ function collectAllFilePaths(dir: string): string[] {
   return out;
 }
 
-function resolveCliBundledWorkspaceExpectedOutputPaths(rootDir: string, packageName: CliSharedDepPackageName): string[] {
-  const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
+function resolveWorkspacePackageExpectedOutputPaths(
+  rootDir: string,
+  packageName: CliSharedDepPackageName,
+  packageDir: string,
+): string[] {
   const packageJsonPath = existsSync(resolve(packageDir, 'package.json'))
     ? resolve(packageDir, 'package.json')
     : resolve(rootDir, 'packages', packageName, 'package.json');
@@ -290,6 +298,14 @@ function resolveCliBundledWorkspaceExpectedOutputPaths(rootDir: string, packageN
 
   if (distPaths.size === 0) distPaths.add('dist/index.js');
   return [...distPaths].map((relPath) => resolve(packageDir, relPath));
+}
+
+function resolveCliBundledWorkspaceExpectedOutputPaths(rootDir: string, packageName: CliSharedDepPackageName): string[] {
+  return resolveWorkspacePackageExpectedOutputPaths(
+    rootDir,
+    packageName,
+    resolveCliBundledWorkspacePackageDir(rootDir, packageName),
+  );
 }
 
 function resolveCliWorkspaceExpectedOutputPaths(rootDir: string, packageName: CliSharedDepPackageName): string[] {
@@ -312,9 +328,13 @@ function resolveCliWorkspaceExpectedOutputPaths(rootDir: string, packageName: Cl
   return [...distPaths].map((relPath) => resolve(packageDir, relPath));
 }
 
-function hasCliBundledWorkspaceDistParity(rootDir: string, packageName: CliSharedDepPackageName): boolean {
+function hasWorkspacePackageDistParity(
+  rootDir: string,
+  packageName: CliSharedDepPackageName,
+  packageDir: string,
+): boolean {
   const workspaceDistDir = resolveCliWorkspacePackageDir(rootDir, packageName);
-  const bundledDistDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
+  const bundledDistDir = packageDir;
   const workspaceFiles = collectAllFilePaths(resolve(workspaceDistDir, 'dist'));
   if (workspaceFiles.length === 0) return false;
   if (!existsSync(resolve(bundledDistDir, 'dist'))) return false;
@@ -327,6 +347,14 @@ function hasCliBundledWorkspaceDistParity(rootDir: string, packageName: CliShare
     const relativePath = workspaceFilePath.slice(resolve(workspaceDistDir, 'dist').length + 1);
     return bundledFileSet.has(relativePath);
   });
+}
+
+function hasCliBundledWorkspaceDistParity(rootDir: string, packageName: CliSharedDepPackageName): boolean {
+  return hasWorkspacePackageDistParity(
+    rootDir,
+    packageName,
+    resolveCliBundledWorkspacePackageDir(rootDir, packageName),
+  );
 }
 
 function stableJsonStringify(value: unknown): string {
@@ -350,9 +378,13 @@ function readPackageJsonField(packageJsonPath: string, field: string): unknown {
   }
 }
 
-function hasCliBundledWorkspaceManifestParity(rootDir: string, packageName: CliSharedDepPackageName): boolean {
+function hasWorkspacePackageManifestParity(
+  rootDir: string,
+  packageName: CliSharedDepPackageName,
+  packageDir: string,
+): boolean {
   const workspacePackageJsonPath = resolve(resolveCliWorkspacePackageDir(rootDir, packageName), 'package.json');
-  const bundledPackageJsonPath = resolve(resolveCliBundledWorkspacePackageDir(rootDir, packageName), 'package.json');
+  const bundledPackageJsonPath = resolve(packageDir, 'package.json');
   if (!existsSync(bundledPackageJsonPath)) return false;
 
   // Some harnesses build a minimal scratch "repo root" that only contains `packages/<name>/dist/**`.
@@ -369,7 +401,44 @@ function hasCliBundledWorkspaceManifestParity(rootDir: string, packageName: CliS
   return stableJsonStringify(workspaceExports) === stableJsonStringify(bundledExports);
 }
 
-function repairMissingCliBundledSharedDepsOutputs(rootDir: string): void {
+function hasCliBundledWorkspaceManifestParity(rootDir: string, packageName: CliSharedDepPackageName): boolean {
+  return hasWorkspacePackageManifestParity(
+    rootDir,
+    packageName,
+    resolveCliBundledWorkspacePackageDir(rootDir, packageName),
+  );
+}
+
+function hasCliDistSnapshotNodeModulesHealth(rootDir: string, snapshotDir: string): boolean {
+  const snapshotNodeModulesDir = resolve(snapshotDir, 'node_modules');
+  if (!existsSync(snapshotNodeModulesDir)) return false;
+
+  const snapshotWorkspaceScopeDir = resolve(snapshotNodeModulesDir, '@happier-dev');
+  if (!existsSync(snapshotWorkspaceScopeDir)) return true;
+
+  return CLI_SHARED_DEP_PACKAGE_NAMES.every((packageName) => {
+    const packageDir = resolve(snapshotNodeModulesDir, '@happier-dev', packageName);
+    if (!existsSync(packageDir)) return false;
+    if (!hasWorkspacePackageManifestParity(rootDir, packageName, packageDir)) return false;
+
+    const expectedOutputPaths = resolveWorkspacePackageExpectedOutputPaths(rootDir, packageName, packageDir);
+    if (!expectedOutputPaths.every((candidatePath) => existsSync(candidatePath))) return false;
+    if (!hasWorkspacePackageDistParity(rootDir, packageName, packageDir)) return false;
+
+    return isBundledWorkspaceRuntimeDependencyTreeHealthy(resolve(packageDir, 'package.json'));
+  });
+}
+
+function repairMissingCliBundledSharedDepsOutputs(
+  rootDir: string,
+  opts?: {
+    beforeRepairBundledWorkspaceDistSymlink?: (params: {
+      packageName: CliSharedDepPackageName;
+      workspaceDistDir: string;
+      bundledDistDir: string;
+    }) => void;
+  },
+): void {
   for (const packageName of CLI_SHARED_DEP_PACKAGE_NAMES) {
     const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
     if (!existsSync(packageDir)) continue;
@@ -394,7 +463,23 @@ function repairMissingCliBundledSharedDepsOutputs(rootDir: string): void {
     }
 
     mkdirSync(dirname(bundledDistDir), { recursive: true });
-    symlinkSync(workspaceDistDir, bundledDistDir, process.platform === 'win32' ? 'junction' : 'dir');
+    opts?.beforeRepairBundledWorkspaceDistSymlink?.({
+      packageName,
+      workspaceDistDir,
+      bundledDistDir,
+    });
+    try {
+      symlinkSync(workspaceDistDir, bundledDistDir, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException | null;
+      if (err?.code === 'EEXIST' && existsSync(bundledDistDir)) {
+        // Another process won the race and created the same symlink before we did.
+        // The shared-deps health check runs immediately after this repair, so an existing
+        // dist link is sufficient.
+        continue;
+      }
+      throw error;
+    }
   }
 }
 
@@ -442,6 +527,24 @@ function collectPackageJsonRelativeFileTargets(value: unknown, result: Set<strin
   for (const nested of Object.values(value)) collectPackageJsonRelativeFileTargets(nested, result);
 }
 
+function doesPackageRelativeFileTargetExist(packageDir: string, relativeTarget: string): boolean {
+  const absoluteTargetPath = resolve(packageDir, relativeTarget);
+  if (existsSync(absoluteTargetPath)) return true;
+
+  const extensionCandidates = ['', '.js', '.mjs', '.cjs', '.json', '.node'];
+  const hasExplicitExtension = /\.[^/\\]+$/u.test(absoluteTargetPath);
+  if (!hasExplicitExtension) {
+    for (const extension of extensionCandidates) {
+      if (existsSync(`${absoluteTargetPath}${extension}`)) return true;
+    }
+    for (const extension of extensionCandidates) {
+      if (existsSync(resolve(absoluteTargetPath, `index${extension}`))) return true;
+    }
+  }
+
+  return false;
+}
+
 function hasBundledWorkspacePackageReferencedFiles(packageJsonPath: string): boolean {
   if (!existsSync(packageJsonPath)) return false;
 
@@ -460,7 +563,7 @@ function hasBundledWorkspacePackageReferencedFiles(packageJsonPath: string): boo
   collectPackageJsonRelativeFileTargets(pkg.exports, relativeFileTargets);
 
   for (const relPath of relativeFileTargets) {
-    if (!existsSync(resolve(packageDir, relPath))) {
+    if (!doesPackageRelativeFileTargetExist(packageDir, relPath)) {
       return false;
     }
   }
@@ -542,6 +645,23 @@ function resolveCliDistDir(rootDir: string): string {
 
 function resolveCliBackupDistDir(rootDir: string): string {
   return resolve(rootDir, 'apps', 'cli', '.dist.hstack-backup');
+}
+
+function resolveCanonicalSharedCliDistSnapshotDir(rootDir: string): string {
+  return resolve(rootDir, '.project', 'tmp', 'cli-dist-snapshot');
+}
+
+function resolveCliDistSnapshotLockPath(params: Readonly<{
+  rootDir: string;
+  snapshotDir: string;
+  defaultLockPath: string;
+}>): string {
+  const canonicalSharedSnapshotDir = resolveCanonicalSharedCliDistSnapshotDir(params.rootDir);
+  if (resolve(params.snapshotDir) === canonicalSharedSnapshotDir) {
+    return params.defaultLockPath;
+  }
+
+  return `${params.snapshotDir}.lock`;
 }
 
 function resolveCliDistEntrypoint(dir: string): string {
@@ -705,13 +825,18 @@ function hasValidCliSharedDepsProtocolExports(rootDir: string): boolean {
     && hasValidProtocolDistIndexExportsAtPath(bundledProtocolDistIndexPath);
 }
 
-function hasCliSharedDepsOutputs(rootDir: string, opts: { skipSourceFreshnessCheck?: boolean } = {}): boolean {
+function hasCliSharedDepsOutputs(
+  rootDir: string,
+  opts: { skipSourceFreshnessCheck?: boolean; beforeRepairBundledWorkspaceDistSymlink?: EnsureCliSharedDepsBuiltOptions['beforeRepairBundledWorkspaceDistSymlink'] } = {},
+): boolean {
   const workspaceOutputPaths = resolveCliSharedDepsOutputPaths(rootDir);
   if (!workspaceOutputPaths.every((candidatePath) => existsSync(candidatePath))) {
     return false;
   }
 
-  repairMissingCliBundledSharedDepsOutputs(rootDir);
+  repairMissingCliBundledSharedDepsOutputs(rootDir, {
+    beforeRepairBundledWorkspaceDistSymlink: opts.beforeRepairBundledWorkspaceDistSymlink,
+  });
   if (!hasCliBundledSharedDepsOutputs(rootDir)) return false;
   if (!hasValidCliSharedDepsProtocolExports(rootDir)) return false;
   if (opts.skipSourceFreshnessCheck) return true;
@@ -720,6 +845,57 @@ function hasCliSharedDepsOutputs(rootDir: string, opts: { skipSourceFreshnessChe
     sourcePaths: resolveCliSharedDepsSourcePaths(rootDir),
     outputPaths: resolveCliBundledSharedDepsOutputPaths(rootDir),
   });
+}
+
+type CliSharedDepsHealthReport = Readonly<{
+  cliNodeModulesDirExists: boolean;
+  sourceFreshnessIgnored: boolean;
+  workspaceOutputsPresent: boolean;
+  bundledOutputsPresent: boolean;
+  protocolExportsHealthy: boolean;
+  packages: ReadonlyArray<Readonly<{
+    packageName: CliSharedDepPackageName;
+    packageDirExists: boolean;
+    manifestParity: boolean;
+    expectedOutputsPresent: boolean;
+    missingExpectedOutputs: readonly string[];
+    distParity: boolean;
+    runtimeTreeHealthy: boolean;
+  }>>;
+}>;
+
+function describeCliSharedDepsHealth(
+  rootDir: string,
+  opts: { skipSourceFreshnessCheck?: boolean } = {},
+): CliSharedDepsHealthReport {
+  const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev');
+  const workspaceOutputPaths = resolveCliSharedDepsOutputPaths(rootDir);
+  const bundledOutputPaths = resolveCliBundledSharedDepsOutputPaths(rootDir);
+  const packages = CLI_SHARED_DEP_PACKAGE_NAMES.map((packageName) => {
+    const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
+    const packageExists = existsSync(packageDir);
+    const expectedOutputPaths = resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName);
+    const missingExpectedOutputs = expectedOutputPaths.filter((candidatePath) => !existsSync(candidatePath));
+    const packageJsonPath = resolve(packageDir, 'package.json');
+    return {
+      packageName,
+      packageDirExists: packageExists,
+      manifestParity: hasCliBundledWorkspaceManifestParity(rootDir, packageName),
+      expectedOutputsPresent: missingExpectedOutputs.length === 0,
+      missingExpectedOutputs,
+      distParity: hasCliBundledWorkspaceDistParity(rootDir, packageName),
+      runtimeTreeHealthy: isBundledWorkspaceRuntimeDependencyTreeHealthy(packageJsonPath),
+    };
+  });
+
+  return {
+    cliNodeModulesDirExists: existsSync(cliNodeModulesDir),
+    sourceFreshnessIgnored: opts.skipSourceFreshnessCheck ?? false,
+    workspaceOutputsPresent: workspaceOutputPaths.every((candidatePath) => existsSync(candidatePath)),
+    bundledOutputsPresent: bundledOutputPaths.every((candidatePath) => existsSync(candidatePath)),
+    protocolExportsHealthy: hasValidCliSharedDepsProtocolExports(rootDir),
+    packages,
+  };
 }
 
 export function resolveCliDistBuildInvocation(params: { repoRoot?: string } = {}): CliDistBuildInvocation {
@@ -745,12 +921,18 @@ export async function ensureCliSharedDepsBuilt(
   const existing = ensureSharedPromisesByRepoRoot.get(rootDir);
   if (existing) return await existing;
 
-  if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
+  if (hasCliSharedDepsOutputs(rootDir, {
+    skipSourceFreshnessCheck,
+    beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
+  })) {
     return;
   }
 
   const promise = (async () => {
-    if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
+    if (hasCliSharedDepsOutputs(rootDir, {
+      skipSourceFreshnessCheck,
+      beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
+    })) {
       return;
     }
 
@@ -766,13 +948,21 @@ export async function ensureCliSharedDepsBuilt(
         timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
       });
 
-      if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
+      if (hasCliSharedDepsOutputs(rootDir, {
+        skipSourceFreshnessCheck,
+        beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
+      })) {
         return;
       }
     }
 
-    if (!hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
-      throw new Error(`Shared workspace deps output missing after build: ${resolve(rootDir, 'packages')}`);
+    if (!hasCliSharedDepsOutputs(rootDir, {
+      skipSourceFreshnessCheck,
+      beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
+    })) {
+      throw new Error(
+        `Shared workspace deps output missing after build: ${resolve(rootDir, 'packages')} | health=${JSON.stringify(describeCliSharedDepsHealth(rootDir, { skipSourceFreshnessCheck }))}`,
+      );
     }
   })();
 
@@ -851,14 +1041,16 @@ export async function ensureCliDistBuilt(
   const rootDir = options.repoRoot ?? repoRootDir();
   // Daemon processes execute `apps/cli/dist/*` which imports from workspace deps.
   // Ensure those deps are compiled first so we don't start with a stale/partial protocol build.
-  await ensureCliSharedDepsBuilt(params, {
-    repoRoot: rootDir,
-    runCommand: options.runCommand,
-    skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
-    timeoutMs: options.timeoutMs,
-    pollIntervalMs: options.pollIntervalMs,
-    staleAfterMs: options.staleAfterMs,
-  });
+  if (!shouldSkipCliSharedDepsBuildForE2e(params.env)) {
+    await ensureCliSharedDepsBuilt(params, {
+      repoRoot: rootDir,
+      runCommand: options.runCommand,
+      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
+      timeoutMs: options.timeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
+      staleAfterMs: options.staleAfterMs,
+    });
+  }
   const distDir = resolveCliDistDir(rootDir);
   const entrypoint = resolveCliDistEntrypoint(distDir);
   const allowRebuild = options.allowRebuild ?? true;
@@ -969,6 +1161,35 @@ function isHealthyCliDist(dir: string): boolean {
   return findMissingDistChunkImports(dir).length === 0;
 }
 
+function isCliDistSnapshotStale(params: {
+  rootDir: string;
+  snapshotDir: string;
+  snapshotDistDir: string;
+}): boolean {
+  const canonicalDistDir = resolveCliDistDir(params.rootDir);
+  if (!existsSync(resolveCliDistEntrypoint(canonicalDistDir))) {
+    return true;
+  }
+  if (isBuildDirectoryStale({
+    sourcePaths: [canonicalDistDir],
+    outputDir: params.snapshotDistDir,
+  })) {
+    return true;
+  }
+
+  return CLI_SHARED_DEP_PACKAGE_NAMES.some((packageName) => {
+    const bundledPackageDir = resolveCliBundledWorkspacePackageDir(params.rootDir, packageName);
+    const snapshotPackageDir = resolve(params.snapshotDir, 'node_modules', '@happier-dev', packageName);
+    if (!existsSync(bundledPackageDir) || !existsSync(snapshotPackageDir)) {
+      return true;
+    }
+    return isBuildDirectoryStale({
+      sourcePaths: [bundledPackageDir],
+      outputDir: snapshotPackageDir,
+    });
+  });
+}
+
 function resolveExistingCliDistDir(params: {
   rootDir: string;
   skipDistIntegrityCheck: boolean;
@@ -1020,12 +1241,80 @@ export async function ensureCliDistSnapshotEntrypoint(
 ): Promise<string> {
   const rootDir = options.repoRoot ?? repoRootDir();
   const distLockPath = options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-dist-build.lock');
+  const snapshotLockPath = resolveCliDistSnapshotLockPath({
+    rootDir,
+    snapshotDir: options.snapshotDir,
+    defaultLockPath: distLockPath,
+  });
   const snapshotDistDir = resolve(options.snapshotDir, 'dist');
   const snapshotEntrypoint = resolve(snapshotDistDir, 'index.mjs');
-  const snapshotReadyMarkerPath = resolve(options.snapshotDir, '.cli-dist-snapshot.ready.json');
   const maxAttempts = 3;
+  const snapshotHasReadyMarker = (dir: string): boolean => {
+    return existsSync(resolve(dir, '.cli-dist-snapshot.ready.json'))
+      && hasCliDistSnapshotNodeModulesHealth(rootDir, dir);
+  };
+  const isReadyReusableSnapshot = (dir: string): boolean => {
+    const distDir = resolve(dir, 'dist');
+    if (!isHealthyCliDist(distDir) || !snapshotHasReadyMarker(dir)) {
+      return false;
+    }
+    if (options.skipSourceFreshnessCheck ?? false) {
+      return true;
+    }
+    return !isCliDistSnapshotStale({
+      rootDir,
+      snapshotDir: dir,
+      snapshotDistDir: distDir,
+    });
+  };
+  const ensureSnapshotScaffolding = (dir: string): void => {
+    ensureSnapshotProjectFile(dir, rootDir, 'package.json');
+    ensureSnapshotProjectLink(dir, rootDir, 'scripts');
+    ensureSnapshotProjectLink(dir, rootDir, 'tools');
+    ensureSnapshotProjectLink(dir, rootDir, 'bin');
+    ensureSnapshotProjectFile(dir, rootDir, 'tsconfig.json');
+  };
+  const findReusableReplacementSnapshotEntrypoint = (): string | null => {
+    const parentDir = dirname(options.snapshotDir);
+    const replacementPrefix = `${basename(options.snapshotDir)}-`;
+    let candidates: Array<{ dir: string; mtimeMs: number }> = [];
+    try {
+      candidates = readdirSync(parentDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith(replacementPrefix))
+        .map((entry) => {
+          const dir = resolve(parentDir, entry.name);
+          let mtimeMs = 0;
+          try {
+            mtimeMs = statSync(resolve(dir, '.cli-dist-snapshot.ready.json')).mtimeMs;
+          } catch {
+            mtimeMs = 0;
+          }
+          return { dir, mtimeMs };
+        })
+        .filter(({ dir }) => isReadyReusableSnapshot(dir));
+    } catch {
+      return null;
+    }
+
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const best = candidates[0]?.dir;
+    if (!best) return null;
+    ensureSnapshotScaffolding(best);
+    return resolve(best, 'dist', 'index.mjs');
+  };
+
+  if (options.skipSourceFreshnessCheck ?? false) {
+    const replacementEntrypoint = findReusableReplacementSnapshotEntrypoint();
+    if (replacementEntrypoint) return replacementEntrypoint;
+  }
+
+  if (isReadyReusableSnapshot(options.snapshotDir)) {
+    ensureSnapshotScaffolding(options.snapshotDir);
+    return snapshotEntrypoint;
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let retryCleanupSnapshotDir: string | null = null;
     // Ensure dist is available first. We intentionally do this outside the snapshot lock to avoid
     // re-entering the same lock from ensureCliDistBuilt.
     await ensureCliDistBuilt(params, { ...options, repoRoot: rootDir, lockPath: distLockPath });
@@ -1033,24 +1322,37 @@ export async function ensureCliDistSnapshotEntrypoint(
     try {
       return await withCliDistBuildLock(
         async () => {
-          const snapshotHasReadyMarker = (): boolean => {
-            return (
-              existsSync(snapshotReadyMarkerPath) && existsSync(resolve(options.snapshotDir, 'node_modules'))
-            );
+          const shouldIgnoreSnapshotFreshness = options.skipSourceFreshnessCheck ?? false;
+          const isSnapshotStale = (distDir: string): boolean => {
+            if (shouldIgnoreSnapshotFreshness) return false;
+            return isCliDistSnapshotStale({
+              rootDir,
+              snapshotDir: options.snapshotDir,
+              snapshotDistDir: distDir,
+            });
           };
 
-          const ensureSnapshotScaffolding = (): void => {
-            ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'package.json');
-            ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'scripts');
-            ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'tools');
-            ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'bin');
-            ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'tsconfig.json');
+          const snapshotIsReusable = (dir: string): boolean => {
+            const distDir = resolve(dir, 'dist');
+            return isHealthyCliDist(distDir) && !isSnapshotStale(distDir);
           };
 
-          const ensureSnapshotNodeModules = (): void => {
+          const snapshotIsReadyButStale = (dir: string): boolean => {
+            const distDir = resolve(dir, 'dist');
+            return existsSync(dir)
+              && snapshotHasReadyMarker(dir)
+              && isHealthyCliDist(distDir)
+              && isSnapshotStale(distDir);
+          };
+
+          const resolveReplacementSnapshotDir = (): string => {
+            return `${options.snapshotDir}-${process.pid}-${Date.now()}-${attempt}`;
+          };
+
+          const ensureSnapshotNodeModules = (dir: string): void => {
             const mode = (params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? '').toString().trim().toLowerCase();
             if (mode === 'symlink') {
-              const snapshotNodeModulesDir = resolve(options.snapshotDir, 'node_modules');
+              const snapshotNodeModulesDir = resolve(dir, 'node_modules');
               if (existsSync(snapshotNodeModulesDir)) return;
 
               const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
@@ -1068,17 +1370,17 @@ export async function ensureCliDistSnapshotEntrypoint(
             }
 
             ensureCliDistSnapshotNodeModules({
-              snapshotDir: options.snapshotDir,
-              snapshotDistDir,
+              snapshotDir: dir,
+              snapshotDistDir: resolve(dir, 'dist'),
               rootDir,
             });
           };
 
-          const markSnapshotReady = (): void => {
-            if (snapshotHasReadyMarker()) return;
+          const markSnapshotReady = (dir: string): void => {
+            if (snapshotHasReadyMarker(dir)) return;
             try {
               writeFileSync(
-                snapshotReadyMarkerPath,
+                resolve(dir, '.cli-dist-snapshot.ready.json'),
                 JSON.stringify({ v: 1, createdAt: new Date().toISOString() }),
                 'utf8',
               );
@@ -1087,30 +1389,16 @@ export async function ensureCliDistSnapshotEntrypoint(
             }
           };
 
-          if (isHealthyCliDist(snapshotDistDir) && snapshotHasReadyMarker()) {
-            // Fast path: keep daemon startups cheap during slow E2E lanes.
-            ensureSnapshotScaffolding();
-            return snapshotEntrypoint;
-          }
+          const resolveSnapshotSourceDistDir = (): string => {
+            const distDir = resolveExistingCliDistDir({
+              rootDir,
+              skipDistIntegrityCheck: options.skipDistIntegrityCheck ?? false,
+              skipSourceFreshnessCheck: options.skipSourceFreshnessCheck ?? false,
+            });
+            if (distDir) {
+              return distDir;
+            }
 
-          // If a previous run left a partial snapshot behind, self-heal instead of failing closed.
-          if (existsSync(options.snapshotDir) && !isHealthyCliDist(snapshotDistDir)) {
-            rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
-          }
-
-          if (isHealthyCliDist(snapshotDistDir)) {
-            ensureSnapshotNodeModules();
-            ensureSnapshotScaffolding();
-            markSnapshotReady();
-            return snapshotEntrypoint;
-          }
-
-          const distDir = resolveExistingCliDistDir({
-            rootDir,
-            skipDistIntegrityCheck: options.skipDistIntegrityCheck ?? false,
-            skipSourceFreshnessCheck: options.skipSourceFreshnessCheck ?? false,
-          });
-          if (!distDir) {
             const canonicalDistDir = resolveCliDistDir(rootDir);
             const missing = findMissingDistChunkImports(canonicalDistDir);
             throw new Error(
@@ -1118,40 +1406,78 @@ export async function ensureCliDistSnapshotEntrypoint(
                 ? `Refusing to snapshot an incomplete CLI dist (missing chunk imports): ${missing.join(', ')}`
                 : `Refusing to snapshot an incomplete CLI dist (missing index.mjs): ${resolveCliDistEntrypoint(canonicalDistDir)}`,
             );
+          };
+
+          const materializeSnapshot = async (targetSnapshotDir: string, distDir: string): Promise<string> => {
+            retryCleanupSnapshotDir = targetSnapshotDir;
+            const targetSnapshotDistDir = resolve(targetSnapshotDir, 'dist');
+            const targetSnapshotEntrypoint = resolve(targetSnapshotDistDir, 'index.mjs');
+
+            mkdirSync(dirname(targetSnapshotDir), { recursive: true });
+            // Ensure we never mutate an existing snapshot (which could be in-use by a running daemon).
+            if (existsSync(targetSnapshotDir)) {
+              rmSync(targetSnapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+            }
+            mkdirSync(targetSnapshotDir, { recursive: true });
+            await cp(distDir, targetSnapshotDistDir, { recursive: true });
+            ensureSnapshotNodeModules(targetSnapshotDir);
+            ensureSnapshotScaffolding(targetSnapshotDir);
+
+            if (!(options.skipDistIntegrityCheck ?? false) && !isHealthyCliDist(targetSnapshotDistDir)) {
+              const missing = findMissingDistChunkImports(targetSnapshotDistDir);
+              throw new Error(
+                missing.length > 0
+                  ? `CLI dist snapshot missing chunk imports: ${missing.join(', ')}`
+                  : `CLI dist snapshot missing entrypoint: ${targetSnapshotEntrypoint}`,
+              );
+            }
+
+            markSnapshotReady(targetSnapshotDir);
+            return targetSnapshotEntrypoint;
+          };
+
+          if (snapshotIsReusable(options.snapshotDir) && snapshotHasReadyMarker(options.snapshotDir)) {
+            // Fast path: keep daemon startups cheap during slow E2E lanes.
+            ensureSnapshotScaffolding(options.snapshotDir);
+            return snapshotEntrypoint;
           }
 
-          mkdirSync(dirname(options.snapshotDir), { recursive: true });
-          // Ensure we never mutate an existing snapshot (which could be in-use by a running daemon).
-          rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
-          mkdirSync(options.snapshotDir, { recursive: true });
-          await cp(distDir, snapshotDistDir, { recursive: true });
-          ensureSnapshotNodeModules();
-          ensureSnapshotScaffolding();
-
-          if (!(options.skipDistIntegrityCheck ?? false) && !isHealthyCliDist(snapshotDistDir)) {
-            const missing = findMissingDistChunkImports(snapshotDistDir);
-            throw new Error(
-              missing.length > 0
-                ? `CLI dist snapshot missing chunk imports: ${missing.join(', ')}`
-                : `CLI dist snapshot missing entrypoint: ${snapshotEntrypoint}`,
-            );
+          if (snapshotIsReadyButStale(options.snapshotDir)) {
+            const replacementEntrypoint = findReusableReplacementSnapshotEntrypoint();
+            if (replacementEntrypoint) return replacementEntrypoint;
+            const distDir = resolveSnapshotSourceDistDir();
+            return await materializeSnapshot(resolveReplacementSnapshotDir(), distDir);
           }
 
-          markSnapshotReady();
-          return snapshotEntrypoint;
+          // If a previous run left a partial snapshot behind, self-heal instead of failing closed.
+          if (existsSync(options.snapshotDir) && !snapshotIsReusable(options.snapshotDir)) {
+            rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+          }
+
+          if (snapshotIsReusable(options.snapshotDir)) {
+            ensureSnapshotNodeModules(options.snapshotDir);
+            ensureSnapshotScaffolding(options.snapshotDir);
+            markSnapshotReady(options.snapshotDir);
+            return snapshotEntrypoint;
+          }
+
+          const distDir = resolveSnapshotSourceDistDir();
+          return await materializeSnapshot(options.snapshotDir, distDir);
         },
         {
-          lockPath: distLockPath,
+          lockPath: snapshotLockPath,
           timeoutMs: options.timeoutMs,
           pollIntervalMs: options.pollIntervalMs,
           staleAfterMs: options.staleAfterMs,
         },
       );
     } catch (error: any) {
+      if (error?.code === 'ENOENT' && retryCleanupSnapshotDir && !snapshotHasReadyMarker(retryCleanupSnapshotDir)) {
+        rmSync(retryCleanupSnapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      }
       if (error?.code !== 'ENOENT' || attempt === maxAttempts) {
         throw error;
       }
-      rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   }
 

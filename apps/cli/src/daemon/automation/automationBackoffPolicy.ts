@@ -1,3 +1,6 @@
+import { readHttpStatus } from '@/api/client/httpStatusError';
+import { readNormalizedErrorCode } from '@/api/offline/serverConnectionErrors';
+
 export type AutomationWorkerErrorClass = 'transient' | 'permanent';
 
 const PERMANENT_RETRY_DELAY_MS = 300_000;
@@ -10,21 +13,12 @@ const TRANSIENT_ERROR_CODES = new Set([
   'ETIMEDOUT',
 ]);
 
-function getStatusCode(error: unknown): number | null {
-  if (!error || typeof error !== 'object') return null;
-  const response = (error as { response?: { status?: unknown } }).response;
-  const status = response?.status;
-  return typeof status === 'number' && Number.isFinite(status) ? status : null;
-}
-
 function getErrorCode(error: unknown): string {
-  if (!error || typeof error !== 'object') return '';
-  const raw = (error as { code?: unknown }).code;
-  return typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+  return readNormalizedErrorCode(error) ?? '';
 }
 
 export function classifyAutomationWorkerError(error: unknown): AutomationWorkerErrorClass {
-  const status = getStatusCode(error);
+  const status = readHttpStatus(error);
   if (status !== null) {
     if (status >= 500 || status === 408 || status === 425 || status === 429) {
       return 'transient';

@@ -14,6 +14,7 @@ type AppendCommandLogFn = (
     stdout: string,
     stderr: string,
     status: number | null,
+    signal: NodeJS.Signals | null,
 ) => void;
 
 type AppendLogLineFn = (logPath: string, line: string) => void;
@@ -58,13 +59,22 @@ function writeLogHeader(logPath: string, plan: ProviderCliInstallPlan): void {
     }
 }
 
-function appendCommandLog(logPath: string, cmd: string, args: readonly string[], stdout: string, stderr: string, status: number | null): void {
+function appendCommandLog(
+    logPath: string,
+    cmd: string,
+    args: readonly string[],
+    stdout: string,
+    stderr: string,
+    status: number | null,
+    signal: NodeJS.Signals | null,
+): void {
     appendFileSync(
         logPath,
         [
             '',
             `## ${cmd} ${args.join(' ')}`.trim(),
             `# exit: ${status ?? 'null'}`,
+            `# signal: ${signal ?? 'null'}`,
             '',
             '### stdout',
             stdout || '',

@@ -21,8 +21,8 @@ export async function cmdSessionRunWait(
   const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
   const timeoutSeconds =
     typeof timeoutSecondsRaw === 'number' && Number.isFinite(timeoutSecondsRaw) && timeoutSecondsRaw > 0
-      ? Math.min(3600, timeoutSecondsRaw)
-      : 300;
+      ? timeoutSecondsRaw
+      : null;
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -37,7 +37,7 @@ export async function cmdSessionRunWait(
   const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.wait',
-    { sessionId: idOrPrefix, runId, ...(timeoutSeconds ? { timeoutSeconds } : {}) },
+    { sessionId: idOrPrefix, runId, ...(timeoutSeconds !== null ? { timeoutSeconds } : {}) },
     { surface: 'cli', defaultSessionId: null },
   );
   const normalized = normalizeActionExecuteResult(actionRes);

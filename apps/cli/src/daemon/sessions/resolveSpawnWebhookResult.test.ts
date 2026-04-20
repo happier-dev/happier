@@ -20,17 +20,46 @@ describe('resolveSpawnWebhookResult', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('converts webhook-timeout errors to success when tracked session already has a canonical session id', () => {
+  it('keeps attach webhook-timeout errors even when the tracked session already has a canonical session id', () => {
     const trackedSession = {
       startedBy: 'daemon',
       pid: 321,
       happySessionId: 'session-321',
+      spawnOptions: {
+        existingSessionId: 'session-321',
+      },
     } as TrackedSession;
     const pidToTrackedSession = new Map<number, TrackedSession>([[321, trackedSession]]);
     const warn = vi.fn();
+    const result: SpawnSessionResult = {
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+      errorMessage: 'timed out',
+    };
 
     const resolved = resolveSpawnWebhookResult({
       pid: 321,
+      result,
+      pidToTrackedSession,
+      warn,
+    });
+
+    expect(resolved).toEqual(result);
+    expect(pidToTrackedSession.get(321)?.happySessionId).toBe('session-321');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('still converts webhook-timeout errors to success for non-attach tracked sessions that already have a canonical session id', () => {
+    const trackedSession = {
+      startedBy: 'daemon',
+      pid: 322,
+      happySessionId: 'session-322',
+    } as TrackedSession;
+    const pidToTrackedSession = new Map<number, TrackedSession>([[322, trackedSession]]);
+    const warn = vi.fn();
+
+    const resolved = resolveSpawnWebhookResult({
+      pid: 322,
       result: {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
@@ -40,8 +69,7 @@ describe('resolveSpawnWebhookResult', () => {
       warn,
     });
 
-    expect(resolved).toEqual({ type: 'success', sessionId: 'session-321' });
-    expect(pidToTrackedSession.get(321)?.happySessionId).toBe('session-321');
+    expect(resolved).toEqual({ type: 'success', sessionId: 'session-322' });
     expect(warn).toHaveBeenCalledTimes(1);
   });
 

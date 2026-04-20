@@ -71,6 +71,7 @@ export {
 } from './setupServiceGuidance/applyBackgroundServiceSetupGuidance.js';
 export {
   buildBackgroundServiceSetupGuidance,
+  resolveBackgroundServiceSetupServicesRequiringReplacement,
   type BackgroundServiceSetupGuidance,
   type BackgroundServiceSetupGuidanceService,
 } from './setupServiceGuidance/buildBackgroundServiceSetupGuidance.js';

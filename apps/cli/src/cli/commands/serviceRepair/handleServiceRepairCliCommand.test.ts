@@ -102,6 +102,91 @@ describe('happier service repair', () => {
     resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockClear();
   });
 
+  it('infers systemUser from SUDO_USER for linux system-mode repair when not explicitly provided', async () => {
+    const originalSudoUser = process.env.SUDO_USER;
+    process.env.SUDO_USER = 'alice';
+
+    try {
+      resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockResolvedValueOnce({
+        runtime: {
+          platform: 'linux',
+          channel: 'stable',
+          targetMode: 'default-following',
+          instanceId: 'default',
+          uid: 0,
+          userHomeDir: '/tmp/user',
+          happierHomeDir: '/tmp/user/.happier',
+          serverUrl: 'https://example.test',
+          publicServerUrl: 'https://example.test',
+          webappUrl: 'https://app.example.test',
+          nodePath: '/usr/bin/node',
+          entryPath: '/opt/happier/index.mjs',
+        },
+        services: [],
+        scannedModes: ['system'],
+        plan: {
+          currentReleaseChannel: 'stable',
+          existingServices: [],
+          actions: [],
+          manualWarnings: [],
+        },
+      });
+
+      await handleServiceRepairCliCommand({
+        argv: ['repair', '--mode', 'system'],
+        commandPath: 'happier service',
+      });
+
+      expect(resolveBackgroundServiceRepairPlanForCurrentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+        preferredMode: 'system',
+        systemUser: 'alice',
+      }));
+    } finally {
+      process.env.SUDO_USER = originalSudoUser;
+    }
+  });
+
+  it('fails closed when a system-mode repair plan needs systemUser but none is available', async () => {
+    const originalSudoUser = process.env.SUDO_USER;
+    delete process.env.SUDO_USER;
+
+    try {
+      resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockResolvedValueOnce({
+        runtime: {
+          platform: 'linux',
+          channel: 'stable',
+          targetMode: 'default-following',
+          instanceId: 'default',
+          uid: 0,
+          userHomeDir: '/tmp/user',
+          happierHomeDir: '/tmp/user/.happier',
+          serverUrl: 'https://example.test',
+          publicServerUrl: 'https://example.test',
+          webappUrl: 'https://app.example.test',
+          nodePath: '/usr/bin/node',
+          entryPath: '/opt/happier/index.mjs',
+        },
+        services: [],
+        scannedModes: ['system'],
+        plan: {
+          currentReleaseChannel: 'stable',
+          existingServices: [],
+          actions: [{ kind: 'install-default-following-service', mode: 'system' }],
+          manualWarnings: [],
+        },
+      });
+
+      await expect(handleServiceRepairCliCommand({
+        argv: ['repair', '--mode', 'system', '--yes'],
+        commandPath: 'happier service',
+      })).rejects.toThrow('System mode background-service repair requires --system-user');
+
+      expect(applyBackgroundServiceRepairPlanMock).not.toHaveBeenCalled();
+    } finally {
+      process.env.SUDO_USER = originalSudoUser;
+    }
+  });
+
   it('fails closed when executing system-scoped repair on linux without root privileges', async () => {
     resolveBackgroundServiceRepairPlanForCurrentRuntimeMock.mockResolvedValueOnce({
       runtime: {

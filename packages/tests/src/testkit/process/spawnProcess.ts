@@ -214,9 +214,10 @@ export function spawnLoggedProcess(params: {
   env?: NodeJS.ProcessEnv;
   stdoutPath: string;
   stderrPath: string;
+  cleanupDescendantsOnExit?: boolean;
 }): SpawnedProcess {
-  type IntervalHandle = ReturnType<typeof setInterval>;
-  const unrefInterval = (handle: IntervalHandle | null) => {
+  type TimeoutHandle = ReturnType<typeof setTimeout>;
+  const unrefTimeout = (handle: TimeoutHandle | null) => {
     if (!handle) return;
     if (typeof handle === 'object' && handle !== null && 'unref' in handle) {
       const candidate = handle as unknown as { unref?: () => void };
@@ -235,23 +236,36 @@ export function spawnLoggedProcess(params: {
   const stderr = createWriteStream(params.stderrPath, { flags: 'w' });
   const observedDescendantPids = new Set<number>();
   const detachCleanup = attachExitCleanup(child, () => [...observedDescendantPids]);
-  const descendantPoller: IntervalHandle | null = process.platform === 'win32'
-    ? null
-    : setInterval(() => {
-      if (typeof child.pid !== 'number' || child.pid <= 0) return;
+  let descendantPoller: TimeoutHandle | null = null;
+  let descendantPollerActive = process.platform !== 'win32';
+  const pollStartedAtMs = Date.now();
+  const fastPollWindowMs = 1_000;
+  const fastPollMs = 25;
+  const slowPollMs = 250;
+
+  const pollDescendants = () => {
+    if (!descendantPollerActive) return;
+    if (typeof child.pid === 'number' && child.pid > 0) {
       for (const pid of collectDescendantPids(child.pid)) {
         observedDescendantPids.add(pid);
       }
-    }, 1);
+    }
+    const nextDelay = Date.now() - pollStartedAtMs < fastPollWindowMs ? fastPollMs : slowPollMs;
+    descendantPoller = setTimeout(pollDescendants, nextDelay);
+    unrefTimeout(descendantPoller);
+  };
 
-  unrefInterval(descendantPoller);
+  if (descendantPollerActive) {
+    pollDescendants();
+  }
 
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
 
   const stop = async (signal: NodeJS.Signals = 'SIGTERM') => {
-    unrefInterval(descendantPoller);
-    descendantPoller && clearInterval(descendantPoller);
+    descendantPollerActive = false;
+    if (descendantPoller) clearTimeout(descendantPoller);
+    descendantPoller = null;
 
     if (typeof child.pid === 'number' && child.pid > 0) {
       for (const pid of collectDescendantPids(child.pid)) {
@@ -295,8 +309,17 @@ export function spawnLoggedProcess(params: {
   };
 
   child.once('exit', () => {
-    if (descendantPoller) clearInterval(descendantPoller);
-    if (observedDescendantPids.size > 0) {
+    descendantPollerActive = false;
+    if (descendantPoller) clearTimeout(descendantPoller);
+    descendantPoller = null;
+
+    if (typeof child.pid === 'number' && child.pid > 0) {
+      for (const pid of collectDescendantPids(child.pid)) {
+        observedDescendantPids.add(pid);
+      }
+    }
+
+    if (params.cleanupDescendantsOnExit !== false && observedDescendantPids.size > 0) {
       void terminateProcessTreeByPid(child.pid ?? 0, {
         graceMs: 0,
         pollMs: 25,

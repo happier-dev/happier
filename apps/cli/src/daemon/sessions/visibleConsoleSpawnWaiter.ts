@@ -14,16 +14,6 @@ export function waitForVisibleConsoleSessionWebhook(params: Readonly<{
   resolveExistingSessionId?: () => string | null | undefined;
 }>): Promise<SpawnSessionResult> {
   const { pid, pollMs, pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = params;
-  const existingSessionId =
-    typeof params.resolveExistingSessionId === 'function'
-      ? String(params.resolveExistingSessionId() ?? '').trim()
-      : '';
-  if (existingSessionId) {
-    return Promise.resolve({
-      type: 'success',
-      sessionId: existingSessionId,
-    });
-  }
   const interval = setInterval(() => {
     try {
       process.kill(pid, 0);
@@ -58,6 +48,6 @@ export function waitForVisibleConsoleSessionWebhook(params: Readonly<{
     onTimeout: () => {
       clearInterval(interval);
     },
-    resolveExistingSessionId: () => existingSessionId,
+    resolveExistingSessionId: params.resolveExistingSessionId,
   });
 }

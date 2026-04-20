@@ -11,6 +11,7 @@ describe('uiWebMetro spawn env', () => {
             noDev: true,
         });
         expect(env.CI).toBe('1');
+        expect(env.EXPO_NO_INTERACTIVE).toBe('1');
     });
 
     it('does not force CI when running with dev enabled', () => {
@@ -21,5 +22,6 @@ describe('uiWebMetro spawn env', () => {
             noDev: false,
         });
         expect(env.CI).toBeUndefined();
+        expect(env.EXPO_NO_INTERACTIVE).toBe('1');
     });
 });

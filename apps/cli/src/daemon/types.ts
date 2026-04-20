@@ -29,6 +29,8 @@ export interface TrackedSession {
    * If present, we require this to match before sending SIGTERM by PID.
    */
   processCommandHash?: string;
+  /** Best-effort observed process command line used for startup runtime refresh checks. */
+  processCommand?: string;
   childProcess?: ChildProcess;
   error?: string;
   directoryCreated?: boolean;

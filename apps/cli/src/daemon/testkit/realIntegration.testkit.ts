@@ -89,6 +89,7 @@ export async function prepareIsolatedDaemonTestHome(options: {
     'HAPPIER_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
+    'HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK',
     ...Object.keys(extraEnv),
   ]);
 
@@ -98,6 +99,7 @@ export async function prepareIsolatedDaemonTestHome(options: {
     HAPPIER_SERVER_URL: sourceServerUrl,
     HAPPIER_WEBAPP_URL: sourceWebappUrl,
     HAPPIER_PUBLIC_SERVER_URL: sourcePublicServerUrl,
+    HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '1',
     ...extraEnv,
   });
   reloadConfiguration();

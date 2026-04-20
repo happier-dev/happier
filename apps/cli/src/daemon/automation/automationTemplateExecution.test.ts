@@ -184,7 +184,12 @@ describe('parseAutomationTemplateExecution', () => {
           targetType: 'new_session',
           templateCiphertext: buildPlainTemplateCiphertext({
             directory: '/tmp/project',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: {
+              kind: 'backend',
+              backendId: 'review-bot',
+              configuredBackendId: 'review-bot',
+              sourceKind: 'configured',
+            },
             prompt: 'Use the ACP backend',
           }),
         },
@@ -193,7 +198,12 @@ describe('parseAutomationTemplateExecution', () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.value.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+    expect(parsed.value.backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
     expect(parsed.value.prompt).toBe('Use the ACP backend');
   });
 
@@ -207,7 +217,12 @@ describe('parseAutomationTemplateExecution', () => {
           targetType: 'new_session',
           templateCiphertext: buildPlainTemplateCiphertext({
             directory: '/tmp/project',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: {
+              kind: 'backend',
+              backendId: 'review-bot',
+              configuredBackendId: 'review-bot',
+              sourceKind: 'configured',
+            },
             sessionConfigOptionOverrides: {
               v: 1,
               updatedAt: 789,
@@ -428,7 +443,7 @@ describe('parseAutomationTemplateExecution', () => {
 
     expect(parsed.value.targetType).toBe('new_session');
     expect(parsed.value.directory).toBe('/tmp/project');
-    expect(parsed.value.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
+    expect(parsed.value.backendTarget).toEqual({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' });
   });
 
   it('rejects invalid template payloads', () => {

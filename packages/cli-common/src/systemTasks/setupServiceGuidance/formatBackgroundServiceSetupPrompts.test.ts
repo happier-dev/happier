@@ -10,11 +10,13 @@ import {
 const baseGuidance: BackgroundServiceSetupGuidance = {
   targetReleaseChannel: 'preview',
   targetServerUrl: 'https://relay.example.test',
+  currentHappierHomeDir: null,
   currentDefaultReleaseChannel: 'stable',
   managedReleaseChannels: [],
   manualRelayOwner: null,
   exactDefaultServiceExists: false,
   conflictingServices: [],
+  foreignHomeConflictingServices: [],
   shouldOfferDefaultReleaseChannelSwitch: true,
   shouldPromptForManualRelayTakeover: false,
   shouldPromptForServiceReplacement: true,
@@ -30,6 +32,24 @@ describe('formatBackgroundServiceSetupPrompts', () => {
   it('formats the replacement prompt around the default-following background service target', () => {
     expect(formatBackgroundServiceReplacementPrompt(baseGuidance)).toBe(
       'This computer already has conflicting Happier background services. Replace them before installing the default background service targeting https://relay.example.test?',
+    );
+  });
+
+  it('formats foreign-installation service replacement as an explicit guided takeover', () => {
+    const guidance = {
+      ...baseGuidance,
+      foreignHomeConflictingServices: [{
+        label: 'com.happier.cli.daemon.default',
+        releaseChannel: 'stable',
+        targetMode: 'default-following',
+        running: true,
+        serverUrl: null,
+        happierHomeDir: '/Users/other/.happier',
+      }],
+    } satisfies BackgroundServiceSetupGuidance;
+
+    expect(formatBackgroundServiceReplacementPrompt(guidance)).toBe(
+      'This computer is already using a Happier background service from another installation. Replace it so this installation becomes the background service for https://relay.example.test?',
     );
   });
 
@@ -58,7 +78,7 @@ describe('formatBackgroundServiceSetupPrompts', () => {
     } satisfies BackgroundServiceSetupGuidance;
 
     expect(formatBackgroundServiceManualRelayTakeoverPrompt(guidance)).toBe(
-      'A manual relay runtime is currently running for https://relay.example.test. Stop it and enable the background service for this computer?',
+      'This computer is currently using a temporary relay process for https://relay.example.test. Continue to stop that process and switch this computer to the background service?',
     );
   });
 });

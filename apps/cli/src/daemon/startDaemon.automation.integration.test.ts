@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
@@ -110,6 +110,7 @@ vi.mock('@/api/client/serializeAxiosErrorForLog', () => ({
 vi.mock('@/api/machine/ensureMachineRegistered', () => ({
   ensureMachineRegistered: vi.fn(async ({ machineId }: { machineId: string }) => ({
     machineId,
+    didRotateMachineId: false,
     machine: {
       id: machineId,
       metadata: {},
@@ -138,6 +139,10 @@ vi.mock('@/configuration', () => ({
   configuration: {
     privateKeyFile: '/tmp/key',
     happyHomeDir: '/tmp/home',
+    activeServerId: 'default',
+    serverUrl: 'https://api.happier.dev',
+    apiServerUrl: 'https://api.happier.dev',
+    webappUrl: 'https://happier.dev',
     activeServerDir: '/tmp/home/servers/active',
     currentCliVersion: '0.0.0-test',
     publicReleaseRing: 'publicdev',
@@ -190,7 +195,9 @@ vi.mock('./controlServer', () => ({
 }));
 
 vi.mock('./sessions/reattachFromMarkers', () => ({
-  reattachTrackedSessionsFromMarkers: vi.fn(async () => {}),
+  reattachTrackedSessionsFromMarkers: vi.fn(async () => ({
+    orphanedDeadDaemonSessions: [],
+  })),
 }));
 
 vi.mock('./sessions/onHappySessionWebhook', () => ({
@@ -339,7 +346,32 @@ vi.mock('./shutdownPolicy', () => ({
   getDaemonShutdownWatchdogTimeoutMs: vi.fn(() => 10_000),
 }));
 
+vi.mock('@/machines/transfer/directPeerTransport', () => ({
+  createDirectPeerTransferRegistry: vi.fn(() => ({
+    publishTransfer: vi.fn(() => ({
+      endpointCandidates: [],
+      expiresAt: 30_000,
+    })),
+    readPublishedTransfer: vi.fn(() => null),
+    resolveOnDemandTransferOnOpen: vi.fn(async () => null),
+    clearPublishedTransfer: vi.fn(),
+  })),
+  requestDirectPeerTransferToFile: vi.fn(async ({ destinationPath }: { destinationPath: string }) => ({
+    destinationPath,
+    manifestHash: 'sha256:test-manifest',
+    sizeBytes: 0,
+  })),
+  startDirectPeerTransferServer: vi.fn(async () => ({
+    port: 46001,
+    stop: vi.fn(async () => {}),
+  })),
+}));
+
 describe('startDaemon automation wiring (integration)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     harness.setAutoShutdownAfterAutomationStart(true);

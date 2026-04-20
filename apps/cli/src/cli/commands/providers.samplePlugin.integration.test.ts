@@ -8,13 +8,13 @@ import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { createPluginStateStore } from '@/extensions/store/state';
 import {
     SAMPLE_PLUGIN_ID,
     SAMPLE_PLUGIN_PROVIDER_ID,
     SAMPLE_PLUGIN_PROVIDER_TITLE,
     materializeSamplePluginFixture,
-} from '@/extensions/plugins/testkit/samplePluginFixture';
+} from '@/extensions/testkit/samplePackage';
 
 import { handleProvidersCommand } from './providers';
 

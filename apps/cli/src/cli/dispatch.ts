@@ -1,6 +1,9 @@
 import { logger } from '@/ui/logger';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
-import { commandRegistry } from '@/cli/commandRegistry';
+import {
+  commandRegistry,
+  ensureMergedAgentCommandRegistryLoaded,
+} from '@/cli/commandRegistry';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import { isTmuxAllowedCommand } from '@/cli/commandSurfaceManifest';
 import { maybePassthroughProviderCliInfoRequest } from '@/cli/providerCliPassthrough';
@@ -26,6 +29,7 @@ export async function dispatchCli(params: Readonly<{
     return;
   }
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
+    await ensureMergedAgentCommandRegistryLoaded();
     console.log(buildRootHelpText());
     return;
   }
@@ -74,7 +78,7 @@ export async function dispatchCli(params: Readonly<{
       }
 
       try {
-        const { startHappyHeadlessInTmux } = await import('@/terminal/tmux/startHappyHeadlessInTmux');
+        const { startHappyHeadlessInTmux } = await import('@/integrations/tmux/startHeadlessSession');
         await startHappyHeadlessInTmux(args);
       } catch (error) {
         console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
@@ -86,7 +90,11 @@ export async function dispatchCli(params: Readonly<{
       return;
     }
   }
-  const commandHandler = (subcommand ? commandRegistry[subcommand] : undefined);
+  let commandHandler = (subcommand ? commandRegistry[subcommand] : undefined);
+  if (!commandHandler && subcommand) {
+    await ensureMergedAgentCommandRegistryLoaded();
+    commandHandler = commandRegistry[subcommand];
+  }
   if (commandHandler) {
     const catalogAgentId =
       typeof subcommand === 'string' && subcommand.length > 0

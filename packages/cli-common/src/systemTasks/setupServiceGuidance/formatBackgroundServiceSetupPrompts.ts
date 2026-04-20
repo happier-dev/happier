@@ -1,4 +1,7 @@
-import type { BackgroundServiceSetupGuidance } from './buildBackgroundServiceSetupGuidance.js';
+import {
+  resolveBackgroundServiceSetupServicesRequiringReplacement,
+  type BackgroundServiceSetupGuidance,
+} from './buildBackgroundServiceSetupGuidance.js';
 
 function resolveBackgroundServiceTargetLabel(guidance: BackgroundServiceSetupGuidance): string {
   const targetServerUrl = typeof guidance.targetServerUrl === 'string' ? guidance.targetServerUrl.trim() : '';
@@ -14,11 +17,16 @@ export function formatBackgroundServiceReleaseChannelSwitchPrompt(
 export function formatBackgroundServiceReplacementPrompt(
   guidance: BackgroundServiceSetupGuidance,
 ): string {
+  if (guidance.foreignHomeConflictingServices.length > 0) {
+    const serviceCount = resolveBackgroundServiceSetupServicesRequiringReplacement(guidance).length;
+    const pronoun = serviceCount === 1 ? 'it' : 'them';
+    return `This computer is already using a Happier background service from another installation. Replace ${pronoun} so this installation becomes the background service for ${resolveBackgroundServiceTargetLabel(guidance)}?`;
+  }
   return `This computer already has conflicting Happier background services. Replace them before installing the default background service targeting ${resolveBackgroundServiceTargetLabel(guidance)}?`;
 }
 
 export function formatBackgroundServiceManualRelayTakeoverPrompt(
   guidance: BackgroundServiceSetupGuidance,
 ): string {
-  return `A manual relay runtime is currently running for ${resolveBackgroundServiceTargetLabel(guidance)}. Stop it and enable the background service for this computer?`;
+  return `This computer is currently using a temporary relay process for ${resolveBackgroundServiceTargetLabel(guidance)}. Continue to stop that process and switch this computer to the background service?`;
 }

@@ -3,9 +3,9 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
-import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '../../testkit/env/envScope';
+import { writeExecutableShimSync } from '../../testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '../../testkit/fs/tempDir';
 import { resolveProviderCliManagedCommandPath } from './providerCliResolution';
 import { validateProviderCliSpawn } from './validateProviderCliSpawn';
 
@@ -45,8 +45,12 @@ describe('validateProviderCliSpawn', () => {
   });
 
   it('returns a provider-specific error when no CLI source is available', async () => {
+    const root = createTempDirSync('happier-provider-spawn-', tmpdir());
+    TEMP_DIRS.add(root);
+    process.env.HAPPIER_HOME_DIR = join(root, 'home');
     process.env.PATH = '';
     delete process.env.HAPPIER_GEMINI_PATH;
+    mkdirSync(process.env.HAPPIER_HOME_DIR, { recursive: true });
 
     const result = await validateProviderCliSpawn({ agentId: 'gemini' });
     expect(result.ok).toBe(false);

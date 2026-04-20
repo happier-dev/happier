@@ -13,6 +13,7 @@ import { yarnCommand } from './commands';
 import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
 import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache';
 import { resolveTsxImportHookPath } from './tsxImportHook';
+import { redactHarnessLogText } from './harnessLogRedaction';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -165,7 +166,7 @@ function attachServerStartTailToError(params: {
   stderrTail: string;
   stdoutTail: string;
 }): unknown {
-  const tail = composeServerStartTail(params.stderrTail, params.stdoutTail);
+  const tail = redactHarnessLogText(composeServerStartTail(params.stderrTail, params.stdoutTail)).trim();
   if (!tail) {
     return params.error;
   }
@@ -818,6 +819,7 @@ export async function startServerLight(params: {
   testDir: string;
   extraEnv?: NodeJS.ProcessEnv;
   dbProvider?: TestDbProvider;
+  dataDirMode?: 'fresh' | 'reuse-existing';
   /**
    * Test-only hook: override port selection to force EADDRINUSE scenarios.
    * Not part of the public API; used to validate retry behavior deterministically.
@@ -885,15 +887,17 @@ export async function startServerLight(params: {
 
   // Ensure the light database schema exists before the server boots.
   // Server light uses pglite/sqlite + Prisma but does not auto-migrate on startup.
-  await prepareServerLightDataDir({
-    rootDir: repoRootDir(),
-    testDir: params.testDir,
-    dataDir,
-    baseEnv,
-    dbProvider,
-    sqliteUrl,
-    databaseUrlForExternalProvider,
-  });
+  if (params.dataDirMode !== 'reuse-existing') {
+    await prepareServerLightDataDir({
+      rootDir: repoRootDir(),
+      testDir: params.testDir,
+      dataDir,
+      baseEnv,
+      dbProvider,
+      sqliteUrl,
+      databaseUrlForExternalProvider,
+    });
+  }
 
   const portAllocator = params.__portAllocator ?? (async () => pickPortCandidate());
   const maxAttempts = 5;

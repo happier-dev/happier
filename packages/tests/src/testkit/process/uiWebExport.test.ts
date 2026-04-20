@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { appendFile, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+
+import { spawnDetachedTestProcess } from './testSpawn';
 
 type RunLoggedCommandMockParams = {
     stdoutPath: string;
@@ -11,6 +12,7 @@ type RunLoggedCommandMockParams = {
     args?: string[];
     env?: NodeJS.ProcessEnv;
     abortSignal?: AbortSignal;
+    timeoutMs?: number;
 };
 
 const { runLoggedCommandMock } = vi.hoisted(() => {
@@ -23,36 +25,15 @@ const { runLoggedCommandMock } = vi.hoisted(() => {
     };
 });
 
-const { ensureWorkspacePackagesBuiltForComponentMock } = vi.hoisted(() => {
-  return {
-    ensureWorkspacePackagesBuiltForComponentMock: vi
-      .fn<(componentDir: string, options?: { quiet?: boolean; env?: NodeJS.ProcessEnv }) => Promise<{
-        ok: boolean;
-        built: string[];
-        skipped: string[];
-      }>>()
-      .mockResolvedValue({
-        ok: true,
-        built: ['@happier-dev/protocol'],
-        skipped: [],
-      }),
-  };
-});
-
 vi.mock('./spawnProcess', () => {
   return {
     runLoggedCommand: runLoggedCommandMock,
   };
 });
 
-vi.mock('../../../../../apps/stack/scripts/utils/proc/pm.mjs', () => {
-  return {
-    ensureWorkspacePackagesBuiltForComponent: ensureWorkspacePackagesBuiltForComponentMock,
-  };
-});
-
 import { __testables as uiWebExportTestables, resolveUiWebExportRootDir, startUiWebExport } from './uiWebExport';
 import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
+import { repoRootDir } from '../paths';
 
 function buildLegacyExportCacheKeyForTest(env: NodeJS.ProcessEnv): string {
   const debug = String(env.EXPO_PUBLIC_DEBUG ?? '1').trim() || '1';
@@ -95,6 +76,10 @@ function resolveOutputDirFromArgs(args: readonly string[] | undefined): string {
   return outputDir;
 }
 
+function isWorkspacePrebuildInvocation(params?: RunLoggedCommandMockParams): boolean {
+  return Array.isArray(params?.args) && params?.args.includes('--input-type=module');
+}
+
 describe('uiWebExport (cache clearing)', () => {
     let namespace: string;
     let exportedRootDir: string;
@@ -102,14 +87,11 @@ describe('uiWebExport (cache clearing)', () => {
   beforeEach(() => {
     uiWebExportTestables.resetSharedUiWebExportState();
     runLoggedCommandMock.mockReset();
-    runLoggedCommandMock.mockImplementation(async (_params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
+      }
       throw new Error('RUN_LOGGED_COMMAND_CALLED');
-    });
-    ensureWorkspacePackagesBuiltForComponentMock.mockReset();
-    ensureWorkspacePackagesBuiltForComponentMock.mockResolvedValue({
-      ok: true,
-      built: ['@happier-dev/protocol'],
-      skipped: [],
     });
   });
 
@@ -137,9 +119,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('fails export startup when expo export stalls after Starting Metro Bundler', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params) {
         throw new Error('missing runLoggedCommand params');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       await writeFile(
         params.stdoutPath,
@@ -177,6 +162,45 @@ describe('uiWebExport (cache clearing)', () => {
     ])).rejects.toThrow(/classification=startup_stalled_after_metro_startup_no_staging_progress/);
   });
 
+  it('fails export startup when expo export stalls before Starting Metro Bundler', async () => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
+      if (!params) {
+        throw new Error('missing runLoggedCommand params');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
+      }
+      await new Promise<never>((_, reject) => {
+        if (params.abortSignal?.aborted) {
+          const abortReason = params.abortSignal?.reason;
+          reject(abortReason instanceof Error ? abortReason : new Error(String(abortReason ?? 'aborted')));
+          return;
+        }
+        params.abortSignal?.addEventListener('abort', () => {
+          const abortReason = params.abortSignal?.reason;
+          reject(abortReason instanceof Error ? abortReason : new Error(String(abortReason ?? 'aborted')));
+        }, { once: true });
+      });
+    });
+
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    await expect(Promise.race([
+      startUiWebExport({
+        testDir,
+        env: {
+          ...process.env,
+          EXPO_PUBLIC_DEBUG: '1',
+          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `stall-before-${Date.now()}`,
+          HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '100',
+          HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_POLL_MS: '5',
+        },
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('startUiWebExport did not reject quickly')), 2_000);
+      }),
+    ])).rejects.toThrow(/classification=startup_stalled_before_metro_startup/);
+  });
+
   it('builds apps/ui workspace packages before starting expo export', async () => {
     const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
     const env: NodeJS.ProcessEnv = {
@@ -192,14 +216,51 @@ describe('uiWebExport (cache clearing)', () => {
       }),
     ).rejects.toThrow(/RUN_LOGGED_COMMAND_CALLED/);
 
-    expect(ensureWorkspacePackagesBuiltForComponentMock).toHaveBeenCalledTimes(1);
-    expect(ensureWorkspacePackagesBuiltForComponentMock).toHaveBeenCalledWith(
-      expect.stringMatching(/\/apps\/ui$/),
-      expect.objectContaining({
-        quiet: true,
-        env,
-      }),
-    );
+    const calls = runLoggedCommandMock.mock.calls as unknown as Array<[RunLoggedCommandMockParams | undefined]>;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(isWorkspacePrebuildInvocation(calls[0]?.[0])).toBe(true);
+    expect(isWorkspacePrebuildInvocation(calls[1]?.[0])).toBe(false);
+  });
+
+  it('still runs export preflight when the shared CLI dist build lock is active', async () => {
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
+    const lockPath = resolve(repoRootDir(), '.project', 'tmp', 'cli-dist-build.lock');
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `shared-cli-dist-lock-${Date.now()}`,
+      HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '50',
+    };
+    await writeFile(lockPath, JSON.stringify({
+      pid: process.pid,
+      createdAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+    }), 'utf8');
+
+    try {
+      runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
+        if (!params?.args) {
+          throw new Error('missing runLoggedCommand args');
+        }
+        // First call should be workspace prebuild; let it succeed.
+        if (params.args.includes('--input-type=module')) {
+          return;
+        }
+        throw new Error('RUN_LOGGED_COMMAND_CALLED');
+      });
+
+      await expect(
+        startUiWebExport({
+          testDir,
+          env,
+        }),
+      ).rejects.toThrow(/RUN_LOGGED_COMMAND_CALLED/);
+    } finally {
+      await rm(lockPath, { force: true }).catch(() => {});
+    }
+
+    // workspace prebuild + export
+    expect(runLoggedCommandMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not create the export lock until workspace build preflight finishes', async () => {
@@ -208,13 +269,15 @@ describe('uiWebExport (cache clearing)', () => {
       releasePreflight = resolve;
     });
 
-    ensureWorkspacePackagesBuiltForComponentMock.mockImplementationOnce(async () => {
-      await preflightPromise;
-      return {
-        ok: true,
-        built: ['@happier-dev/protocol'],
-        skipped: [],
-      };
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
+      if (!params?.args) {
+        throw new Error('missing runLoggedCommand args');
+      }
+      if (params.args.includes('--input-type=module')) {
+        await preflightPromise;
+        return;
+      }
+      throw new Error('RUN_LOGGED_COMMAND_CALLED');
     });
 
     const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
@@ -240,15 +303,16 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('times out workspace build preflight with an actionable export log before opening the export lock', async () => {
-    ensureWorkspacePackagesBuiltForComponentMock.mockImplementationOnce(async () => {
-      await new Promise<void>(() => {
-        // Simulate a workspace preflight waiting forever on an external build lock.
-      });
-      return {
-        ok: true,
-        built: ['@happier-dev/protocol'],
-        skipped: [],
-      };
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
+      if (!params?.args) {
+        throw new Error('missing runLoggedCommand args');
+      }
+      if (!params.args.includes('--input-type=module')) {
+        throw new Error('RUN_LOGGED_COMMAND_CALLED');
+      }
+      // Simulate a hung prebuild that times out.
+      expect(params.timeoutMs).toBe(50);
+      throw new Error(`node prebuild timed out after ${params.timeoutMs}ms`);
     });
 
     const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
@@ -283,9 +347,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('fails export startup promptly when a stalled exporter ignores the abort signal', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params) {
         throw new Error('missing runLoggedCommand params');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       await writeFile(
         params.stdoutPath,
@@ -317,9 +384,12 @@ describe('uiWebExport (cache clearing)', () => {
   }, 10_000);
 
   it('fails export startup when logs keep moving but the staging dir stays partial', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       const outputDir = resolveOutputDirFromArgs(params.args);
       await mkdir(outputDir, { recursive: true });
@@ -371,9 +441,12 @@ describe('uiWebExport (cache clearing)', () => {
   }, 10_000);
 
   it('fails export startup when staging keeps growing without publish-required files', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       const outputDir = resolveOutputDirFromArgs(params.args);
       const monacoDir = resolve(outputDir, 'monaco');
@@ -434,9 +507,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('times out export startup even when the command runner ignores aborts', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       const outputDir = resolveOutputDirFromArgs(params.args);
       const monacoDir = resolve(outputDir, 'monaco');
@@ -498,9 +574,12 @@ describe('uiWebExport (cache clearing)', () => {
 
   it('passes a Metro cache version bust through to the Expo export process', async () => {
     let capturedEnv: NodeJS.ProcessEnv | null = null;
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args || !params.env) {
         throw new Error('missing runLoggedCommand params');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       capturedEnv = params.env;
       const outputDir = resolveOutputDirFromArgs(params.args);
@@ -613,15 +692,14 @@ describe('uiWebExport (cache clearing)', () => {
     const lockPath = resolve(rootDir, 'build.lock');
     const ownerStagingDir = resolve(rootDir, `dist-staging-99999-${Date.now()}`);
 
-    const orphan = spawn(
-      process.execPath,
-      ['-e', 'setInterval(() => {}, 1_000)', 'expo', 'export', '--output-dir', ownerStagingDir],
-      {
-        stdio: 'ignore',
-        detached: true,
-      },
-    );
-    orphan.unref();
+    const orphan = spawnDetachedTestProcess(process.execPath, [
+      '-e',
+      'setInterval(() => {}, 1_000)',
+      'expo',
+      'export',
+      '--output-dir',
+      ownerStagingDir,
+    ]);
 
     try {
       await mkdir(resolve(ownerStagingDir, 'nested'), { recursive: true });
@@ -664,9 +742,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('rejects a completed export when the staging dir is missing publish-required files', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       const outputDir = resolveOutputDirFromArgs(params.args);
       await mkdir(outputDir, { recursive: true });
@@ -687,9 +768,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('classifies a frozen partial export failure during export', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       const outputDir = resolveOutputDirFromArgs(params.args);
       await mkdir(resolve(outputDir, 'monaco'), { recursive: true });
@@ -722,9 +806,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('classifies an unresolved web import failure during export', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params) {
         throw new Error('missing runLoggedCommand params');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
 
       await writeFile(
@@ -760,9 +847,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('classifies a missing source file ENOENT as an unresolved import even when partial staging exists', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
 
       const outputDir = resolveOutputDirFromArgs(params.args);
@@ -823,9 +913,12 @@ describe('uiWebExport (cache clearing)', () => {
   });
 
   it('creates a nested testDir before opening export stdout and stderr logs', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args || !params.stderrPath) {
         throw new Error('missing runLoggedCommand params');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       await writeFile(params.stdoutPath, 'Expo Autolinking module resolution enabled\nStarting Metro Bundler\n', 'utf8');
       await writeFile(params.stderrPath, '', 'utf8');
@@ -852,7 +945,8 @@ describe('uiWebExport (cache clearing)', () => {
     });
 
     try {
-      expect(runLoggedCommandMock).toHaveBeenCalledTimes(1);
+      // workspace prebuild + export
+      expect(runLoggedCommandMock).toHaveBeenCalledTimes(2);
     } finally {
       await ui.stop();
       await rm(rootDir, { recursive: true, force: true }).catch(() => {});
@@ -899,6 +993,9 @@ describe('uiWebExport (cache clearing)', () => {
 
   it('retries expo export with --clear when Metro cache deserialization fails', async () => {
     runLoggedCommandMock
+      .mockImplementationOnce(async () => {
+        // workspace prebuild
+      })
       .mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
         if (!params?.stderrPath) {
           throw new Error('missing runLoggedCommand params');
@@ -941,7 +1038,8 @@ describe('uiWebExport (cache clearing)', () => {
     });
 
     try {
-      expect(runLoggedCommandMock).toHaveBeenCalledTimes(2);
+      // workspace prebuild + 2 export attempts
+      expect(runLoggedCommandMock).toHaveBeenCalledTimes(3);
     } finally {
       await ui.stop();
     }
@@ -949,6 +1047,9 @@ describe('uiWebExport (cache clearing)', () => {
 
   it('retries expo export when Metro cache cleanup briefly hits ENOTEMPTY', async () => {
     runLoggedCommandMock
+      .mockImplementationOnce(async () => {
+        // workspace prebuild
+      })
       .mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
         if (!params?.stdoutPath) {
           throw new Error('missing runLoggedCommand params');
@@ -991,7 +1092,8 @@ describe('uiWebExport (cache clearing)', () => {
     });
 
     try {
-      expect(runLoggedCommandMock).toHaveBeenCalledTimes(2);
+      // workspace prebuild + 2 export attempts
+      expect(runLoggedCommandMock).toHaveBeenCalledTimes(3);
     } finally {
       await ui.stop();
     }
@@ -1024,6 +1126,9 @@ describe('uiWebExport (cache clearing)', () => {
 
   it('retries expo export with --clear when a corrupted startup attempt never resolves after abort', async () => {
     runLoggedCommandMock
+      .mockImplementationOnce(async () => {
+        // workspace prebuild
+      })
       .mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
         if (!params) {
           throw new Error('missing runLoggedCommand params');
@@ -1074,16 +1179,20 @@ describe('uiWebExport (cache clearing)', () => {
     });
 
     try {
-      expect(runLoggedCommandMock).toHaveBeenCalledTimes(2);
+      // workspace prebuild + 2 export attempts
+      expect(runLoggedCommandMock).toHaveBeenCalledTimes(3);
     } finally {
       await ui.stop();
     }
   });
 
   it('does not fail a long export while stdout keeps making forward progress', async () => {
-    runLoggedCommandMock.mockImplementationOnce(async (params?: RunLoggedCommandMockParams) => {
+    runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
+      }
+      if (isWorkspacePrebuildInvocation(params)) {
+        return;
       }
       const outputDir = resolveOutputDirFromArgs(params.args);
       await mkdir(resolve(outputDir, '_expo/static/js/web'), { recursive: true });
@@ -1122,7 +1231,8 @@ describe('uiWebExport (cache clearing)', () => {
     });
 
     try {
-      expect(runLoggedCommandMock).toHaveBeenCalledTimes(1);
+      // workspace prebuild + export
+      expect(runLoggedCommandMock).toHaveBeenCalledTimes(2);
     } finally {
       await ui.stop();
     }

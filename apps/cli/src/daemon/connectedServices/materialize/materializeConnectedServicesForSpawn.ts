@@ -5,9 +5,9 @@ import type {
   ConnectedServiceId,
 } from '@happier-dev/protocol';
 
-import { getConnectedServicesSpawnMaterializer } from '@/backends/catalog';
+import { getConnectedServicesMaterializer } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
-import type { ConnectedServicesSpawnMaterialization } from '@/backends/connectedServices/spawnMaterializer';
+import type { ConnectedServicesMaterialization } from '@/daemon/connectedServices/materialization/materializer';
 import { normalizeMaterializationKeyForPath } from './normalizeMaterializationKeyForPath';
 
 export async function materializeConnectedServicesForSpawn(params: Readonly<{
@@ -16,10 +16,10 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   activeServerDir: string;
   baseDir: string;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
-}>): Promise<ConnectedServicesSpawnMaterialization | null> {
+}>): Promise<ConnectedServicesMaterialization | null> {
   const materializationSegment = normalizeMaterializationKeyForPath(params.materializationKey);
   const rootDir = join(params.baseDir, materializationSegment, params.agentId);
-  const materializer = await getConnectedServicesSpawnMaterializer(params.agentId);
+  const materializer = await getConnectedServicesMaterializer(params.agentId);
   if (!materializer) return null;
 
   return await materializer({

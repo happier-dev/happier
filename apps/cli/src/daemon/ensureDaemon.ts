@@ -21,7 +21,20 @@ export function shouldEnsureDaemonForInvocation(params: Readonly<{ args: string[
   if (args.includes('-v') || args.includes('--version')) return false;
 
   const subcommand = args[0];
-  const nonSession = new Set(['auth', 'doctor', 'daemon', 'notify', 'connect', 'logout', 'attach', 'self', 'server', 'session']);
+  const nonSession = new Set([
+    'auth',
+    'doctor',
+    'daemon',
+    'notify',
+    'connect',
+    'logout',
+    'attach',
+    'capabilities',
+    'self',
+    'server',
+    'session',
+    'sessions',
+  ]);
   if (subcommand && nonSession.has(subcommand)) return false;
 
   // Default invocation (no explicit subcommand) starts a session.

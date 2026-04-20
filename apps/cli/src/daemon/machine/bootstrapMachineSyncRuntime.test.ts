@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Machine } from '@/api/types';
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
-import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { DEFAULT_MEMORY_SETTINGS } from '@/settings/memorySettings';
 
 import { buildUnavailableMemoryEmbeddingsDiagnostics } from '../memory/resolveOperationalMemoryEmbeddingsSettings';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
+import type { VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
 
 import { bootstrapMachineSyncRuntime } from './bootstrapMachineSyncRuntime';
 import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
@@ -33,6 +34,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             getDeepDbPath: vi.fn(() => null),
         };
         const startMemoryWorkerForMachine = vi.fn(async (): Promise<MemoryWorkerHandle> => memoryWorker);
+        const startVoiceInferenceWorkerForMachine = vi.fn(async (): Promise<VoiceInferenceWorkerHandle | null> => null);
         const createConnectedApiMachine = vi.fn(() => null);
         const attachTransferRuntimeStatePublisher = vi.fn(async () => {});
         const machine: Machine = {
@@ -52,6 +54,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             preferredHost: 'host.local',
             happyHomeDir: '/tmp/happy-home',
             happyLibDir: '/tmp/happy-lib',
+            filesystemAccessPolicy: { kind: 'osUser' },
             takeoverRequested: false,
             isShuttingDown: () => false,
             createConnectedApiMachine,
@@ -70,6 +73,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             directTransferPromptRegistryRegistry: createPromptRegistryAdapterRegistry(),
             connectedServiceRefreshLoopHandle: null,
             connectedServiceQuotasLoopHandle: null,
+            startVoiceInferenceWorkerForMachine,
         });
 
         expect(createConnectedApiMachine).toHaveBeenCalledTimes(1);
@@ -81,6 +85,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             apiMachineForSessions: null,
             automationWorker: null,
             memoryWorker: null,
+            voiceInferenceWorker: null,
             daemonConnectivityCoordinator: null,
             machineConnectionStateCleanup: null,
         });

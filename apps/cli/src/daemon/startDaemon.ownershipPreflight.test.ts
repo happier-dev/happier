@@ -190,6 +190,39 @@ describe('startDaemon ownership preflight', () => {
         });
     });
 
+    it('allows replacing a stale manual relay runtime without an explicit takeover flag', async () => {
+        await withTempDir('happier-start-daemon-stale-manual-replace-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+            });
+            vi.resetModules();
+            vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+            const [{ writeDaemonState }, { startDaemon }] = await Promise.all([
+                import('@/persistence'),
+                import('./startDaemon'),
+            ]);
+
+            writeDaemonState({
+                pid: process.pid,
+                httpPort: 43118,
+                startedAt: Date.now(),
+                controlToken: 'control-token',
+                startedWithCliVersion: '0.0.0-other',
+                startedWithPublicReleaseChannel: 'stable',
+                startupSource: 'manual',
+                runtimeId: 'runtime-manual',
+            });
+
+            await expect(startDaemon()).resolves.toBeUndefined();
+            const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
+            expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
+            expect(waitForInitialCredentialsMock).toHaveBeenCalledTimes(1);
+        });
+    });
+
     it('allows takeover to continue past a legacy manual relay runtime conflict when startup source is missing', async () => {
         await withTempDir('happier-start-daemon-legacy-manual-takeover-', async (homeDir) => {
             envScope.patch({

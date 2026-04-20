@@ -114,4 +114,18 @@ describe('happier providers --json', () => {
       output.restore();
     }
   });
+
+  it('projects the merged provider registry into the help page', async () => {
+    const output = captureConsoleLogAndMuteStdout();
+    try {
+      await handleProvidersCommand(['help']);
+      const text = output.logs.join('\n');
+      expect(text).toContain('Available providers:');
+      expect(text).toContain('Acme Providers List');
+      expect(text).toContain('acme.providers.list');
+      expect(text).toContain('happier providers install acme.providers.list');
+    } finally {
+      output.restore();
+    }
+  });
 });

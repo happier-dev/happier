@@ -29,8 +29,9 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
             spawnOptions: {
                 directory: '/repo-source-current',
                 backendTarget: {
-                    kind: 'builtInAgent',
-                    agentId: 'claude',
+                    kind: 'backend',
+                    backendId: 'claude',
+                    sourceKind: 'built_in',
                 },
                 transcriptStorage: 'direct',
                 environmentVariables: {

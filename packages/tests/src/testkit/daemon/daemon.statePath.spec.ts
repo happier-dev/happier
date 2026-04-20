@@ -91,4 +91,84 @@ describe('readDaemonState', () => {
       }),
     );
   });
+
+  it('prefers a healthy per-server daemon.state.json over a stale legacy home-dir state file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-daemon-state-shadowed-'));
+
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 6,
+          activeServerId: 'cloud',
+          servers: {
+            cloud: { id: 'cloud', serverUrl: 'https://api.happier.dev', webappUrl: 'https://app.happier.dev' },
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    );
+
+    await writeFile(
+      join(dir, 'daemon.state.json'),
+      JSON.stringify({ pid: 999, httpPort: 0, controlToken: 'stale-root-state' }, null, 2) + '\n',
+      'utf8',
+    );
+
+    const serverId = 'env_deadbeef';
+    const serverDir = join(dir, 'servers', serverId);
+    await mkdir(serverDir, { recursive: true });
+    await writeFile(
+      join(serverDir, 'daemon.state.json'),
+      JSON.stringify({ pid: 222, httpPort: 333, controlToken: 'healthy-server-state' }, null, 2) + '\n',
+      'utf8',
+    );
+
+    await expect(readDaemonState(dir)).resolves.toEqual(
+      expect.objectContaining({
+        pid: 222,
+        httpPort: 333,
+        controlToken: 'healthy-server-state',
+      }),
+    );
+  });
+
+  it('reads a legacy ring-scoped daemon.dev.state.json from the newest server dir when canonical state is absent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-daemon-state-legacy-ring-'));
+
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 6,
+          activeServerId: 'cloud',
+          servers: {
+            cloud: { id: 'cloud', serverUrl: 'https://api.happier.dev', webappUrl: 'https://app.happier.dev' },
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    );
+
+    const serverId = 'env_deadbeef';
+    const serverDir = join(dir, 'servers', serverId);
+    await mkdir(serverDir, { recursive: true });
+    await writeFile(
+      join(serverDir, 'daemon.dev.state.json'),
+      JSON.stringify({ pid: 444, httpPort: 555, controlToken: 'legacy-ring-state' }, null, 2) + '\n',
+      'utf8',
+    );
+
+    await expect(readDaemonState(dir)).resolves.toEqual(
+      expect.objectContaining({
+        pid: 444,
+        httpPort: 555,
+        controlToken: 'legacy-ring-state',
+      }),
+    );
+  });
 });

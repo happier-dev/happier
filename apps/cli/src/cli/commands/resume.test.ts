@@ -13,7 +13,7 @@ import { encodeBase64, encrypt } from '@/api/encryption';
 import { readSessionAttachFromEnv } from '@/agent/runtime/sessionAttach';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { CommandHandler } from '@/cli/commandRegistry';
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { createPluginStateStore } from '@/extensions/store/state';
 
 const { resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
   resolveMergedContributionRegistryMock: vi.fn(),
@@ -325,53 +325,56 @@ describe('happier resume', () => {
         join(pluginRoot, '.happier-plugin', 'plugin.json'),
         JSON.stringify(
           {
-            schemaVersion: 1,
+            schemaVersion: 2,
             id: 'acme.resume',
             version: '1.0.0',
             displayName: 'Acme Resume',
             description: 'Plugin resume coverage',
             engines: { happier: '^0.2.0' },
+            runtime: {
+              apiVersion: 1,
+              capabilities: ['providers', 'backends'],
+            },
             targets: {
               daemon: {
                 entry: './daemon.js',
               },
             },
-            contributions: {
-              providers: [
-                {
-                  kindVersion: 1,
-                  id: 'acme.resume.provider',
-                  display: { name: 'Acme Resume Provider', tags: ['plugin'] },
-                  session: {
-                    resume: {
-                      supportLevel: 'supported',
-                      vendorResumeIdField: 'acmeResumeSessionId',
-                    },
+            permissions: [],
+            contributions: [
+              {
+                kind: 'provider',
+                kindVersion: 1,
+                id: 'acme.resume.provider',
+                display: { name: 'Acme Resume Provider', tags: ['plugin'] },
+                session: {
+                  resume: {
+                    supportLevel: 'supported',
+                    vendorResumeIdField: 'acmeResumeSessionId',
                   },
-                  catalogEntry: {
-                    id: 'acme.resume.provider',
-                    cliSubcommand: 'acme.resume.provider',
-                    vendorResumeSupport: 'supported',
-                  },
-                  ownedBackendIds: ['acme.resume.backend'],
                 },
-              ],
-              backends: [
-                {
-                  kindVersion: 1,
-                  id: 'acme.resume.backend',
-                  providerId: 'acme.resume.provider',
-                  runtimeKind: 'acp',
-                  capabilities: {},
-                  runtimeAdapters: [],
-                },
-              ],
-              hooks: [],
-            },
+                ownedBackendIds: ['acme.resume.backend'],
+              },
+              {
+                kind: 'backend',
+                kindVersion: 1,
+                id: 'acme.resume.backend',
+                providerId: 'acme.resume.provider',
+                runtimeKind: 'acp',
+                capabilities: {},
+                runtimeAdapters: [],
+              },
+            ],
           },
           null,
           2,
         ),
+        'utf8',
+      );
+      // Plugin loader requires the declared daemon entry path to exist.
+      await writeFile(
+        join(pluginRoot, 'daemon.js'),
+        'export default async function pluginDaemonEntry() { return null; }\n',
         'utf8',
       );
 
@@ -418,10 +421,11 @@ describe('happier resume', () => {
           },
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'acme.resume.provider',
-            provider: {
-              vendorSessionId: vendorResumeId,
-            },
+            // Configured ACP sessions often publish a configured-backend provider id,
+            // so resume eligibility must be able to rely on the provider-declared
+            // vendorResumeIdField instead of only runtimeDescriptor.provider.vendorSessionId.
+            providerId: 'acp:acme.resume.backend',
+            provider: {},
           },
           acmeResumeSessionId: vendorResumeId,
         }),
@@ -439,11 +443,14 @@ describe('happier resume', () => {
         fetchSessionByIdFn: async () => rawSession,
         readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6 }),
         resolveAgentHandlerFn: async () => agentHandler,
+        resolveConfiguredAcpCatalogHandlerFn: async () => agentHandler,
         chdirFn: (next: string) => process.chdir(next),
       });
 
       expect(agentHandler).toHaveBeenCalledTimes(1);
-      expect(dispatched[0]?.args[0]).toBe('customAcp');
+      expect(dispatched[0]?.args[0]).toBe('acp-catalog');
+      expect(dispatched[0]?.args).toContain('--backend');
+      expect(dispatched[0]?.args).toContain('acme.resume.backend');
       expect(dispatched[0]?.args).toContain('--resume');
       expect(dispatched[0]?.args).toContain(vendorResumeId);
     } finally {

@@ -75,6 +75,24 @@ describe('happier session history (integration)', () => {
       'base64',
     );
 
+    const acpMessageCiphertext = encodeBase64Session(
+      encryptWithDataKey(
+        {
+          role: 'agent',
+          content: {
+            type: 'acp',
+            provider: 'opencode',
+            data: {
+              type: 'message',
+              message: 'provider compact text',
+            },
+          },
+        },
+        dek,
+      ),
+      'base64',
+    );
+
     const sessionRow = {
       id: sessionId,
       seq: 1,
@@ -141,6 +159,11 @@ describe('happier session history (integration)', () => {
                 seq: 3,
                 createdAt: 1700000000000,
                 content: { t: 'encrypted', c: msg1Ciphertext },
+              },
+              {
+                seq: 4,
+                createdAt: 1700000001000,
+                content: { t: 'encrypted', c: acpMessageCiphertext },
               },
             ],
           }),
@@ -211,8 +234,46 @@ describe('happier session history (integration)', () => {
       expect(parsedDefault.kind).toBe('session_history');
       expect(parsedDefault.data?.format).toBe('compact');
       expect(parsedDefault.data?.sessionId).toBe('sess_integration_history_123');
-      expect(parsedDefault.data?.messages).toHaveLength(1);
-      expect(parsedDefault.data?.messages?.[0]?.structuredKind).toBe('review_findings.v1');
+      expect(parsedDefault.data?.messages?.some((message: any) => message.text === 'should stay hidden')).toBe(false);
+      const structuredMessage = parsedDefault.data?.messages?.find((message: any) => message.structuredKind === 'review_findings.v1');
+      expect(structuredMessage).toEqual(expect.objectContaining({
+        role: 'agent',
+        kind: 'text',
+        text: 'hello',
+      }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('returns compact text for provider ACP message rows', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(
+        ['history', 'sess_integration_history_123', '--limit', '10', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_history');
+      const acpMessage = parsed.data?.messages?.find((message: any) => message.kind === 'acp');
+      expect(acpMessage).toEqual(expect.objectContaining({
+        role: 'agent',
+        kind: 'acp',
+        text: 'provider compact text',
+      }));
     } finally {
       output.restore();
     }
@@ -241,8 +302,11 @@ describe('happier session history (integration)', () => {
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_history');
       expect(parsed.data?.format).toBe('raw');
-      expect(parsed.data?.messages).toHaveLength(1);
-      expect(parsed.data?.messages?.[0]?.raw?.meta?.happier?.kind).toBe('review_findings.v1');
+      expect(parsed.data?.messages?.some((message: any) => message.raw?.content?.text === 'should stay hidden')).toBe(false);
+      const structuredMessage = parsed.data?.messages?.find((message: any) => message.raw?.meta?.happier?.kind === 'review_findings.v1');
+      expect(structuredMessage).toEqual(expect.objectContaining({
+        role: 'agent',
+      }));
     } finally {
       output.restore();
     }

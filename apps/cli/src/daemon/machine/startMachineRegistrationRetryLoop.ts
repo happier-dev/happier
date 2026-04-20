@@ -1,8 +1,8 @@
-import { isMachineContentPublicKeyMismatchError } from '@/api/api';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { DaemonState, MachineMetadata } from '@/api/types';
 import { logger } from '@/ui/logger';
+import { isMachineContentPublicKeyMismatchError } from '@/api/machine/machineRegistrationErrors';
 import { shouldRetryMachineRegistrationError } from '../machineRegistrationRetryPolicy';
 
 type EnsuredMachineRegistration = Awaited<ReturnType<typeof ensureMachineRegistered>>;

@@ -247,7 +247,7 @@ describe('createOnHappySessionWebhook', () => {
       startedBy: 'daemon',
       spawnOptions: {
         directory: '/tmp/workspace',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         transcriptStorage: 'direct',
         token: 'secret-token-should-not-be-persisted',
         initialPrompt: 'secret prompt should not be persisted',
@@ -292,7 +292,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(markerArgs.respawn).toEqual({
       version: 1,
       directory: '/tmp/workspace',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       resume: 'vendor-resume-id',
       terminal: {
         mode: 'tmux',

@@ -3,13 +3,13 @@ import { spawn } from 'node:child_process';
 
 import { inferAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
 
-import { resolveBackendExecutionSurfaces } from '@/backends/catalog';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { configuration } from '@/configuration';
 import { readCredentials, readSettings, type Credentials, type Settings } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
-import { createProviderAttachStatePublisher } from '@/agent/localControl/createProviderAttachStatePublisher';
+import { createProviderAttachStatePublisher } from '@/agent/runtimeSwitching/createAttachStatePublisher';
 import {
   readTerminalAttachmentInfo,
   type TerminalAttachmentInfo,
@@ -20,7 +20,6 @@ import { focusWindowsTerminalWindow } from '@/terminal/attachment/windowsTermina
 import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleAttach';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
-import { evaluateCliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
 import { buildAttachSelectionModel } from './attachInteractiveSelection';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -262,7 +261,7 @@ export async function handleAttachCommand(
   const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;
   const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
   const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ agentId, sessionId, metadata }) => {
-    const providerAttachOps = (await resolveBackendExecutionSurfaces(agentId)).attach;
+    const providerAttachOps = (await getSessionHostBridge().resolveExecutionSurfaces(agentId)).attach;
     if (!providerAttachOps) return 1;
     return await providerAttachOps.runAttach({ sessionId, metadata });
   });
@@ -338,7 +337,7 @@ export async function handleAttachCommand(
     const effectiveMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
       ? settings.machineId.trim()
       : null;
-    const eligibility = await evaluateCliSessionAttachEligibility({
+    const eligibility = await getSessionHostBridge().evaluateAttachEligibility({
       credentials: context.credentials,
       rawSession: context.rawSession,
       currentMachineId: effectiveMachineId,

@@ -35,6 +35,11 @@ function shouldSkipRuntimeReexecForDaemonAttach(argv: readonly string[]): boolea
   return existingSessionValue.length > 0;
 }
 
+function shouldSkipRuntimeReexecForDaemonServiceInstall(argv: readonly string[]): boolean {
+  const positionals = argv.filter((arg) => arg && !arg.startsWith('-'));
+  return positionals[0] === 'service' && positionals[1] === 'install';
+}
+
 export function resolveRuntimeEntrypointPath(params: Readonly<{ homeDir: string; packageName: string; publicReleaseRing?: PublicReleaseRingId }>): string {
   const packageName = String(params.packageName ?? '').trim();
   if (!packageName) {
@@ -60,11 +65,12 @@ export async function maybeReexecToRuntime(params: Readonly<{
   ensureRuntimeExecutable?: typeof ensureJavaScriptRuntimeExecutable;
 }>): Promise<void> {
   const env = params.env;
+  const publicReleaseRing = params.publicReleaseRing ?? 'stable';
   if (String(env.HAPPIER_CLI_RUNTIME_DISABLE ?? '').trim() === '1') return;
   if (String(env.HAPPIER_CLI_RUNTIME_REEXEC ?? '').trim() === '1') return;
   if (shouldSkipRuntimeReexecForDaemonAttach(params.argv)) return;
+  if (publicReleaseRing === 'stable' && shouldSkipRuntimeReexecForDaemonServiceInstall(params.argv)) return;
 
-  const publicReleaseRing = params.publicReleaseRing ?? 'stable';
   const runtimeDir = resolveScopedRuntimeDir({ homeDir: params.homeDir, publicReleaseRing });
   const runtimeEntrypoint = resolveRuntimeEntrypointPath({
     homeDir: params.homeDir,

@@ -4,11 +4,13 @@ const { geminiHandlerSpy, passthroughSpy } = vi.hoisted(() => ({
   geminiHandlerSpy: vi.fn(async () => {}),
   passthroughSpy: vi.fn(() => false),
 }));
+const ensureMergedAgentCommandRegistryLoadedSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('@/cli/commandRegistry', () => ({
   commandRegistry: {
     gemini: geminiHandlerSpy,
   },
+  ensureMergedAgentCommandRegistryLoaded: ensureMergedAgentCommandRegistryLoadedSpy,
 }));
 
 vi.mock('@/cli/providerCliPassthrough', () => ({
@@ -19,6 +21,7 @@ vi.mock('@/backends/catalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/backends/catalog')>();
   return {
     ...actual,
+    resolveCatalogAgentIdForCliSubcommand: vi.fn(() => 'gemini'),
     requireCatalogEntry: vi.fn(() => ({
       getCliCommandHandler: async () => geminiHandlerSpy,
     })),
@@ -30,6 +33,7 @@ import { dispatchCli } from './dispatch';
 describe('dispatchCli provider info passthrough', () => {
   beforeEach(() => {
     geminiHandlerSpy.mockClear();
+    ensureMergedAgentCommandRegistryLoadedSpy.mockClear();
     passthroughSpy.mockReset();
     passthroughSpy.mockReturnValue(false);
   });
@@ -48,5 +52,6 @@ describe('dispatchCli provider info passthrough', () => {
       args: ['gemini', '--help'],
     });
     expect(geminiHandlerSpy).not.toHaveBeenCalled();
+    expect(ensureMergedAgentCommandRegistryLoadedSpy).not.toHaveBeenCalled();
   });
 });

@@ -28,11 +28,12 @@ export async function resolveBackgroundServiceRepairPlanForCurrentRuntime(params
       mode,
       systemUser: params.systemUser,
     });
-    return await resolveDaemonServiceListEntries(modeRuntime, { mode });
+    return await resolveDaemonServiceListEntries(modeRuntime, { mode, systemUser: params.systemUser });
   }));
   const services = serviceLists.flat();
   const plan = buildBackgroundServiceRepairPlan({
     currentReleaseChannel: runtime.channel,
+    currentHappierHomeDir: runtime.happierHomeDir,
     currentServerId: runtime.instanceId,
     preferredMode: params.preferredMode,
     services,

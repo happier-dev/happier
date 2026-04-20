@@ -156,7 +156,16 @@ export function buildServiceDefinition(params: Readonly<{ backend: ServiceBacken
 
 function resolveUid(uid: number | null | undefined): number | null {
   if (typeof uid === 'number' && Number.isFinite(uid) && uid >= 0) return Math.floor(uid);
-  if (typeof process.getuid === 'function') return process.getuid();
+  if (typeof process.getuid === 'function') {
+    const currentUid = process.getuid();
+    if (currentUid === 0) {
+      const sudoUid = Number(String(process.env.SUDO_UID ?? '').trim());
+      if (Number.isFinite(sudoUid) && sudoUid > 0) {
+        return Math.floor(sudoUid);
+      }
+    }
+    return currentUid;
+  }
   try {
     const info = userInfo();
     if (typeof info?.uid === 'number' && Number.isFinite(info.uid) && info.uid >= 0) return Math.floor(info.uid);

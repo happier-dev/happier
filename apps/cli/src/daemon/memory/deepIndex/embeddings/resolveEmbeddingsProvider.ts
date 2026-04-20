@@ -79,6 +79,7 @@ export async function resolveEmbeddingsProvider(params: Readonly<{
       modelId: settings?.modelId ?? null,
       runtimeState: 'unavailable',
       usingFallback: false,
+      lastError: null,
     };
   }
   const providerConfig = settings.providerConfig!;
@@ -93,6 +94,7 @@ export async function resolveEmbeddingsProvider(params: Readonly<{
       modelId,
       runtimeState: 'unavailable',
       usingFallback: false,
+      lastError: null,
     };
   }
 
@@ -124,6 +126,7 @@ export async function resolveEmbeddingsProvider(params: Readonly<{
         modelId: provider.modelId,
         runtimeState: 'ready',
         usingFallback: false,
+        lastError: null,
       };
     } catch (error) {
       logger.debug('[memoryWorker] Embeddings provider init failed (best-effort)', {
@@ -140,6 +143,7 @@ export async function resolveEmbeddingsProvider(params: Readonly<{
         modelId,
         runtimeState: 'error',
         usingFallback: true,
+        lastError: error instanceof Error ? error.message : String(error),
       };
     }
   })();

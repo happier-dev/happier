@@ -153,4 +153,58 @@ describe('stopDaemon: graceful wait before force kill', () => {
       removeTempDirSync(homeDir);
     }
   });
+
+  it('falls back to the lock-file pid when daemon state is temporarily missing', async () => {
+    const homeDir = createTempDirSync('happier-cli-daemon-stop-lock-fallback-');
+    envScope.patch({
+      HAPPIER_HOME_DIR: homeDir,
+    });
+
+    const daemonPid = 23456;
+    let alive = true;
+    const realKill = process.kill.bind(process);
+
+    try {
+      vi.resetModules();
+
+      const [{ configuration }, { stopDaemon }] = await Promise.all([
+        import('@/configuration'),
+        import('./controlClient'),
+      ]);
+
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+        if (pid !== daemonPid) {
+          return realKill(pid as any, signal as any);
+        }
+
+        if (signal === 0) {
+          if (!alive) {
+            throw new Error('ESRCH: process does not exist');
+          }
+          return undefined as any;
+        }
+
+        if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+          alive = false;
+          return undefined as any;
+        }
+
+        return undefined as any;
+      }) as any);
+
+      writeFileSync(configuration.daemonLockFile, String(daemonPid), 'utf-8');
+
+      expect(existsSync(configuration.daemonStateFile)).toBe(false);
+      expect(existsSync(configuration.daemonLockFile)).toBe(true);
+
+      await stopDaemon();
+
+      expect(killSpy).toHaveBeenCalledWith(daemonPid, 'SIGTERM');
+      expect(alive).toBe(false);
+      expect(existsSync(configuration.daemonStateFile)).toBe(false);
+      expect(existsSync(configuration.daemonLockFile)).toBe(false);
+    } finally {
+      removeTempDirSync(homeDir);
+    }
+  });
 });

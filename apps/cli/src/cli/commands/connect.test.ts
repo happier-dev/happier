@@ -76,7 +76,11 @@ describe('handleConnectCommand help', () => {
       const { handleConnectCommand } = await import('./connect');
       await handleConnectCommand(['help']);
 
-      expect(output.logs.join('\n')).toContain('happier connect plugin-target');
+      const rendered = output.logs.join('\n');
+      expect(rendered).toContain('happier connect plugin-target');
+      expect(rendered).not.toContain('happier connect codex --device');
+      expect(rendered).not.toContain('happier connect claude --setup-token');
+      expect(rendered).not.toContain('happier connect gemini --oauth');
     } finally {
       errorSpy.mockRestore();
       output.restore();
@@ -93,6 +97,8 @@ describe('handleConnectCommand help', () => {
       const rendered = output.logs.join('\n');
       expect(rendered).toContain('Plugin Target: connected');
       expect(rendered).not.toContain('Plugin Target: not supported');
+      expect(rendered).toContain('To connect a vendor, run: happier connect <vendor>');
+      expect(rendered).not.toContain('Example: happier connect gemini');
     } finally {
       errorSpy.mockRestore();
       output.restore();

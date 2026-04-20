@@ -1,6 +1,12 @@
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
-import { checkIfDaemonRunningAndCleanupStaleState, listDaemonSessions, stopDaemon, stopDaemonSession } from '@/daemon/controlClient';
+import {
+  checkIfDaemonRunningAndCleanupStaleState,
+  inspectDaemonRunningStateAndCleanupStaleState,
+  listDaemonSessions,
+  stopDaemon,
+  stopDaemonSession,
+} from '@/daemon/controlClient';
 import { startDaemon } from '@/daemon/startDaemon';
 import {
   resolveDaemonServiceInstallationSnapshotFromEnv,
@@ -22,6 +28,7 @@ import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDa
 import { renderDaemonOwnerConflict } from '@/daemon/ownership/renderDaemonOwnerConflict';
 import {
   buildDaemonTakeoverNotice,
+  resolveDaemonTakeoverDecision,
 } from '@/daemon/ownership/resolveDaemonTakeoverDecision';
 import {
   evaluateDaemonStartupServiceConflict,
@@ -112,14 +119,16 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
       process.exit(0);
     }
-    const takeoverAllowed = takeoverRequested
-      && ownership.kind === 'conflict'
-      && ownership.owner.serviceManaged === false;
+    const takeoverDecision = resolveDaemonTakeoverDecision({
+      ownership,
+      takeoverRequested,
+      startupSource,
+    });
 
-    if (ownership.kind === 'conflict' && !takeoverAllowed) {
+    if (takeoverDecision.kind === 'conflict') {
       const message = renderDaemonOwnerConflict({
         intent: 'daemon-start',
-        owner: ownership.owner,
+        owner: takeoverDecision.owner,
       });
       if (jsonRequested) {
         printDaemonJson({
@@ -156,7 +165,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
     }
 
-    if (takeoverAllowed && !jsonRequested) {
+    if (takeoverDecision.kind === 'manual-owner-takeover' && !jsonRequested) {
       console.log(warn('Taking over the current manual relay runtime before starting a new relay...'));
     }
 
@@ -204,7 +213,28 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         if (account) console.log(`  ${kv('Account:', account)}`);
       }
     } else {
+      const inspection = await inspectDaemonRunningStateAndCleanupStaleState().catch(() => ({ status: 'not-running' as const }));
       const latestDaemonLog = await getLatestDaemonLog().catch(() => null);
+      if (inspection.status === 'starting') {
+        if (jsonRequested) {
+          printDaemonJson({
+            ok: true,
+            status: 'starting',
+            relay: configuration.serverUrl,
+            relayId: configuration.activeServerId,
+            ...(latestDaemonLog?.path ? { latestDaemonLogPath: latestDaemonLog.path } : {}),
+          });
+        } else {
+          console.log(warn('Daemon is still starting in the background'));
+          console.log(`  ${kv('Relay:', configuration.serverUrl)}`);
+          console.log(`  ${kv('Relay ID:', configuration.activeServerId)}`);
+          if (latestDaemonLog?.path) {
+            console.log(`  ${kv('Latest daemon log:', latestDaemonLog.path)}`);
+          }
+        }
+        process.exit(0);
+      }
+
       if (jsonRequested) {
         printDaemonJson({
           ok: false,
@@ -233,14 +263,16 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       console.log(`  ${kv('Relay ID:', configuration.activeServerId)}`);
       process.exit(0);
     }
-    const takeoverAllowed = takeoverRequested
-      && ownership.kind === 'conflict'
-      && ownership.owner.serviceManaged === false;
+    const takeoverDecision = resolveDaemonTakeoverDecision({
+      ownership,
+      takeoverRequested,
+      startupSource,
+    });
 
-    if (ownership.kind === 'conflict' && !takeoverAllowed) {
+    if (takeoverDecision.kind === 'conflict') {
       const message = renderDaemonOwnerConflict({
         intent: 'daemon-start-sync',
-        owner: ownership.owner,
+        owner: takeoverDecision.owner,
       });
       console.error(errorFrame(message.title, [...message.lines]));
       process.exit(1);
@@ -261,7 +293,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
     }
 
-    if (takeoverAllowed) {
+    if (takeoverDecision.kind === 'manual-owner-takeover') {
       console.log(warn('Taking over the current manual relay runtime before starting a new relay...'));
     }
 
@@ -309,10 +341,14 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     }
 
     const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
-    if (!isDaemonStartupSourceServiceManaged(startupSource) && startupSource !== 'self-restart') {
+    const startupSourceForServiceConflict = startupSource === 'self-restart'
+      ? 'manual'
+      : startupSource;
+    if (!isDaemonStartupSourceServiceManaged(startupSourceForServiceConflict)) {
+      const serviceRuntime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
       const startupServiceConflict = await evaluateDaemonStartupServiceConflict({
-        startupSource,
-        runtime: resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env }),
+        startupSource: startupSourceForServiceConflict,
+        runtime: serviceRuntime,
       });
       if (startupServiceConflict.kind === 'installed-background-service-conflict') {
         const message = renderDaemonInstalledServiceConflict({
@@ -474,8 +510,8 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     `  ${cmd('happier daemon start')}                 Start the daemon (detached)`,
     `  ${cmd('happier daemon start --takeover')}      Start and take over an existing manual relay runtime`,
     `  ${cmd('happier daemon restart')}               Restart the daemon (stop → start)`,
-    `  ${cmd('happier daemon stop')}                  Stop the daemon (sessions stay alive)`,
-    `  ${cmd('happier daemon stop --kill-sessions')}  Stop the daemon and its tracked sessions`,
+    `  ${cmd('happier daemon stop')}                  Stop a manual daemon (sessions stay alive; use happier service stop for installed background services)`,
+    `  ${cmd('happier daemon stop --kill-sessions')}  Stop a manual daemon and its tracked sessions`,
     `  ${cmd('happier daemon stop --all')}            Stop daemons for all configured servers`,
     `  ${cmd('happier daemon status')}                Show daemon status`,
     `  ${cmd('happier daemon status --all')}          Show daemon status for all configured servers`,
@@ -486,6 +522,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     `  ${cmd('happier daemon service list')}          Legacy alias for ${cmd('happier service list')}`,
     '',
     '  Prefix with --server/--server-url to target a specific server profile for this invocation.',
+    '  For installed background services, use happier service start|stop|restart.',
     `  Canonical service command: ${cmd('happier service install')}`,
     `  Example: ${cmd('happier --server company service install')}`,
     '',

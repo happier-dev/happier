@@ -35,6 +35,7 @@ export type SetupRepairThisComputerParams = Readonly<{
    * When omitted, the task falls back to the active relay profile’s local relay url.
    */
   activeLocalRelayUrl?: string | null;
+  channel?: 'stable' | 'preview' | 'dev' | 'publicdev' | null;
   surface?: string | null;
 }>;
 
@@ -61,6 +62,11 @@ export function parseSetupRepairThisComputerParams(params: unknown): SetupRepair
     : record.activeLocalRelayUrl == null
       ? null
       : undefined;
+  const channel = typeof record.channel === 'string'
+    ? record.channel.trim()
+    : record.channel == null
+      ? null
+      : undefined;
   const surface = typeof record.surface === 'string'
     ? record.surface.trim()
     : record.surface == null
@@ -71,13 +77,14 @@ export function parseSetupRepairThisComputerParams(params: unknown): SetupRepair
     'activeRelayUrl',
     'activeWebappUrl',
     'activeLocalRelayUrl',
+    'channel',
     'surface',
   ].includes(key));
   if (unknownKeys.length > 0) {
     throw new SystemTaskExecutionError('invalid_params', 'Unsupported setup repair params.');
   }
 
-  if (activeRelayUrl === undefined || activeWebappUrl === undefined || activeLocalRelayUrl === undefined || surface === undefined) {
+  if (activeRelayUrl === undefined || activeWebappUrl === undefined || activeLocalRelayUrl === undefined || channel === undefined || surface === undefined) {
     throw new SystemTaskExecutionError('invalid_params', 'Invalid setup repair params.');
   }
 
@@ -85,6 +92,7 @@ export function parseSetupRepairThisComputerParams(params: unknown): SetupRepair
     ...(activeRelayUrl ? { activeRelayUrl } : {}),
     ...(activeWebappUrl ? { activeWebappUrl } : {}),
     ...(activeLocalRelayUrl ? { activeLocalRelayUrl } : {}),
+    ...(channel ? { channel: channel as SetupRepairThisComputerParams['channel'] } : {}),
     ...(surface ? { surface } : {}),
   };
 }
@@ -223,7 +231,7 @@ export function createSetupRepairThisComputerTaskKind(
               throw new SystemTaskExecutionError('approval_declined', 'Pairing request was not approved.');
             }
           },
-        daemonReadinessErrorMessage: 'Background service did not reach a ready state for the selected server.',
+      daemonReadinessErrorMessage: 'Background service did not reach a ready state for the selected Relay.',
       });
 
       const daemonMachineId = typeof recipeResult.daemonStatus?.machineId === 'string' && recipeResult.daemonStatus.machineId.trim()
@@ -232,7 +240,7 @@ export function createSetupRepairThisComputerTaskKind(
       if (!daemonMachineId) {
         throw new SystemTaskExecutionError(
           'daemon_service_not_ready',
-          'Background service did not reach a ready state for the selected server.',
+          'Background service did not reach a ready state for the selected Relay.',
         );
       }
 

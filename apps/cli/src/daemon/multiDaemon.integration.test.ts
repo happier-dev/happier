@@ -1,7 +1,8 @@
+import { dirname, join } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { buildLaunchdPlistXml, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 
 import { waitForHttpReady, reserveEphemeralPort } from '@/testkit/http/portUtils';
 import { waitForProcessExit } from '@/testkit/process/spawn';
@@ -14,6 +15,78 @@ import {
   writeDaemonStateFixture,
 } from './testkit/fakeDaemonLifecycle.testkit';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from './multiDaemon';
+import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths } from './service/cli';
+
+function writeValidInstalledDaemonServiceForCurrentRuntime(homeDir: string, serverId: string): void {
+  const runtimeProcessEnv = {
+    ...process.env,
+    HAPPIER_DAEMON_SERVICE_INSTANCE_ID: serverId,
+    HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
+  };
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: runtimeProcessEnv });
+  const paths = resolveDaemonServicePaths(runtime);
+
+  mkdirSync(dirname(paths.installedPath), { recursive: true });
+
+  if (runtime.platform === 'darwin') {
+    writeFileSync(
+      paths.installedPath,
+      buildLaunchdPlistXml({
+        label: paths.label,
+        programArgs: ['/usr/local/bin/happier', 'daemon', 'start-sync'],
+        env: {
+          HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+          HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
+          HAPPIER_ACTIVE_SERVER_ID: serverId,
+          HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+        },
+        stdoutPath: join(homeDir, 'logs', 'daemon-service.default.out.log'),
+        stderrPath: join(homeDir, 'logs', 'daemon-service.default.err.log'),
+        workingDirectory: homeDir,
+      }),
+      'utf-8',
+    );
+    return;
+  }
+
+  if (runtime.platform === 'linux') {
+    writeFileSync(
+      paths.installedPath,
+      renderSystemdServiceUnit({
+        description: 'Happier Daemon',
+        execStart: ['/usr/local/bin/happier', 'daemon', 'start-sync'],
+        env: {
+          HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+          HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
+          HAPPIER_ACTIVE_SERVER_ID: serverId,
+          HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+        },
+        wantedBy: 'default.target',
+      }),
+      'utf-8',
+    );
+    return;
+  }
+
+  writeFileSync(
+    paths.installedPath,
+    renderWindowsScheduledTaskWrapperPs1({
+      workingDirectory: homeDir,
+      programArgs: ['C:\\hq\\happier.exe', 'daemon', 'start-sync'],
+      env: {
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
+        HAPPIER_ACTIVE_SERVER_ID: serverId,
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+      },
+      stdoutPath: join(homeDir, 'logs', 'daemon-service.default.out.log'),
+      stderrPath: join(homeDir, 'logs', 'daemon-service.default.err.log'),
+    }),
+    'utf-8',
+  );
+}
 
 describe('multi-daemon helpers', () => {
   it('lists daemon status per saved server profile', async () => {
@@ -36,6 +109,7 @@ describe('multi-daemon helpers', () => {
           pid: sleepy.pid,
           httpPort: 12345,
         });
+        writeValidInstalledDaemonServiceForCurrentRuntime(homeDir, 'company');
 
         const serverDir = join(homeDir, 'servers', 'company');
         mkdirSync(serverDir, { recursive: true });
@@ -59,7 +133,10 @@ describe('multi-daemon helpers', () => {
         });
         expect(company?.drift?.activeComparableKey).toBeTruthy();
         expect(company?.drift?.matchesActiveRelay).toBe(false);
-        expect(company?.service?.running).toBe(false);
+        expect(company?.service).toMatchObject({
+          installed: true,
+          running: false,
+        });
       } finally {
         await sleepy.kill();
       }

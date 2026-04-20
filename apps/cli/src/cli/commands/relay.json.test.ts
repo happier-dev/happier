@@ -115,24 +115,33 @@ describe('happier relay --json', () => {
     let home = '';
     let envScope = createEnvKeyScope([
         'HAPPIER_HOME_DIR',
+        'HAPPIER_PUBLIC_SERVER_URL',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+        'HAPPIER_SERVER_URL',
         'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT',
         'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID',
+        'HAPPIER_WEBAPP_URL',
     ]);
 
     beforeEach(async () => {
         envScope = createEnvKeyScope([
             'HAPPIER_HOME_DIR',
+            'HAPPIER_PUBLIC_SERVER_URL',
             'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+            'HAPPIER_SERVER_URL',
             'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT',
             'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID',
+            'HAPPIER_WEBAPP_URL',
         ]);
         home = await createTempDir('happier-relay-json-');
         envScope.patch({
             HAPPIER_HOME_DIR: home,
+            HAPPIER_PUBLIC_SERVER_URL: undefined,
             HAPPIER_PUBLIC_RELEASE_CHANNEL: undefined,
+            HAPPIER_SERVER_URL: undefined,
             HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT: undefined,
             HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID: undefined,
+            HAPPIER_WEBAPP_URL: undefined,
         });
         reloadConfiguration();
     });
@@ -326,9 +335,12 @@ describe('happier relay --json', () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: '/home/dev\n' },
                 { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
-                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'UnitFileState=enabled\nActiveState=active\nSubState=running\nLoadState=loaded\n' },
                 { status: 0, stdout: 'yes\n' },
+                { status: 0, stdout: '' },
+                { status: 0, stdout: 'HAPPIER_RELAY_HEALTH_OK\n' },
             ],
         });
 
@@ -400,9 +412,12 @@ describe('happier relay --json', () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: '/home/dev\n' },
                 { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
-                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'UnitFileState=enabled\nActiveState=active\nSubState=running\nLoadState=loaded\n' },
                 { status: 0, stdout: 'yes\n' },
+                { status: 0, stdout: '' },
+                { status: 0, stdout: 'HAPPIER_RELAY_HEALTH_OK\n' },
             ],
         });
 
@@ -527,9 +542,12 @@ echo "[127.0.0.1]:53621 ssh-ed25519 AAAATESTKEY"
         const fakeSsh = createFakeSsh({
             outputs: [
                 { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: '/home/dev\n' },
                 { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
-                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'UnitFileState=enabled\nActiveState=active\nSubState=running\nLoadState=loaded\n' },
                 { status: 0, stdout: 'yes\n' },
+                { status: 0, stdout: '' },
+                { status: 0, stdout: 'HAPPIER_RELAY_HEALTH_OK\n' },
             ],
         });
 
@@ -590,13 +608,238 @@ echo "[127.0.0.1]:53621 ssh-ed25519 AAAATESTKEY"
         }
     });
 
+    it('reconciles the active server profile to the installed local relay after relay host install', async () => {
+        const payloadRoot = await createTempDir('happier-first-party-payload-local-profile-');
+        writeFileSync(join(payloadRoot, 'happier-server'), '#!/usr/bin/env bash\necho stub\n', 'utf8');
+        chmodSync(join(payloadRoot, 'happier-server'), 0o755);
+
+        envScope.patch({
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT: undefined,
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID: undefined,
+        });
+
+        const relayUrl = 'http://127.0.0.1:3005';
+        vi.resetModules();
+        vi.doMock('@happier-dev/cli-common/relayHost', () => ({
+            createRelayHostEngine: () => ({
+                readStatus: async () => ({
+                    installed: true,
+                    version: '0.2.4',
+                    service: { active: true, enabled: true },
+                    baseUrl: relayUrl,
+                    healthy: true,
+                }),
+                installOrUpdate: async () => ({
+                    relayUrl,
+                    mode: 'user',
+                }),
+                control: async () => undefined,
+            }),
+        }));
+
+        const { commandRegistry: freshCommandRegistry } = await import('@/cli/commandRegistry');
+
+        const installOutput = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await freshCommandRegistry.relay({
+                args: ['relay', 'host', 'install', '--server-binary', join(payloadRoot, 'happier-server'), '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'host', 'install', '--server-binary', join(payloadRoot, 'happier-server'), '--json'],
+                terminalRuntime: null,
+            });
+
+            const installParsed = JSON.parse(installOutput.logs.join('\n').trim());
+            expect(installParsed.ok).toBe(true);
+            expect(installParsed.kind).toBe('relay_host_install');
+            expect(installParsed.data?.relayUrl).toBe(relayUrl);
+            expect(process.exitCode).toBe(0);
+        } finally {
+            installOutput.restore();
+            process.exitCode = prevExitCode;
+        }
+
+        const currentOutput = captureConsoleLogAndMuteStdout();
+        const currentPrevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await freshCommandRegistry.server({
+                args: ['server', 'current', '--json'],
+                rawArgv: ['node', 'happier', 'server', 'current', '--json'],
+                terminalRuntime: null,
+            });
+
+            const currentParsed = JSON.parse(currentOutput.logs.join('\n').trim());
+            expect(currentParsed.ok).toBe(true);
+            expect(currentParsed.kind).toBe('server_current');
+            expect(currentParsed.data?.active?.serverUrl).toBe(relayUrl);
+            expect(currentParsed.data?.active?.id).not.toBe('cloud');
+            expect(process.exitCode).toBe(0);
+        } finally {
+            currentOutput.restore();
+            process.exitCode = currentPrevExitCode;
+            vi.unmock('@happier-dev/cli-common/relayHost');
+            vi.resetModules();
+        }
+        await removeTempDir(payloadRoot);
+    });
+
+    it('preserves the active server profile when relay host install uses --preserve-active-server', async () => {
+        const payloadRoot = await createTempDir('happier-first-party-payload-preserve-active-profile-');
+        writeFileSync(join(payloadRoot, 'happier-server'), '#!/usr/bin/env bash\necho stub\n', 'utf8');
+        chmodSync(join(payloadRoot, 'happier-server'), 0o755);
+
+        envScope.patch({
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT: undefined,
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID: undefined,
+        });
+
+        const relayUrl = 'http://127.0.0.1:3005';
+        vi.resetModules();
+        const { getActiveServerProfile, listServerProfiles } = await import('@/server/serverProfiles');
+        const activeBeforeInstall = await getActiveServerProfile();
+        vi.doMock('@happier-dev/cli-common/relayHost', () => ({
+            createRelayHostEngine: () => ({
+                readStatus: async () => ({
+                    installed: true,
+                    version: '0.2.4',
+                    service: { active: true, enabled: true },
+                    baseUrl: relayUrl,
+                    healthy: true,
+                }),
+                installOrUpdate: async () => ({
+                    relayUrl,
+                    mode: 'user',
+                }),
+                control: async () => undefined,
+            }),
+        }));
+
+        const { commandRegistry: freshCommandRegistry } = await import('@/cli/commandRegistry');
+
+        const installOutput = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await freshCommandRegistry.relay({
+                args: ['relay', 'host', 'install', '--server-binary', join(payloadRoot, 'happier-server'), '--preserve-active-server', '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'host', 'install', '--server-binary', join(payloadRoot, 'happier-server'), '--preserve-active-server', '--json'],
+                terminalRuntime: null,
+            });
+
+            const installParsed = JSON.parse(installOutput.logs.join('\n').trim());
+            expect(installParsed.ok).toBe(true);
+            expect(installParsed.kind).toBe('relay_host_install');
+            expect(installParsed.data?.relayUrl).toBe(relayUrl);
+            expect(process.exitCode).toBe(0);
+        } finally {
+            installOutput.restore();
+            process.exitCode = prevExitCode;
+        }
+
+        const activeAfterInstall = await getActiveServerProfile();
+        expect(activeAfterInstall.id).toBe(activeBeforeInstall.id);
+        expect(activeAfterInstall.serverUrl).toBe(activeBeforeInstall.serverUrl);
+
+        const profiles = await listServerProfiles();
+        expect(profiles.some((profile) => profile.id !== activeBeforeInstall.id && profile.serverUrl === relayUrl)).toBe(true);
+
+        vi.unmock('@happier-dev/cli-common/relayHost');
+        vi.resetModules();
+        await removeTempDir(payloadRoot);
+    });
+
+    it('preserves the authenticated public relay profile when local relay install runs through a tunnel', async () => {
+        const payloadRoot = await createTempDir('happier-first-party-payload-local-profile-tunnel-');
+        writeFileSync(join(payloadRoot, 'happier-server'), '#!/usr/bin/env bash\necho stub\n', 'utf8');
+        chmodSync(join(payloadRoot, 'happier-server'), 0o755);
+
+        const localRelayUrl = 'http://127.0.0.1:3005';
+        const publicRelayUrl = 'http://127.0.0.1:43005';
+        envScope.patch({
+            HAPPIER_PUBLIC_SERVER_URL: publicRelayUrl,
+            HAPPIER_SERVER_URL: localRelayUrl,
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT: undefined,
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID: undefined,
+            HAPPIER_WEBAPP_URL: publicRelayUrl,
+        });
+
+        vi.resetModules();
+        const { addServerProfile } = await import('@/server/serverProfiles');
+        await addServerProfile({
+            name: 'local relay',
+            serverUrl: localRelayUrl,
+            webappUrl: localRelayUrl,
+            use: false,
+        });
+        const publicProfile = await addServerProfile({
+            name: 'preview tunnel',
+            serverUrl: localRelayUrl,
+            webappUrl: publicRelayUrl,
+            use: true,
+        });
+
+        vi.resetModules();
+        vi.doMock('@happier-dev/cli-common/relayHost', () => ({
+            createRelayHostEngine: () => ({
+                readStatus: async () => ({
+                    installed: true,
+                    version: '0.2.4',
+                    service: { active: true, enabled: true },
+                    baseUrl: localRelayUrl,
+                    healthy: true,
+                }),
+                installOrUpdate: async () => ({
+                    relayUrl: localRelayUrl,
+                    mode: 'user',
+                }),
+                control: async () => undefined,
+            }),
+        }));
+
+        const { commandRegistry: freshCommandRegistry } = await import('@/cli/commandRegistry');
+
+        const installOutput = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await freshCommandRegistry.relay({
+                args: ['relay', 'host', 'install', '--server-binary', join(payloadRoot, 'happier-server'), '--json'],
+                rawArgv: ['node', 'hprev', 'relay', 'host', 'install', '--server-binary', join(payloadRoot, 'happier-server'), '--json'],
+                terminalRuntime: null,
+            });
+
+            const installParsed = JSON.parse(installOutput.logs.join('\n').trim());
+            expect(installParsed.ok).toBe(true);
+            expect(installParsed.kind).toBe('relay_host_install');
+            expect(process.exitCode).toBe(0);
+        } finally {
+            installOutput.restore();
+            process.exitCode = prevExitCode;
+            vi.unmock('@happier-dev/cli-common/relayHost');
+        }
+
+        const { getActiveServerProfile } = await import('@/server/serverProfiles');
+        const active = await getActiveServerProfile();
+        expect(active.id).toBe(publicProfile.id);
+        expect(active.serverUrl).toBe(publicRelayUrl);
+        expect(active.localServerUrl).toBe(localRelayUrl);
+        expect(active.webappUrl).toBe(publicRelayUrl);
+
+        vi.resetModules();
+        await removeTempDir(payloadRoot);
+    });
+
     it('supports ssh password auth for relay host status over ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: '/home/dev\n' },
                 { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
-                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'UnitFileState=enabled\nActiveState=active\nSubState=running\nLoadState=loaded\n' },
                 { status: 0, stdout: 'yes\n' },
+                { status: 0, stdout: '' },
+                { status: 0, stdout: 'HAPPIER_RELAY_HEALTH_OK\n' },
             ],
         });
 

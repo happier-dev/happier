@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 const startHappyHeadlessInTmux = vi.fn(async () => {});
 
 // TMUX launcher touches the host environment; treat it as a boundary and stub it in unit tests.
-vi.mock('@/terminal/tmux/startHappyHeadlessInTmux', () => ({
+vi.mock('@/integrations/tmux/startHeadlessSession', () => ({
   startHappyHeadlessInTmux,
 }));
 

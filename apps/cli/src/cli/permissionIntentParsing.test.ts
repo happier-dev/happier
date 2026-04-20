@@ -22,7 +22,10 @@ describe('parsePermissionIntentAlias', () => {
   it('parses default intent aliases', () => {
     expect(parsePermissionIntentAlias('ask')).toBe('default');
     expect(parsePermissionIntentAlias('prompt')).toBe('default');
-    expect(parsePermissionIntentAlias('auto')).toBe('default');
+  });
+
+  it('maps auto alias to safe-yolo intent (matches Claude SDK auto mode semantics)', () => {
+    expect(parsePermissionIntentAlias('auto')).toBe('safe-yolo');
   });
 
   it('normalizes mixed formatting aliases', () => {

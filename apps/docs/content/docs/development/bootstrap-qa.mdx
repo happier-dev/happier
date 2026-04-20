@@ -208,18 +208,8 @@ Concrete evidence:
 
 ### Lane B1 — Stack-owned TUI Tauri pane (`yarn tui:with-tauri`)
 
-- [blocked] `yarn tui:with-tauri` currently fails on some hosts with `failed to run 'cargo metadata' ... No such file or directory (os error 2)`.
-  - Track the fix + validation evidence here once re-run is green (capture the TUI pane output as a log and at least one native screenshot).
-
-Evidence to capture:
-- stack name + `hstack stack info <name> --json`
-- at least one screenshot from the browser after each major step
-
-Latest evidence:
-- `stack info` confirms the stack is healthy on `http://127.0.0.1:24502`.
-- The browser screenshot confirms `/setup` renders only the desktop-only notice on web:
-  - `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/08-setup-web-desktop-only-notice.png`
-  - `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/10-setup-web-desktop-only-notice.json`
+- [partial] the old `cargo metadata ... (os error 2)` blocker is retired; current native desktop proof comes from the Compose-backed `yarn --cwd apps/ui tauri:qa` run on `com.happier.stack.compose-desktop-qa`.
+  - Proof artifacts: `.project/logs/bootstrap-qa/tauri-onboarding-wizard-20260419-2026-04-19_00-44-18/00-driver-session-status.json`, `.project/logs/bootstrap-qa/tauri-onboarding-wizard-20260419-2026-04-19_00-44-18/00-backend-state.json`, `.project/logs/bootstrap-qa/tauri-onboarding-wizard-20260419-2026-04-19_00-44-18/08-setup.png`, `.project/logs/bootstrap-qa/tauri-onboarding-wizard-20260419-2026-04-19_00-44-18/08-setup.a11y.yml`, `.project/logs/bootstrap-qa/tauri-onboarding-wizard-20260419-2026-04-19_00-44-18/08-setup.structure.yml`
 
 ### Tauri-only validation checklist
 
@@ -262,8 +252,7 @@ Latest evidence:
 
 Add new entries as you discover issues:
 
-- 2026-03-30: stack-owned Tauri dev/TUI pane helpers are present in this worktree but some are still untracked (`git status --porcelain` shows `?? apps/stack/scripts/utils/dev/tauri_dev.mjs`, `?? apps/stack/scripts/utils/dev/tauri_dev.test.mjs`, `?? apps/stack/scripts/utils/tui/tauri_mode.mjs`, `?? apps/stack/scripts/utils/tui/pane_routing.mjs`, `?? apps/stack/scripts/utils/tauri/dev_runtime.mjs`) → until these are added, the “fix” is not reproducible in other worktrees/CI → mark Lane B1 as `[blocked]` until both (a) files are tracked and (b) `yarn tui:with-tauri` is re-run green with artifacts captured.
-- 2026-03-30: correction — the stack-owned Tauri pane helper modules are now tracked in this worktree; Lane B1 should be treated as blocked only on runtime/toolchain issues + missing evidence (rerun `yarn tui:with-tauri` and capture pane logs + one native screenshot under `.project/logs/bootstrap-qa/**`).
+- 2026-04-19: Compose-backed native desktop QA completed successfully on `com.happier.stack.compose-desktop-qa`; the earlier Lane B1 blocker notes are retired in favor of the proof artifacts under `.project/logs/bootstrap-qa/tauri-onboarding-wizard-20260419-2026-04-19_00-44-18/`.
 - 2026-03-30: `yarn tui:with-tauri` failures with `failed to run 'cargo metadata' ... (os error 2)` were traced to Tauri invoking `cargo metadata` via PATH (it does not consistently honor `--runner` for metadata) + some stacks having stale `tauri.dev.stack.json` referencing `binaries/hboots`. Fixes: `apps/stack/scripts/tauri_dev.mjs` now passes the resolved Tauri runtime env into the invocation (so PATH includes cargo) and refreshes the stack-scoped `tauri.dev.stack.json` (so `externalBin` matches `apps/ui/src-tauri` and points at `binaries/hsetup`).
 - 2026-03-29: `hstack stack new <name> --copy-auth-from=<source>` copied credentials into the new stack, but the new stack env did not persist `HAPPIER_STACK_AUTH_SEED_FROM` / `HAPPIER_STACK_AUTO_AUTH_SEED=1` → the first `stack start --runtime` hit daemon auth `401`, auto-reseed was disabled, and the runtime start failed → `apps/stack/scripts/stack.mjs` now persists the explicit copy-auth source as the stack’s auth seed when `--copy-auth-from` is used → validated by RED/GREEN in `node --test apps/stack/scripts/stack_copy_auth_server_scoped.test.mjs` and a broader reseed lane in `node --test --test-name-pattern='invalid-auth auto-reseed uses resolved stack name instead of null placeholder' apps/stack/scripts/daemon_invalid_auth_reseed_stack_name.integration.test.mjs`.
 - 2026-03-29: real web QA run on `codex-bootstrap-webcli-24502` confirmed `/setup` shows only the desktop-only notice in browser-web, with no local setup actions rendered → validation artifacts: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/08-setup-web-desktop-only-notice.png`, `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/09-setup-web-desktop-only-notice.html`, `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/10-setup-web-desktop-only-notice.json`.

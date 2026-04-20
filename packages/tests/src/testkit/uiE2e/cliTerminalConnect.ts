@@ -145,7 +145,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   const proc = spawnLoggedProcess({
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, 'auth', 'login', '--force', '--no-open', '--method', 'web'],
-    cwd: repoRootDir(),
+    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
     env: {
       ...params.env,
       ...(cliLaunchSpec.env ?? {}),

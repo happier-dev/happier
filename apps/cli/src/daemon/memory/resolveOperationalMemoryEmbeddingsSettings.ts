@@ -5,15 +5,17 @@ import {
   type MemoryEmbeddingsPresetId,
   type MemorySettingsV1,
 } from '@happier-dev/protocol';
+import {
+  createUnavailableInferenceDiagnostics,
+  type InferenceDiagnostics,
+} from '@/daemon/inference/inferenceDiagnostics';
 
 export type OperationalMemoryEmbeddingsDiagnostics = Readonly<{
   mode: MemoryEmbeddingsMode;
   presetId: MemoryEmbeddingsPresetId | null;
   providerKind: MemoryEmbeddingsCustomConfig['kind'] | null;
   modelId: string | null;
-  runtimeState: 'ready' | 'downloading' | 'unavailable' | 'error';
-  usingFallback: boolean;
-}>;
+} & InferenceDiagnostics>;
 
 export type OperationalMemoryEmbeddingsSettings = Readonly<{
   enabled: boolean;
@@ -84,7 +86,6 @@ export function buildUnavailableMemoryEmbeddingsDiagnostics(
     presetId: embeddings.mode === 'preset' ? embeddings.presetId : null,
     providerKind: operational?.providerKind ?? null,
     modelId: operational?.modelId ?? null,
-    runtimeState: operational ? 'unavailable' : 'unavailable',
-    usingFallback: false,
+    ...createUnavailableInferenceDiagnostics(),
   };
 }

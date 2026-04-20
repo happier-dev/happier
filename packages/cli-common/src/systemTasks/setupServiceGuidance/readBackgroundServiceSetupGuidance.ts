@@ -4,6 +4,7 @@ import {
   discoverHappierServices,
 } from '../../happierRuntime/index.js';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { resolveHappyHomeDirFromEnvironment } from '../../providers/resolveHappyHomeDir.js';
 
 import {
   buildBackgroundServiceSetupGuidance,
@@ -40,6 +41,7 @@ export async function readBackgroundServiceSetupGuidance(params: Readonly<{
   return buildBackgroundServiceSetupGuidance({
     targetReleaseChannel: params.targetReleaseChannel,
     targetServerUrl: params.targetServerUrl,
+    currentHappierHomeDir: resolveHappyHomeDirFromEnvironment(process.env),
     managedReleaseChannelInventory,
     services: serviceInventory.services,
     currentRelayOwner: params.currentRelayOwner,

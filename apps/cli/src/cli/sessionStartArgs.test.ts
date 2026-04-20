@@ -70,12 +70,12 @@ describe('parseSessionStartArgs', () => {
 
   it('parses --agent-mode as a raw ACP session mode id', () => {
     const parsed = parseWithTrap(['happier', '--agent-mode', 'plan']);
-    expect(parsed.agentModeId).toBe('plan');
+    expect(parsed.sessionModeId).toBe('plan');
   });
 
   it('parses --agent-mode-updated-at as unix ms', () => {
     const parsed = parseWithTrap(['happier', '--agent-mode', 'plan', '--agent-mode-updated-at', '123']);
-    expect(parsed.agentModeUpdatedAt).toBe(123);
+    expect(parsed.sessionModeUpdatedAt).toBe(123);
   });
 
   it('parses --model as a raw model id', () => {
@@ -95,7 +95,7 @@ describe('parseSessionStartArgs', () => {
       ...parsed,
     });
 
-    expect(resolved.agentModeId).toBe('plan');
+    expect(resolved.sessionModeId).toBe('plan');
     expect(resolved.permissionMode).toBe('read-only');
     expect(resolved.warnings.join(' ')).toMatch(/deprecated/i);
   });
@@ -107,7 +107,7 @@ describe('parseSessionStartArgs', () => {
       ...parsed,
     });
 
-    expect(resolved.agentModeId).toBe('plan');
+    expect(resolved.sessionModeId).toBe('plan');
     expect(resolved.permissionMode).toBe('read-only');
     expect(resolved.warnings.join(' ')).toMatch(/deprecated/i);
   });
@@ -119,7 +119,7 @@ describe('parseSessionStartArgs', () => {
       ...parsed,
     });
 
-    expect(resolved.agentModeId).toBe('plan');
+    expect(resolved.sessionModeId).toBe('plan');
     expect(resolved.permissionMode).toBe('read-only');
     expect(resolved.warnings.join(' ')).toMatch(/deprecated/i);
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildTrackedSessionRespawnEnvironmentVariables,
   buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
   buildSpawnSessionOptionsFromRespawnDescriptorV1,
   SessionRunnerRespawnDescriptorV1Schema,
@@ -9,10 +10,52 @@ import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 describe('sessionRunnerRespawnDescriptor', () => {
+  it('canonicalizes legacy agentRuntimeDescriptorV1 respawn carriers onto runtimeDescriptorV1', () => {
+    const descriptor = SessionRunnerRespawnDescriptorV1Schema.parse({
+      version: 1,
+      directory: '/tmp/repo',
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'runtime-thread',
+        },
+      },
+    });
+
+    expect(descriptor).toMatchObject({
+      version: 1,
+      directory: '/tmp/repo',
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'runtime-thread',
+        },
+      },
+    });
+    expect(descriptor).not.toHaveProperty('agentRuntimeDescriptorV1');
+
+    expect(buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor)).toMatchObject({
+      directory: '/tmp/repo',
+      approvedNewDirectoryCreation: true,
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'runtime-thread',
+        },
+      },
+    });
+  });
+
   it('round-trips mcpSelection through the respawn descriptor', () => {
     const spawnOptions = {
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       resume: 'vendor-session-1',
       mcpSelection: {
         v: 1,
@@ -27,6 +70,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(descriptor).toMatchObject({
       version: 1,
       directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,
@@ -38,7 +82,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       resume: 'vendor-session-1',
       approvedNewDirectoryCreation: true,
       mcpSelection: {
@@ -88,7 +132,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     const parsed = SessionRunnerRespawnDescriptorV1Schema.safeParse({
       version: 1,
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       futureFlag: true,
     });
 
@@ -96,14 +140,27 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(parsed.success ? parsed.data : null).toMatchObject({
       version: 1,
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
     });
+  });
+
+  it('fails closed when a V1 backendTarget carrier is injected into canonical spawn options before respawn persistence', () => {
+    const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' } as never,
+    } satisfies SpawnSessionOptions);
+
+    expect(descriptor).toMatchObject({
+      version: 1,
+      directory: '/tmp/repo',
+    });
+    expect(descriptor?.backendTarget).toBeUndefined();
   });
 
   it('persists legacy experimentalCodexAcp spawn options as canonical codexBackendMode only', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       experimentalCodexAcp: true,
     } satisfies SpawnSessionOptions);
 
@@ -117,7 +174,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'acp',
       approvedNewDirectoryCreation: true,
     });
@@ -137,13 +194,14 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(descriptor).toMatchObject({
       version: 1,
       directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'acp',
     });
     expect(descriptor).not.toHaveProperty('experimentalCodexAcp');
 
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'acp',
       approvedNewDirectoryCreation: true,
     });
@@ -163,13 +221,14 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(descriptor).toMatchObject({
       version: 1,
       directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'acp',
     });
     expect(descriptor).not.toHaveProperty('experimentalCodexResume');
 
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'acp',
       approvedNewDirectoryCreation: true,
     });
@@ -178,7 +237,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
   it('round-trips canonical codex backend mode through the respawn descriptor', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'appServer',
     } satisfies SpawnSessionOptions);
 
@@ -191,7 +250,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'appServer',
       approvedNewDirectoryCreation: true,
     });
@@ -200,7 +259,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
   it('round-trips agent mode overrides through the respawn descriptor', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       agentModeId: 'plan',
       agentModeUpdatedAt: 42,
     } satisfies SpawnSessionOptions);
@@ -215,7 +274,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       agentModeId: 'plan',
       agentModeUpdatedAt: 42,
       approvedNewDirectoryCreation: true,
@@ -225,7 +284,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
   it('round-trips session config-option overrides without workspace context through the respawn descriptor', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       sessionConfigOptionOverrides: {
         v: 1,
         updatedAt: 10,
@@ -249,7 +308,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       sessionConfigOptionOverrides: {
         v: 1,
         overrides: {
@@ -275,7 +334,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     ) => ReturnType<typeof buildSessionRunnerRespawnDescriptorV1FromSpawnOptions>)(
       {
         directory: '/tmp/repo',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         environmentVariables: {
           CLAUDE_CONFIG_DIR: '/tmp/claude-config',
           CODEX_HOME: '/tmp/codex-home',
@@ -333,6 +392,27 @@ describe('sessionRunnerRespawnDescriptor', () => {
     });
     expect(restored.environmentVariables).toMatchObject({
       OPENAI_API_KEY: 'test-key',
+    });
+  });
+
+  it('builds tracked respawn environment variables from expanded env plus safe child runtime locators only', () => {
+    expect(buildTrackedSessionRespawnEnvironmentVariables({
+      expandedEnvironmentVariables: {
+        OPENAI_API_KEY: 'sk-openai',
+        ANTHROPIC_AUTH_TOKEN: 'sk-anthropic',
+        CODEX_HOME: '/tmp/codex-home',
+      },
+      extraEnvForChild: {
+        CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+        HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON: '["OPENAI_API_KEY"]',
+        HAPPIER_SESSION_REQUESTED_DIRECTORY: '/tmp/repo',
+        HAPPIER_CODEX_BACKEND_MODE: 'acp',
+      },
+    })).toEqual({
+      OPENAI_API_KEY: 'sk-openai',
+      ANTHROPIC_AUTH_TOKEN: 'sk-anthropic',
+      CODEX_HOME: '/tmp/codex-home',
+      CLAUDE_CONFIG_DIR: '/tmp/claude-config',
     });
   });
 });

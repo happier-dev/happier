@@ -10,7 +10,8 @@ import {
   defaultPermissionModeForExecutionRunIntent,
   defaultRunClassForExecutionRunIntent,
 } from '@/session/services/executionRunStartDefaults';
-import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/parseSingleBackendTargetFromFlag';
+import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
+import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -40,6 +41,10 @@ export async function cmdSessionRunStart(
 
   const backendTarget = parseSingleBackendTargetFromFlag(backendTargetRaw);
   if (!backendTarget) {
+    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+  }
+  const resolvedBackendTarget = resolveConcreteCompatBackendTargetRefs(backendTarget);
+  if (!resolvedBackendTarget) {
     throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
   }
 
@@ -84,7 +89,7 @@ export async function cmdSessionRunStart(
 
   const request = ExecutionRunStartRequestSchema.parse({
     intent,
-    backendTarget,
+    backendTarget: resolvedBackendTarget.backendTargetV2,
     ...(instructions ? { instructions } : {}),
     permissionMode,
     retentionPolicy,
@@ -117,8 +122,12 @@ export async function cmdSessionRunStart(
   const runPayload = result && typeof result === 'object' && result.ok === true ? result.data : null;
 
   if (json) {
-    const backendId = backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : backendTarget.backendId;
-    printJsonEnvelope({ ok: true, kind: 'session_run_start', data: { sessionId, ...(runPayload as any), intent, backendId, backendTarget } });
+    const backendId = request.backendTarget.backendId;
+    printJsonEnvelope({
+      ok: true,
+      kind: 'session_run_start',
+      data: { sessionId, ...(runPayload as any), intent, backendId, backendTarget: request.backendTarget },
+    });
     return;
   }
 

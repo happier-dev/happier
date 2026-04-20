@@ -25,6 +25,7 @@ import { updateMemorySynopsisPointerBestEffort } from './artifacts/updateMemoryS
 import { chunkTranscriptRows } from './deepIndex/chunkTranscriptRows';
 import { syncDeepIndexForSessionsOnce } from './deepIndex/syncDeepIndexForSessionsOnce';
 import { resolveEmbeddingsProvider } from './deepIndex/embeddings/resolveEmbeddingsProvider';
+import { ensurePrivateInferenceDirectory, resolveInferenceCacheDir } from '@/daemon/inference/inferencePaths';
 import {
   buildUnavailableMemoryEmbeddingsDiagnostics,
   resolveOperationalMemoryEmbeddingsSettings,
@@ -125,13 +126,11 @@ export async function startMemoryWorker(params: Readonly<{
       return null;
     }
 
-    const cacheDir = join(paths.modelsDir, 'transformers');
-    try {
-      mkdirSync(cacheDir, { recursive: true });
-      bestEffortChmod700(cacheDir);
-    } catch {
-      // best-effort
-    }
+    const cacheDir = resolveInferenceCacheDir({
+      modelsRootDir: paths.modelsDir,
+      runtimeId: 'transformers',
+    });
+    ensurePrivateInferenceDirectory(cacheDir);
 
     const resolution = await resolveEmbeddingsProvider({
       settings: embeddings,
@@ -145,6 +144,7 @@ export async function startMemoryWorker(params: Readonly<{
       modelId: resolution.modelId,
       runtimeState: resolution.runtimeState,
       usingFallback: resolution.usingFallback,
+      lastError: resolution.lastError,
     };
     return resolution;
   };
@@ -371,8 +371,7 @@ export async function startMemoryWorker(params: Readonly<{
 
     mkdirSync(paths.memoryDir, { recursive: true });
     bestEffortChmod700(paths.memoryDir);
-    mkdirSync(paths.modelsDir, { recursive: true });
-    bestEffortChmod700(paths.modelsDir);
+    ensurePrivateInferenceDirectory(paths.modelsDir);
 
     if (inventoryBackfillPolicy !== settings.backfillPolicy) {
       inventoryBackfillPolicy = settings.backfillPolicy;

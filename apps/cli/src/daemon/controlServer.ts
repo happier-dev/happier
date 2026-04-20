@@ -3,7 +3,7 @@
  * Provides endpoints for listing sessions, stopping sessions, and daemon shutdown
  */
 
-import fastify, { FastifyInstance } from 'fastify';
+import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -13,13 +13,37 @@ import { TrackedSession } from './types';
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
-import { resolveContinueWithReplayBackendTarget } from '@/session/replay/resolveContinueWithReplayBackendTarget';
-import { SessionContinueWithReplayRpcParamsSchema } from '@happier-dev/protocol';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
+import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@happier-dev/protocol';
+import { readAuthenticationStatus } from '@/api/client/httpStatusError';
+
+const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
+const DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY = 'HAPPIER_DAEMON_CONTROL_BODY_LIMIT_BYTES';
 
 function safeTokenEquals(provided: string, expected: string): boolean {
   const hashA = createHash('sha256').update(provided).digest();
   const hashB = createHash('sha256').update(expected).digest();
   return timingSafeEqual(hashA, hashB);
+}
+
+function resolveDaemonControlBodyLimitBytes(): number {
+  const raw = String(process.env[DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY] ?? '').trim();
+  if (!raw) return DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES;
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES;
+  }
+
+  return Math.max(1024 * 1024, Math.min(parsed, 64 * 1024 * 1024));
+}
+
+function sendBadRequest(reply: FastifyReply, body: Readonly<{
+  success: false;
+  error: string;
+  errorCode?: string;
+}>): void {
+  void reply.code(400).send(body);
 }
 
 export function createDaemonControlApp({
@@ -48,7 +72,8 @@ export function createDaemonControlApp({
   }
 
   const app = fastify({
-    logger: false // We use our own logger
+    logger: false, // We use our own logger
+    bodyLimit: resolveDaemonControlBodyLimitBytes(),
   });
 
   // Set up Zod type provider
@@ -160,12 +185,17 @@ export function createDaemonControlApp({
   // Spawn new session
       typed.post('/spawn-session', {
         schema: {
-          body: SpawnDaemonSessionRequestSchema,
+          body: z.unknown(),
       response: {
         200: z.object({
           success: z.boolean(),
           sessionId: z.string().optional(),
           approvedNewDirectoryCreation: z.boolean().optional()
+        }),
+        400: z.object({
+          success: z.boolean(),
+          error: z.string(),
+          errorCode: z.string().optional(),
         }),
         401: authSchema401,
         409: z.object({
@@ -181,9 +211,20 @@ export function createDaemonControlApp({
         })
       }
     },
-        preHandler: requireAuth,
+    preHandler: requireAuth,
       }, async (request, reply) => {
-        const { directory, sessionId, existingSessionId } = request.body;
+        const parsedRequest = SpawnDaemonSessionRequestSchema.safeParse(request.body);
+        if (!parsedRequest.success) {
+          sendBadRequest(reply, {
+            success: false,
+            error: 'Invalid params',
+            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+          });
+          return;
+        }
+
+        const requestBody = parsedRequest.data;
+        const { directory, sessionId, existingSessionId } = requestBody;
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
         let result: SpawnSessionResult;
@@ -193,7 +234,7 @@ export function createDaemonControlApp({
             : undefined;
           result = await spawnSession(
             mergeSpawnSessionOptions(
-              request.body,
+              requestBody,
               normalizedExistingSessionId ? { existingSessionId: normalizedExistingSessionId } : {},
               normalizedExistingSessionId ? { omit: ['sessionId'] } : {},
             ) as SpawnSessionOptions,
@@ -258,6 +299,7 @@ export function createDaemonControlApp({
           errorCode: z.string().optional(),
         }),
         401: authSchema401,
+        403: authSchema401,
         409: z.object({
           success: z.boolean(),
           requiresUserApproval: z.boolean().optional(),
@@ -273,28 +315,27 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    const parsedRequest = SessionContinueWithReplayRpcParamsSchema.safeParse(request.body);
+    const parsedRequest = parseSessionContinueWithReplayRpcParamsCompatIngress(request.body);
     if (!parsedRequest.success) {
-      reply.code(400);
-      return {
+      sendBadRequest(reply, {
         success: false,
         error: 'Invalid params',
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-      };
+      });
+      return;
     }
     const requestBody = parsedRequest.data;
 
-    const resolvedBackend = resolveContinueWithReplayBackendTarget({
-      agent: requestBody.agent,
+    const resolvedBackend = getSessionHostBridge().resolveContinueWithReplayBackendTarget({
       backendTarget: requestBody.backendTarget,
     });
     if (!resolvedBackend.ok) {
-      reply.code(400);
-      return {
+      sendBadRequest(reply, {
         success: false,
         error: resolvedBackend.errorMessage,
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-      };
+      });
+      return;
     }
 
     let result: SpawnSessionResult;
@@ -302,7 +343,7 @@ export function createDaemonControlApp({
       result = await continueSessionWithReplay(
         {
           directory: requestBody.directory,
-          backendTarget: resolvedBackend.backendTarget,
+          backendTarget: resolvedBackend.backendTargetV2,
           approvedNewDirectoryCreation: requestBody.approvedNewDirectoryCreation,
           permissionMode: requestBody.permissionMode,
           permissionModeUpdatedAt: requestBody.permissionModeUpdatedAt,
@@ -313,6 +354,14 @@ export function createDaemonControlApp({
         { spawnSession },
       );
     } catch (error) {
+      const authStatus = readAuthenticationStatus(error);
+      if (authStatus) {
+        reply.code(authStatus);
+        return {
+          success: false,
+          error: 'not_authenticated',
+        };
+      }
       const message = error instanceof Error ? error.message : String(error);
       reply.code(500);
       return {

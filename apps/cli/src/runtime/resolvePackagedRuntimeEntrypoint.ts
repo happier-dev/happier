@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 import {
+  readDefaultManagedReleaseChannelSync,
+  resolveInstalledFirstPartyComponentPaths,
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectPath } from '@/projectPath';
@@ -79,9 +81,37 @@ function resolveRuntimeRootFromScriptPath(pathLike: string): string | null {
   return null;
 }
 
-function resolvePackagedRuntimeProjectRoots(): string[] {
+function resolveManagedInstalledCliProjectRoot(): string | null {
+  try {
+    const channel = readDefaultManagedReleaseChannelSync();
+    const paths = resolveInstalledFirstPartyComponentPaths({
+      componentId: 'happier-cli',
+      channel,
+    });
+    if (paths.nodeEntrypointPath && existsSync(paths.nodeEntrypointPath)) {
+      return paths.currentPath;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function shouldPreferDistForRuntimeRoot(root: string): boolean {
+  const normalizedRoot = normalizePathLike(root);
+  const normalizedArgv1 = normalizePathLike(process.argv[1] ?? '');
+  if (!normalizedRoot || !normalizedArgv1) {
+    return false;
+  }
+
+  return normalizedArgv1 === `${normalizedRoot}/dist/index.mjs`
+    || normalizedArgv1.startsWith(`${normalizedRoot}/dist/`);
+}
+
+export function resolvePackagedRuntimeProjectRoots(): string[] {
   const roots: string[] = [];
   const candidateRoots = [
+    resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromInstalledShimPath(process.execPath),
     resolveRuntimeRootFromBinaryPath(process.execPath),
     resolveRuntimeRootFromScriptPath(process.argv[1]),
@@ -110,10 +140,15 @@ export function resolvePackagedRuntimeEntrypoint(relativePath: string): string {
   const projectRoots = resolvePackagedRuntimeProjectRoots();
 
   for (const root of projectRoots) {
-    const candidates = [
-      join(root, 'package-dist', normalizedRelativePath),
-      join(root, 'dist', normalizedRelativePath),
-    ];
+    const candidates = shouldPreferDistForRuntimeRoot(root)
+      ? [
+        join(root, 'dist', normalizedRelativePath),
+        join(root, 'package-dist', normalizedRelativePath),
+      ]
+      : [
+        join(root, 'package-dist', normalizedRelativePath),
+        join(root, 'dist', normalizedRelativePath),
+      ];
 
     for (const candidate of candidates) {
       if (existsSync(candidate)) {
@@ -122,5 +157,10 @@ export function resolvePackagedRuntimeEntrypoint(relativePath: string): string {
     }
   }
 
-  return join(projectRoots[0] ?? projectPath(), 'package-dist', normalizedRelativePath);
+  const fallbackRoot = projectRoots[0] ?? projectPath();
+  return join(
+    fallbackRoot,
+    shouldPreferDistForRuntimeRoot(fallbackRoot) ? 'dist' : 'package-dist',
+    normalizedRelativePath,
+  );
 }

@@ -100,12 +100,31 @@ export async function withConfiguredDaemonTestHome<T>(
   fn: (context: { homeDir: string }) => Promise<T>,
 ): Promise<T> {
   const homeDir = await createTempDir(options.prefix)
-  const envKeys = ['HAPPIER_HOME_DIR', ...Object.keys(options.env ?? {})]
+  const envKeys = [
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_DAEMON_SERVICE_PLATFORM',
+    'HAPPIER_DAEMON_SERVICE_UID',
+    'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
+    'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+    'HAPPIER_DAEMON_SERVICE_INSTANCE_ID',
+    'HAPPIER_DAEMON_SERVICE_SERVER_URL',
+    'HAPPIER_DAEMON_SERVICE_WEBAPP_URL',
+    'HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL',
+    'HAPPIER_DAEMON_SERVICE_NODE_PATH',
+    'HAPPIER_DAEMON_SERVICE_ENTRY_PATH',
+    'HAPPIER_DAEMON_SERVICE_CHANNEL',
+    'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
+    'HAPPIER_DAEMON_SERVICE_MODE',
+    'HAPPIER_DAEMON_SERVICE_SYSTEM_USER',
+    ...Object.keys(options.env ?? {}),
+  ]
   const envScope = createEnvKeyScope(envKeys)
 
   try {
     envScope.patch({
       HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
       ...(options.env ?? {}),
     })
     reloadConfiguration()

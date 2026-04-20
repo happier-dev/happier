@@ -32,6 +32,39 @@ describe('resolveDaemonLaunchSpec', () => {
     delete process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK;
   });
 
+  it('reuses the current self-contained binary when running from a bundled Windows executable', async () => {
+    const originalExecPath = process.execPath;
+    const originalArgv = [...process.argv];
+
+    try {
+      Object.defineProperty(process, 'execPath', {
+        value: 'C:\\hq\\winsvc005-live\\happier-v0.2.4-windows-x64\\happier.exe',
+        configurable: true,
+      });
+      process.argv = [
+        'C:\\hq\\winsvc005-live\\happier-v0.2.4-windows-x64\\happier.exe',
+        'B:/~BUN/root/happier.exe',
+        'daemon',
+        'start',
+      ];
+
+      const mod = await import('./resolveDaemonLaunchSpec');
+      const result = await mod.resolveDaemonLaunchSpec(['daemon', 'start-sync']);
+
+      expect(result).toEqual({
+        filePath: 'C:\\hq\\winsvc005-live\\happier-v0.2.4-windows-x64\\happier.exe',
+        args: ['daemon', 'start-sync'],
+      });
+      expect(ensureJavaScriptRuntimeExecutableMock).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'execPath', {
+        value: originalExecPath,
+        configurable: true,
+      });
+      process.argv = originalArgv;
+    }
+  });
+
   it('forces a node-backed packaged entrypoint even when the parent process is bun', async () => {
     vi.doMock('node:fs', async () => {
       const actual = await vi.importActual<typeof import('node:fs')>('node:fs');

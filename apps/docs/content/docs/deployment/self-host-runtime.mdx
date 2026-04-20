@@ -68,6 +68,21 @@ npx --yes --package @happier-dev/relay-server happier-server --help
 
 Important: because this is a runner, `happier relay host …` service controls do **not** apply to it.
 
+## Metrics default note
+
+The direct server binary defaults `METRICS_ENABLED=true`, but runtime-managed self-host surfaces currently write `METRICS_ENABLED=false` unless you override it explicitly. That keeps local multi-process and managed-service launches from colliding on the metrics port by default.
+
+If you want metrics in a managed self-host/runtime launch:
+
+```bash
+METRICS_ENABLED=true
+METRICS_PORT=9090
+```
+
+If multiple local processes may run at once, prefer distinct ports or `METRICS_PORT=0` per process.
+
+For a production-style self-host deployment, use Prometheus and Grafana rather than scraping `/metrics` manually. The repo ships a Docker-friendly observability pack under `apps/server/observability/`; see [Observability](./observability).
+
 ## Choosing between them
 
 - If you want a **service** and `hstack`-managed lifecycle → use **Option A**.

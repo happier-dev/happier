@@ -7,12 +7,12 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('is stable for equivalent inputs with different object key order', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       environmentVariables: { B: '2', A: '1' },
       connectedServices: { z: 1, a: 2 },
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       directory: '/tmp/repo',
       environmentVariables: { A: '1', B: '2' },
       connectedServices: { a: 2, z: 1 },
@@ -25,12 +25,12 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('incorporates spawnNonce when provided', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       spawnNonce: 'nonce-a',
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       spawnNonce: 'nonce-b',
     } satisfies SpawnSessionOptions);
     expect(a.kind).toBe('new');
@@ -49,7 +49,7 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('does not include updatedAt timestamps in the new-session key', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       permissionMode: 'read-only',
       permissionModeUpdatedAt: 111,
       modelId: 'gpt-5',
@@ -57,7 +57,7 @@ describe('computeDaemonSpawnRequestKey', () => {
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       permissionMode: 'read-only',
       permissionModeUpdatedAt: 222,
       modelId: 'gpt-5',
@@ -71,11 +71,11 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('includes transcriptStorage=direct in the new-session key', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       transcriptStorage: 'direct',
     } satisfies SpawnSessionOptions);
     expect(a.kind).toBe('new');
@@ -86,12 +86,12 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('includes codexBackendMode in the new-session key', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'mcp',
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'appServer',
     } satisfies SpawnSessionOptions);
     expect(a.kind).toBe('new');
@@ -102,12 +102,12 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('treats legacy experimentalCodexAcp requests as canonical acp for the new-session key', () => {
     const canonical = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'acp',
     } satisfies SpawnSessionOptions);
     const legacy = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       experimentalCodexAcp: true,
     } satisfies SpawnSessionOptions);
 
@@ -119,7 +119,7 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('includes mcpSelection in the new-session key while ignoring list order noise', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,
@@ -129,7 +129,7 @@ describe('computeDaemonSpawnRequestKey', () => {
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,
@@ -146,7 +146,7 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('changes the new-session key when mcpSelection changes', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,
@@ -156,7 +156,7 @@ describe('computeDaemonSpawnRequestKey', () => {
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: true,
@@ -173,7 +173,7 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('changes the new-session key when session config option overrides change', () => {
     const base = {
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' } as const,
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } as const,
     } satisfies SpawnSessionOptions;
 
     const a = computeDaemonSpawnRequestKey({
@@ -205,7 +205,7 @@ describe('computeDaemonSpawnRequestKey', () => {
   it('includes agent mode but ignores removed workspace shaping fields in the new-session key', () => {
     const base = {
       directory: '/tmp/repo',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' } as const,
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } as const,
     } satisfies SpawnSessionOptions;
     const baseWithWorkspace = base as SpawnSessionOptions & {
       workspaceId?: string;

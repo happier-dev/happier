@@ -1,7 +1,9 @@
 import axios from 'axios';
 import type { HappierService } from '@happier-dev/cli-common/happierRuntime';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 import type { CliAuthState } from '@/capabilities/cliAuth/types';
+import { configuration } from '@/configuration';
 import { readCredentials, type Credentials } from '@/persistence';
 import type { DaemonServiceListEntry } from '@/daemon/service/cli';
 
@@ -51,18 +53,7 @@ async function readServerChangeCredentialState(
         void response;
         return 'authenticated';
     } catch (error) {
-        if (typeof axios.isAxiosError === 'function' && axios.isAxiosError(error)) {
-            if (error.response?.status === 401 || error.response?.status === 403) {
-                return 'authentication-required';
-            }
-        }
-        if (error && typeof error === 'object' && 'response' in error) {
-            const status = (error as { response?: { status?: unknown } }).response?.status;
-            if (status === 401 || status === 403) {
-                return 'authentication-required';
-            }
-        }
-        return 'unknown';
+        return isAuthenticationError(error) ? 'authentication-required' : 'unknown';
     }
 }
 
@@ -122,10 +113,27 @@ function hasDuplicateDefaultFollowingModes(
     return (modes?.length ?? 0) > 1;
 }
 
-function renderRepairGuidance(): readonly string[] {
+function hasMissingHomeMetadataDefaultFollowingService(services: readonly BackgroundServiceInventoryEntry[]): boolean {
+    return services.some((service) =>
+        isInstalledDefaultFollowingDaemonService(service)
+        && !service.happierHomeDir
+        && String(('ring' in service ? service.ring : service.releaseChannel) ?? '').trim() !== String(configuration.publicReleaseRing ?? '').trim(),
+    );
+}
+
+function renderRepairGuidance(params: Readonly<{ modes?: readonly BackgroundServiceFollowUpMode[] }>): readonly string[] {
+    const requiresSudo = params.modes?.includes('system') ?? false;
     return [
         'Multiple default-following background services are installed. Repair them before restarting a background service for this change:',
-        '  happier service repair --yes',
+        requiresSudo ? '  sudo happier service repair --yes' : '  happier service repair --yes',
+    ];
+}
+
+function renderMissingHomeRepairGuidance(params: Readonly<{ modes?: readonly BackgroundServiceFollowUpMode[] }>): readonly string[] {
+    const requiresSudo = params.modes?.includes('system') ?? false;
+    return [
+        'Detected default-following background services with missing Happier home metadata. Automatic restart guidance will not replace or remove them; remove the legacy service(s) from the owning installation first:',
+        requiresSudo ? '  sudo happier service repair --yes' : '  happier service repair --yes',
     ];
 }
 
@@ -228,7 +236,7 @@ export async function runDefaultFollowingBackgroundServiceRestartFollowUp(params
     modes?: readonly BackgroundServiceFollowUpMode[];
 }>): Promise<boolean> {
     if (hasDuplicateDefaultFollowingModes(params.modes)) {
-        for (const line of renderRepairGuidance()) {
+        for (const line of renderRepairGuidance({ modes: params.modes })) {
             params.log(line);
         }
         return false;
@@ -272,8 +280,15 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
         return;
     }
 
+    if (hasMissingHomeMetadataDefaultFollowingService(params.services)) {
+        for (const line of renderMissingHomeRepairGuidance({ modes })) {
+            params.log(line);
+        }
+        return;
+    }
+
     if (hasDuplicateDefaultFollowingModes(modes)) {
-        for (const line of renderRepairGuidance()) {
+        for (const line of renderRepairGuidance({ modes })) {
             params.log(line);
         }
         return;

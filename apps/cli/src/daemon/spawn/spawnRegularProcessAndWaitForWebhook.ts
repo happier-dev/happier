@@ -15,6 +15,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   args: readonly string[];
   directory: string;
   options: SpawnSessionOptions;
+  trackedSpawnOptions: SpawnSessionOptions;
   normalizedExistingSessionId: string;
   effectiveResume: string;
   directoryCreated: boolean;
@@ -92,7 +93,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     happySessionId: params.normalizedExistingSessionId || undefined,
     pid,
     childProcess: happyProcess,
-    spawnOptions: params.options,
+    spawnOptions: params.trackedSpawnOptions,
     vendorResumeId: params.effectiveResume || undefined,
     directoryCreated: params.directoryCreated,
     message: params.directoryCreated

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
-import { configuration } from '@/configuration';
+import { configuration } from '../../configuration';
+import { resolveInferenceModelsRootDir } from '@/daemon/inference/inferencePaths';
 
 export type MemoryIndexPaths = Readonly<{
   memoryDir: string;
@@ -15,7 +16,6 @@ export function resolveMemoryIndexPaths(): MemoryIndexPaths {
     memoryDir,
     tier1DbPath: join(memoryDir, 'memory.sqlite'),
     deepDbPath: join(memoryDir, 'deep.sqlite'),
-    modelsDir: join(memoryDir, 'models'),
+    modelsDir: resolveInferenceModelsRootDir({ ownerRootDir: memoryDir }),
   };
 }
-

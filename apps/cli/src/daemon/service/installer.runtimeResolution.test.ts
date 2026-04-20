@@ -109,6 +109,7 @@ describe('installDaemonService runtime resolution', () => {
     expect(ensureJavaScriptRuntimeExecutableMock).toHaveBeenCalledWith({
       isBunRuntime: false,
       currentExecPath: process.execPath,
+      processEnv: process.env,
     });
     expect(resolveDaemonServiceRuntimeTargetMock).toHaveBeenCalledWith(
       expect.objectContaining({

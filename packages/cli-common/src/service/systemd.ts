@@ -54,6 +54,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
   env?: Record<string, string>;
   restart?: string;
   killMode?: 'control-group' | 'mixed' | 'process' | 'none';
+  managedOomPreference?: 'none' | 'avoid' | 'omit';
   runAsUser?: string;
   stdoutPath?: string;
   stderrPath?: string;
@@ -71,6 +72,10 @@ export function renderSystemdServiceUnit(params: Readonly<{
     'killMode',
     String(params.killMode ?? '').trim(),
   );
+  const managedOomPreference = assertSingleLineSystemdField(
+    'managedOomPreference',
+    String(params.managedOomPreference ?? '').trim(),
+  );
   const workDir = assertSingleLineSystemdField('workingDirectory', String(params.workingDirectory ?? '').trim());
   const out = assertSingleLineSystemdField('stdoutPath', String(params.stdoutPath ?? '').trim());
   const err = assertSingleLineSystemdField('stderrPath', String(params.stderrPath ?? '').trim());
@@ -87,6 +92,10 @@ export function renderSystemdServiceUnit(params: Readonly<{
   const workDirLine = workDir ? `WorkingDirectory=${workDir}\n` : '';
   const userLine = runAsUser ? `User=${runAsUser}\n` : '';
   const killModeLine = killMode ? `KillMode=${killMode}\n` : '';
+  const managedOomPreferenceLine =
+    managedOomPreference && managedOomPreference !== 'none'
+      ? `ManagedOOMPreference=${managedOomPreference}\n`
+      : '';
   const outLine = out ? `StandardOutput=append:${out}\n` : '';
   const errLine = err ? `StandardError=append:${err}\n` : '';
   const wantedBy = assertSingleLineSystemdField(
@@ -103,7 +112,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-${workDirLine}${userLine}${killModeLine}${envBlock}ExecStart=${execStart}
+${workDirLine}${userLine}${killModeLine}${managedOomPreferenceLine}${envBlock}ExecStart=${execStart}
 Restart=${restartPolicy}
 RestartSec=2
 ${outLine}${errLine}[Install]

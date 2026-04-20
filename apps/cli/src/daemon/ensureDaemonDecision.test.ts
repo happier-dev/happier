@@ -23,9 +23,11 @@ describe('shouldEnsureDaemonForInvocation', () => {
     expect(shouldEnsureDaemonForInvocation({ args: ['connect'] })).toBe(false);
     expect(shouldEnsureDaemonForInvocation({ args: ['logout'] })).toBe(false);
     expect(shouldEnsureDaemonForInvocation({ args: ['attach'] })).toBe(false);
+    expect(shouldEnsureDaemonForInvocation({ args: ['capabilities'] })).toBe(false);
     expect(shouldEnsureDaemonForInvocation({ args: ['self'] })).toBe(false);
     expect(shouldEnsureDaemonForInvocation({ args: ['server'] })).toBe(false);
     expect(shouldEnsureDaemonForInvocation({ args: ['session'] })).toBe(false);
+    expect(shouldEnsureDaemonForInvocation({ args: ['sessions'] })).toBe(false);
   });
 
   it('returns false for help/version invocations', () => {
@@ -93,7 +95,13 @@ describe('applyDaemonAutostartEnvForInvocation', () => {
 
   it('does not set HAPPIER_SESSION_AUTOSTART_DAEMON for non-session commands', () => {
     const env: NodeJS.ProcessEnv = {};
-    applyDaemonAutostartEnvForInvocation({ args: ['doctor'], env });
+    applyDaemonAutostartEnvForInvocation({ args: ['capabilities', '--json'], env });
+    expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBeUndefined();
+  });
+
+  it('does not set HAPPIER_SESSION_AUTOSTART_DAEMON for the plural sessions command alias', () => {
+    const env: NodeJS.ProcessEnv = {};
+    applyDaemonAutostartEnvForInvocation({ args: ['sessions', 'list', '--json'], env });
     expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBeUndefined();
   });
 });

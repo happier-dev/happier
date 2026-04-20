@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 let stopCalls = 0;
 const defaultTerminalConnectStdout = 'https://127.0.0.1:4011/terminal/connect#key=test-key\n';
 let terminalConnectStdout = defaultTerminalConnectStdout;
+let lastSpawnCwd: string | null = null;
 
 vi.mock('../process/cliLaunchSpec', () => ({
     resolveCliTestLaunchSpec: vi.fn(async (params: { testDir: string }) => ({
@@ -22,7 +23,8 @@ vi.mock('../process/cliLaunchSpec', () => ({
 }));
 
 vi.mock('../process/spawnProcess', () => ({
-    spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string }) => {
+    spawnLoggedProcess: (params: { cwd: string; stdoutPath: string; stderrPath: string }) => {
+        lastSpawnCwd = params.cwd;
         writeFileSync(params.stdoutPath, terminalConnectStdout, 'utf8');
         writeFileSync(params.stderrPath, '', 'utf8');
         const child = new EventEmitter() as EventEmitter & {
@@ -66,6 +68,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
     stopCalls = 0;
     terminalConnectStdout = defaultTerminalConnectStdout;
+    lastSpawnCwd = null;
 });
 
 function readProcessStartTime(pid: number): string {
@@ -77,6 +80,30 @@ function readProcessStartTime(pid: number): string {
 }
 
 describe('startCliAuthLoginForTerminalConnect', () => {
+    it('launches the CLI from the resolved snapshot cwd', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-cwd-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+
+            const started = await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://127.0.0.1:19006',
+                waitForConnectUrlReady: false,
+                env: {},
+            });
+
+            expect(lastSpawnCwd).toBe(resolve(testDir));
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
     it('reclaims stale terminal-connect auth helpers from dead owners before starting a new one', async () => {
         if (process.platform === 'win32') return;
 

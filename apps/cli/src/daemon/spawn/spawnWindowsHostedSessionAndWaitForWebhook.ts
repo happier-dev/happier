@@ -22,6 +22,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
     agentCommand: string;
     directory: string;
     options: SpawnSessionOptions;
+    trackedSpawnOptions: SpawnSessionOptions;
     normalizedExistingSessionId: string;
     effectiveResume: string;
     reservedSessionId?: string;
@@ -56,7 +57,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
             startedBy: 'daemon',
             happySessionId: params.normalizedExistingSessionId || undefined,
             pid: waitParams.pid,
-            spawnOptions: params.options,
+            spawnOptions: params.trackedSpawnOptions,
             vendorResumeId: params.effectiveResume || undefined,
             directoryCreated: params.directoryCreated,
             message: params.directoryCreated

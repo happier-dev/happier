@@ -194,7 +194,7 @@ describe('happier session run list (integration)', () => {
         const decodedParams = decodeBase64(String(data.params ?? ''));
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted).toMatchObject({
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           status: 'running',
           limit: 1,
         });
@@ -208,7 +208,7 @@ describe('happier session run list (integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'list', 'sess_integration_ctrl_123', '--backend', 'claude', '--status', 'running', '--limit', '1', '--json'],
+        ['run', 'list', 'sess_integration_ctrl_123', '--backend', 'agent:claude', '--status', 'running', '--limit', '1', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',

@@ -1,14 +1,19 @@
-import type { BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
-import { resolveDaemonCatalogAgentIdFromBackendTarget } from '../backendTargetRouting';
+import {
+  normalizeDaemonBackendTargetV2Input,
+  resolveDaemonCatalogAgentIdFromBackendTarget,
+} from '../backendTargetRouting';
 import { readCredentials, type Credentials } from '@/persistence';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import {
   resolveExistingSessionAttachContext,
   type ExistingSessionAttachContextFailureReason,
 } from '../sessionEncryption/resolveExistingSessionAttachContext';
-import { resolveConcreteBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
+import {
+  resolveConcreteCompatBackendTargetRefs,
+} from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 
 function isConcreteBuiltInCatalogAgentId(value: string): value is CatalogAgentId {
   return value !== 'customAcp' && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
@@ -55,10 +60,7 @@ function mapExistingSessionAttachFailureToSpawnError(reason: ExistingSessionAtta
   }
 }
 
-function resolveBackendTargetFromLocalHandoffOverlay(metadata: Record<string, unknown> | null): {
-  backendTarget: BackendTargetRefV1;
-  backendTargetV2: BackendTargetRefV2;
-} | null {
+function resolveBackendTargetFromLocalHandoffOverlay(metadata: Record<string, unknown> | null): BackendTargetRefV2 | null {
   const handoff = metadata?.handoffV1;
   if (!handoff || typeof handoff !== 'object' || Array.isArray(handoff)) {
     return null;
@@ -72,20 +74,19 @@ function resolveBackendTargetFromLocalHandoffOverlay(metadata: Record<string, un
 
   if (providerId.startsWith('acp:')) {
     const backendId = providerId.slice(4).trim();
-    const resolved = backendId
-      ? resolveConcreteBackendTargetRefs({
+    return backendId
+      ? resolveConcreteCompatBackendTargetRefs({
           kind: 'configuredAcpBackend',
           backendId,
-        })
+        })?.backendTargetV2 ?? null
       : null;
-    return resolved;
   }
 
   if (isConcreteBuiltInCatalogAgentId(providerId)) {
-    return resolveConcreteBackendTargetRefs({
+    return resolveConcreteCompatBackendTargetRefs({
       kind: 'builtInAgent',
       agentId: providerId,
-    });
+    })?.backendTargetV2 ?? null;
   }
 
   return null;
@@ -95,10 +96,9 @@ type ResolveSpawnBackendIdentitySuccess = Readonly<{
   ok: true;
   normalizedExistingSessionId: string;
   effectiveResume: string;
-  effectiveBackendTarget: BackendTargetRefV1;
   effectiveBackendTargetV2: BackendTargetRefV2;
   sessionAttachPayload: SessionAttachFilePayload | null;
-  catalogAgentId: CatalogAgentId;
+  catalogAgentId: CatalogAgentId | null;
 }>;
 
 type ResolveSpawnBackendIdentityFailure = Readonly<{
@@ -109,16 +109,14 @@ type ResolveSpawnBackendIdentityFailure = Readonly<{
 export async function resolveSpawnBackendIdentity(params: Readonly<{
   existingSessionId: string;
   resume: string;
-  backendTarget: BackendTargetRefV2Input | undefined;
+  backendTarget: BackendTargetRefV2 | undefined;
   credentials: Credentials | null;
   loadLocalHandoffMetadataByVendorResumeId: (vendorResumeId: string) => Promise<Record<string, unknown> | null>;
 }>): Promise<ResolveSpawnBackendIdentitySuccess | ResolveSpawnBackendIdentityFailure> {
   const normalizedExistingSessionId = params.existingSessionId.trim();
   let effectiveResume = params.resume.trim();
   const hasBackendTargetInput = params.backendTarget !== undefined;
-  const initialBackendTarget = resolveConcreteBackendTargetRefs(params.backendTarget);
-  let effectiveBackendTarget = initialBackendTarget?.backendTarget;
-  let effectiveBackendTargetV2 = initialBackendTarget?.backendTargetV2;
+  let effectiveBackendTargetV2 = normalizeDaemonBackendTargetV2Input(params.backendTarget);
   let sessionAttachPayload: SessionAttachFilePayload | null = null;
 
   if (normalizedExistingSessionId) {
@@ -131,18 +129,18 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
       credentials: effectiveCredentials,
     });
 
-    if (!attachContext.ok) {
+    if (attachContext.ok === false) {
+      const { reason } = attachContext;
       return {
         ok: false,
-        error: mapExistingSessionAttachFailureToSpawnError(attachContext.reason),
+        error: mapExistingSessionAttachFailureToSpawnError(reason),
       };
     }
 
     sessionAttachPayload = attachContext.attachPayload;
     if (attachContext.backendTarget) {
-      const attachedBackendTarget = resolveConcreteBackendTargetRefs(attachContext.backendTarget);
+      const attachedBackendTarget = resolveConcreteCompatBackendTargetRefs(attachContext.backendTarget);
       if (attachedBackendTarget) {
-        effectiveBackendTarget = attachedBackendTarget.backendTarget;
         effectiveBackendTargetV2 = attachedBackendTarget.backendTargetV2;
       }
     }
@@ -152,20 +150,16 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
         effectiveResume = derivedResume;
       }
     }
-    if (
-      (!effectiveBackendTarget || (effectiveBackendTarget.kind === 'builtInAgent' && effectiveBackendTarget.agentId === 'customAcp'))
-      && effectiveResume
-    ) {
+    if (!effectiveBackendTargetV2 && effectiveResume) {
       const localHandoffMetadataOverlay = await params.loadLocalHandoffMetadataByVendorResumeId(effectiveResume).catch(() => null);
       const localHandoffBackendTarget = resolveBackendTargetFromLocalHandoffOverlay(localHandoffMetadataOverlay);
       if (localHandoffBackendTarget) {
-        effectiveBackendTarget = localHandoffBackendTarget.backendTarget;
-        effectiveBackendTargetV2 = localHandoffBackendTarget.backendTargetV2;
+        effectiveBackendTargetV2 = localHandoffBackendTarget;
       }
     }
   }
 
-  if (!effectiveBackendTarget) {
+  if (!effectiveBackendTargetV2) {
     return {
       ok: false,
       error: {
@@ -178,8 +172,8 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     };
   }
 
-  const catalogAgentId = resolveDaemonCatalogAgentIdFromBackendTarget(effectiveBackendTarget);
-  if (!catalogAgentId) {
+  const catalogAgentId = resolveDaemonCatalogAgentIdFromBackendTarget(effectiveBackendTargetV2);
+  if (!catalogAgentId && effectiveBackendTargetV2.sourceKind !== 'configured') {
     return {
       ok: false,
       error: {
@@ -190,12 +184,13 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     };
   }
 
+  const resolvedBackendTargetV2 = effectiveBackendTargetV2;
+
   return {
     ok: true,
     normalizedExistingSessionId,
     effectiveResume,
-    effectiveBackendTarget,
-    effectiveBackendTargetV2: effectiveBackendTargetV2 ?? resolveConcreteBackendTargetRefs(effectiveBackendTarget)!.backendTargetV2,
+    effectiveBackendTargetV2: resolvedBackendTargetV2,
     sessionAttachPayload,
     catalogAgentId,
   };

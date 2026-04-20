@@ -5,23 +5,21 @@ import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers
 
 describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
   it('passes explicit codexBackendMode=acp through daemon spawn validation without shadowing the legacy flag', async () => {
-    const validateSpawn = vi.fn(async ({ codexBackendMode, experimentalCodexAcp }) => {
+    const resolveRuntimePrerequisites = vi.fn(async ({ codexBackendMode }) => {
       expect(codexBackendMode).toBe('acp');
-      expect(experimentalCodexAcp).toBeUndefined();
       return { ok: true as const };
     });
 
     const result = await resolveSpawnChildEnvironment({
       options: {
         directory: '.',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         codexBackendMode: 'acp',
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn,
-        buildExtraEnvForChild: ({ codexBackendMode, experimentalCodexAcp }) => ({
-          ...(experimentalCodexAcp === true ? { HAPPIER_LEGACY_CODEX_ACP_SHADOW: '1' } : {}),
+        resolveRuntimePrerequisites,
+        augmentEnv: ({ codexBackendMode }) => ({
           ...(codexBackendMode === 'acp' ? { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
         }),
       },
@@ -35,15 +33,14 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(validateSpawn).toHaveBeenCalledTimes(1);
+    expect(resolveRuntimePrerequisites).toHaveBeenCalledTimes(1);
     expect(result.extraEnvForChild.HAPPIER_LEGACY_CODEX_ACP_SHADOW).toBeUndefined();
     expect(result.extraEnvForChild.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('1');
   });
 
   it('falls back from explicit codexBackendMode=acp to MCP without reintroducing the legacy flag', async () => {
-    const validateSpawn = vi.fn(async ({ codexBackendMode, experimentalCodexAcp }) => {
+    const resolveRuntimePrerequisites = vi.fn(async ({ codexBackendMode }) => {
       if (codexBackendMode === 'acp') {
-        expect(experimentalCodexAcp).toBeUndefined();
         return {
           ok: false as const,
           reasonCode: 'codex_acp_unavailable' as const,
@@ -52,22 +49,20 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
       }
 
       expect(codexBackendMode).toBe('mcp');
-      expect(experimentalCodexAcp).toBeUndefined();
       return { ok: true as const };
     });
 
     const result = await resolveSpawnChildEnvironment({
       options: {
         directory: '.',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         codexBackendMode: 'acp',
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn,
-        buildExtraEnvForChild: ({ codexBackendMode, experimentalCodexAcp }) => ({
+        resolveRuntimePrerequisites,
+        augmentEnv: ({ codexBackendMode }) => ({
           ...(codexBackendMode === 'mcp' ? { HAPPIER_CODEX_BACKEND_MODE_AFTER_FALLBACK: 'mcp' } : {}),
-          ...(experimentalCodexAcp === true ? { HAPPIER_LEGACY_CODEX_ACP_SHADOW: '1' } : {}),
         }),
       },
       processEnv: {},
@@ -80,32 +75,30 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(validateSpawn).toHaveBeenCalledTimes(2);
+    expect(resolveRuntimePrerequisites).toHaveBeenCalledTimes(2);
     expect(result.extraEnvForChild.HAPPIER_CODEX_BACKEND_MODE).toBe('mcp');
     expect(result.extraEnvForChild.HAPPIER_CODEX_BACKEND_MODE_AFTER_FALLBACK).toBe('mcp');
     expect(result.extraEnvForChild.HAPPIER_LEGACY_CODEX_ACP_SHADOW).toBeUndefined();
   });
 
   it('prefers explicit codexBackendMode=appServer over the legacy ACP experiment flag', async () => {
-    const validateSpawn = vi.fn(async ({ codexBackendMode, experimentalCodexAcp }) => {
+    const resolveRuntimePrerequisites = vi.fn(async ({ codexBackendMode }) => {
       expect(codexBackendMode).toBe('appServer');
-      expect(experimentalCodexAcp).toBeUndefined();
       return { ok: true as const };
     });
 
     const result = await resolveSpawnChildEnvironment({
       options: {
         directory: '.',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         experimentalCodexAcp: true,
         codexBackendMode: 'appServer',
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn,
-        buildExtraEnvForChild: ({ codexBackendMode, experimentalCodexAcp }) => ({
+        resolveRuntimePrerequisites,
+        augmentEnv: ({ codexBackendMode }) => ({
           ...(codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
-          ...(experimentalCodexAcp === true ? { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
         }),
       },
       processEnv: {},
@@ -118,23 +111,22 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(validateSpawn).toHaveBeenCalledTimes(1);
+    expect(resolveRuntimePrerequisites).toHaveBeenCalledTimes(1);
     expect(result.extraEnvForChild.HAPPIER_CODEX_BACKEND_MODE).toBe('appServer');
     expect(result.extraEnvForChild.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBeUndefined();
   });
 
-  it('derives codex backend mode from agentRuntimeDescriptorV1 when legacy fields are absent', async () => {
-    const validateSpawn = vi.fn(async ({ codexBackendMode, experimentalCodexAcp }) => {
+  it('derives codex backend mode from runtimeDescriptorV1 when legacy fields are absent', async () => {
+    const resolveRuntimePrerequisites = vi.fn(async ({ codexBackendMode }) => {
       expect(codexBackendMode).toBe('appServer');
-      expect(experimentalCodexAcp).toBeUndefined();
       return { ok: true as const };
     });
 
     const result = await resolveSpawnChildEnvironment({
       options: {
         directory: '.',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        agentRuntimeDescriptorV1: {
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
           provider: {
@@ -145,7 +137,7 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn,
+        resolveRuntimePrerequisites,
       },
       processEnv: {},
       logDebug: () => {},
@@ -160,10 +152,75 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
     expect(result.extraEnvForChild.HAPPIER_CODEX_BACKEND_MODE).toBe('appServer');
   });
 
+  it('canonicalizes legacy runtime descriptors before daemon spawn hooks observe runtime selection', async () => {
+    const resolveRuntimePrerequisites = vi.fn(async (runtimeSelection) => {
+      expect(runtimeSelection).toMatchObject({
+        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: {
+            backendMode: 'appServer',
+            vendorSessionId: 'legacy-thread',
+          },
+        },
+      });
+      expect(runtimeSelection).not.toHaveProperty('agentRuntimeDescriptorV1');
+      return { ok: true as const };
+    });
+    const augmentEnv = vi.fn((runtimeSelection) => {
+      expect(runtimeSelection).toMatchObject({
+        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: {
+            backendMode: 'appServer',
+            vendorSessionId: 'legacy-thread',
+          },
+        },
+      });
+      expect(runtimeSelection).not.toHaveProperty('agentRuntimeDescriptorV1');
+      return { HAPPIER_RUNTIME_DESCRIPTOR_CANONICALIZED: '1' };
+    });
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        runtimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: {
+            backendMode: 'appServer',
+            vendorSessionId: 'legacy-thread',
+          },
+        },
+      },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: {
+        resolveRuntimePrerequisites,
+        augmentEnv,
+      },
+      processEnv: {},
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(resolveRuntimePrerequisites).toHaveBeenCalledTimes(1);
+    expect(augmentEnv).toHaveBeenCalledTimes(1);
+    expect(result.extraEnvForChild.HAPPIER_RUNTIME_DESCRIPTOR_CANONICALIZED).toBe('1');
+  });
+
   it('publishes explicit Codex backend mode into child env without workspace linkage metadata', async () => {
     const options = {
       directory: '.',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' } as const,
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } as const,
       codexBackendMode: 'appServer' as const,
       workspaceId: ' ws_payments ',
       workspaceLocationId: ' loc_local ',
@@ -192,7 +249,7 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
 
     const options: SpawnSessionOptions = {
       directory: '.',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       experimentalCodexAcp: true,
     };
 
@@ -200,14 +257,14 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
       options,
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn: async ({ experimentalCodexAcp }) => {
-          if (experimentalCodexAcp === true) {
+        resolveRuntimePrerequisites: async ({ codexBackendMode }) => {
+          if (codexBackendMode === 'acp') {
             return { ok: false, reasonCode: 'codex_acp_unavailable' as const, errorMessage: 'codex-acp is missing' };
           }
           return { ok: true };
         },
-        buildExtraEnvForChild: ({ experimentalCodexAcp }) => ({
-          ...(experimentalCodexAcp === true ? { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
+        augmentEnv: ({ codexBackendMode }) => ({
+          ...(codexBackendMode === 'acp' ? { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
         }),
       },
       processEnv: {},
@@ -231,12 +288,12 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
     const result = await resolveSpawnChildEnvironment({
       options: {
         directory: '.',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         experimentalCodexAcp: true,
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn: async () => ({
+        resolveRuntimePrerequisites: async () => ({
           ok: false,
           reasonCode: 'other_validation_failure',
           errorMessage: 'workspace setup failed',
@@ -262,13 +319,13 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
     const result = await resolveSpawnChildEnvironment({
       options: {
         directory: '.',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         experimentalCodexAcp: true,
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn: async ({ experimentalCodexAcp }) => {
-          if (experimentalCodexAcp === true) {
+        resolveRuntimePrerequisites: async ({ codexBackendMode }) => {
+          if (codexBackendMode === 'acp') {
             return {
               ok: false,
               reasonCode: 'codex_acp_unavailable',
@@ -300,7 +357,7 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
 
     const options: SpawnSessionOptions = {
       directory: '.',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       resume: 'x1',
       experimentalCodexAcp: true,
     };
@@ -309,7 +366,7 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
       options,
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        validateSpawn: async () => ({ ok: false, errorMessage: 'codex-acp is missing' }),
+        resolveRuntimePrerequisites: async () => ({ ok: false, errorMessage: 'codex-acp is missing' }),
       },
       processEnv: {},
       logDebug: () => {},

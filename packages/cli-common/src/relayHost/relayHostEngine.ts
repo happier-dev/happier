@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
@@ -10,7 +11,9 @@ import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier
 import {
   applyServicePlan,
   buildServiceCommandEnv,
+  buildReadWindowsScheduledTaskStatusPowerShellCommand,
   buildServiceDefinition,
+  parseWindowsScheduledTaskStatusPowerShellJson,
   resolveServiceBackend,
   planServiceAction,
   type ServiceBackend,
@@ -23,12 +26,16 @@ import {
   resolveRelayRuntimeDefaults,
   type RelayRuntimeDefaults,
 } from '../firstPartyRuntime/relayRuntime.js';
-import { installOrUpdateRelayRuntimeLocal } from '../firstPartyRuntime/relayRuntimeInstall.js';
 import {
-    mergeSelfHostServerEnvText,
-    parseEnvText,
-    renderSelfHostServerEnvTextFromResolvedValues,
-    resolveConfiguredSelfHostBaseUrl,
+  installOrUpdateRelayRuntimeLocal,
+  shouldMigrateLegacyUnsuffixedRelayRuntimeInstallRoot,
+} from '../firstPartyRuntime/relayRuntimeInstall.js';
+import {
+  mergeSelfHostServerEnvText,
+  parseEnvText,
+  resolveSelfHostSqliteAutoMigrateValue,
+  renderSelfHostServerEnvTextFromResolvedValues,
+  resolveConfiguredSelfHostBaseUrl,
 } from '../firstPartyRuntime/selfHostServerEnv.js';
 
 import { buildRelayRuntimeHealthProbeCommand, RELAY_RUNTIME_HEALTH_OK_TOKEN } from './buildRelayRuntimeHealthProbeCommand.js';
@@ -93,7 +100,7 @@ export type RelayHostEngine = Readonly<{
 }>;
 
 const LOCAL_RELAY_STATUS_HEALTH_TIMEOUT_MS = 1_000;
-const LOCAL_RELAY_CONTROL_HEALTH_TIMEOUT_MS = 30_000;
+const LOCAL_RELAY_CONTROL_HEALTH_TIMEOUT_MS = 120_000;
 const RELAY_RUNTIME_CHANNELS: readonly PublicReleaseRingId[] = ['stable', 'preview', 'publicdev'];
 
 function quoteRemoteShellArg(value: string): string {
@@ -298,7 +305,7 @@ async function resolveLocalDesiredRelayUrl(params: Readonly<{
     filesDir: join(defaults.dataDir, 'files'),
     dbDir: join(defaults.dataDir, 'pglite'),
     databaseUrl: `file:${join(defaults.dataDir, 'happier-server-light.sqlite')}`,
-    sqliteAutoMigrate: process.platform === 'darwin' ? '0' : '1',
+    sqliteAutoMigrate: resolveSelfHostSqliteAutoMigrateValue(),
     sqliteMigrationsDir: join(defaults.dataDir, 'migrations', 'sqlite'),
   });
   const existingEnvText = existsSync(envPath) ? await readFile(envPath, 'utf8').catch(() => '') : '';
@@ -332,7 +339,7 @@ function resolveRemoteDesiredRelayUrl(params: Readonly<{
     filesDir: `${defaults.dataDir}/files`,
     dbDir: `${defaults.dataDir}/pglite`,
     databaseUrl: `file:${defaults.dataDir}/happier-server-light.sqlite`,
-    sqliteAutoMigrate: params.platform === 'darwin' ? '0' : '1',
+    sqliteAutoMigrate: resolveSelfHostSqliteAutoMigrateValue(),
     sqliteMigrationsDir: `${defaults.dataDir}/migrations/sqlite`,
   });
   const envText = mergeSelfHostServerEnvText({
@@ -420,7 +427,7 @@ function buildRemoteRelayRuntimeEnvText(params: Readonly<{
     dbDir,
     databaseUrl,
     nodeModulesPath: params.nodeModulesPath,
-    sqliteAutoMigrate: params.platform === 'darwin' ? '0' : '1',
+    sqliteAutoMigrate: resolveSelfHostSqliteAutoMigrateValue(),
     sqliteMigrationsDir: migrationsDir,
   });
   const envText = mergeSelfHostServerEnvText({
@@ -527,7 +534,7 @@ function wrapRemoteSystemdUserCommand(command: string): string {
   return `XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" DBUS_SESSION_BUS_ADDRESS="\${DBUS_SESSION_BUS_ADDRESS:-unix:path=\${XDG_RUNTIME_DIR}/bus}" ${command}`;
 }
 
-function parseSystemctlShowOutput(stdout: string): Readonly<{ unitFileState: string; activeState: string; subState: string }> {
+function parseSystemctlShowOutput(stdout: string): Readonly<{ unitFileState: string; activeState: string; subState: string; loadState: string }> {
   const lines = String(stdout ?? '').split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
   const map = new Map<string, string>();
   const rawValues: string[] = [];
@@ -548,7 +555,13 @@ function parseSystemctlShowOutput(stdout: string): Readonly<{ unitFileState: str
   const unitFileState = map.get('unitfilestate') ?? rawValues[0] ?? '';
   const activeState = map.get('activestate') ?? rawValues[1] ?? '';
   const subState = map.get('substate') ?? rawValues[2] ?? '';
-  return { unitFileState, activeState, subState };
+  const loadState = map.get('loadstate') ?? '';
+  return { unitFileState, activeState, subState, loadState };
+}
+
+function normalizeComparablePathKey(value: string | null | undefined): string | null {
+  const trimmed = String(value ?? '').trim().replace(/[\\/]+$/, '');
+  return trimmed || null;
 }
 
 function normalizeRemoteServiceSnapshot(params: Readonly<{
@@ -614,6 +627,218 @@ function resolveLaunchdPlistPath(label: string, system: boolean): string {
   return system
     ? `/Library/LaunchDaemons/${label}.plist`
     : `${resolveRemoteHomeDirForRuntime()}/Library/LaunchAgents/${label}.plist`;
+}
+
+function resolveSystemdUnitDefinitionPath(params: Readonly<{
+  backend: 'systemd-user' | 'systemd-system';
+  unitName: string;
+  homeDir: string;
+}>): string {
+  const filename = `${params.unitName}.service`;
+  if (params.backend === 'systemd-system') {
+    return join('/etc/systemd/system', filename);
+  }
+  return join(params.homeDir, '.config', 'systemd', 'user', filename);
+}
+
+function resolveLaunchdPlistDefinitionPath(params: Readonly<{
+  backend: 'launchd-user' | 'launchd-system';
+  label: string;
+  homeDir: string;
+}>): string {
+  const filename = `${params.label}.plist`;
+  if (params.backend === 'launchd-system') {
+    return join('/Library/LaunchDaemons', filename);
+  }
+  return join(params.homeDir, 'Library', 'LaunchAgents', filename);
+}
+
+function resolveWindowsWrapperDefinitionPath(params: Readonly<{
+  backend: 'schtasks-user' | 'schtasks-system';
+  label: string;
+  homeDir: string;
+}>): string {
+  if (params.backend === 'schtasks-system') {
+    return `C:\\ProgramData\\happier\\services\\${params.label}.ps1`;
+  }
+  return `${params.homeDir}\\.happier\\services\\${params.label}.ps1`;
+}
+
+function parseSystemdUnitWorkingDirectory(unitText: string): string | null {
+  const lines = String(unitText ?? '').split(/\r?\n/u);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+    if (!trimmed.toLowerCase().startsWith('workingdirectory=')) continue;
+    const value = trimmed.slice('WorkingDirectory='.length).trim();
+    return value || null;
+  }
+  return null;
+}
+
+function parseSystemdUnitEnvironmentText(unitText: string): string {
+  const entries: string[] = [];
+  for (const line of String(unitText ?? '').split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+    if (!trimmed.toLowerCase().startsWith('environment=')) continue;
+    const raw = trimmed.slice('Environment='.length).trim();
+    if (!raw) continue;
+    const unquoted = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')
+      ? raw.slice(1, -1)
+      : raw;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*=/u.test(unquoted)) continue;
+    entries.push(unquoted);
+  }
+  return entries.join('\n');
+}
+
+function xmlUnescape(value: string): string {
+  return String(value ?? '')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&gt;', '>')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&amp;', '&');
+}
+
+function parseLaunchdPlistWorkingDirectory(plistText: string): string | null {
+  const match = String(plistText ?? '').match(/<key>\s*WorkingDirectory\s*<\/key>\s*<string>([\s\S]*?)<\/string>/iu);
+  const value = match?.[1]?.trim();
+  return value ? xmlUnescape(value) : null;
+}
+
+function parseWindowsWrapperWorkingDirectory(wrapperText: string): string | null {
+  const match = String(wrapperText ?? '').match(/Set-Location\s+-LiteralPath\s+"((?:`.|[^"])*)"/iu);
+  const raw = match?.[1]?.trim();
+  if (!raw) return null;
+  return raw.replace(/`(["`])/gu, '$1') || null;
+}
+
+function parseServiceDefinitionWorkingDirectory(params: Readonly<{
+  backend: ServiceBackend;
+  definitionText: string;
+}>): string | null {
+  if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
+    return parseSystemdUnitWorkingDirectory(params.definitionText);
+  }
+  if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
+    return parseLaunchdPlistWorkingDirectory(params.definitionText);
+  }
+  if (params.backend === 'schtasks-user' || params.backend === 'schtasks-system') {
+    return parseWindowsWrapperWorkingDirectory(params.definitionText);
+  }
+  return null;
+}
+
+function resolveServiceDefinitionBaseUrl(params: Readonly<{
+  backend: ServiceBackend;
+  definitionText: string;
+  fallbackBaseUrl: string;
+}>): string | null {
+  if (params.backend !== 'systemd-user' && params.backend !== 'systemd-system') {
+    return null;
+  }
+  const envText = parseSystemdUnitEnvironmentText(params.definitionText);
+  if (!envText.trim()) return null;
+  return resolveConfiguredSelfHostBaseUrl({
+    fallbackBaseUrl: params.fallbackBaseUrl,
+    envText,
+  });
+}
+
+type LocalRelayStrandedLegacyState = Readonly<{
+  legacyInstallRoot: string;
+  currentInstallRoot: string;
+}>;
+
+async function readComparableFileHash(path: string): Promise<string | null> {
+  if (!existsSync(path)) return null;
+  const contents = await readFile(path).catch(() => null);
+  if (!contents) return null;
+  return createHash('sha256').update(contents).digest('hex');
+}
+
+function renderLocalRelayStrandedLegacyStateMessage(params: Readonly<{
+  channel: PublicReleaseRingId;
+  legacyInstallRoot: string;
+  currentInstallRoot: string;
+}>): string {
+  return `Detected older ${formatRelayChannelLabel(params.channel)} relay state at ${params.legacyInstallRoot} beside the current relay root ${params.currentInstallRoot}. `
+    + 'The two roots use different data secrets, so auth/session data may be split between them. '
+    + 'Automatic recovery is unsafe once both roots exist; inspect or restore the older root before reinstalling or reauthenticating this relay.';
+}
+
+function relayRuntimeStateMatchesRequestedLane(params: Readonly<{
+  state: Record<string, unknown>;
+  channel: PublicReleaseRingId;
+  mode: 'user' | 'system';
+}>): boolean {
+  const stateChannel = String(params.state.channel ?? '').trim();
+  const stateMode = String(params.state.mode ?? '').trim();
+  const channelMatches = stateChannel === params.channel
+    || (params.channel === 'publicdev' && stateChannel === 'dev');
+  const modeMatches = !stateMode || stateMode === params.mode;
+  return channelMatches && modeMatches;
+}
+
+async function detectLocalRelayStrandedLegacyState(params: Readonly<{
+  backend: ServiceBackend;
+  channel: PublicReleaseRingId;
+  defaults: RelayRuntimeDefaults;
+  currentBaseUrl: string;
+}>): Promise<LocalRelayStrandedLegacyState | null> {
+  if (params.channel === 'stable') return null;
+  if (params.backend !== 'systemd-user' && params.backend !== 'systemd-system') return null;
+
+  const legacyDefinitionPath = resolveSystemdUnitDefinitionPath({
+    backend: params.backend,
+    unitName: 'happier-server',
+    homeDir: homedir(),
+  });
+  if (!existsSync(legacyDefinitionPath)) return null;
+
+  const legacyText = await readFile(legacyDefinitionPath, 'utf8').catch(() => '');
+  if (!legacyText.trim()) return null;
+
+  const legacyInstallRoot = parseSystemdUnitWorkingDirectory(legacyText);
+  const legacyKey = normalizeComparablePathKey(legacyInstallRoot);
+  const currentKey = normalizeComparablePathKey(params.defaults.installRoot);
+  if (!legacyKey || !currentKey || legacyKey === currentKey) return null;
+  const resolvedLegacyInstallRoot = legacyKey;
+
+  const legacyBaseUrl = resolveServiceDefinitionBaseUrl({
+    backend: params.backend,
+    definitionText: legacyText,
+    fallbackBaseUrl: params.currentBaseUrl,
+  });
+  if (legacyBaseUrl !== params.currentBaseUrl) return null;
+
+  const legacyStatePath = join(resolvedLegacyInstallRoot, 'self-host-state.json');
+  if (existsSync(legacyStatePath)) {
+    const legacyStateText = await readFile(legacyStatePath, 'utf8').catch(() => '');
+    const legacyState = tryParseJsonObject(legacyStateText);
+    if (legacyState && !relayRuntimeStateMatchesRequestedLane({
+      state: legacyState,
+      channel: params.channel,
+      mode: params.defaults.mode,
+    })) {
+      return null;
+    }
+  }
+
+  const legacyDbPath = join(resolvedLegacyInstallRoot, 'data', 'happier-server-light.sqlite');
+  const currentDbPath = join(params.defaults.dataDir, 'happier-server-light.sqlite');
+  if (!existsSync(legacyDbPath) || !existsSync(currentDbPath)) return null;
+
+  const legacySecretHash = await readComparableFileHash(join(resolvedLegacyInstallRoot, 'data', 'handy-master-secret.txt'));
+  const currentSecretHash = await readComparableFileHash(join(params.defaults.dataDir, 'handy-master-secret.txt'));
+  if (!legacySecretHash || !currentSecretHash || legacySecretHash === currentSecretHash) return null;
+
+  return {
+    legacyInstallRoot: resolvedLegacyInstallRoot,
+    currentInstallRoot: params.defaults.installRoot,
+  };
 }
 
 function resolveRemoteServiceDefinitionPath(params: Readonly<{
@@ -752,6 +977,10 @@ async function installRemoteService(params: Readonly<{
   definitionPath: string;
   definitionContents: string;
   serviceName: string;
+  legacySystemdServiceNameToRemove?: string;
+  legacySystemdDefinitionPathToRemove?: string;
+  legacyLaunchdServiceNameToRemove?: string;
+  legacyLaunchdDefinitionPathToRemove?: string;
 }>): Promise<void> {
   const stageParent = `${resolveRemoteHomeDirForComponents()}/bootstrap-staging/relay-service-${Date.now()}`;
   const staged = await writeRemoteFilesViaScp({
@@ -780,6 +1009,18 @@ async function installRemoteService(params: Readonly<{
 
   if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
     const prefix = params.backend === 'systemd-user' ? '--user ' : '';
+    const legacyServiceName = String(params.legacySystemdServiceNameToRemove ?? '').trim();
+    const legacyDefinitionPath = String(params.legacySystemdDefinitionPathToRemove ?? '').trim();
+    if (legacyServiceName && legacyDefinitionPath) {
+      const legacySvc = `${legacyServiceName}.service`;
+      if (params.backend === 'systemd-user') {
+        installCommands.push(`${wrapRemoteSystemdUserCommand(`systemctl --user disable --now ${quoteRemoteShellArg(legacySvc)}`)} 2>/dev/null || true`);
+        installCommands.push(`rm -f ${quoteRemoteShellArg(legacyDefinitionPath)} 2>/dev/null || true`);
+      } else {
+        installCommands.push(`${privilegedPrefix}systemctl disable --now ${quoteRemoteShellArg(legacySvc)} 2>/dev/null || true`);
+        installCommands.push(`${privilegedPrefix}rm -f ${quoteRemoteShellArg(legacyDefinitionPath)} 2>/dev/null || true`);
+      }
+    }
     if (params.backend === 'systemd-user') {
       installCommands.push(wrapRemoteSystemdUserCommand('systemctl --user daemon-reload'));
       installCommands.push(wrapRemoteSystemdUserCommand(`systemctl --user enable ${quoteRemoteShellArg(`${params.serviceName}.service`)}`));
@@ -792,6 +1033,14 @@ async function installRemoteService(params: Readonly<{
       installCommands.push(`${privilegedPrefix}systemctl ${prefix}restart ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
     }
   } else if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
+    const legacyServiceName = String(params.legacyLaunchdServiceNameToRemove ?? '').trim();
+    const legacyDefinitionPath = String(params.legacyLaunchdDefinitionPathToRemove ?? '').trim();
+    if (legacyServiceName && legacyDefinitionPath) {
+      const legacyPlist = quoteRemoteShellArg(legacyDefinitionPath);
+      installCommands.push(`${privilegedPrefix}launchctl unload -w ${legacyPlist} 2>/dev/null || true`);
+      installCommands.push(`${privilegedPrefix}launchctl remove ${quoteRemoteShellArg(legacyServiceName)} 2>/dev/null || true`);
+      installCommands.push(`${privilegedPrefix}rm -f ${legacyPlist} 2>/dev/null || true`);
+    }
     const plist = quoteRemoteShellArg(remoteDefinitionPath);
     installCommands.push(`${privilegedPrefix}launchctl unload -w ${plist} 2>/dev/null || true`);
     installCommands.push(`${privilegedPrefix}launchctl load -w ${plist}`);
@@ -807,12 +1056,24 @@ async function installRemoteService(params: Readonly<{
     remoteCommand: installCommands.join('; '),
   });
   if (result.status !== 0) {
-    const stderr = String(result.stderr ?? '').trim();
-    if ((params.backend === 'systemd-user') && /failed to connect to bus/i.test(stderr)) {
-      throw new Error('Systemd user service is unavailable. Ensure the host has a user systemd session (e.g. enable lingering) or use system mode.');
-    }
-    throw new Error(result.stderr.trim() || 'Failed to install relay service');
+    throw mapRelayRuntimeServiceControlError({
+      backend: params.backend,
+      stderr: result.stderr,
+      fallbackMessage: 'Failed to install relay service',
+    });
   }
+}
+
+function mapRelayRuntimeServiceControlError(params: Readonly<{
+  backend: ServiceBackend;
+  stderr: string | null | undefined;
+  fallbackMessage: string;
+}>): Error {
+  const stderr = String(params.stderr ?? '').trim();
+  if (params.backend === 'systemd-user' && /failed to connect to bus/i.test(stderr)) {
+    return new Error('Systemd user service is unavailable. Ensure the host has a user systemd session (e.g. enable lingering) or use system mode.');
+  }
+  return new Error(stderr || params.fallbackMessage);
 }
 
 export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngine {
@@ -829,6 +1090,412 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       stdout: String(res.stdout ?? ''),
       stderr: `${String(res.stderr ?? '')}${res.error instanceof Error ? `\n${res.error.message}` : ''}`.trim(),
     };
+  };
+
+  const resolveLocalSystemdUnitOwnedByInstallRoot = async (params: Readonly<{
+    backend: 'systemd-user' | 'systemd-system';
+    unitName: string;
+    installRoot: string;
+  }>): Promise<boolean> => {
+    const unitPath = resolveSystemdUnitDefinitionPath({
+      backend: params.backend,
+      unitName: params.unitName,
+      homeDir: homedir(),
+    });
+    const unitText = existsSync(unitPath) ? await readFile(unitPath, 'utf8').catch(() => '') : '';
+    const workingDir = parseSystemdUnitWorkingDirectory(unitText);
+    const workingDirKey = normalizeComparablePathKey(workingDir);
+    const installRootKey = normalizeComparablePathKey(params.installRoot);
+    return Boolean(workingDirKey && installRootKey && workingDirKey === installRootKey);
+  };
+
+  const resolveLocalLaunchdPlistOwnedByInstallRoot = async (params: Readonly<{
+    backend: 'launchd-user' | 'launchd-system';
+    label: string;
+    installRoot: string;
+  }>): Promise<boolean> => {
+    const plistPath = resolveLaunchdPlistDefinitionPath({
+      backend: params.backend,
+      label: params.label,
+      homeDir: homedir(),
+    });
+    const plistText = existsSync(plistPath) ? await readFile(plistPath, 'utf8').catch(() => '') : '';
+    const workingDir = parseLaunchdPlistWorkingDirectory(plistText);
+    const workingDirKey = normalizeComparablePathKey(workingDir);
+    const installRootKey = normalizeComparablePathKey(params.installRoot);
+    return Boolean(workingDirKey && installRootKey && workingDirKey === installRootKey);
+  };
+
+  const materializeRemoteHomeDir = (remoteHomeDir: string, value: string): string => {
+    const raw = String(value ?? '');
+    if (!raw) return raw;
+    if (remoteHomeDir.startsWith('/') && raw.includes('$HOME')) {
+      return raw.replaceAll('$HOME', remoteHomeDir);
+    }
+    return raw;
+  };
+
+  const resolveRemoteSystemdUnitState = async (params: Readonly<{
+    ssh: SystemTaskSshConnectionConfig;
+    knownHostsMode: 'app' | 'system';
+    backend: 'systemd-user' | 'systemd-system';
+    unitName: string;
+  }>): Promise<Readonly<{ loadState: string; activeState: string }>> => {
+    const svc = `${params.unitName}.service`;
+    const remoteCommand = params.backend === 'systemd-user'
+      ? wrapRemoteSystemdUserCommand(`systemctl --user show ${quoteRemoteShellArg(svc)} --property=LoadState,ActiveState`)
+      : `systemctl show ${quoteRemoteShellArg(svc)} --property=LoadState,ActiveState`;
+    const result = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode: params.knownHostsMode,
+      remoteCommand,
+    }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
+    if (result.status !== 0) return { loadState: 'not-found', activeState: '' };
+    const parsed = parseSystemctlShowOutput(String(result.stdout ?? ''));
+    const loadState = parsed.loadState.trim().toLowerCase();
+    const activeState = parsed.activeState.trim().toLowerCase();
+    return { loadState: loadState || 'not-found', activeState };
+  };
+
+  const resolveRemoteSystemdUnitOwnedByInstallRoot = async (params: Readonly<{
+    ssh: SystemTaskSshConnectionConfig;
+    knownHostsMode: 'app' | 'system';
+    backend: 'systemd-user' | 'systemd-system';
+    unitName: string;
+    remoteHomeDir: string;
+    installRoot: string;
+  }>): Promise<boolean> => {
+    const unitPath = resolveRemoteServiceDefinitionPath({
+      backend: params.backend,
+      label: params.unitName,
+      remoteHomeDir: params.remoteHomeDir,
+    });
+    const privilegedPrefix = params.backend === 'systemd-system' ? 'sudo -n ' : '';
+    const unitText = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode: params.knownHostsMode,
+      remoteCommand: buildRemoteReadTextFileCommand({ path: unitPath, privilegedPrefix }),
+    }).then((result) => String(result.stdout ?? '')).catch(() => '');
+    const workingDir = parseSystemdUnitWorkingDirectory(unitText);
+    const workingDirKey = normalizeComparablePathKey(materializeRemoteHomeDir(params.remoteHomeDir, String(workingDir ?? '')));
+    const installRootKey = normalizeComparablePathKey(materializeRemoteHomeDir(params.remoteHomeDir, params.installRoot));
+    return Boolean(workingDirKey && installRootKey && workingDirKey === installRootKey);
+  };
+
+  const resolveRemoteLaunchdServiceState = async (params: Readonly<{
+    ssh: SystemTaskSshConnectionConfig;
+    knownHostsMode: 'app' | 'system';
+    backend: 'launchd-user' | 'launchd-system';
+    label: string;
+  }>): Promise<Readonly<{ loadState: string; activeState: string }>> => {
+    const sudoSetup = params.backend === 'launchd-system'
+      ? "SUDO_PREFIX=''; if [ \"$(id -u)\" -ne 0 ]; then SUDO_PREFIX=\"sudo -n \"; fi; "
+      : '';
+    const privilegedPrefix = params.backend === 'launchd-system' ? '${SUDO_PREFIX}' : '';
+    const result = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode: params.knownHostsMode,
+      remoteCommand: `${sudoSetup}${privilegedPrefix}launchctl list ${quoteRemoteShellArg(params.label)}`,
+    }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
+    return result.status === 0
+      ? { loadState: 'loaded', activeState: 'active' }
+      : { loadState: 'not-found', activeState: '' };
+  };
+
+  const resolveRemoteLaunchdPlistOwnedByInstallRoot = async (params: Readonly<{
+    ssh: SystemTaskSshConnectionConfig;
+    knownHostsMode: 'app' | 'system';
+    backend: 'launchd-user' | 'launchd-system';
+    label: string;
+    remoteHomeDir: string;
+    installRoot: string;
+  }>): Promise<boolean> => {
+    const plistPath = resolveRemoteServiceDefinitionPath({
+      backend: params.backend,
+      label: params.label,
+      remoteHomeDir: params.remoteHomeDir,
+    });
+    const privilegedPrefix = params.backend === 'launchd-system' ? 'sudo -n ' : '';
+    const plistText = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode: params.knownHostsMode,
+      remoteCommand: buildRemoteReadTextFileCommand({ path: plistPath, privilegedPrefix }),
+    }).then((result) => String(result.stdout ?? '')).catch(() => '');
+    const workingDir = parseLaunchdPlistWorkingDirectory(plistText);
+    const workingDirKey = normalizeComparablePathKey(materializeRemoteHomeDir(params.remoteHomeDir, String(workingDir ?? '')));
+    const installRootKey = normalizeComparablePathKey(materializeRemoteHomeDir(params.remoteHomeDir, params.installRoot));
+    return Boolean(workingDirKey && installRootKey && workingDirKey === installRootKey);
+  };
+
+  const resolveRemoteEffectiveServiceName = async (params: Readonly<{
+    ssh: SystemTaskSshConnectionConfig;
+    knownHostsMode: 'app' | 'system';
+    backend: ServiceBackend;
+    channel: PublicReleaseRingId;
+    remoteHomeDir: string;
+    defaults: RelayRuntimeDefaults;
+  }>): Promise<string> => {
+    if (
+      params.backend !== 'systemd-user'
+      && params.backend !== 'systemd-system'
+      && params.backend !== 'launchd-user'
+      && params.backend !== 'launchd-system'
+    ) {
+      return params.defaults.serviceName;
+    }
+    if (params.channel === 'stable') {
+      return params.defaults.serviceName;
+    }
+
+    const legacyUnitName = 'happier-server';
+    const legacyOwnedByInstallRoot = params.backend === 'systemd-user' || params.backend === 'systemd-system'
+      ? await resolveRemoteSystemdUnitOwnedByInstallRoot({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        unitName: legacyUnitName,
+        remoteHomeDir: params.remoteHomeDir,
+        installRoot: params.defaults.installRoot,
+      }).catch(() => false)
+      : await resolveRemoteLaunchdPlistOwnedByInstallRoot({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        label: legacyUnitName,
+        remoteHomeDir: params.remoteHomeDir,
+        installRoot: params.defaults.installRoot,
+      }).catch(() => false);
+    if (!legacyOwnedByInstallRoot) {
+      return params.defaults.serviceName;
+    }
+
+    const canonicalState = params.backend === 'systemd-user' || params.backend === 'systemd-system'
+      ? await resolveRemoteSystemdUnitState({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        unitName: params.defaults.serviceName,
+      }).catch(() => ({ loadState: 'not-found', activeState: '' }))
+      : await resolveRemoteLaunchdServiceState({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        label: params.defaults.serviceName,
+      }).catch(() => ({ loadState: 'not-found', activeState: '' }));
+    if (canonicalState.loadState === 'not-found') {
+      return legacyUnitName;
+    }
+
+    const canonicalOwnedByInstallRoot = params.backend === 'systemd-user' || params.backend === 'systemd-system'
+      ? await resolveRemoteSystemdUnitOwnedByInstallRoot({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        unitName: params.defaults.serviceName,
+        remoteHomeDir: params.remoteHomeDir,
+        installRoot: params.defaults.installRoot,
+      }).catch(() => false)
+      : await resolveRemoteLaunchdPlistOwnedByInstallRoot({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        label: params.defaults.serviceName,
+        remoteHomeDir: params.remoteHomeDir,
+        installRoot: params.defaults.installRoot,
+      }).catch(() => false);
+    if (!canonicalOwnedByInstallRoot) {
+      return legacyUnitName;
+    }
+
+    const legacyState = params.backend === 'systemd-user' || params.backend === 'systemd-system'
+      ? await resolveRemoteSystemdUnitState({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        unitName: legacyUnitName,
+      }).catch(() => ({ loadState: 'not-found', activeState: '' }))
+      : await resolveRemoteLaunchdServiceState({
+        ssh: params.ssh,
+        knownHostsMode: params.knownHostsMode,
+        backend: params.backend,
+        label: legacyUnitName,
+      }).catch(() => ({ loadState: 'not-found', activeState: '' }));
+    const canonicalActive = canonicalState.activeState === 'active';
+    const legacyActive = legacyState.activeState === 'active';
+    if (canonicalActive !== legacyActive) {
+      return legacyActive ? legacyUnitName : params.defaults.serviceName;
+    }
+
+    return params.defaults.serviceName;
+  };
+
+  const resolveLocalSystemdUnitState = (params: Readonly<{
+    backend: 'systemd-user' | 'systemd-system';
+    unitName: string;
+  }>): Readonly<{ loadState: string; activeState: string; enabledState: string }> => {
+    const prefix = params.backend === 'systemd-user' ? ['--user'] : [];
+    const result = runLocalText('systemctl', [
+      ...prefix,
+      'show',
+      `${params.unitName}.service`,
+      '--property=UnitFileState,ActiveState,SubState,LoadState',
+    ]);
+    if (result.status !== 0) {
+      return { loadState: 'not-found', activeState: '', enabledState: '' };
+    }
+    const parsed = parseSystemctlShowOutput(result.stdout);
+    return {
+      loadState: parsed.loadState.trim().toLowerCase() || 'not-found',
+      activeState: parsed.activeState.trim().toLowerCase(),
+      enabledState: parsed.unitFileState.trim().toLowerCase(),
+    };
+  };
+
+  const resolveLocalLaunchdServiceState = (params: Readonly<{
+    backend: 'launchd-user' | 'launchd-system';
+    label: string;
+  }>): Readonly<{ loadState: string; activeState: string; enabledState: string }> => {
+    const result = runLocalText('launchctl', ['list', params.label]);
+    return result.status === 0
+      ? { loadState: 'loaded', activeState: 'active', enabledState: 'enabled' }
+      : { loadState: 'not-found', activeState: '', enabledState: '' };
+  };
+
+  const resolveLocalWindowsScheduledTaskState = (params: Readonly<{
+    label: string;
+  }>): Readonly<{ loadState: string; activeState: string; enabledState: string }> => {
+    const result = runLocalText('schtasks', ['/Query', '/TN', `Happier\\${params.label}`, '/FO', 'LIST', '/V']);
+    const powerShellStatus = runLocalText('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      buildReadWindowsScheduledTaskStatusPowerShellCommand({
+        taskName: params.label,
+      }),
+    ]);
+    const parsedPowerShellStatus = powerShellStatus.status === 0
+      ? parseWindowsScheduledTaskStatusPowerShellJson(powerShellStatus.stdout)
+      : null;
+    if (parsedPowerShellStatus) {
+      return parsedPowerShellStatus.exists
+        ? {
+            loadState: 'loaded',
+            activeState: parsedPowerShellStatus.active ? 'active' : 'inactive',
+            enabledState: parsedPowerShellStatus.enabled ? 'enabled' : 'disabled',
+          }
+        : { loadState: 'not-found', activeState: '', enabledState: '' };
+    }
+    if (result.status !== 0) {
+      return { loadState: 'not-found', activeState: '', enabledState: '' };
+    }
+    const output = `${result.stdout}\n${result.stderr}`;
+    return {
+      loadState: 'loaded',
+      activeState: /Status:\s*Running/i.test(output) ? 'active' : 'inactive',
+      enabledState: /Scheduled Task State:\s*Enabled/i.test(output) ? 'enabled' : 'disabled',
+    };
+  };
+
+  const resolveLocalServiceOwnedByInstallRoot = async (params: Readonly<{
+    backend: ServiceBackend;
+    label: string;
+    installRoot: string;
+  }>): Promise<boolean> => {
+    if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
+      return resolveLocalSystemdUnitOwnedByInstallRoot({
+        backend: params.backend,
+        unitName: params.label,
+        installRoot: params.installRoot,
+      });
+    }
+    if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
+      return resolveLocalLaunchdPlistOwnedByInstallRoot({
+        backend: params.backend,
+        label: params.label,
+        installRoot: params.installRoot,
+      });
+    }
+    if (params.backend === 'schtasks-user' || params.backend === 'schtasks-system') {
+      const definitionPath = resolveWindowsWrapperDefinitionPath({
+        backend: params.backend,
+        label: params.label,
+        homeDir: homedir(),
+      });
+      const definitionText = existsSync(definitionPath) ? await readFile(definitionPath, 'utf8').catch(() => '') : '';
+      const workingDir = parseWindowsWrapperWorkingDirectory(definitionText);
+      const workingDirKey = normalizeComparablePathKey(workingDir);
+      const installRootKey = normalizeComparablePathKey(params.installRoot);
+      return Boolean(workingDirKey && installRootKey && workingDirKey === installRootKey);
+    }
+    return false;
+  };
+
+  const resolveLocalEffectiveServiceName = async (params: Readonly<{
+    backend: ServiceBackend;
+    channel: PublicReleaseRingId;
+    defaults: RelayRuntimeDefaults;
+  }>): Promise<string> => {
+    if (params.channel === 'stable') {
+      return params.defaults.serviceName;
+    }
+    if (
+      params.backend !== 'systemd-user'
+      && params.backend !== 'systemd-system'
+      && params.backend !== 'launchd-user'
+      && params.backend !== 'launchd-system'
+      && params.backend !== 'schtasks-user'
+      && params.backend !== 'schtasks-system'
+    ) {
+      return params.defaults.serviceName;
+    }
+
+    const legacyUnitName = 'happier-server';
+    const legacyOwnedByInstallRoot = await resolveLocalServiceOwnedByInstallRoot({
+      backend: params.backend,
+      label: legacyUnitName,
+      installRoot: params.defaults.installRoot,
+    }).catch(() => false);
+    if (!legacyOwnedByInstallRoot) {
+      return params.defaults.serviceName;
+    }
+
+    const readState = (label: string) => {
+      if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
+        return resolveLocalSystemdUnitState({
+          backend: params.backend,
+          unitName: label,
+        });
+      }
+      if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
+        return resolveLocalLaunchdServiceState({
+          backend: params.backend,
+          label,
+        });
+      }
+      return resolveLocalWindowsScheduledTaskState({ label });
+    };
+
+    const canonicalState = readState(params.defaults.serviceName);
+    if (canonicalState.loadState === 'not-found') {
+      return legacyUnitName;
+    }
+
+    const canonicalOwnedByInstallRoot = await resolveLocalServiceOwnedByInstallRoot({
+      backend: params.backend,
+      label: params.defaults.serviceName,
+      installRoot: params.defaults.installRoot,
+    }).catch(() => false);
+    if (!canonicalOwnedByInstallRoot) {
+      return legacyUnitName;
+    }
+
+    const legacyState = readState(legacyUnitName);
+    const canonicalActive = canonicalState.activeState === 'active';
+    const legacyActive = legacyState.activeState === 'active';
+    if (canonicalActive !== legacyActive) {
+      return legacyActive ? legacyUnitName : params.defaults.serviceName;
+    }
+
+    return params.defaults.serviceName;
   };
 
   async function readLocalStatus(parsed: RelayRuntimeTaskParams): Promise<RelayRuntimeStatusSnapshot> {
@@ -851,35 +1518,43 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       platform: process.platform,
       mode,
     }) as ServiceBackend;
+    const effectiveServiceName = await resolveLocalEffectiveServiceName({
+      backend,
+      channel,
+      defaults,
+    });
 
-    const service = (() => {
+    const service = await (async () => {
       if (backend === 'systemd-user' || backend === 'systemd-system') {
-        const prefix = backend === 'systemd-user' ? ['--user'] : [];
-        const result = runLocalText('systemctl', [...prefix, 'show', `${defaults.serviceName}.service`, '--property=UnitFileState,ActiveState,SubState']);
-        if (result.status !== 0) {
-          return { enabled: null, active: null };
-        }
-        const { unitFileState, activeState } = parseSystemctlShowOutput(result.stdout);
+        const snapshot = resolveLocalSystemdUnitState({
+          backend,
+          unitName: effectiveServiceName,
+        });
+        if (snapshot.loadState === 'not-found') return { enabled: null, active: null };
         return {
-          enabled: unitFileState.trim().toLowerCase() === 'enabled',
-          active: activeState.trim().toLowerCase() === 'active',
+          enabled: snapshot.enabledState === 'enabled',
+          active: snapshot.activeState === 'active',
         };
       }
       if (backend === 'launchd-user' || backend === 'launchd-system') {
-        const result = runLocalText('launchctl', ['list', defaults.serviceName]);
-        if (result.status !== 0) {
+        const snapshot = resolveLocalLaunchdServiceState({
+          backend,
+          label: effectiveServiceName,
+        });
+        if (snapshot.loadState === 'not-found') {
           return { enabled: null, active: null };
         }
         return { enabled: true, active: true };
       }
-      const result = runLocalText('schtasks', ['/Query', '/TN', `Happier\\${defaults.serviceName}`, '/FO', 'LIST', '/V']);
-      if (result.status !== 0) {
+      const snapshot = resolveLocalWindowsScheduledTaskState({
+        label: effectiveServiceName,
+      });
+      if (snapshot.loadState === 'not-found') {
         return { enabled: null, active: null };
       }
-      const output = `${result.stdout}\n${result.stderr}`;
       return {
-        enabled: /Scheduled Task State:\s*Enabled/i.test(output),
-        active: /Status:\s*Running/i.test(output),
+        enabled: snapshot.enabledState === 'enabled',
+        active: snapshot.activeState === 'active',
       };
     })();
     const installed = Boolean(version) || existsSync(installBinaryPath);
@@ -898,6 +1573,12 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       : service.active === null
         ? null
         : false;
+    const strandedLegacyState = await detectLocalRelayStrandedLegacyState({
+      backend,
+      channel,
+      defaults,
+      currentBaseUrl: baseUrl,
+    });
 
     return {
       installed,
@@ -905,6 +1586,13 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       service,
       baseUrl,
       healthy,
+      ...(strandedLegacyState ? {
+        warnings: [renderLocalRelayStrandedLegacyStateMessage({
+          channel,
+          legacyInstallRoot: strandedLegacyState.legacyInstallRoot,
+          currentInstallRoot: strandedLegacyState.currentInstallRoot,
+        })],
+      } : {}),
     };
   }
 
@@ -916,12 +1604,110 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       channel,
       envOverrides: parsed.env,
     });
+    const defaults = resolveRelayRuntimeDefaults({
+      platform: process.platform,
+      mode,
+      channel,
+      homeDir: homedir(),
+    });
+    const backend = resolveServiceBackend({ platform: process.platform, mode }) as ServiceBackend;
+    const shouldTreatStableLaneAsLegacyUnsuffixedInstall = await shouldMigrateLegacyUnsuffixedRelayRuntimeInstallRoot({
+      platform: process.platform,
+      mode,
+      channel,
+      homeDir: homedir(),
+    });
+    const ignoreStableLaneConflict = await (async () => {
+      if (channel === 'stable') return false;
+      if (
+        backend !== 'systemd-user'
+        && backend !== 'systemd-system'
+        && backend !== 'launchd-user'
+        && backend !== 'launchd-system'
+      ) return false;
+      const legacyUnitName = 'happier-server';
+      const legacyDefinitionPath = backend === 'systemd-user' || backend === 'systemd-system'
+        ? resolveSystemdUnitDefinitionPath({ backend, unitName: legacyUnitName, homeDir: homedir() })
+        : resolveLaunchdPlistDefinitionPath({ backend, label: legacyUnitName, homeDir: homedir() });
+      const legacyText = existsSync(legacyDefinitionPath) ? await readFile(legacyDefinitionPath, 'utf8').catch(() => '') : '';
+      if (!legacyText.trim()) return false;
+      const legacyWorkingDir = parseServiceDefinitionWorkingDirectory({ backend, definitionText: legacyText });
+      const legacyWorkingDirKey = normalizeComparablePathKey(legacyWorkingDir);
+      const installRootKey = normalizeComparablePathKey(defaults.installRoot);
+      return Boolean(legacyWorkingDirKey && installRootKey && legacyWorkingDirKey === installRootKey);
+    })();
+    await (async () => {
+      if (channel === 'stable') return;
+      if (backend !== 'systemd-user' && backend !== 'systemd-system') return;
+      const legacyUnitName = 'happier-server';
+      const legacyDefinitionPath = resolveSystemdUnitDefinitionPath({
+        backend,
+        unitName: legacyUnitName,
+        homeDir: homedir(),
+      });
+      if (!existsSync(legacyDefinitionPath)) return;
+      const legacyText = await readFile(legacyDefinitionPath, 'utf8').catch(() => '');
+      if (!legacyText.trim()) return;
+
+      const legacyWorkingDir = parseServiceDefinitionWorkingDirectory({ backend, definitionText: legacyText });
+      const legacyWorkingDirKey = normalizeComparablePathKey(legacyWorkingDir);
+      const installRootKey = normalizeComparablePathKey(defaults.installRoot);
+      if (legacyWorkingDirKey && installRootKey && legacyWorkingDirKey === installRootKey) return;
+
+      const prefix = backend === 'systemd-user' ? ['--user'] : [];
+      const legacyShow = runLocalText('systemctl', [
+        ...prefix,
+        'show',
+        `${legacyUnitName}.service`,
+        '--property=ActiveState,SubState,LoadState',
+      ]);
+      const legacyState = legacyShow.status === 0
+        ? parseSystemctlShowOutput(legacyShow.stdout)
+        : null;
+      const legacyLoaded = legacyState?.loadState.trim().toLowerCase() === 'loaded';
+      const legacyActive = legacyState?.activeState.trim().toLowerCase() === 'active';
+      if (!legacyLoaded || !legacyActive) return;
+
+      const legacyBaseUrl = resolveServiceDefinitionBaseUrl({
+        backend,
+        definitionText: legacyText,
+        fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+      });
+      if (legacyBaseUrl !== desiredRelayUrl) return;
+
+      throw new Error(
+        `An active legacy happier-server.service is already using ${desiredRelayUrl} from ${legacyWorkingDir ?? 'an unknown root'}. `
+        + `Stop or uninstall that legacy service before installing the ${formatRelayChannelLabel(channel)} relay.`,
+      );
+    })();
+    const strandedLegacyState = await detectLocalRelayStrandedLegacyState({
+      backend,
+      channel,
+      defaults,
+      currentBaseUrl: desiredRelayUrl,
+    });
+    if (strandedLegacyState) {
+      throw new Error(renderLocalRelayStrandedLegacyStateMessage({
+        channel,
+        legacyInstallRoot: strandedLegacyState.legacyInstallRoot,
+        currentInstallRoot: strandedLegacyState.currentInstallRoot,
+      }));
+    }
     for (const otherChannel of listOtherRelayChannels(channel)) {
+      if (otherChannel === 'stable' && shouldTreatStableLaneAsLegacyUnsuffixedInstall) continue;
+      if (otherChannel === 'stable' && ignoreStableLaneConflict) continue;
       const otherStatus = await readLocalStatus({
         ...parsed,
         channel: formatRelayChannelLabel(otherChannel),
       });
-      if (otherStatus.installed && otherStatus.baseUrl === desiredRelayUrl) {
+      const otherLaneOccupiesDesiredUrl =
+        otherStatus.baseUrl === desiredRelayUrl
+        && (
+          otherStatus.installed
+          || otherStatus.service.active === true
+          || otherStatus.service.enabled === true
+        );
+      if (otherLaneOccupiesDesiredUrl) {
         throw createRelayLaneConflictError({
           requestedChannel: channel,
           conflictingChannel: otherChannel,
@@ -940,6 +1726,43 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       : null;
     const policy = deps.localInstallPolicy ?? {};
 
+    await (async () => {
+      if (channel === 'stable') return undefined;
+      if (backend !== 'systemd-user' && backend !== 'systemd-system' && backend !== 'launchd-user' && backend !== 'launchd-system') return undefined;
+
+      const legacyUnitName = 'happier-server';
+      const legacyDefinitionPath = backend === 'systemd-user' || backend === 'systemd-system'
+        ? resolveSystemdUnitDefinitionPath({ backend, unitName: legacyUnitName, homeDir: homedir() })
+        : resolveLaunchdPlistDefinitionPath({ backend, label: legacyUnitName, homeDir: homedir() });
+      if (!existsSync(legacyDefinitionPath)) return undefined;
+
+      const legacyText = await readFile(legacyDefinitionPath, 'utf8').catch(() => '');
+      const legacyWorkingDir = parseServiceDefinitionWorkingDirectory({ backend, definitionText: legacyText });
+      const legacyOwnedByInstallRoot =
+        normalizeComparablePathKey(legacyWorkingDir) !== null
+        && normalizeComparablePathKey(legacyWorkingDir) === normalizeComparablePathKey(defaults.installRoot);
+      if (!legacyOwnedByInstallRoot) return undefined;
+
+      if (backend === 'systemd-user' || backend === 'systemd-system') {
+        const prefix = backend === 'systemd-user' ? ['--user'] : [];
+        if (policy.runServiceCommands !== false) {
+          runLocalText('systemctl', [...prefix, 'disable', '--now', `${legacyUnitName}.service`]);
+        }
+        await rm(legacyDefinitionPath, { force: true }).catch(() => undefined);
+        if (policy.runServiceCommands !== false) {
+          runLocalText('systemctl', [...prefix, 'daemon-reload']);
+        }
+        return undefined;
+      }
+
+      if (policy.runServiceCommands !== false) {
+        runLocalText('launchctl', ['unload', '-w', legacyDefinitionPath]);
+        runLocalText('launchctl', ['remove', legacyUnitName]);
+      }
+      await rm(legacyDefinitionPath, { force: true }).catch(() => undefined);
+      return undefined;
+    })();
+
     const local = await installOrUpdateRelayRuntimeLocal({
       serverBinaryPath,
       channel,
@@ -951,7 +1774,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     });
 
     return {
-      relayUrl: String(local.baseUrl ?? '').trim() || `http://127.0.0.1:${resolveRelayRuntimeDefaults({ mode, channel, homeDir: homedir() }).serverPort}`,
+      relayUrl: String(local.baseUrl ?? '').trim() || `http://127.0.0.1:${defaults.serverPort}`,
       mode,
     };
   }
@@ -1031,6 +1854,8 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const mode = normalizeMode(params.parsed.mode);
     const channel = normalizeChannel(params.parsed.channel);
     const defaults = resolveRelayDefaultsForRemote({ platform, channel, mode });
+    const remoteHomeDir = await resolveRemoteUserHomeDir(deps, { ssh: params.ssh, knownHostsMode })
+      ?? resolveRemoteHomeDirForRuntime();
     const statePath = `${defaults.installRoot}/self-host-state.json`;
     const envPath = `${defaults.configDir}/server.env`;
 
@@ -1043,10 +1868,18 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const version = typeof state?.version === 'string' ? state.version : null;
 
     const backend = resolveServiceBackend({ platform, mode });
+    const serviceName = await resolveRemoteEffectiveServiceName({
+      ssh: params.ssh,
+      knownHostsMode,
+      backend,
+      channel,
+      remoteHomeDir,
+      defaults,
+    });
     const serviceResult = await deps.runRemoteText({
       ssh: params.ssh,
       knownHostsMode,
-      remoteCommand: buildRemoteServiceStatusCommand({ backend, serviceName: defaults.serviceName }),
+      remoteCommand: buildRemoteServiceStatusCommand({ backend, serviceName }),
     }).catch((error: unknown) => ({
       status: 1,
       stdout: '',
@@ -1125,7 +1958,45 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       existingEnvText,
       envOverrides: params.parsed.env,
     });
+    const legacyServiceNameToRemove = await (async (): Promise<string | undefined> => {
+      if (channel === 'stable') return undefined;
+      if (
+        backend !== 'systemd-user'
+        && backend !== 'systemd-system'
+        && backend !== 'launchd-user'
+        && backend !== 'launchd-system'
+      ) return undefined;
+      const legacyUnitName = 'happier-server';
+      const legacyOwnedByInstallRoot = backend === 'systemd-user' || backend === 'systemd-system'
+        ? await resolveRemoteSystemdUnitOwnedByInstallRoot({
+          ssh: params.ssh,
+          knownHostsMode,
+          backend,
+          unitName: legacyUnitName,
+          remoteHomeDir,
+          installRoot: defaults.installRoot,
+        }).catch(() => false)
+        : await resolveRemoteLaunchdPlistOwnedByInstallRoot({
+          ssh: params.ssh,
+          knownHostsMode,
+          backend,
+          label: legacyUnitName,
+          remoteHomeDir,
+          installRoot: defaults.installRoot,
+        }).catch(() => false);
+      return legacyOwnedByInstallRoot ? legacyUnitName : undefined;
+    })();
+    const ignoreStableLaneConflict =
+      channel !== 'stable'
+      && (
+        backend === 'systemd-user'
+        || backend === 'systemd-system'
+        || backend === 'launchd-user'
+        || backend === 'launchd-system'
+      )
+      && legacyServiceNameToRemove === 'happier-server';
     for (const otherChannel of listOtherRelayChannels(channel)) {
+      if (otherChannel === 'stable' && ignoreStableLaneConflict) continue;
       const otherStatus = await readRemoteStatus({
         parsed: {
           ...params.parsed,
@@ -1133,7 +2004,14 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
         },
         ssh: params.ssh,
       });
-      if (otherStatus.installed && otherStatus.baseUrl === desiredRelayUrl) {
+      const otherLaneOccupiesDesiredUrl =
+        otherStatus.baseUrl === desiredRelayUrl
+        && (
+          otherStatus.installed
+          || otherStatus.service.active === true
+          || otherStatus.service.enabled === true
+        );
+      if (otherLaneOccupiesDesiredUrl) {
         throw createRelayLaneConflictError({
           requestedChannel: channel,
           conflictingChannel: otherChannel,
@@ -1180,6 +2058,28 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       ? `${serverBinDir}/node_modules`
       : '').catch(() => '');
 
+    const effectiveServiceName = defaults.serviceName;
+    const legacySystemdServiceNameToRemove = legacyServiceNameToRemove && (backend === 'systemd-user' || backend === 'systemd-system')
+      ? legacyServiceNameToRemove
+      : undefined;
+    const legacySystemdDefinitionPathToRemove = legacySystemdServiceNameToRemove
+      ? resolveRemoteServiceDefinitionPath({
+        backend,
+        label: legacySystemdServiceNameToRemove,
+        remoteHomeDir,
+      })
+      : undefined;
+    const legacyLaunchdServiceNameToRemove = legacyServiceNameToRemove && (backend === 'launchd-user' || backend === 'launchd-system')
+      ? legacyServiceNameToRemove
+      : undefined;
+    const legacyLaunchdDefinitionPathToRemove = legacyLaunchdServiceNameToRemove
+      ? resolveRemoteServiceDefinitionPath({
+        backend,
+        label: legacyLaunchdServiceNameToRemove,
+        remoteHomeDir,
+      })
+      : undefined;
+
     const renderedEnv = buildRemoteRelayRuntimeEnvText({
       platform,
       arch: target.arch,
@@ -1191,8 +2091,8 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     });
 
     const serviceSpec: ServiceSpec = {
-      label: defaults.serviceName,
-      description: `Happier Relay Runtime (${defaults.serviceName})`,
+      label: effectiveServiceName,
+      description: `Happier Relay Runtime (${effectiveServiceName})`,
       programArgs: [installServerBinaryPath],
       workingDirectory: defaults.installRoot,
       env: renderedEnv.parsed,
@@ -1275,7 +2175,11 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       backend,
       definitionPath,
       definitionContents,
-      serviceName: defaults.serviceName,
+      serviceName: effectiveServiceName,
+      legacySystemdServiceNameToRemove,
+      legacySystemdDefinitionPathToRemove,
+      legacyLaunchdServiceNameToRemove,
+      legacyLaunchdDefinitionPathToRemove,
     });
 
     const portRaw = renderedEnv.parsed.PORT;
@@ -1433,7 +2337,11 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
           homeDir: homedir(),
         });
         const backend = resolveServiceBackend({ platform: process.platform, mode });
-        const serviceName = defaults.serviceName;
+        const serviceName = await resolveLocalEffectiveServiceName({
+          backend,
+          channel,
+          defaults,
+        });
         const ensureLocalRelayHealthy = async (): Promise<void> => {
           if (parsed.action !== 'start' && parsed.action !== 'restart') {
             return;
@@ -1455,7 +2363,11 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
           const prefix = backend === 'systemd-user' ? ['--user'] : [];
           const result = runLocalText('systemctl', [...prefix, parsed.action, `${serviceName}.service`]);
           if (result.status !== 0) {
-            throw new Error(result.stderr.trim() || `Failed to ${parsed.action} relay runtime.`);
+            throw mapRelayRuntimeServiceControlError({
+              backend,
+              stderr: result.stderr,
+              fallbackMessage: `Failed to ${parsed.action} relay runtime.`,
+            });
           }
           await ensureLocalRelayHealthy();
           return;

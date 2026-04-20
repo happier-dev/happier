@@ -26,6 +26,8 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
         'HAPPIER_SERVER_URL',
         'HAPPIER_PUBLIC_SERVER_URL',
         'HAPPIER_WEBAPP_URL',
+        'HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS',
+        'HAPPIER_DAEMON_START_WAIT_POLL_MS',
     ]);
 
     afterEach(() => {
@@ -130,17 +132,30 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
                 HAPPIER_SERVER_URL: 'https://cloud.example.test',
                 HAPPIER_PUBLIC_SERVER_URL: 'https://cloud.example.test',
                 HAPPIER_WEBAPP_URL: 'https://cloud.example.test',
+                HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '50',
+                HAPPIER_DAEMON_START_WAIT_POLL_MS: '5',
             });
             vi.resetModules();
 
-            const [{ ensureDaemonRunningForSessionCommand }, { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, controlClient] = await Promise.all([
-                import('@/daemon/ensureDaemon'),
-                import('@/daemon/service/cli'),
-                import('@/daemon/controlClient'),
-            ]);
-            vi.spyOn(controlClient, 'isDaemonRunningCurrentlyInstalledHappyVersion')
+            // This test is about "autostart when no current relay owner exists", not about daemon-state
+            // fallback discovery. Stub the control client inspection to avoid scanning a developer's real
+            // servers dir if configuration was loaded before the test's env patch.
+            const isDaemonRunningMock = vi.fn()
                 .mockResolvedValueOnce(false)
                 .mockResolvedValueOnce(true);
+            vi.doMock('@/daemon/controlClient', async (importOriginal) => {
+                const actual = await importOriginal<typeof import('@/daemon/controlClient')>();
+                return {
+                    ...actual,
+                    inspectDaemonRunningStateAndCleanupStaleState: vi.fn(async () => ({ status: 'not-running' as const })),
+                    isDaemonRunningCurrentlyInstalledHappyVersion: isDaemonRunningMock,
+                };
+            });
+
+            const [{ ensureDaemonRunningForSessionCommand }, { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }] = await Promise.all([
+                import('@/daemon/ensureDaemon'),
+                import('@/daemon/service/cli'),
+            ]);
 
             const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
             const paths = resolveDaemonServicePaths(runtime);

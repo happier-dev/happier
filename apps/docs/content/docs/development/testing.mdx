@@ -185,6 +185,13 @@ Repeat/chaos reliability suites in `packages/tests`.
 yarn test:stress
 ```
 
+Target matrix:
+- `light`: boots the canonical local `server-light` process through the shared process testkit.
+- `full-compose`: boots a generated Compose topology with Postgres, Redis, Minio, scaled API/worker services, and an Nginx gateway.
+- `external`: attaches to `HAPPIER_STRESS_BASE_URL` and drives load against an already running target.
+
+Use `HAPPIER_STRESS_TARGET_MODE=light|full-compose|external` to select the mode. `packages/tests/README.md` is the canonical source for the full env surface, artifacts, and per-mode notes.
+
 ### 7) Test governance
 
 Repo-level governance checks for test file naming/lane placement and feature-tag validity.

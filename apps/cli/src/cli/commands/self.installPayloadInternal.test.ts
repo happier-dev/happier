@@ -6,6 +6,7 @@ const { installVersionedPayloadMock } = vi.hoisted(() => ({
   installVersionedPayloadMock: vi.fn(async () => ({
     currentVersionId: '1.2.3' as string,
     previousVersionId: null as string | null,
+    hadLegacyCurrentInstallWithoutVersionMarkers: false,
   })),
 }));
 const { maybeRunVersionGatedRuntimeMigrationMock } = vi.hoisted(() => ({
@@ -81,6 +82,7 @@ describe('happier self __install-payload', () => {
     installVersionedPayloadMock.mockResolvedValueOnce({
       currentVersionId: '0.2.3',
       previousVersionId: '0.2.2',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -100,6 +102,7 @@ describe('happier self __install-payload', () => {
 
       expect(maybeRunVersionGatedRuntimeMigrationMock).toHaveBeenCalledWith({
         fromVersion: '0.2.2',
+        hadLegacyCurrentInstallWithoutVersionMarkers: false,
         installedRuntimeNodePath: installedPaths.binaryPath,
         toVersion: '0.2.3',
         argv: ['repair'],

@@ -4,10 +4,10 @@ import { basename, dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { writeTextFile } from '@/testkit/fs/fileHelpers';
-import { writeExecutableShim } from '@/testkit/fs/executableShim';
-import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '../../testkit/env/envScope';
+import { writeTextFile } from '../../testkit/fs/fileHelpers';
+import { writeExecutableShim } from '../../testkit/fs/executableShim';
+import { createTempDir, removeTempDir } from '../../testkit/fs/tempDir';
 import { requireProviderCliLaunchSpec } from './requireProviderCliLaunchSpec';
 import { resolveProviderCliManagedCommandPath } from './providerCliResolution';
 

@@ -1,28 +1,45 @@
 import chalk from 'chalk';
 
 import { AGENT_IDS, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
+import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { installPluginFromSource, type PluginInstallKind } from '@/extensions/plugins/install/installPluginFromSource';
-import { removeInstalledPlugin } from '@/extensions/plugins/install/removeInstalledPlugin';
-import { createPluginStateStore } from '@/extensions/plugins/store/pluginStateStore';
+import { installPluginFromSource, type PluginInstallKind } from '@/extensions/install/source';
+import { removeInstalledPlugin } from '@/extensions/install/remove';
+import { createPluginStateStore } from '@/extensions/store/state';
+import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
 import type {
   invokeProviderCliInstall as invokeProviderCliInstallDefault,
 } from '@/runtime/managedTools/invokeProviderCliInstall';
 import type { runDoctorCommand as runDoctorCommandDefault } from '@/ui/doctor';
 
-function usage(): string {
-  return [
+type ProviderStatusRow = Readonly<{
+  id: string;
+  title: string;
+  runtimeSpec: ProviderCliRuntimeDescriptor;
+}>;
+
+function usage(providerRows: readonly ProviderStatusRow[] = []): string {
+  const lines = [
     `${chalk.bold('happier install')} - Installation helpers`,
     '',
     `${chalk.bold('Usage:')}`,
     '  happier install doctor',
     '  happier install provider <providerId> [--dry-run] [--force]',
-    '  happier install plugin <path|archive> [--kind path|archive] [--dry-run] [--force]',
+    '  happier install plugin <path|archive-url> [--kind path|archive] [--dry-run] [--force]',
     '  happier install plugin update <pluginId> [--dry-run]',
     '  happier install plugin remove <pluginId> [--dry-run]',
     '',
-  ].join('\n');
+  ];
+  if (providerRows.length > 0) {
+    lines.push(
+      `${chalk.bold('Available providers:')}`,
+      ...providerRows.map((row) => `  ${row.title} (${row.id}) — Install with happier install provider ${row.id}`),
+      '',
+    );
+  }
+  return lines.join('\n');
 }
 
 type InstallCliDeps = Readonly<{
@@ -43,6 +60,17 @@ async function invokeProviderCliInstallLazy(
 ): Promise<Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>> {
   const { invokeProviderCliInstall } = await import('@/runtime/managedTools/invokeProviderCliInstall');
   return await invokeProviderCliInstall(...args);
+}
+
+function readProviderCliRuntimeDescriptor(
+  contribution: ResolvedContributionRegistry['providers'][number],
+): ProviderCliRuntimeDescriptor | null {
+  if (contribution.runtimeSpec) return contribution.runtimeSpec;
+  const runtime = (contribution.definition as { providerCliRuntime?: ProviderCliRuntimeDescriptor | null }).providerCliRuntime;
+  if (!runtime || typeof runtime !== 'object') return null;
+  if (typeof runtime.id !== 'string' || runtime.id.trim().length === 0) return null;
+  if (runtime.id !== contribution.id) return null;
+  return runtime;
 }
 
 function parseProviderInstallFlags(args: readonly string[]): Readonly<{ dryRun: boolean; skipIfInstalled: boolean }> {
@@ -80,6 +108,23 @@ function parsePluginInstallFlags(args: readonly string[]): Readonly<{
 
 function isAgentId(value: string): value is AgentId {
   return (AGENT_IDS as readonly string[]).includes(value);
+}
+
+function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionRegistry, 'providers'>): ProviderStatusRow[] {
+  return registry.providers
+    .filter((contribution) => contribution.provenance === 'first_party')
+    .map((contribution) => {
+      const runtimeSpec = readProviderCliRuntimeDescriptor(contribution);
+      if (!runtimeSpec) return null;
+      if (runtimeSpec.manualInstallKind === 'none') return null;
+      return {
+        id: contribution.id,
+        title: runtimeSpec.title,
+        runtimeSpec,
+      } satisfies ProviderStatusRow;
+    })
+    .filter((row): row is ProviderStatusRow => row !== null)
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function printProviderInstallResult(
@@ -225,6 +270,11 @@ export async function runInstallCliCommand(
 ): Promise<void> {
   try {
     const subcommand = context.args[1] ?? 'help';
+    const needsRegistry = subcommand === 'help' || subcommand === '--help' || subcommand === '-h' || subcommand === 'provider';
+    const mergedRegistry = needsRegistry
+      ? await resolveMergedContributionRegistry({ happyHomeDir: createPluginStateStore().paths.happyHomeDir })
+      : null;
+    const installableProviderRows = mergedRegistry ? readInstallableBuiltInProviderRows(mergedRegistry) : [];
     if (subcommand === 'doctor') {
       await deps.runDoctorCommand();
       return;
@@ -237,17 +287,17 @@ export async function runInstallCliCommand(
       const providerIdRaw = context.args[2]?.trim() ?? '';
       if (!providerIdRaw) {
         deps.error(chalk.red('Error:'), 'Missing provider id.');
-        deps.log(usage());
+        deps.log(usage(installableProviderRows));
         deps.exit(1);
         return;
       }
       if (providerIdRaw === 'help' || providerIdRaw === '--help' || providerIdRaw === '-h') {
-        deps.log(usage());
+        deps.log(usage(installableProviderRows));
         return;
       }
       if (!isAgentId(providerIdRaw)) {
         deps.error(chalk.red('Error:'), `Unknown provider id: ${providerIdRaw}`);
-        deps.log(usage());
+        deps.log(usage(installableProviderRows));
         deps.exit(1);
         return;
       }
@@ -278,11 +328,11 @@ export async function runInstallCliCommand(
       return;
     }
     if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-      deps.log(usage());
+      deps.log(usage(installableProviderRows));
       return;
     }
     deps.error(chalk.red('Error:'), `Unknown install subcommand: ${subcommand}`);
-    deps.log(usage());
+    deps.log(usage(installableProviderRows));
     deps.exit(1);
   } catch (error) {
     deps.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');

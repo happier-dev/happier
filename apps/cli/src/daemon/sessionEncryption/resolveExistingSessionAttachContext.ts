@@ -72,7 +72,7 @@ function resolveExistingSessionBackendTarget(metadataRecord: Record<string, unkn
   }
 
   const agentId = resolveAgentIdFromSessionMetadata(metadataRecord);
-  if (!agentId || agentId === 'customAcp') {
+  if (!agentId) {
     return null;
   }
 

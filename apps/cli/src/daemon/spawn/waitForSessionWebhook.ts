@@ -3,7 +3,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandler
 
 import type { TrackedSession } from '../types';
 
-const DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS = 5 * 60_000;
+export const DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS = 5 * 60_000;
 const SESSION_WEBHOOK_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS';
 
 type WaitForSessionWebhookParams = {
@@ -39,17 +39,6 @@ function resolveTimeoutMs(explicitTimeoutMs: number | undefined): number {
 export function waitForSessionWebhook(
   params: WaitForSessionWebhookParams,
 ): Promise<SpawnSessionResult> {
-  const existingSessionId =
-    typeof params.resolveExistingSessionId === 'function'
-      ? String(params.resolveExistingSessionId() ?? '').trim()
-      : '';
-  if (existingSessionId) {
-    return Promise.resolve({
-      type: 'success',
-      sessionId: existingSessionId,
-    });
-  }
-
   const timeoutMs = resolveTimeoutMs(params.timeoutMs);
 
   return new Promise((resolve) => {

@@ -57,7 +57,7 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                 happySessionId: 'sess_configured_acp_fallback',
                 spawnOptions: {
                     directory: '/repo-acp',
-                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                    backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
                     environmentVariables: { HOME: '/Users/acp-home' },
                 },
             } as never,
@@ -77,6 +77,40 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                     title: 'review-bot',
                     updatedAt: expect.any(Number),
                 }),
+            }),
+        }));
+    });
+
+    it('uses direct-session runtime identity when webhook metadata has no legacy flavor field', () => {
+        const metadata = buildHandoffSessionMetadataFromTrackedSession({
+            trackedSession: {
+                startedBy: 'daemon',
+                pid: 345,
+                happySessionId: 'sess_direct_identity',
+                vendorResumeId: 'sess-handoff-direct',
+                happySessionMetadataFromLocalWebhook: {
+                    machineId: 'machine-session-handoff',
+                    path: '/repo-source-current',
+                    homeDir: '/Users/target',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'opencode',
+                        machineId: 'machine-session-handoff',
+                        remoteSessionId: 'sess-handoff-direct',
+                        source: {
+                            kind: 'opencodeServer',
+                            baseUrl: 'http://127.0.0.1:4096/',
+                        },
+                        linkedAtMs: 1,
+                    },
+                },
+            } as never,
+            machineId: 'machine-session-handoff',
+        });
+
+        expect(metadata).toEqual(expect.objectContaining({
+            runtimeLocalMetadata: expect.objectContaining({
+                opencodeSessionId: 'sess-handoff-direct',
             }),
         }));
     });

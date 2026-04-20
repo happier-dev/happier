@@ -3,10 +3,10 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { writeTextFileSync } from '@/testkit/fs/fileHelpers';
-import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '@/testkit/fs/executableShim';
-import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '../../testkit/env/envScope';
+import { writeTextFileSync } from '../../testkit/fs/fileHelpers';
+import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '../../testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '../../testkit/fs/tempDir';
 import {
   resolveProviderCliCommand,
   resolveProviderCliManagedCommandPath,

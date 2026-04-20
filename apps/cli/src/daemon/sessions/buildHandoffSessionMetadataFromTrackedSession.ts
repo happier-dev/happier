@@ -1,4 +1,4 @@
-import { inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 
 import type { Metadata } from '@/api/types';
 import {
@@ -6,10 +6,10 @@ import {
     pickSessionHandoffRuntimeLocalMetadata,
     type SessionHandoffLocalMetadataSource,
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
-import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/buildConfiguredAcpBackendSessionMetadata';
+import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 import type { TrackedSession } from '../types';
-import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/directSessions/resolveClaudeConfigDir';
-import { resolveClaudeProjectId } from '@/backends/claude/utils/path';
+import { buildClaudeRuntimeLocalHandoffMetadata } from '@/backends/claude/handoff/buildClaudeRuntimeLocalHandoffMetadata';
+import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -27,23 +27,26 @@ function normalizeOptionalString(value: unknown): string | null {
 }
 
 function resolveFallbackFlavorFromBackendTarget(trackedSession: TrackedSession): string {
-    const backendTarget = trackedSession.spawnOptions?.backendTarget;
-    if (backendTarget?.kind === 'configuredAcpBackend') {
-        const backendId = backendTarget.backendId.trim();
+    const backendTarget = resolveConcreteBackendTargetRefV2(trackedSession.spawnOptions?.backendTarget);
+    if (!backendTarget) {
+        return '';
+    }
+    if (backendTarget.sourceKind === 'configured') {
+        const backendId = backendTarget.configuredBackendId?.trim() || backendTarget.backendId.trim();
         return backendId ? `acp:${backendId}` : '';
     }
-    if (backendTarget?.kind === 'builtInAgent') {
-        return typeof backendTarget.agentId === 'string' ? backendTarget.agentId.trim() : '';
+    if (backendTarget.sourceKind === 'built_in') {
+        return backendTarget.backendId.trim();
     }
     return '';
 }
 
 function buildConfiguredAcpFallbackMetadata(trackedSession: TrackedSession): Record<string, unknown> | null {
-    const backendTarget = trackedSession.spawnOptions?.backendTarget;
-    if (backendTarget?.kind !== 'configuredAcpBackend') {
+    const backendTarget = resolveConcreteBackendTargetRefV2(trackedSession.spawnOptions?.backendTarget);
+    if (backendTarget?.sourceKind !== 'configured') {
         return null;
     }
-    const backendId = backendTarget.backendId.trim();
+    const backendId = backendTarget.configuredBackendId?.trim() || backendTarget.backendId.trim();
     if (!backendId) {
         return null;
     }
@@ -122,36 +125,16 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
         });
     }
 
-    const agentId = inferAgentIdFromSessionMetadata(metadata);
+    const runtimeIdentity = resolveSessionRuntimeIdentityFallback({ metadata });
+    const agentId = typeof runtimeIdentity.providerId === 'string' ? runtimeIdentity.providerId.trim() : '';
 
     switch (agentId) {
         case 'claude': {
-            if (!runtimeLocalMetadata.claudeSessionId) {
-                runtimeLocalMetadata.claudeSessionId = vendorResumeId;
-            }
-            if (!runtimeLocalMetadata.directSessionV1 && params.trackedSession.spawnOptions?.transcriptStorage === 'direct') {
-                const configDir = resolveConfiguredClaudeConfigDir({
-                    env: {
-                        ...process.env,
-                        ...(params.trackedSession.spawnOptions.environmentVariables ?? {}),
-                    },
-                });
-                const machineId = typeof metadata.machineId === 'string' ? metadata.machineId.trim() : '';
-                runtimeLocalMetadata.directSessionV1 = {
-                    v: 1,
-                    providerId: 'claude',
-                    machineId,
-                    remoteSessionId: vendorResumeId,
-                    source: {
-                        kind: 'claudeConfig',
-                        configDir,
-                        ...(typeof metadata.path === 'string' && metadata.path.trim()
-                            ? { projectId: resolveClaudeProjectId(metadata.path.trim()) }
-                            : {}),
-                    },
-                    linkedAtMs: Date.now(),
-                };
-            }
+            Object.assign(runtimeLocalMetadata, buildClaudeRuntimeLocalHandoffMetadata({
+                metadata,
+                trackedSession: params.trackedSession,
+                vendorResumeId,
+            }));
             break;
         }
         case 'codex':

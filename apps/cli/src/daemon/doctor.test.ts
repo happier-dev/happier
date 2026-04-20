@@ -27,6 +27,26 @@ describe('classifyHappyProcess', () => {
     expect(res!.type).toBe('daemon-spawned-session');
   });
 
+  it('should detect a daemon-spawned session process from package-dist when ps-list reports MainThread', () => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'MainThread',
+      cmd: '/usr/bin/node /repo/cli-preview/versions/0.2.4/package-dist/index.mjs codex --happy-starting-mode remote --started-by daemon',
+    });
+    expect(res).not.toBeNull();
+    expect(res!.type).toBe('daemon-spawned-session');
+  });
+
+  it('should detect a packaged Windows daemon-spawned session process when ps-list reports happier.exe', () => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'happier.exe',
+      cmd: 'C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\happier.exe C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\package-dist\\index.mjs opencode --happy-starting-mode remote --started-by daemon --existing-session session-123',
+    });
+    expect(res).not.toBeNull();
+    expect(res!.type).toBe('daemon-spawned-session');
+  });
+
   it('should detect a dev daemon started from tsx', () => {
     const res = classifyHappyProcess({
       pid: 123,
@@ -35,5 +55,15 @@ describe('classifyHappyProcess', () => {
     });
     expect(res).not.toBeNull();
     expect(res!.type).toBe('dev-daemon');
+  });
+
+  it('should detect a daemon-spawned session launched from a CLI source snapshot', () => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'node',
+      cmd: '/usr/bin/node --import /repo/node_modules/tsx/dist/esm/index.mjs /repo/.project/tmp/cli-dist-snapshot/src/index.ts claude --happy-starting-mode remote --started-by daemon',
+    });
+    expect(res).not.toBeNull();
+    expect(res!.type).toBe('dev-daemon-spawned');
   });
 });

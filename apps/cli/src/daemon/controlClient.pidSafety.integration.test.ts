@@ -367,7 +367,7 @@ describe.sequential('daemon control client PID safety', () => {
     }
   }, 30_000);
 
-  it('spawnDaemonSession uses an extended default timeout budget', async () => {
+  it('spawnDaemonSession defaults to the daemon session webhook timeout budget', async () => {
     const homeDir = createTempDirSync('happier-cli-daemon-spawn-timeout-');
     envScope.patch({
       HAPPIER_HOME_DIR: homeDir,
@@ -410,7 +410,7 @@ describe.sequential('daemon control client PID safety', () => {
       vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
       const result = await spawnDaemonSession({ directory: '/tmp' });
       expect(result).toEqual({ success: true, sessionId: 's-1' });
-      expect(timeoutSpy).toHaveBeenCalledWith(120_000);
+      expect(timeoutSpy).toHaveBeenCalledWith(300_000);
     } finally {
       timeoutSpy.mockRestore();
       vi.unstubAllGlobals();

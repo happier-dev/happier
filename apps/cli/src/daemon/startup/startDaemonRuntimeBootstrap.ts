@@ -11,8 +11,8 @@ import { createTailscaleTransferServeLifecycle } from '@/machines/transfer/tails
 import { isLoopbackTransferBindHost, resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { createDaemonTransferRuntimeState, createDaemonTransferRuntimeStatePublisher } from '../transferRuntimeState';
 import { resolveTailscaleTransferListenerState } from '../resolveTailscaleTransferListenerState';
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
-import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { createConnectedServicesAuthUpdatedRestartHandler } from '../connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
 import { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import { startConnectedServiceRefreshLoop } from '../connectedServices/refresh/startConnectedServiceRefreshLoop';
@@ -22,11 +22,12 @@ import { resolveConnectedServiceQuotasDaemonOptions } from '../connectedServices
 import { resolveConnectedServicesQuotasDaemonEnabled } from '../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
 import { startConnectedServiceQuotasLoop } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { parseBooleanEnv } from '@happier-dev/protocol';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 import { writeDaemonState } from '@/persistence';
 import type { Credentials, DaemonLocallyPersistedState } from '@/persistence';
 import { configuration } from '@/configuration';
-import type { PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import type { DaemonStartupSource } from '../ownership/daemonOwnershipMetadata';
 import { isDaemonStartupSourceServiceManaged } from '../ownership/daemonOwnershipMetadata';
 import type { TrackedSession } from '../types';
@@ -63,6 +64,7 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
   controlToken: string;
   happyHomeDir: string;
   activeServerDir: string;
+  filesystemAccessPolicy: FilesystemAccessPolicy;
   publicReleaseChannel: NonNullable<DaemonState['publicReleaseChannel']>;
   connectedServicesRestartRequestedPids: Set<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
@@ -112,6 +114,7 @@ export async function startDaemonRuntimeBootstrap(
         listenerClasses: directPeerTransferListenerClasses,
         advertisedHosts: directPeerAdvertisedHosts,
         idleStopMs: directPeerRuntimeConfig.directPeer.idleStopMs,
+        accessPolicy: params.filesystemAccessPolicy,
         promptAssetUpload: {
           adapterRegistry: directTransferPromptAssetAdapterRegistry,
         },

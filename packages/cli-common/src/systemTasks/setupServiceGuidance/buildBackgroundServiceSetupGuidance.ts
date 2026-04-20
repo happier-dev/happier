@@ -19,6 +19,7 @@ export type BackgroundServiceSetupGuidanceService = Readonly<{
   targetMode: HappierServiceTargetMode | null;
   running: boolean;
   serverUrl: string | null;
+  happierHomeDir: string | null;
 }>;
 
 export type BackgroundServiceSetupGuidanceManualRelayOwner = Readonly<{
@@ -29,11 +30,13 @@ export type BackgroundServiceSetupGuidanceManualRelayOwner = Readonly<{
 export type BackgroundServiceSetupGuidance = Readonly<{
   targetReleaseChannel: PublicReleaseRingLabel;
   targetServerUrl: string | null;
+  currentHappierHomeDir: string | null;
   currentDefaultReleaseChannel: PublicReleaseRingLabel;
   managedReleaseChannels: ManagedReleaseChannelInventory['managedReleaseChannels'];
   manualRelayOwner: BackgroundServiceSetupGuidanceManualRelayOwner | null;
   exactDefaultServiceExists: boolean;
   conflictingServices: readonly BackgroundServiceSetupGuidanceService[];
+  foreignHomeConflictingServices: readonly BackgroundServiceSetupGuidanceService[];
   shouldOfferDefaultReleaseChannelSwitch: boolean;
   shouldPromptForManualRelayTakeover: boolean;
   shouldPromptForServiceReplacement: boolean;
@@ -65,6 +68,9 @@ function normalizeServiceSummary(service: HappierService): BackgroundServiceSetu
     targetMode,
     running: service.running === true,
     serverUrl,
+    happierHomeDir: typeof service.happierHomeDir === 'string' && service.happierHomeDir.trim()
+      ? service.happierHomeDir.trim()
+      : null,
   };
 }
 
@@ -100,9 +106,19 @@ function normalizeManualRelayOwner(
   };
 }
 
+export function resolveBackgroundServiceSetupServicesRequiringReplacement(
+  guidance: Pick<BackgroundServiceSetupGuidance, 'conflictingServices' | 'foreignHomeConflictingServices'>,
+): readonly BackgroundServiceSetupGuidanceService[] {
+  return [
+    ...guidance.conflictingServices,
+    ...guidance.foreignHomeConflictingServices,
+  ];
+}
+
 export function buildBackgroundServiceSetupGuidance(params: Readonly<{
   targetReleaseChannel: PublicReleaseRingId | PublicReleaseRingLabel;
   targetServerUrl?: string | null;
+  currentHappierHomeDir?: string | null;
   managedReleaseChannelInventory: ManagedReleaseChannelInventory;
   services: readonly HappierService[];
   currentRelayOwner?: Pick<MachineDaemonOwnershipMetadata, 'serviceManaged' | 'publicReleaseChannel' | 'cliVersion'> | null;
@@ -120,15 +136,29 @@ export function buildBackgroundServiceSetupGuidance(params: Readonly<{
     ring: null,
     instanceId: null,
     serverUrl: null,
+    happierHomeDir: typeof params.currentHappierHomeDir === 'string' && params.currentHappierHomeDir.trim()
+      ? params.currentHappierHomeDir.trim()
+      : null,
   };
   const conflictPlan = resolveDaemonServiceInstallConflictPlan({
     target,
     strategy: 'require-explicit',
     services: params.services,
   });
-  const conflictingServices = conflictPlan.competingServices
+  const currentHappierHomeDir = target.happierHomeDir ?? null;
+  const foreignHomeConflictingServices = conflictPlan.foreignHomeConflicts
     .map((service) => normalizeServiceSummary(service))
     .filter((service): service is BackgroundServiceSetupGuidanceService => service != null);
+  const conflictingServices = conflictPlan.competingServices
+    .map((service) => normalizeServiceSummary(service))
+    .filter((service): service is BackgroundServiceSetupGuidanceService => (
+      service != null
+      && !(
+        service.happierHomeDir != null
+        && currentHappierHomeDir != null
+        && service.happierHomeDir !== currentHappierHomeDir
+      )
+    ));
   const manualRelayOwner = normalizeManualRelayOwner(params.currentRelayOwner);
 
   return {
@@ -136,17 +166,22 @@ export function buildBackgroundServiceSetupGuidance(params: Readonly<{
     targetServerUrl: typeof params.targetServerUrl === 'string' && params.targetServerUrl.trim()
       ? params.targetServerUrl.trim()
       : null,
+    currentHappierHomeDir,
     currentDefaultReleaseChannel,
     managedReleaseChannels: params.managedReleaseChannelInventory.managedReleaseChannels,
     manualRelayOwner,
     exactDefaultServiceExists: conflictPlan.exactTargetExists,
     conflictingServices,
+    foreignHomeConflictingServices,
     shouldOfferDefaultReleaseChannelSwitch:
       currentDefaultReleaseChannel !== targetReleaseChannel
       && params.managedReleaseChannelInventory.managedReleaseChannels.some((entry) => (
         resolveReleaseChannelLabel(entry.releaseChannel) === targetReleaseChannel
       )),
     shouldPromptForManualRelayTakeover: manualRelayOwner != null,
-    shouldPromptForServiceReplacement: conflictingServices.length > 0,
+    shouldPromptForServiceReplacement: resolveBackgroundServiceSetupServicesRequiringReplacement({
+      conflictingServices,
+      foreignHomeConflictingServices,
+    }).length > 0,
   };
 }

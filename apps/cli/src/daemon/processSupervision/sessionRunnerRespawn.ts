@@ -27,6 +27,22 @@ function normalizeOptionalString(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
+function isNotAuthenticatedSpawnResult(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const value = result as Readonly<{
+    code?: unknown;
+    error?: unknown;
+    errorCode?: unknown;
+    errorMessage?: unknown;
+  }>;
+  return (
+    value.code === 'not_authenticated' ||
+    value.error === 'not_authenticated' ||
+    value.errorCode === 'not_authenticated' ||
+    value.errorMessage === 'not_authenticated'
+  );
+}
+
 function toTerminationEvent(exit: DaemonChildExit): TerminationEvent {
   if (typeof exit.signal === 'string' && exit.signal.trim().length > 0) {
     return { type: 'signaled', signal: exit.signal as NodeJS.Signals };
@@ -168,6 +184,12 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
 
             if (result && typeof result === 'object' && (result as any).type === 'requestToApproveDirectoryCreation') {
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (directory approval required)`);
+              stateBySessionId.delete(sessionId);
+              return;
+            }
+
+            if (isNotAuthenticatedSpawnResult(result)) {
+              params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (auth:not_authenticated)`);
               stateBySessionId.delete(sessionId);
               return;
             }

@@ -1,4 +1,4 @@
-import { parseAndStripTerminalRuntimeFlags, type TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import { parseAndStripTerminalRuntimeFlags, type TerminalRuntimeFlags } from '../terminal/runtime/terminalRuntimeFlags';
 
 function isCliEntrypointPath(arg: string): boolean {
     const normalized = String(arg ?? '').trim().replaceAll('\\', '/');

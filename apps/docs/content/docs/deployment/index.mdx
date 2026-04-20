@@ -18,6 +18,8 @@ This section describes how to deploy **your own Happier Server** (the sync backe
   - See: [Run from a monorepo clone (repo-local mode)](./repo-local)
 - **Docker** (recommended starting point): build from this repo’s `Dockerfile` and run with Docker / Docker Compose.
   - See: [Docker](./docker)
+- **Observability** (Prometheus + Grafana + Alertmanager): the repo ships a Docker-friendly observability pack under `apps/server/observability`.
+  - See: [Observability](./observability)
 - **Configuration reference**: see [Environment variables](./env) for the complete server runtime env surface.
 - **Canonical env template**: `apps/server/.env.example`
 - **HStack** (stack CLI): a guided workflow that can run the server for you (documentation maintained separately).
@@ -51,13 +53,21 @@ For multi-replica API deployments, enable Redis fanout (`REDIS_URL` + `HAPPIER_S
 
 See [Docker](./docker) for concrete examples.
 
+If you want dashboards and alerts, use the repo-owned observability pack described in [Observability](./observability).
+
 ## Reverse proxy basics
 
 In production, run the API behind a reverse proxy that:
 
 - Terminates TLS
-- Supports WebSockets (Upgrade headers)
+- Supports WebSockets (Upgrade headers), especially for Socket.IO realtime at `/v1/updates`
 - Uses sensible timeouts for long-lived connections
 - Keeps secrets in your deployment platform (env vars), not in git
 
+When Socket.IO polling is enabled, sticky sessions are required in front of multiple API replicas. Also make sure the reverse proxy idle timeout is greater than `pingInterval + pingTimeout` so long-lived realtime connections are not dropped prematurely.
+
 If you serve `/files/*` from the server (light flavor), ensure your proxy allows those routes.
+
+Troubleshooting note: if `/v1/updates` websocket upgrades are broken, machines can register but stay offline (`machine.none_online`).
+
+See: [Environment variables → Networking / reverse proxy](./env#websockets-required-for-realtime--machine-online)

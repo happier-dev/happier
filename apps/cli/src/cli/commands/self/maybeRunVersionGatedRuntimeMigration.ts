@@ -12,11 +12,16 @@ function normalizeVersionId(value: string | null | undefined): string | null {
 export function hasCrossedBackgroundServiceMigrationBoundary(params: Readonly<{
   fromVersion: string | null | undefined;
   toVersion: string | null | undefined;
+  hadLegacyCurrentInstallWithoutVersionMarkers?: boolean;
 }>): boolean {
   const fromVersion = normalizeVersionId(params.fromVersion);
   const toVersion = normalizeVersionId(params.toVersion);
-  if (!fromVersion || !toVersion) {
+  if (!toVersion) {
     return false;
+  }
+  if (!fromVersion) {
+    return params.hadLegacyCurrentInstallWithoutVersionMarkers === true
+      && compareVersions(toVersion, '0.2.3') >= 0;
   }
   return compareVersions(fromVersion, '0.2.3') < 0 && compareVersions(toVersion, '0.2.3') >= 0;
 }
@@ -24,6 +29,7 @@ export function hasCrossedBackgroundServiceMigrationBoundary(params: Readonly<{
 export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
   fromVersion: string | null | undefined;
   toVersion: string | null | undefined;
+  hadLegacyCurrentInstallWithoutVersionMarkers?: boolean;
   argv: readonly string[];
   commandPath: string;
   installedRuntimeNodePath?: string | null;

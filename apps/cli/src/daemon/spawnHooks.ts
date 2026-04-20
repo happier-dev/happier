@@ -1,23 +1,17 @@
 import type { CodexBackendMode } from '@happier-dev/agents';
-import type { AgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { CanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 
-import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/codexBackendMode';
-
-export type DaemonSpawnRuntimeSelection = Readonly<{
-  experimentalCodexAcp?: boolean;
+export type DaemonSpawnRuntimeSelection = CanonicalSpawnRuntimeSelection & Readonly<{
   codexBackendMode?: CodexBackendMode;
-  agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>;
-
-export function resolveDaemonSpawnRuntimeCodexBackendMode(selection: DaemonSpawnRuntimeSelection): CodexBackendMode | undefined {
-  return resolveCanonicalCodexBackendMode(selection);
-}
 
 export type DaemonSpawnValidationResult =
   | Readonly<{ ok: true }>
   | Readonly<{ ok: false; errorMessage: string; reasonCode?: string }>;
 
 export type DaemonSpawnHooks = Readonly<{
-  validateSpawn?: (params: DaemonSpawnRuntimeSelection) => Promise<DaemonSpawnValidationResult>;
-  buildExtraEnvForChild?: (params: DaemonSpawnRuntimeSelection) => Record<string, string>;
+  resolveRuntimePrerequisites?: (params: DaemonSpawnRuntimeSelection) => Promise<DaemonSpawnValidationResult>;
+  augmentEnv?: (params: DaemonSpawnRuntimeSelection) => Record<string, string>;
 }>;

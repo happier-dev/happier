@@ -70,7 +70,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
     expect(map.get(123)?.reattachedFromDiskMarker).toBe(true);
     expect(map.get(123)?.spawnOptions).toMatchObject({
       directory: '/tmp/workspace',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       resume: 'vendor-sess-123',
       environmentVariables: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
@@ -124,7 +124,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
       happySessionId: 'sess-222',
       spawnOptions: {
         directory: '/tmp/workspace',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       },
     });
     expect(map.get(222)?.spawnOptions).not.toHaveProperty('environmentVariables');
@@ -187,7 +187,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
     expect(adopted).toBe(1);
     expect(map.get(345)?.spawnOptions).toMatchObject({
       directory: '/tmp/workspace',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       codexBackendMode: 'acp',
     });
     expect(map.get(345)?.spawnOptions).not.toHaveProperty('experimentalCodexAcp');

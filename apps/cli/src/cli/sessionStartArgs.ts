@@ -11,8 +11,8 @@ export type ParsedSessionStartArgs = {
   startedBy: 'daemon' | 'terminal' | undefined;
   permissionMode: PermissionMode | undefined;
   permissionModeUpdatedAt: number | undefined;
-  agentModeId: string | undefined;
-  agentModeUpdatedAt: number | undefined;
+  sessionModeId: string | undefined;
+  sessionModeUpdatedAt: number | undefined;
   modelId: string | undefined;
   modelUpdatedAt: number | undefined;
 };
@@ -34,8 +34,8 @@ export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
   let startedBy: 'daemon' | 'terminal' | undefined = undefined;
   let permissionMode: PermissionMode | undefined = undefined;
   let permissionModeUpdatedAt: number | undefined = undefined;
-  let agentModeId: string | undefined = undefined;
-  let agentModeUpdatedAt: number | undefined = undefined;
+  let sessionModeId: string | undefined = undefined;
+  let sessionModeUpdatedAt: number | undefined = undefined;
   let modelId: string | undefined = undefined;
   let modelUpdatedAt: number | undefined = undefined;
 
@@ -99,7 +99,7 @@ export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
         console.error(chalk.red('Invalid --agent-mode value: empty'));
         process.exit(1);
       }
-      agentModeId = normalized;
+      sessionModeId = normalized;
     } else if (arg === '--agent-mode-updated-at') {
       if (i + 1 >= args.length) {
         console.error(chalk.red('Missing value for --agent-mode-updated-at (expected: unix ms timestamp)'));
@@ -111,7 +111,7 @@ export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
         console.error(chalk.red(`Invalid --agent-mode-updated-at value: ${raw}. Expected a positive number (unix ms)`));
         process.exit(1);
       }
-      agentModeUpdatedAt = Math.floor(parsedAt);
+      sessionModeUpdatedAt = Math.floor(parsedAt);
     } else if (arg === '--model') {
       if (i + 1 >= args.length) {
         console.error(chalk.red('Missing value for --model (expected: model id)'));
@@ -141,7 +141,7 @@ export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
     }
   }
 
-  return { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt };
+  return { startedBy, permissionMode, permissionModeUpdatedAt, sessionModeId, sessionModeUpdatedAt, modelId, modelUpdatedAt };
 }
 
 export function readOptionalFlagValue(args: string[], flag: string): string | undefined {
@@ -169,16 +169,16 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   startedBy: 'daemon' | 'terminal' | undefined;
   permissionMode: PermissionMode | undefined;
   permissionModeUpdatedAt: number | undefined;
-  agentModeId: string | undefined;
-  agentModeUpdatedAt: number | undefined;
+  sessionModeId: string | undefined;
+  sessionModeUpdatedAt: number | undefined;
   modelId: string | undefined;
   modelUpdatedAt: number | undefined;
 }): {
   startedBy: 'daemon' | 'terminal' | undefined;
   permissionMode: PermissionMode | undefined;
   permissionModeUpdatedAt: number | undefined;
-  agentModeId: string | undefined;
-  agentModeUpdatedAt: number | undefined;
+  sessionModeId: string | undefined;
+  sessionModeUpdatedAt: number | undefined;
   modelId: string | undefined;
   modelUpdatedAt: number | undefined;
   warnings: string[];
@@ -187,8 +187,8 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
 
   let permissionMode = params.permissionMode;
   let permissionModeUpdatedAt = params.permissionModeUpdatedAt;
-  let agentModeId = params.agentModeId;
-  let agentModeUpdatedAt = params.agentModeUpdatedAt;
+  let sessionModeId = params.sessionModeId;
+  let sessionModeUpdatedAt = params.sessionModeUpdatedAt;
   const modelId = params.modelId;
   const modelUpdatedAt = params.modelUpdatedAt;
 
@@ -196,10 +196,10 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   // For agents where "plan" is an agent/session mode (e.g. OpenCode plan/build, Claude plan/build), map it to --agent-mode.
   const sessionModesKind = getAgentSessionModesKind(params.agentId);
   const supportsAgentModeAlias = sessionModesKind === 'acpAgentModes' || sessionModesKind === 'staticAgentModes';
-  if (supportsAgentModeAlias && !agentModeId && permissionMode === 'plan') {
+  if (supportsAgentModeAlias && !sessionModeId && permissionMode === 'plan') {
     warnings.push(`Deprecated: use --agent-mode plan instead of --permission-mode plan for ${params.agentId}.`);
-    agentModeId = 'plan';
-    agentModeUpdatedAt = agentModeUpdatedAt ?? permissionModeUpdatedAt;
+    sessionModeId = 'plan';
+    sessionModeUpdatedAt = sessionModeUpdatedAt ?? permissionModeUpdatedAt;
     // "plan" is no longer a permission intent. Treat it as read-only for safety.
     permissionMode = 'read-only';
     // permissionModeUpdatedAt is preserved: it still serves as a monotonic seed for arbitration.
@@ -209,8 +209,8 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
     startedBy: params.startedBy,
     permissionMode,
     permissionModeUpdatedAt,
-    agentModeId,
-    agentModeUpdatedAt,
+    sessionModeId,
+    sessionModeUpdatedAt,
     modelId,
     modelUpdatedAt,
     warnings,

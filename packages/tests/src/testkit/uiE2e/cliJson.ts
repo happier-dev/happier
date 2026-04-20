@@ -48,8 +48,16 @@ export async function runCliJson(params: Readonly<{
     skipSharedDepsBuild?: boolean;
   }>;
 }>): Promise<JsonEnvelope> {
+  const launchEnv = {
+    ...params.env,
+    ...(params.launchOptions?.skipSharedDepsBuild
+      ? {
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+        }
+      : {}),
+  };
   const cliLaunchSpec = await resolveCliTestLaunchSpec(
-    { testDir: params.testDir, env: params.env },
+    { testDir: params.testDir, env: launchEnv },
     {
       snapshotDir: resolvePath(join(params.testDir, 'cli-dist')),
       preferSourceEntrypoint: params.launchOptions?.preferSourceEntrypoint,
@@ -59,18 +67,13 @@ export async function runCliJson(params: Readonly<{
   const stdoutPath = resolvePath(join(params.testDir, `cli.${params.label}.stdout.log`));
   const stderrPath = resolvePath(join(params.testDir, `cli.${params.label}.stderr.log`));
   const env = {
-    ...params.env,
-    ...(params.launchOptions?.skipSharedDepsBuild
-      ? {
-          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
-        }
-      : {}),
+    ...launchEnv,
   };
 
   await runLoggedCommand({
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, ...params.args],
-    cwd: repoRootDir(),
+    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
     env: {
       ...env,
       ...(cliLaunchSpec.env ?? {}),

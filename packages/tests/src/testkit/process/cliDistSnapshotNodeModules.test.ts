@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
+import { ensureCliDistSnapshotNodeModules, ensureCliPackSnapshotRuntimeDependencies } from './cliDistSnapshotNodeModules';
 
 const createdDirs: string[] = [];
 
@@ -494,6 +494,103 @@ describe('ensureCliDistSnapshotNodeModules', () => {
     expect(readFileSync(snapshotPackageJson, 'utf8')).toContain('@happier-dev/connection-supervisor');
   });
 
+  it('refreshes existing workspace package manifests in the copied @happier-dev scope', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-manifest-refresh-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'dist'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'packages', 'release-runtime', 'dist'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    writeFileSync(
+      join(rootDir, 'packages', 'release-runtime', 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/release-runtime',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './releaseRings': {
+              import: './dist/releaseRings.js',
+              require: './releaseRings.cjs',
+              default: './dist/releaseRings.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/release-runtime',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './releaseRings': {
+              require: './releaseRings.cjs',
+              default: './dist/releaseRings.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'releaseRings.js'),
+      'export const live = "initial";\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'packages', 'release-runtime', 'dist', 'releaseRings.js'),
+      'export const live = "workspace";\n',
+      'utf8',
+    );
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-manifest-refresh-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    mkdirSync(join(snapshotDir, 'node_modules', '@happier-dev', 'release-runtime'), { recursive: true });
+    writeFileSync(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'release-runtime', 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/release-runtime',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './releaseRings': {
+              require: './releaseRings.cjs',
+              default: './dist/releaseRings.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    const snapshotPackageJson = join(snapshotDir, 'node_modules', '@happier-dev', 'release-runtime', 'package.json');
+    expect(readFileSync(snapshotPackageJson, 'utf8')).toContain('"import": "./dist/releaseRings.js"');
+  });
+
   it('repairs missing workspace dist files from the source package tree', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-dist-'));
     createdDirs.push(rootDir);
@@ -544,5 +641,75 @@ describe('ensureCliDistSnapshotNodeModules', () => {
 
     const snapshotFile = join(snapshotDir, 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'github.js');
     expect(readFileSync(snapshotFile, 'utf8')).toContain('workspace-dist');
+  });
+
+  it('hydrates packed cli snapshots with missing top-level and bundled runtime dependencies without replacing the packed payload', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-pack-snapshot-runtime-'));
+    createdDirs.push(rootDir);
+
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', 'zod'), { recursive: true });
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'tweetnacl'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', 'zod', 'package.json'),
+      JSON.stringify({ name: 'zod', version: '4.3.6', main: 'index.js' }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'apps', 'cli', 'node_modules', 'zod', 'index.js'), 'export const z = "source";\n', 'utf8');
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'tweetnacl', 'package.json'),
+      JSON.stringify({ name: 'tweetnacl', version: '1.0.3', main: 'nacl-fast.js' }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'tweetnacl', 'nacl-fast.js'),
+      'export const nacl = "source";\n',
+      'utf8',
+    );
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-pack-snapshot-runtime-out-'));
+    createdDirs.push(snapshotDir);
+    mkdirSync(join(snapshotDir, 'dist'), { recursive: true });
+    mkdirSync(join(snapshotDir, 'node_modules', '@happier-dev', 'protocol'), { recursive: true });
+    writeFileSync(
+      join(snapshotDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        version: '0.0.0-test',
+        dependencies: { zod: '4.3.6' },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(snapshotDir, 'dist', 'index.mjs'), 'export const cli = true;\n', 'utf8');
+    writeFileSync(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0-test',
+        dependencies: { tweetnacl: '^1.0.3' },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist-marker.txt'),
+      'packed-payload',
+      'utf8',
+    );
+
+    ensureCliPackSnapshotRuntimeDependencies({ snapshotDir, rootDir });
+
+    expect(readFileSync(join(snapshotDir, 'node_modules', 'zod', 'index.js'), 'utf8')).toContain('source');
+    expect(
+      readFileSync(
+        join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'tweetnacl', 'nacl-fast.js'),
+        'utf8',
+      ),
+    ).toContain('source');
+    expect(readFileSync(join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist-marker.txt'), 'utf8')).toBe(
+      'packed-payload',
+    );
   });
 });

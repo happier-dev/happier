@@ -58,4 +58,23 @@ describe('resolveSpawnChildEnvironment (transcript storage)', () => {
     if (!result.ok) return;
     expect(result.extraEnvForChild.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY).toBe('replace_with_runtime_identity');
   });
+
+  it('fails closed when a V1 backendTarget carrier is injected into the canonical spawn environment path', async () => {
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' } as never,
+      },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: null,
+      processEnv: {},
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.extraEnvForChild.HAPPIER_CODEX_BACKEND_MODE).toBeUndefined();
+  });
 });

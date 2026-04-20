@@ -1,6 +1,6 @@
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as z from 'zod';
@@ -51,7 +51,7 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const tmpPath = `${filePath}.tmp`;
+  const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf-8');
     try {

@@ -207,7 +207,7 @@ describe('happier session create (integration)', () => {
       expect(parsed.data?.session?.encryption?.type).toBe('dataKey');
       expect(observedSpawnBody).toEqual({
         directory: process.cwd(),
-        backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
+        backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
         initialPrompt: 'Plan the refactor',
       });
       expect(observedInitialMessageRpc).toBe(false);
@@ -266,10 +266,40 @@ describe('happier session create (integration)', () => {
       expect(parsed.kind).toBe('session_create');
       expect(observedSpawnBody).toEqual({
         directory: process.cwd(),
-        backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
+        backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
         initialPrompt: 'Plan the refactor',
       });
       expect(observedInitialMessageRpc).toBe(false);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('accepts --agent as a single-target alias for the spawned backend target', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(['create', '--agent', 'codex', '--prompt', 'Plan the refactor', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_create');
+      expect(observedSpawnBody).toEqual({
+        directory: process.cwd(),
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        initialPrompt: 'Plan the refactor',
+      });
     } finally {
       output.restore();
     }
@@ -296,7 +326,7 @@ describe('happier session create (integration)', () => {
       expect(parsed.kind).toBe('session_create');
       expect(observedSpawnBody).toEqual({
         directory: process.cwd(),
-        backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
+        backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
       });
     } finally {
       output.restore();

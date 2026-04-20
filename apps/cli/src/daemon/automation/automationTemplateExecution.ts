@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
-  BackendTargetRefSchema,
+  BackendTargetRefV2Schema,
+  normalizeBackendTargetRefV2InputToV2,
   openAccountScopedBlobCiphertext,
   SessionMcpSelectionV1Schema,
 } from '@happier-dev/protocol';
@@ -34,7 +35,7 @@ const TemplateSchema = z.object({
   directory: z.string().trim().min(1),
   checkoutCreationDraft: CheckoutCreationDraftSchema.optional(),
   agent: z.string().trim().min(1).optional(),
-  backendTarget: BackendTargetRefSchema.optional(),
+  backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema).optional(),
   profileId: z.string().optional(),
   environmentVariables: z.record(z.string(), z.string()).optional(),
   resume: z.string().optional(),
@@ -247,7 +248,13 @@ export function parseAutomationTemplateExecution(
       ...(template.backendTarget
         ? { backendTarget: template.backendTarget satisfies NonNullable<SpawnSessionOptions['backendTarget']> }
         : template.agent
-          ? { backendTarget: { kind: 'builtInAgent', agentId: template.agent } as const satisfies NonNullable<SpawnSessionOptions['backendTarget']> }
+          ? {
+            backendTarget: {
+              kind: 'backend',
+              backendId: template.agent,
+              sourceKind: 'built_in',
+            } as const satisfies NonNullable<SpawnSessionOptions['backendTarget']>,
+          }
           : {}),
       ...(template.profileId ? { profileId: template.profileId } : {}),
       ...(template.environmentVariables ? { environmentVariables: template.environmentVariables } : {}),

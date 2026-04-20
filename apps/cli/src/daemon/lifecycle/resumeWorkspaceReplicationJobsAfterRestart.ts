@@ -1,6 +1,6 @@
 import type { MachineTransferChannel } from '@/machines/transfer/serverRoutedTransport';
 import { normalizeWorkspacePath } from '@/scm/sourceController/workspaceExportPackaging/normalizeWorkspacePath';
-import { buildSessionHandoffWorkspaceBlobPackTransferId } from '@/workspace/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
+import { buildSessionHandoffWorkspaceBlobPackTransferId } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
 import type { WorkspaceReplicationJobRecord } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
 import {
@@ -12,7 +12,7 @@ import { listWorkspaceReplicationJobs } from '@/workspaces/replication/engine/li
 import { createWorkspaceReplicationSourceOfferStore } from '@/workspaces/replication/transport/workspaceReplicationSourceOfferStore';
 import { createWorkspaceReplicationTransfers } from '@/workspaces/replication/transport/workspaceReplicationTransfers';
 import type { WorkspaceReplicationTransfers } from '@/workspaces/replication/transport/workspaceReplicationTransfers';
-import { executeWorkspaceReplicationJobWithLocalRuntime } from '@/workspaces/replication/orchestration/executeWorkspaceReplicationJobWithLocalRuntime';
+import { executeWorkspaceReplicationJobWithLocalRuntime } from '@/workspaces/replication/orchestration/jobExecution/localRuntime';
 import { recoverWorkspaceReplicationJobsAfterRestart } from '@/workspaces/replication/state/workspaceReplicationGc';
 
 const SESSION_HANDOFF_WORKSPACE_PREPARE_TARGET_CORRELATION_PREFIX = 'session_handoff_workspace_prepare_target:';

@@ -71,7 +71,7 @@ describe('daemon control server: /spawn-session', () => {
           directory: '/tmp',
           sessionId: 'explicit-session',
           spawnNonce: 'spawn-nonce-1',
-          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
           experimentalCodexAcp: true,
           transcriptStorage: 'direct',
           mcpSelection: {
@@ -109,7 +109,7 @@ describe('daemon control server: /spawn-session', () => {
         directory: '/tmp',
         sessionId: 'explicit-session',
         spawnNonce: 'spawn-nonce-1',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         codexBackendMode: 'acp',
         transcriptStorage: 'direct',
         mcpSelection: {
@@ -239,7 +239,59 @@ describe('daemon control server: /spawn-session', () => {
       });
 
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({
+        success: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      });
       expect(observed).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('accepts legacy V1 backendTarget carriers on the daemon compatibility ingress', async () => {
+    let observed: any = null;
+
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => false,
+      spawnSession: async (options: any) => {
+        observed = options;
+        return { type: 'success', sessionId: 'happy-test-123' };
+      },
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({
+          directory: '/tmp',
+          agent: 'codex',
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        success: true,
+        sessionId: 'happy-test-123',
+        approvedNewDirectoryCreation: true,
+      });
+      expect(observed).toEqual({
+        directory: '/tmp',
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'codex',
+          sourceKind: 'built_in',
+        },
+      });
     } finally {
       await app.close();
     }

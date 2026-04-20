@@ -42,7 +42,7 @@ describe('resolveSpawnChildEnvironment (profile template expansion)', () => {
         ANTHROPIC_AUTH_TOKEN: '${DEEPSEEK_AUTH_TOKEN}',
       },
       daemonSpawnHooks: {
-        buildExtraEnvForChild: () => ({
+        augmentEnv: () => ({
           DEEPSEEK_AUTH_TOKEN: 'sk-child-only-secret',
         }),
       },

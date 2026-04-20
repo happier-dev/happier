@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
-import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/registerSessionHandlers';
+import { resolveCanonicalCodexBackendModeFromCompatInput } from '@/backends/codex/daemon/backendMode';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 function sha256Hex(value: string): string {
@@ -89,10 +89,10 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
   const agentModeId = normalizeNonEmptyString(options.agentModeId);
 
   const modelId = normalizeNonEmptyString(options.modelId);
-  const codexBackendMode = resolveCanonicalCodexBackendMode({
+  const codexBackendMode = resolveCanonicalCodexBackendModeFromCompatInput({
     codexBackendMode: options.codexBackendMode,
     experimentalCodexAcp: options.experimentalCodexAcp,
-    agentRuntimeDescriptorV1: options.agentRuntimeDescriptorV1,
+    runtimeDescriptorV1: options.runtimeDescriptorV1,
   }) ?? null;
   const resume = normalizeNonEmptyString(options.resume);
   const initialPrompt = normalizeNonEmptyString(options.initialPrompt);

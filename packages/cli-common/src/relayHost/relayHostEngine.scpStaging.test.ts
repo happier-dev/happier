@@ -103,6 +103,280 @@ describe('RelayHostEngine (remote SSH)', () => {
     expect(serviceInstallCommand).not.toContain('enable --now');
   });
 
+  it('migrates a preview-owned legacy unsuffixed systemd unit to the suffixed service name over SSH', async () => {
+    let serviceInstallCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('/self-host-state.json')) {
+          return { status: 1, stdout: '', stderr: 'missing\n' };
+        }
+        if (command.includes('systemctl') && command.includes('show') && command.includes('--property=LoadState')) {
+          if (command.includes('happier-server-preview.service')) {
+            return { status: 0, stdout: 'LoadState=not-found\n', stderr: '' };
+          }
+          if (command.includes('happier-server.service')) {
+            return { status: 0, stdout: 'LoadState=loaded\n', stderr: '' };
+          }
+        }
+        if (command.includes('cat') && command.includes('happier-server.service')) {
+          return { status: 0, stdout: '[Service]\nWorkingDirectory=/home/remote-user/.happier/self-host-preview\n', stderr: '' };
+        }
+        if (command.includes('[ -f') && command.includes('happier-server')) {
+          return { status: 0, stdout: 'no\n', stderr: '' };
+        }
+        if (command.includes('[ -d') && command.includes('node_modules')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        if (command.includes('systemctl') && command.includes('daemon-reload') && command.includes('enable')) {
+          serviceInstallCommand = command;
+        }
+        if (command.includes('curl') || command.includes('wget')) {
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => ({
+        binaryPath: componentId === 'happier-cli'
+          ? '$HOME/.happier/happier-cli/current/happier'
+          : '$HOME/.happier/happier-server/current/happier-server',
+        versionId: 'preview-1',
+      }),
+    });
+
+    await engine.installOrUpdate({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'preview',
+      mode: 'user',
+    });
+
+    expect(serviceInstallCommand).toContain('systemctl --user disable --now');
+    expect(serviceInstallCommand).toContain('happier-server.service');
+    expect(serviceInstallCommand).toContain('rm -f');
+    expect(serviceInstallCommand).toContain('systemctl --user enable');
+    expect(serviceInstallCommand).toContain('systemctl --user restart');
+    expect(serviceInstallCommand).toContain('happier-server-preview.service');
+    expect(serviceInstallCommand).not.toMatch(/systemctl --user enable ['"]?happier-server\.service/);
+    expect(serviceInstallCommand).not.toMatch(/systemctl --user restart ['"]?happier-server\.service/);
+  });
+
+  it('migrates duplicate preview-owned legacy and canonical systemd units to the suffixed service name on install', async () => {
+    let serviceInstallCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('/self-host-state.json')) {
+          return { status: 1, stdout: '', stderr: 'missing\n' };
+        }
+        if (command.includes('systemctl') && command.includes('show') && command.includes('--property=LoadState')) {
+          return { status: 0, stdout: 'LoadState=loaded\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('happier-server-preview.service')) {
+          return { status: 0, stdout: '[Service]\nWorkingDirectory=/home/remote-user/.happier/self-host-preview\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('happier-server.service')) {
+          return { status: 0, stdout: '[Service]\nWorkingDirectory=/home/remote-user/.happier/self-host-preview\n', stderr: '' };
+        }
+        if (command.includes('[ -f') && command.includes('happier-server')) {
+          return { status: 0, stdout: 'no\n', stderr: '' };
+        }
+        if (command.includes('[ -d') && command.includes('node_modules')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        if (command.includes('systemctl') && command.includes('daemon-reload') && command.includes('enable')) {
+          serviceInstallCommand = command;
+        }
+        if (command.includes('curl') || command.includes('wget')) {
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => ({
+        binaryPath: componentId === 'happier-cli'
+          ? '$HOME/.happier/happier-cli/current/happier'
+          : '$HOME/.happier/happier-server/current/happier-server',
+        versionId: 'preview-1',
+      }),
+    });
+
+    await engine.installOrUpdate({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'preview',
+      mode: 'user',
+    });
+
+    expect(serviceInstallCommand).toContain('systemctl --user disable --now');
+    expect(serviceInstallCommand).toContain('happier-server.service');
+    expect(serviceInstallCommand).toContain('systemctl --user enable');
+    expect(serviceInstallCommand).toContain('systemctl --user restart');
+    expect(serviceInstallCommand).toContain('happier-server-preview.service');
+    expect(serviceInstallCommand).not.toMatch(/systemctl --user enable ['"]?happier-server\.service/);
+    expect(serviceInstallCommand).not.toMatch(/systemctl --user restart ['"]?happier-server\.service/);
+  });
+
+  it('migrates a preview-owned legacy launchd plist to the suffixed label over SSH', async () => {
+    let serviceInstallCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'darwin', arch: 'arm64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/Users/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('/self-host-state.json')) {
+          return { status: 1, stdout: '', stderr: 'missing\n' };
+        }
+        if (command.includes('cat') && command.includes('happier-server.plist')) {
+          return {
+            status: 0,
+            stdout: [
+              '<?xml version="1.0" encoding="UTF-8"?>',
+              '<plist version="1.0">',
+              '  <dict>',
+              '    <key>Label</key>',
+              '    <string>happier-server</string>',
+              '    <key>WorkingDirectory</key>',
+              '    <string>/Users/remote-user/.happier/self-host-preview</string>',
+              '  </dict>',
+              '</plist>',
+              '',
+            ].join('\n'),
+            stderr: '',
+          };
+        }
+        if (command.includes('launchctl list')) {
+          if (command.includes('happier-server-preview') || command.includes('happier-server-dev')) {
+            return { status: 1, stdout: '', stderr: '' };
+          }
+          if (command.includes('happier-server')) {
+            return { status: 0, stdout: '', stderr: '' };
+          }
+          return { status: 1, stdout: '', stderr: '' };
+        }
+        if (command.includes('[ -f') && command.includes('happier-server')) {
+          return { status: 0, stdout: 'no\n', stderr: '' };
+        }
+        if (command.includes('[ -d') && command.includes('node_modules')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        if (command.includes('launchctl') && command.includes('load -w')) {
+          serviceInstallCommand = command;
+        }
+        if (command.includes('curl') || command.includes('wget')) {
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => ({
+        binaryPath: componentId === 'happier-cli'
+          ? '$HOME/.happier/happier-cli/current/happier'
+          : '$HOME/.happier/happier-server/current/happier-server',
+        versionId: 'preview-1',
+      }),
+    });
+
+    await engine.installOrUpdate({
+      target: { kind: 'ssh', ssh: { target: 'darwin@example.test', auth: 'agent' } },
+      channel: 'preview',
+      mode: 'user',
+    });
+
+    expect(serviceInstallCommand).toContain('launchctl unload -w');
+    expect(serviceInstallCommand).toContain('happier-server.plist');
+    expect(serviceInstallCommand).toContain('launchctl remove');
+    expect(serviceInstallCommand).toContain('happier-server');
+    expect(serviceInstallCommand).toContain('rm -f');
+    expect(serviceInstallCommand).toContain('happier-server-preview.plist');
+    expect(serviceInstallCommand).not.toMatch(/launchctl load -w ['"]?[^;]*happier-server\.plist/);
+  });
+
+  it('controls the canonical remote systemd unit when both canonical and legacy units share the preview install root', async () => {
+    const invokedControlCommands: string[] = [];
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('self-host-state.json')) {
+          return { status: 0, stdout: '{"version":"0.2.4"}\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('server.env')) {
+          return { status: 0, stdout: 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n', stderr: '' };
+        }
+        if (command.includes('systemctl') && command.includes('show') && command.includes('--property=LoadState')) {
+          return { status: 0, stdout: 'LoadState=loaded\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('happier-server-preview.service')) {
+          return { status: 0, stdout: '[Service]\nWorkingDirectory=/home/remote-user/.happier/self-host-preview\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('happier-server.service')) {
+          return { status: 0, stdout: '[Service]\nWorkingDirectory=/home/remote-user/.happier/self-host-preview\n', stderr: '' };
+        }
+        if (command.includes('systemctl --user restart')) {
+          invokedControlCommands.push(command);
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        if (command.includes('/v1/version')) {
+          return { status: 0, stdout: 'HAPPIER_RELAY_HEALTH_OK\n', stderr: '' };
+        }
+        if (command.includes('systemctl --user show')) {
+          return { status: 0, stdout: 'LoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\n', stderr: '' };
+        }
+        if (command.includes('[ -f') && command.includes('happier-server')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => ({
+        binaryPath: componentId === 'happier-cli'
+          ? '$HOME/.happier/happier-cli/current/happier'
+          : '$HOME/.happier/happier-server/current/happier-server',
+        versionId: 'preview-1',
+      }),
+    });
+
+    await expect(engine.control({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'preview',
+      mode: 'user',
+      action: 'restart',
+    })).resolves.toBeUndefined();
+
+    expect(invokedControlCommands.some((command) => command.includes('happier-server-preview.service'))).toBe(true);
+    expect(invokedControlCommands.some((command) => command.includes('happier-server.service'))).toBe(false);
+  });
+
   it('uses server.env to report the configured baseUrl (instead of defaults)', async () => {
     const engine = createRelayHostEngine({
       now: () => 123,
@@ -370,8 +644,14 @@ describe('RelayHostEngine (remote SSH)', () => {
         if (command.includes('printf') && command.includes('$PATH')) {
           return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
         }
+        if (command.includes('launchctl list')) {
+          return { status: 1, stdout: '', stderr: '' };
+        }
         if (command.includes('[ -f') && command.includes('happier-server')) {
           return { status: 0, stdout: 'no\n', stderr: '' };
+        }
+        if (command.includes('[ -d') && command.includes('node_modules')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
         }
         if (command.includes('echo yes')) {
           return { status: 0, stdout: 'yes\n', stderr: '' };
@@ -415,6 +695,65 @@ describe('RelayHostEngine (remote SSH)', () => {
     expect(capturedLocalBinaryPath).toBe('/tmp/local/happier-server');
     expect(renderedEnvText).toContain('HAPPIER_SQLITE_MIGRATIONS_DIR=/home/remote-user/.happier/happier-server/current/prisma/sqlite/migrations');
     expect(renderedEnvText).not.toContain('/tmp/local/happier-server');
+  });
+
+  it('keeps sqlite auto-migrate enabled in remote darwin relay env', async () => {
+    let renderedEnvText = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'darwin', arch: 'arm64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/Users/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('launchctl list')) {
+          return { status: 1, stdout: '', stderr: '' };
+        }
+        if (command.includes('[ -f') && command.includes('happier-server')) {
+          return { status: 0, stdout: 'no\n', stderr: '' };
+        }
+        if (command.includes('[ -d') && command.includes('node_modules')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async ({ localPath }) => {
+        const { readFile } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        const envCandidate = await readFile(join(localPath, 'server.env'), 'utf8').catch(() => '');
+        if (envCandidate) {
+          renderedEnvText = envCandidate;
+        }
+      },
+      installRemoteComponent: async ({ componentId }) => ({
+        binaryPath: componentId === 'happier-cli'
+          ? '$HOME/.happier/happier-cli/current/happier'
+          : '$HOME/.happier/happier-server/current/happier-server',
+        versionId: 'publicdev-1',
+      }),
+    });
+
+    await engine.installOrUpdate({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'darwin@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'preview',
+      mode: 'user',
+    });
+
+    expect(renderedEnvText).toContain('HAPPIER_SQLITE_AUTO_MIGRATE=1');
   });
 
   it('fails installOrUpdate when the remote relay /health probe does not become ready', async () => {

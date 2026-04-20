@@ -48,10 +48,12 @@ describe('handleDaemonCliCommand: daemon restart', () => {
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+        'HAPPIER_DAEMON_STARTUP_SOURCE',
         'HAPPIER_DAEMON_SERVICE_PLATFORM',
         'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_CHANNEL',
+        'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
     ]);
 
     afterEach(() => {
@@ -250,10 +252,12 @@ describe('handleDaemonCliCommand: daemon restart', () => {
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart',
                 HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
                 HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
                 HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(homeDir, '.happier'),
                 HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
             });
             vi.resetModules();
 
@@ -271,6 +275,9 @@ describe('handleDaemonCliCommand: daemon restart', () => {
                     description: 'Happier Daemon',
                     execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
                     env: {
+                        HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+                        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+                        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
                         HAPPIER_ACTIVE_SERVER_ID: 'cloud',
                         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                     },
@@ -285,21 +292,22 @@ describe('handleDaemonCliCommand: daemon restart', () => {
             }) as any);
 
             try {
+                expect(process.env.HAPPIER_DAEMON_STARTUP_SOURCE).toBe('self-restart');
                 await expect(
-                    handleDaemonCliCommand({
-                        args: ['daemon', 'restart'],
-                    } as any),
+                handleDaemonCliCommand({
+                    args: ['daemon', 'restart'],
+                } as any),
                 ).rejects.toThrow(/exit:1/);
             } finally {
                 output.restore();
             }
 
+            expect(output.text()).toContain('background service is already installed');
+            expect(output.text()).toContain('happier service restart');
             expect(stopDaemonMock).not.toHaveBeenCalled();
             expect(spawnDetachedMock).not.toHaveBeenCalled();
             expect(waitRunningMock).not.toHaveBeenCalled();
             expect(exitSpy).toHaveBeenCalledWith(1);
-            expect(output.text()).toContain('background service is already installed');
-            expect(output.text()).toContain('happier service restart');
         });
     });
 });

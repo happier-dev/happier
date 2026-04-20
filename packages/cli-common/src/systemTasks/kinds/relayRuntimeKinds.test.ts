@@ -84,6 +84,46 @@ describe('relay runtime shared system task kinds', () => {
     });
   });
 
+  it('preserves relay runtime warnings in the canonical status payload', async () => {
+    const kind = createRelayRuntimeStatusTaskKind({
+      readStatus: async () => ({
+        installed: true,
+        version: '1.2.3',
+        service: {
+          active: true,
+          enabled: true,
+        },
+        baseUrl: 'http://127.0.0.1:3005',
+        warnings: ['Detected older preview relay state with a different data secret.'],
+      }),
+      checkHealth: async () => true,
+    });
+
+    const result = await kind.run({
+      params: {
+        target: { kind: 'local' },
+        mode: 'user',
+        channel: 'preview',
+      },
+      emit: () => undefined,
+      prompt: async () => {
+        throw new Error('relay runtime status should not prompt');
+      },
+    });
+
+    expect(result).toEqual({
+      installed: true,
+      version: '1.2.3',
+      service: {
+        active: true,
+        enabled: true,
+      },
+      relayUrl: 'http://127.0.0.1:3005',
+      healthy: true,
+      warnings: ['Detected older preview relay state with a different data secret.'],
+    });
+  });
+
   it('installs or updates the relay runtime and returns the canonical task payload', async () => {
     const events: unknown[] = [];
     const kind = createRelayRuntimeInstallOrUpdateTaskKind({

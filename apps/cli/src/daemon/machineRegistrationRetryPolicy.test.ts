@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MachineContentPublicKeyMismatchError } from '@/api/api';
+import { MachineContentPublicKeyMismatchError } from '@/api/machine/machineRegistrationErrors';
 
 import { shouldRetryMachineRegistrationError } from './machineRegistrationRetryPolicy';
 

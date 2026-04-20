@@ -7,6 +7,7 @@ export type DaemonServiceTaskParams = Readonly<{
   }>;
   surface?: string;
   mode?: 'user';
+  channel?: 'stable' | 'preview' | 'dev' | 'publicdev';
 }>;
 
 export type DaemonServiceStatusSnapshot = Readonly<{
@@ -39,7 +40,7 @@ function assertDaemonReady(status: DaemonServiceStatusSnapshot): void {
   if (status.needsAuth) {
     throw new SystemTaskExecutionError(
       'not_authenticated',
-      'Authenticate this computer with the selected server before continuing.',
+      'Authenticate this computer with the selected Relay before continuing.',
     );
   }
 }
@@ -261,6 +262,7 @@ export function parseDaemonServiceTaskParams(params: unknown): DaemonServiceTask
   const record = params as Record<string, unknown>;
   const target = record.target;
   const mode = record.mode;
+  const channel = record.channel;
 
   if (!target || typeof target !== 'object' || Array.isArray(target)) {
     throw new SystemTaskExecutionError('invalid_params', 'target is required.');
@@ -280,6 +282,10 @@ export function parseDaemonServiceTaskParams(params: unknown): DaemonServiceTask
   if (surface !== undefined && (typeof surface !== 'string' || surface.trim().length === 0)) {
     throw new SystemTaskExecutionError('invalid_params', 'surface must be a non-empty string when provided.');
   }
+  const normalizedChannel = typeof channel === 'string' ? channel.trim().toLowerCase() : '';
+  if (normalizedChannel && normalizedChannel !== 'stable' && normalizedChannel !== 'preview' && normalizedChannel !== 'dev' && normalizedChannel !== 'publicdev') {
+    throw new SystemTaskExecutionError('invalid_params', 'channel must be stable, preview, dev, or publicdev when provided.');
+  }
 
   return {
     target: {
@@ -287,5 +293,6 @@ export function parseDaemonServiceTaskParams(params: unknown): DaemonServiceTask
     },
     ...(surface === undefined ? {} : { surface: surface.trim() }),
     ...(normalizedMode === 'user' ? { mode: 'user' as const } : {}),
+    ...(normalizedChannel ? { channel: normalizedChannel as DaemonServiceTaskParams['channel'] } : {}),
   };
 }

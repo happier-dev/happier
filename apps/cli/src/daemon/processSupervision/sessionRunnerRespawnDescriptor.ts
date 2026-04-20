@@ -1,16 +1,30 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/registerSessionHandlers';
+import {
+  type SpawnSessionOptions,
+} from '@/rpc/handlers/registerSessionHandlers';
+import {
+  readCanonicalSpawnRuntimeSelectionFromCompatIngress,
+  readSpawnRuntimeDescriptorV1,
+} from '@/rpc/handlers/spawnRuntimeSelection';
+import {
+  resolveCanonicalCodexBackendMode,
+  resolveCanonicalCodexBackendModeFromCompatInput,
+} from '@/backends/codex/daemon/backendMode';
 import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import {
-  AgentRuntimeDescriptorV1Schema,
-  BackendTargetRefSchema,
+  BackendTargetRefV2Schema,
   openAccountScopedBlobCiphertext,
+  RuntimeDescriptorV1Schema,
+  normalizeBackendTargetRefV2InputToV2,
   sealAccountScopedBlobCiphertext,
   SessionMcpSelectionV1Schema,
   type AccountScopedCryptoMaterial,
 } from '@happier-dev/protocol';
 import * as z from 'zod';
+import {
+  resolveConcreteBackendTargetRefV2,
+  resolveConcreteCompatBackendTargetRefs,
+} from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 
 const TERMINAL_MODES = ['plain', 'tmux', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
@@ -72,6 +86,19 @@ function pickSafeRespawnEnvironmentVariables(value: unknown): Record<string, str
   return Object.keys(persisted).length > 0 ? persisted : undefined;
 }
 
+export function buildTrackedSessionRespawnEnvironmentVariables(params: Readonly<{
+  expandedEnvironmentVariables: unknown;
+  extraEnvForChild: unknown;
+}>): Record<string, string> | undefined {
+  const expandedEnvironmentVariables = pickPersistedEnvironmentVariables(params.expandedEnvironmentVariables) ?? {};
+  const safeExtraEnvForChild = pickSafeRespawnEnvironmentVariables(params.extraEnvForChild) ?? {};
+  const merged = {
+    ...expandedEnvironmentVariables,
+    ...safeExtraEnvForChild,
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 function sealRespawnEnvironmentVariables(params: Readonly<{
   environmentVariables: Record<string, string> | undefined;
   encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
@@ -106,31 +133,47 @@ function openRespawnEnvironmentVariables(params: Readonly<{
   return parsed.success ? parsed.data : null;
 }
 
+function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const normalizedBackendTarget = normalizeBackendTargetRefV2InputToV2(candidate.backendTarget);
+  const {
+    runtimeDescriptorV1,
+    codexBackendMode: canonicalCodexBackendMode,
+  } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+    codexBackendMode: candidate.codexBackendMode,
+    experimentalCodexAcp: candidate.experimentalCodexAcp,
+    runtimeDescriptorV1: candidate.runtimeDescriptorV1,
+    legacyAgentRuntimeDescriptorV1: candidate.agentRuntimeDescriptorV1,
+  });
+  const resolvedCanonicalCodexBackendMode = canonicalCodexBackendMode
+    ?? (candidate.experimentalCodexResume === true ? 'acp' : undefined);
+  const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(candidate.environmentVariables);
+  const {
+    experimentalCodexAcp: _legacyExperimentalCodexAcp,
+    experimentalCodexResume: _legacyExperimentalCodexResume,
+    agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1,
+    ...rest
+  } = candidate;
+
+  return {
+    ...rest,
+    ...(normalizedBackendTarget ? { backendTarget: normalizedBackendTarget } : {}),
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+    ...(resolvedCanonicalCodexBackendMode ? { codexBackendMode: resolvedCanonicalCodexBackendMode } : {}),
+    ...(safeEnvironmentVariables ? { environmentVariables: safeEnvironmentVariables } : {}),
+  };
+}
+
 export const SessionRunnerRespawnDescriptorV1Schema = z
-  .preprocess((value) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return value;
-    }
-
-    const candidate = value as Record<string, unknown>;
-    const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
-      codexBackendMode: candidate.codexBackendMode,
-      experimentalCodexAcp: candidate.experimentalCodexAcp === true,
-      agentRuntimeDescriptorV1: candidate.agentRuntimeDescriptorV1,
-    }) ?? (candidate.experimentalCodexResume === true ? 'acp' : undefined);
-    const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(candidate.environmentVariables);
-    const { experimentalCodexAcp: _legacyExperimentalCodexAcp, experimentalCodexResume: _legacyExperimentalCodexResume, ...rest } = candidate;
-
-    return {
-      ...rest,
-      ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
-      ...(safeEnvironmentVariables ? { environmentVariables: safeEnvironmentVariables } : {}),
-    };
-  }, z
+  .preprocess(canonicalizeSessionRunnerRespawnDescriptorIngress, z
   .object({
     version: z.literal(1),
     directory: z.string(),
-    backendTarget: BackendTargetRefSchema.optional(),
+    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema).optional(),
     resume: z.string().optional(),
     transcriptStorage: z.enum(['persisted', 'direct']).optional(),
     terminal: TerminalSpawnOptionsSchema.optional(),
@@ -148,7 +191,7 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     sealedEnvironmentVariables: SealedRespawnEnvironmentVariablesSchema.optional(),
     connectedServices: z.unknown().optional(),
     mcpSelection: SessionMcpSelectionV1Schema.optional(),
-    agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   })
   .passthrough());
@@ -172,13 +215,16 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   if (!directory) return null;
   const resume = normalizeOptionalString(spawnOptions.resume);
   const transcriptStorage = spawnOptions.transcriptStorage === 'direct' ? 'direct' : undefined;
+  const canonicalBackendTarget = resolveConcreteBackendTargetRefV2(spawnOptions.backendTarget);
+  const backendTarget = canonicalBackendTarget ?? undefined;
   const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(spawnOptions.environmentVariables);
   const persistedEnvironmentVariables = pickPersistedEnvironmentVariables(spawnOptions.environmentVariables);
-  const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+  const canonicalCodexBackendMode = resolveCanonicalCodexBackendModeFromCompatInput({
     codexBackendMode: spawnOptions.codexBackendMode,
     experimentalCodexAcp: spawnOptions.experimentalCodexAcp,
-    agentRuntimeDescriptorV1: spawnOptions.agentRuntimeDescriptorV1,
+    runtimeDescriptorV1: spawnOptions.runtimeDescriptorV1,
   });
+  const runtimeDescriptorV1 = readSpawnRuntimeDescriptorV1(spawnOptions);
   const sealedEnvironmentVariables = sealRespawnEnvironmentVariables({
     environmentVariables: persistedEnvironmentVariables,
     encryptionMaterial: options?.encryptionMaterial,
@@ -188,7 +234,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   const descriptor: SessionRunnerRespawnDescriptorV1 = {
     version: 1,
     directory,
-    ...(spawnOptions.backendTarget ? { backendTarget: spawnOptions.backendTarget } : {}),
+    ...(backendTarget ? { backendTarget } : {}),
     ...(resume ? { resume } : {}),
     ...(transcriptStorage ? { transcriptStorage } : {}),
     ...(spawnOptions.terminal ? { terminal: spawnOptions.terminal } : {}),
@@ -206,7 +252,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     ...(sealedEnvironmentVariables ? { sealedEnvironmentVariables } : {}),
     ...(spawnOptions.connectedServices ? { connectedServices: spawnOptions.connectedServices } : {}),
     ...(spawnOptions.mcpSelection ? { mcpSelection: spawnOptions.mcpSelection } : {}),
-    ...(spawnOptions.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: spawnOptions.agentRuntimeDescriptorV1 } : {}),
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
   };
 
@@ -222,7 +268,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
 ): SpawnSessionOptions {
   const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
     codexBackendMode: descriptor.codexBackendMode,
-    agentRuntimeDescriptorV1: descriptor.agentRuntimeDescriptorV1,
+    runtimeDescriptorV1: descriptor.runtimeDescriptorV1,
   });
   const openedEnvironmentVariables = descriptor.sealedEnvironmentVariables
     ? openRespawnEnvironmentVariables({
@@ -251,7 +297,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
     ...(environmentVariables ? { environmentVariables } : {}),
     ...(descriptor.connectedServices ? { connectedServices: descriptor.connectedServices } : {}),
     ...(descriptor.mcpSelection ? { mcpSelection: descriptor.mcpSelection } : {}),
-    ...(descriptor.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: descriptor.agentRuntimeDescriptorV1 } : {}),
+    ...(descriptor.runtimeDescriptorV1 ? { runtimeDescriptorV1: descriptor.runtimeDescriptorV1 } : {}),
     ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
     approvedNewDirectoryCreation: true,
   };

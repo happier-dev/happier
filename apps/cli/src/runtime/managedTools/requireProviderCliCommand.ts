@@ -1,14 +1,30 @@
-import type { AgentId } from '@happier-dev/agents';
+import {
+  getProviderCliRuntimeSpec,
+  isAgentId,
+  legacyCustomAcpCompat,
+} from '@happier-dev/agents';
+import type { CatalogAgentLookupId } from '@/backends/types';
 
-import { readProviderCliOverride, resolveProviderCliCommand } from './providerCliResolution';
+import { readProviderCliOverrideForRuntime, resolveProviderCliCommandForRuntime } from './providerCliResolution';
+
+export function resolveProviderCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
+  if (isAgentId(agentId)) {
+    return getProviderCliRuntimeSpec(agentId);
+  }
+  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
+    return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+  }
+  throw new Error(`Unsupported provider CLI runtime lookup id '${agentId}'`);
+}
 
 export function buildMissingProviderCliCommandErrorMessage(
-  agentId: AgentId,
+  agentId: CatalogAgentLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
   const processEnv = opts.processEnv ?? process.env;
+  const runtimeSpec = resolveProviderCliRuntimeSpecForLookupId(agentId);
   const envKey = `HAPPIER_${agentId.toUpperCase()}_PATH`;
-  if (readProviderCliOverride(agentId, processEnv)) {
+  if (readProviderCliOverrideForRuntime(runtimeSpec, processEnv)) {
     return (
       `${capitalize(agentId)} CLI (${agentId}) is unavailable because ${envKey} is set ` +
       `but does not point to a supported CLI entrypoint. Fix ${envKey} or unset it, then restart the daemon.`
@@ -21,10 +37,12 @@ export function buildMissingProviderCliCommandErrorMessage(
 }
 
 export function requireProviderCliCommand(
-  agentId: AgentId,
+  agentId: CatalogAgentLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
-  const resolved = resolveProviderCliCommand(agentId, { processEnv: opts.processEnv });
+  const resolved = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(agentId), {
+    processEnv: opts.processEnv,
+  });
   if (resolved) return resolved.command;
   throw new ReferenceError(buildMissingProviderCliCommandErrorMessage(agentId, opts));
 }

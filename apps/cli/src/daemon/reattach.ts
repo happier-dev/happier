@@ -5,6 +5,8 @@ import type { DaemonSessionMarker } from './sessionRegistry';
 import type { Credentials } from '@/persistence';
 import type { TrackedSession } from './types';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
+import { projectPath } from '@/projectPath';
+import { resolvePackagedRuntimeProjectRoots } from '@/runtime/resolvePackagedRuntimeEntrypoint';
 import {
   buildSpawnSessionOptionsFromRespawnDescriptorV1,
   SessionRunnerRespawnDescriptorV1Schema,
@@ -22,6 +24,63 @@ function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizePathLike(value: string): string {
+  return value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function resolveCliRuntimeRootFromEntrypoint(pathLike: string | undefined): string | null {
+  const normalized = normalizeOptionalString(pathLike);
+  if (!normalized) return null;
+
+  const normalizedPath = normalizePathLike(normalized);
+  const packageDistMarker = '/package-dist/';
+  const distMarker = '/dist/';
+  const srcMarker = '/src/';
+  const packageDistIndex = normalizedPath.indexOf(packageDistMarker);
+  if (packageDistIndex >= 0) {
+    return normalizedPath.slice(0, packageDistIndex);
+  }
+  const distIndex = normalizedPath.indexOf(distMarker);
+  if (distIndex >= 0) {
+    return normalizedPath.slice(0, distIndex);
+  }
+  const srcIndex = normalizedPath.indexOf(srcMarker);
+  if (srcIndex >= 0) {
+    return normalizedPath.slice(0, srcIndex);
+  }
+  return null;
+}
+
+function resolveOwnedLiveDaemonSessionRuntimeRoots(): string[] {
+  const ownedRoots = new Set<string>();
+
+  const currentSubprocessEntrypointRoot = resolveCliRuntimeRootFromEntrypoint(
+    normalizeOptionalString(process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT),
+  );
+  if (currentSubprocessEntrypointRoot) {
+    ownedRoots.add(currentSubprocessEntrypointRoot);
+  }
+
+  for (const runtimeRoot of resolvePackagedRuntimeProjectRoots()) {
+    ownedRoots.add(normalizePathLike(runtimeRoot));
+  }
+
+  ownedRoots.add(normalizePathLike(projectPath()));
+
+  return [...ownedRoots];
+}
+
+export function isOwnedLiveDaemonSessionProcessCommand(command: string): boolean {
+  const normalizedCommand = normalizeOptionalString(command);
+  if (!normalizedCommand) return false;
+
+  const ownedRoots = resolveOwnedLiveDaemonSessionRuntimeRoots();
+  if (ownedRoots.length === 0) return false;
+
+  const normalizedProcessCommand = normalizePathLike(normalizedCommand);
+  return ownedRoots.some((ownedRoot) => normalizedProcessCommand.includes(ownedRoot));
 }
 
 export function setRespawnDescriptorEncryptionMaterialForRestore(
@@ -86,6 +145,7 @@ export function adoptSessionsFromMarkers(params: {
 
 export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
   happyProcesses: HappyProcessInfo[];
+  markedPids: ReadonlySet<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
 }>): Promise<number> {
   let adopted = 0;
@@ -94,10 +154,16 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
     if (!LIVE_RECOVERABLE_HAPPY_SESSION_PROCESS_TYPES.has(proc.type as LiveRecoverableHappySessionProcessType)) {
       continue;
     }
+    if (params.markedPids.has(proc.pid)) {
+      continue;
+    }
     if (params.pidToTrackedSession.has(proc.pid)) {
       continue;
     }
     if (typeof proc.command !== 'string' || proc.command.trim().length === 0) {
+      continue;
+    }
+    if (!isOwnedLiveDaemonSessionProcessCommand(proc.command)) {
       continue;
     }
 

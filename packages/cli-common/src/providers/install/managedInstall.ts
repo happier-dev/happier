@@ -36,6 +36,7 @@ export type AppendCommandLogFn = (
   stdout: string,
   stderr: string,
   status: number | null,
+  signal: NodeJS.Signals | null,
 ) => void;
 
 export type AppendLogLineFn = (logPath: string, line: string) => void;
@@ -167,6 +168,7 @@ export async function installManagedPackageProviderCli(params: Readonly<{
     String(result.stdout ?? ''),
     String(result.stderr ?? ''),
     result.status ?? null,
+    result.signal ?? null,
   );
   if (result.error) {
     throw result.error;

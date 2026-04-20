@@ -2,7 +2,7 @@ import { inferAgentIdFromSessionMetadata, evaluateVendorResumeEligibility, type 
 import {
   buildBackendTargetKey,
   readAcpConfiguredBackendV1FromMetadata,
-  readAgentRuntimeDescriptorV1,
+  readRuntimeDescriptorV1FromMetadata,
   readSystemSessionMetadataFromMetadata,
   type AccountSettings,
 } from '@happier-dev/protocol';
@@ -97,7 +97,7 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
   const providerIdFromConfiguredBackend = configuredBackendId
     ? contributionRegistry.backendDefinitionsById.get(configuredBackendId)?.providerId ?? null
     : null;
-  const runtimeDescriptor = readAgentRuntimeDescriptorV1(metadata.agentRuntimeDescriptorV1);
+  const runtimeDescriptor = readRuntimeDescriptorV1FromMetadata(metadata);
   const providerIdFromRuntimeDescriptor = typeof runtimeDescriptor?.providerId === 'string'
     ? runtimeDescriptor.providerId.trim() || null
     : null;
@@ -105,13 +105,18 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
   if (!providerId) return null;
 
   const providerContribution = contributionRegistry.providerDefinitionsById.get(providerId);
-  if (!providerContribution || providerContribution.source !== 'plugin') return null;
+  if (!providerContribution || providerContribution.provenance !== 'external') return null;
 
   if (isConfiguredBackendDisabledByAccountSettings({ configuredBackendId, accountSettings: params.accountSettings })) {
     return { eligible: false, reasonCode: 'backend_disabled_by_account_settings' };
   }
 
-  const resumeConfig = readPluginProviderResumeConfig(providerContribution.definition);
+  // Plugin providers have a minimal contract definition plus an optional rich definition
+  // that preserves additional (still internal) plugin-specific fields such as session.resume.
+  const pluginResumeDefinition = providerContribution.richDefinition?.provenance === 'external'
+    ? providerContribution.richDefinition.definition
+    : providerContribution.definition;
+  const resumeConfig = readPluginProviderResumeConfig(pluginResumeDefinition);
   const supportLevel = resumeConfig.supportLevel !== 'unsupported'
     ? resumeConfig.supportLevel
     : normalizeVendorResumeSupportLevel(providerContribution.catalogEntry?.vendorResumeSupport);

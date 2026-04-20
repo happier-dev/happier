@@ -1,4 +1,4 @@
-import type { BackendTargetRefV1, BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import type { ResolvedTerminalRequest } from '@/terminal/runtime/terminalConfig';
@@ -17,9 +17,9 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   terminalRequest: ResolvedTerminalRequest;
   directory: string;
   options: SpawnSessionOptions;
+  trackedSpawnOptions: SpawnSessionOptions;
   normalizedExistingSessionId: string;
   effectiveResume: string;
-  effectiveBackendTarget: BackendTargetRefV1;
   effectiveBackendTargetV2: BackendTargetRefV2;
   reservedSessionId?: string;
   permissionMode?: string;
@@ -58,9 +58,10 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
     terminalRequest: params.terminalRequest,
     directory: params.directory,
     options: params.options,
+    trackedSpawnOptions: params.trackedSpawnOptions,
     normalizedExistingSessionId: params.normalizedExistingSessionId,
     effectiveResume: params.effectiveResume,
-    effectiveBackendTarget: params.effectiveBackendTarget,
+    effectiveBackendTargetV2: params.effectiveBackendTargetV2,
     sessionControlArgs,
     directoryCreated: params.directoryCreated,
     extraEnvForChildWithMessage: params.extraEnvForChildWithMessage,
@@ -81,7 +82,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
 
   params.logDebug('[DAEMON RUN] Using regular process spawning');
 
-  const agentCommand = resolveDaemonCliSubcommandFromBackendTarget(params.effectiveBackendTarget);
+  const agentCommand = resolveDaemonCliSubcommandFromBackendTarget(params.effectiveBackendTargetV2);
   if (!agentCommand) {
     return {
       type: 'error',
@@ -122,6 +123,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
       agentCommand,
       directory: params.directory,
       options: params.options,
+      trackedSpawnOptions: params.trackedSpawnOptions,
       normalizedExistingSessionId: params.normalizedExistingSessionId,
       effectiveResume: params.effectiveResume,
       reservedSessionId: params.reservedSessionId,
@@ -145,6 +147,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
     args,
     directory: params.directory,
     options: params.options,
+    trackedSpawnOptions: params.trackedSpawnOptions,
     normalizedExistingSessionId: params.normalizedExistingSessionId,
     effectiveResume: params.effectiveResume,
     directoryCreated: params.directoryCreated,

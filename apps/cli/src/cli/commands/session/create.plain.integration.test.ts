@@ -109,7 +109,7 @@ describe('happier session create plaintext sessions (integration)', () => {
         expect(decrypted?.tag).toBe('MyTag');
         expect(observedSpawnBody).toEqual({
           directory: process.cwd(),
-          backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
+          backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
         });
         metadataJson = String(data.metadata);
         metadataVersion = 1;

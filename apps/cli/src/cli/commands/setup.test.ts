@@ -6,6 +6,18 @@ import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
+const { getProviderCliSetupRecommendedIdsMock } = vi.hoisted(() => ({
+  getProviderCliSetupRecommendedIdsMock: vi.fn(() => ['alpha', 'beta']),
+}));
+
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+  return {
+    ...actual,
+    getProviderCliSetupRecommendedIds: getProviderCliSetupRecommendedIdsMock,
+  };
+});
+
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-9;]*m/g, '');
 }
@@ -16,11 +28,13 @@ function createBackgroundServiceSetupGuidance(
   return {
     targetReleaseChannel: 'stable',
     targetServerUrl: 'https://relay.example.test',
+    currentHappierHomeDir: null,
     currentDefaultReleaseChannel: 'stable',
     managedReleaseChannels: [],
     manualRelayOwner: null,
     exactDefaultServiceExists: false,
     conflictingServices: [],
+    foreignHomeConflictingServices: [],
     shouldOfferDefaultReleaseChannelSwitch: false,
     shouldPromptForManualRelayTakeover: false,
     shouldPromptForServiceReplacement: false,
@@ -84,6 +98,8 @@ describe('happier setup', () => {
       expect(text).toContain('Usage:');
       expect(text).toContain('happier setup plan');
       expect(text).toContain('Examples:');
+      expect(text).toContain('happier setup --relay-url https://relay.example.test --provider alpha --provider beta');
+      expect(text).not.toContain('happier setup --relay-url https://relay.example.test --provider codex --provider claude');
       expect(text).toContain('Notes:');
       expect(text).toContain('Sets up this computer for a server');
       expect(text).not.toContain('Sets up this computer for a Relay');
@@ -143,6 +159,7 @@ describe('happier setup', () => {
       expect(calls).toEqual([
         ['auth', 'login'],
         ['service', 'install'],
+        ['service', 'start'],
         ['providers', 'setup', '--yes'],
       ]);
     });
@@ -345,6 +362,7 @@ describe('happier setup', () => {
                 targetMode: 'pinned',
                 running: true,
                 serverUrl: 'https://relay.example.test',
+                happierHomeDir: homeDir,
               },
             ],
             shouldOfferDefaultReleaseChannelSwitch: true,
@@ -366,7 +384,7 @@ describe('happier setup', () => {
       );
       expect(promptInputFn).toHaveBeenNthCalledWith(
         2,
-        'A manual relay runtime is currently running for https://relay.example.test. Stop it and enable the background service for this computer? [Y/n] ',
+        'This computer is currently using a temporary relay process for https://relay.example.test. Continue to stop that process and switch this computer to the background service? [Y/n] ',
       );
       expect(promptInputFn).toHaveBeenNthCalledWith(
         3,
@@ -382,9 +400,64 @@ describe('happier setup', () => {
         processEnv: process.env,
       });
       expect(calls).toEqual([
-        ['daemon', 'start', '--takeover'],
         ['service', 'uninstall', '--all', '--yes'],
-        ['service', 'install'],
+        ['service', 'install', '--takeover'],
+        ['service', 'start', '--takeover'],
+        ['providers', 'setup', '--yes'],
+      ]);
+    });
+  });
+
+  it('starts the existing default background service with takeover instead of reinstalling it', async () => {
+    await withTempDir('happier-setup-takeover-existing-default-background-service-', async (homeDir) => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: 'https://relay.example.test', HAPPIER_ACTIVE_SERVER_ID: undefined });
+      vi.resetModules();
+      const { handleSetupCommand } = await importHandleSetupCommand();
+
+      const calls: string[][] = [];
+      const promptInputFn = vi.fn<(prompt: string) => Promise<string>>()
+        .mockResolvedValueOnce('y');
+
+      await handleSetupCommand(
+        ['--relay-url', 'https://relay.example.test', '--yes'],
+        {
+          applyServerSelectionFromArgs: async (args) => args,
+          readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
+          readSettingsFn: async () => ({ machineId: 'mid_123' } as any),
+          isInteractiveTerminalFn: () => true,
+          promptInputFn,
+          readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
+            exactDefaultServiceExists: true,
+            manualRelayOwner: {
+              currentReleaseChannel: 'stable',
+              currentCliVersion: '0.2.0',
+            },
+            shouldPromptForManualRelayTakeover: true,
+            managedReleaseChannels: [
+              {
+                releaseChannel: 'stable',
+                label: 'stable',
+                version: '1.0.0',
+                installationId: 'stable-install',
+                installationPath: '/managed/stable',
+                invokerName: 'happier',
+                isDefault: true,
+                onPath: true,
+              },
+            ],
+          }),
+          runHappyCliStepFn: async (argv) => {
+            calls.push([...argv]);
+            return 0;
+          },
+        },
+      );
+
+      expect(promptInputFn).toHaveBeenCalledWith(
+        'This computer is currently using a temporary relay process for https://relay.example.test. Continue to stop that process and switch this computer to the background service? [Y/n] ',
+      );
+      expect(calls).toEqual([
+        ['service', 'start', '--takeover'],
         ['providers', 'setup', '--yes'],
       ]);
     });
@@ -494,6 +567,7 @@ describe('happier setup', () => {
                 targetMode: 'pinned',
                 running: true,
                 serverUrl: 'https://relay.example.test',
+                happierHomeDir: homeDir,
               },
             ],
             shouldOfferDefaultReleaseChannelSwitch: true,

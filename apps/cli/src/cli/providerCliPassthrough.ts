@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
-import type { AgentId } from '@happier-dev/agents';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import type { CatalogAgentLookupId } from '@/backends/types';
 
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
@@ -15,7 +15,7 @@ export function detectProviderCliInfoRequest(args: readonly string[]): '--help' 
 }
 
 export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
-  agentId: AgentId;
+  agentId: CatalogAgentLookupId;
   args: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
 }>): boolean {

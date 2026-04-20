@@ -77,6 +77,7 @@ describe('resolveDaemonServiceInstallRuntimeTarget', () => {
         expect(ensureJavaScriptRuntimeExecutableMock).toHaveBeenCalledWith({
             isBunRuntime: false,
             currentExecPath: '/Applications/Happier.app/Contents/MacOS/happier',
+            processEnv,
         });
         expect(resolved.nodePath).toBe('/managed/node');
         expectPackagedRuntimeEntrypoint(resolved.entryPath);

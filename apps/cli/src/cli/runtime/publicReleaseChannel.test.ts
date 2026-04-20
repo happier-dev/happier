@@ -1,3 +1,4 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,6 +81,32 @@ describe('inferPublicReleaseRingIdFromEnvAndArgv', () => {
                 ],
             }),
         ).toBe('publicdev');
+    });
+
+    it('uses the persisted default channel for the unsuffixed happier shim', () => {
+        const homeDir = mkdtempSync(join(tmpdir(), 'happier-public-release-channel-'));
+        try {
+            writeFileSync(
+                join(homeDir, 'default-cli-release-channel.json'),
+                `${JSON.stringify({ releaseChannel: 'preview' })}\n`,
+                'utf8',
+            );
+
+            expect(
+                inferPublicReleaseRingIdFromEnvAndArgv({
+                    env: {
+                        HAPPIER_HOME_DIR: homeDir,
+                        HAPPIER_PUBLIC_RELEASE_CHANNEL: '',
+                        HAPPIER_RELEASE_RING: '',
+                        HAPPIER_RELEASE_CHANNEL: '',
+                    },
+                    argv: ['/home/test/.happier/bin/happier', 'self', 'update'],
+                    execPath: '/home/test/.happier/bin/happier',
+                }),
+            ).toBe('preview');
+        } finally {
+            rmSync(homeDir, { recursive: true, force: true });
+        }
     });
 });
 

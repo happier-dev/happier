@@ -230,7 +230,7 @@ describe('daemonServiceKinds', () => {
       ok: false,
       error: {
         code: 'not_authenticated',
-        message: 'Authenticate this computer with the selected server before continuing.',
+        message: 'Authenticate this computer with the selected Relay before continuing.',
       },
     });
   });

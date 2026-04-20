@@ -167,6 +167,8 @@ Notes:
 - Use an **ephemeral**, **one-time** pre-auth key for `TS_AUTHKEY` when possible.
 - `tailscale serve` publishes the Happier UI + API (including WebSockets) behind the Tailscale HTTPS endpoint.
 - If your environment can’t use `/dev/net/tun` (some restricted hosts), fall back to a normal reverse proxy (Caddy/Traefik/nginx) or run Tailscale on the host OS and proxy to the container.
+  - Make sure your proxy supports **WebSocket upgrades** for Socket.IO realtime at `/v1/updates` (otherwise machines can stay offline).
+  - See: [Deployment → Environment variables → Networking / reverse proxy](./env#websockets-required-for-realtime--machine-online)
 
 ## Build images
 
@@ -222,6 +224,60 @@ Use this if you want a production setup: an external database, and optional Redi
   - Local disk with `HAPPIER_FILES_BACKEND=local` (stores files under `HAPPIER_SERVER_LIGHT_DATA_DIR`)
 - A stable secret (`HANDY_MASTER_SECRET`)
 - Optional: Redis for scaling realtime across multiple API replicas (`REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`)
+
+## Scaling guidance (reference profiles)
+
+These are **reference points from our local full-compose validation runs**, not a universal production guarantee. They are useful as a starting point for Docker / Dokploy sizing, but you should still watch Prometheus/Grafana and re-measure on your own hardware.
+
+Reference observations from the current Compose-backed campaigns:
+
+- `1 API / 1 worker`
+  - passed presence pressure at `1000 users × 2 machines × 2 sessions = 4000` machine sockets
+  - timed out at `1500 users = 6000` machine sockets
+  - passed reconnect/message pressure at `2000` messages/second for `20s` (`40000` acknowledged messages)
+  - passed mixed pressure at `1500` active session/machine sockets with `1500` messages/second and `60` routed RPC calls/second (`30000` acknowledged messages and `1500` routed RPC calls over `20s`)
+- `2 API / 1 worker`
+  - passed cross-replica RPC at `40 users × 2 listeners = 80` listeners with `40` routed RPC calls/second for `20s` (`800` routed calls)
+- `2 API / 2 workers`
+  - passed presence pressure at `1500 users = 6000` machine sockets
+  - timed out at `2000 users = 8000` machine sockets
+
+Practical guidance:
+
+- Start with `1 API / 1 worker` for small internal deployments and low-to-moderate concurrency.
+- Add **API replicas first** when the dominant pressure is:
+  - websocket/RPC handling
+  - request latency
+  - cross-replica listener routing
+- Add **worker replicas** when the dominant pressure is:
+  - presence fan-in
+  - Redis stream backlog
+  - reclaim/flush lag
+- If transcript writes and RPC are healthy but machine-bound sockets are the first thing to time out, scale workers and reduce per-user machine/session fan-in before scaling API replicas.
+- Treat **sticky sessions** as mandatory when you run more than one API replica and keep Socket.IO polling enabled.
+- Keep the Socket.IO Redis Streams adapter enabled for multi-replica API topologies:
+
+```env
+REDIS_URL=redis://redis:6379
+HAPPIER_SOCKET_ADAPTER=redis-streams
+```
+
+- Use Prometheus/Grafana to decide when to scale instead of guessing. The most useful signals are:
+  - p95 HTTP latency
+  - websocket active connection counts
+  - RPC failures / `METHOD_NOT_AVAILABLE`
+  - `fetchSockets()` failures
+  - presence pending backlog and reclaim spikes
+  - event-loop lag
+  - Prisma query wait / pool pressure
+
+If you are running through Dokploy or another reverse proxy, make sure:
+
+- websocket upgrade is enabled
+- idle timeout is comfortably above `60s`
+- sticky affinity is enabled when more than one API replica is running
+
+For the bundled observability stack and dashboards, see [Observability](./observability).
 
 ### Light flavor (single-node / testing)
 
@@ -536,6 +592,120 @@ services:
       - minio
       - redis
 ```
+
+Important production notes for multi-replica API deployments:
+
+- keep sticky sessions enabled at the reverse proxy / load balancer
+- keep the reverse-proxy idle timeout above the server’s Socket.IO `pingInterval + pingTimeout` (currently more than `60s`)
+- scrape metrics from each API and worker directly instead of scraping only the public gateway
+
+### Observability stack (Prometheus + Grafana + Alertmanager)
+
+The repo includes a server-owned observability pack in `apps/server/observability/`.
+
+It launches:
+
+- Prometheus
+- Grafana
+- Alertmanager
+
+Quick start:
+
+```bash
+cp apps/server/observability/.env.example apps/server/observability/.env
+
+docker compose \
+  --env-file apps/server/observability/.env \
+  -f apps/server/observability/docker-compose.yml \
+  up -d
+```
+
+Before starting it:
+
+- ensure your API and worker containers expose `METRICS_ENABLED=true`
+- keep `METRICS_PORT=9090`
+- edit `apps/server/observability/prometheus/targets/*.yml` so the targets match your actual internal service names
+
+The bundled Grafana provisioning includes four dashboards:
+
+- API overview
+- WebSocket / RPC cluster
+- Presence / Redis worker
+- Runtime / DB saturation
+
+The bundled Prometheus rules include baseline alerts for:
+
+- elevated 5xx rate
+- elevated p95 latency
+- event-loop lag spikes
+- RPC method-not-available spikes
+- `fetchSockets()` timeout spikes
+- presence reclaim spikes
+- Redis-backed or in-process presence backlog not draining
+- missing worker metrics target
+
+See [Observability](./observability) for the full guide.
+
+Combined example on one internal Docker network:
+
+```yaml
+networks:
+  happier-internal:
+
+services:
+  api:
+    build:
+      context: .
+      target: server
+    environment:
+      SERVER_ROLE: api
+      REDIS_URL: redis://redis:6379
+      HAPPIER_SOCKET_ADAPTER: redis-streams
+      METRICS_ENABLED: "true"
+      METRICS_PORT: "9090"
+    networks: [happier-internal]
+
+  worker:
+    build:
+      context: .
+      target: server-worker
+    environment:
+      REDIS_URL: redis://redis:6379
+      HAPPIER_SOCKET_ADAPTER: redis-streams
+      METRICS_ENABLED: "true"
+      METRICS_PORT: "9090"
+    networks: [happier-internal]
+
+  redis:
+    image: redis:7
+    networks: [happier-internal]
+
+  prometheus:
+    extends:
+      file: apps/server/observability/docker-compose.yml
+      service: prometheus
+    networks: [happier-internal]
+
+  grafana:
+    extends:
+      file: apps/server/observability/docker-compose.yml
+      service: grafana
+    networks: [happier-internal]
+```
+
+When you use the observability pack on that shared network, set `HAPPIER_OBSERVABILITY_TARGET_NETWORK=happier-internal` in `apps/server/observability/.env` so Prometheus, Grafana, and Alertmanager join the same internal network as Happier Server.
+
+Many operators still keep Happier Server and the observability pack as separate Compose apps. The important part is that both join the same internal Docker network and Prometheus scrapes the internal API and worker service names directly.
+
+### Dokploy note
+
+If you deploy with Dokploy, the recommended shape is:
+
+- one Dokploy app for Happier Server
+- one Dokploy app for the observability pack
+- both attached to the same internal Docker network
+
+Prometheus should scrape the internal API and worker service names directly. Expose Grafana publicly only behind authentication. Keep Prometheus and Alertmanager private unless you have a specific reason to expose them.
 
 ## Migrations
 

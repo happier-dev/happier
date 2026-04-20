@@ -17,6 +17,7 @@ import { discoverInstalledDaemonServiceEntries } from './discoverInstalledDaemon
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
+import { resolveDaemonServiceDiscoveryTargets } from './resolveDaemonServiceDiscoveryTargets';
 import {
   normalizePublicReleaseRingId,
   type PublicReleaseRingId,
@@ -100,13 +101,21 @@ export async function installDaemonService(options: Readonly<{
     entryPath: runtimeTarget.entryPath,
   });
 
-  const discoveredServices = await discoverInstalledDaemonServiceEntries({
+  const discoveryTargets = resolveDaemonServiceDiscoveryTargets({
     platform,
+    mode: options.mode,
     userHomeDir,
     happierHomeDir,
-    mode: options.mode === 'system' ? 'system' : 'user',
-    serversById: {},
   });
+  const discoveredServicesByTarget = await Promise.all(discoveryTargets.map(async (target) =>
+    await discoverInstalledDaemonServiceEntries({
+      platform,
+      userHomeDir: target.userHomeDir,
+      happierHomeDir: target.happierHomeDir,
+      mode: target.mode,
+      serversById: {},
+    })));
+  const discoveredServices = discoveredServicesByTarget.flat();
   const target: DaemonServiceInstallTarget = {
     platform,
     mode: options.mode,
@@ -121,8 +130,15 @@ export async function installDaemonService(options: Readonly<{
     services: discoveredServices,
     expectedInstalledDefinitionContents: installPlan.files[0]?.content ?? null,
   });
+  if (conflictPlan.foreignHomeConflicts.length > 0) {
+    const serviceList = conflictPlan.foreignHomeConflicts.map((service) => service.label).join(', ');
+    throw createDaemonServiceConflictError(
+      `Conflicting background services from another Happier home were detected: ${serviceList}. Switch to that installation to manage its service or remove it manually before installing here.`,
+      conflictPlan.foreignHomeConflicts,
+    );
+  }
 
-  if (!conflictPlan.exactTargetExists && strategy === 'require-explicit' && conflictPlan.competingServices.length > 0) {
+  if (!conflictPlan.exactTargetIsConverged && strategy === 'require-explicit' && conflictPlan.competingServices.length > 0) {
     const serviceList = conflictPlan.competingServices.map((service) => service.label).join(', ');
     throw createDaemonServiceConflictError(
       `Competing background services detected: ${serviceList}. Re-run with --yes or --replace-existing=ring|all.`,
@@ -146,7 +162,7 @@ export async function installDaemonService(options: Readonly<{
     });
   }
 
-  if (conflictPlan.exactTargetExists && options.startExisting !== true) {
+  if (conflictPlan.exactTargetIsConverged && options.startExisting !== true) {
     return;
   }
 

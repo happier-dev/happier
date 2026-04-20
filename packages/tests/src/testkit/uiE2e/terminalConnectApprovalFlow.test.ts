@@ -82,6 +82,49 @@ describe('terminalConnectApprovalFlow', () => {
     expect(page.waitForURL).toHaveBeenCalledTimes(1);
   });
 
+  it('revisits the pending connect URL when the initial pending page stalls before showing restore or approve', async () => {
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    let revisited = false;
+    let restored = false;
+    const waitForTimeout = vi.fn(async (delayMs: number) => {
+      nowMs += delayMs;
+    });
+    const timeoutPage: TerminalConnectApprovalReadyPage = {
+      locator: (selector: string) => ({
+        count: async () => {
+          if (!revisited) return 0;
+          if (selector === '[data-testid="welcome-restore"]:visible') return restored ? 0 : 1;
+          if (selector === '[data-testid="terminal-connect-approve"]:visible') return restored ? 1 : 0;
+          return 0;
+        },
+      }),
+      waitForTimeout,
+      waitForURL: vi.fn(async (matcher) => {
+        expect(matcher(new URL('http://127.0.0.1:3000/terminal/connect'))).toBe(true);
+      }),
+    };
+    const gotoConnectUrl = vi.fn(async () => {
+      revisited = true;
+    });
+    const restoreAccount = vi.fn(async () => {
+      restored = true;
+    });
+
+    await expect(
+      ensurePendingTerminalConnectReadyForApproval({
+        page: timeoutPage,
+        connectUrlForBrowser: 'http://127.0.0.1:3000/terminal/connect#key=abc',
+        gotoConnectUrl,
+        restoreAccount,
+        timeoutMs: 1_500,
+      }),
+    ).resolves.toBe('approve');
+
+    expect(gotoConnectUrl).toHaveBeenCalledTimes(2);
+    expect(restoreAccount).toHaveBeenCalledTimes(1);
+  });
+
   it('times out when neither restore nor approval surfaces appear', async () => {
     let nowMs = 0;
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);

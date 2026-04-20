@@ -60,7 +60,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-live',
       resume: '',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
     });
@@ -92,7 +92,6 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
 
     expect(result).toMatchObject({
       ok: true,
-      effectiveBackendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       effectiveBackendTargetV2: {
         kind: 'backend',
         backendId: 'codex',
@@ -109,7 +108,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-persisted',
       resume: '',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       credentials: null,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
     });
@@ -153,7 +152,6 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     expect(result).toMatchObject({
       ok: true,
       effectiveResume: 'sess-handoff-direct',
-      effectiveBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       effectiveBackendTargetV2: {
         kind: 'backend',
         backendId: 'claude',
@@ -164,7 +162,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     expect(loadLocalHandoffMetadataByVendorResumeId).toHaveBeenCalledWith('sess-handoff-direct');
   });
 
-  it('preserves configured ACP backend targets as canonical V2 and legacy V1 views', async () => {
+  it('preserves configured ACP backend targets as canonical V2 targets', async () => {
     const liveCredentials = createLegacyCredentials('live-token', 5);
     resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
       ok: true,
@@ -183,14 +181,41 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
 
     expect(result).toMatchObject({
       ok: true,
-      effectiveBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       effectiveBackendTargetV2: {
         kind: 'backend',
         backendId: 'review-bot',
         configuredBackendId: 'review-bot',
         sourceKind: 'configured',
       },
-      catalogAgentId: 'customAcp',
+      catalogAgentId: null,
+    });
+  });
+
+  it('canonicalizes configured ACP targets that still carry the legacy customAcp family marker', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 8);
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: '',
+      resume: '',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'customAcp',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      } as never,
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
+      catalogAgentId: null,
     });
   });
 
@@ -200,7 +225,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: '',
       resume: '',
-      backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
+      backendTarget: { kind: 'backend', backendId: 'customAcp', sourceKind: 'built_in' },
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
     });

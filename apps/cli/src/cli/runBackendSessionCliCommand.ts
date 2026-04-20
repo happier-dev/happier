@@ -1,4 +1,4 @@
-import type { AgentId, CodexBackendMode } from '@happier-dev/agents';
+import type { AgentId, CodexBackendMode, OpenCodeBackendMode } from '@happier-dev/agents';
 import { errorFrame, warn } from '@happier-dev/cli-common/output';
 
 import type { Credentials } from '@/persistence';
@@ -8,7 +8,6 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
 import { resolveSessionStartAccountSettingsRefreshMode } from '@/settings/accountSettings/resolveSessionStartAccountSettingsRefreshMode';
-import { resolveProviderSpawnExtrasForRuntime } from '@/settings/providerSettings';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -27,39 +26,66 @@ import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { maybePassthroughProviderCliInfoRequest } from '@/cli/providerCliPassthrough';
+import {
+  resolveCodexSessionRuntimePreferences,
+  resolveOpenCodeSessionRuntimePreferences,
+} from '@happier-dev/agents';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
+import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
+import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
   credentials: Credentials;
+  directory?: string;
   terminalRuntime: CommandContext['terminalRuntime'];
+  happyHomeDir: string;
   existingSessionId: string | undefined;
   resume: string | undefined;
+  startedBy: ParsedSessionStartArgs['startedBy'];
   accountSettingsContext: AccountSettingsContext | null;
-  experimentalCodexAcp?: boolean;
   codexBackendMode?: CodexBackendMode;
+  opencodeBackendMode?: OpenCodeBackendMode;
+  opencodeServerBaseUrl?: string;
+  opencodeServerBaseUrlExplicit?: boolean;
 };
 
-function pickProviderRunOptions(extras: Record<string, unknown>): Pick<CommonBackendRunOptions, 'experimentalCodexAcp' | 'codexBackendMode'> {
-  const out: Pick<CommonBackendRunOptions, 'experimentalCodexAcp' | 'codexBackendMode'> = {};
-
+function pickProviderRunOptions(extras: Readonly<Record<string, unknown>>): Pick<CommonBackendRunOptions, 'codexBackendMode'> {
   if (
     extras.codexBackendMode === 'mcp'
     || extras.codexBackendMode === 'acp'
     || extras.codexBackendMode === 'appServer'
   ) {
-    out.codexBackendMode = extras.codexBackendMode;
-    return out;
+    return { codexBackendMode: extras.codexBackendMode };
   }
 
-  if (extras.experimentalCodexAcp === true || extras.experimentalCodexAcp === false) {
-    out.experimentalCodexAcp = extras.experimentalCodexAcp;
+  return {};
+}
+
+function resolveProviderRunOptions(params: Readonly<{
+  agentId: AgentId;
+  settings: Readonly<Record<string, unknown>>;
+  processEnv: NodeJS.ProcessEnv;
+}>): Partial<CommonBackendRunOptions> {
+  if (params.agentId === 'codex') {
+    return pickProviderRunOptions(resolveCodexSessionRuntimePreferences({
+      settings: params.settings,
+      processEnv: params.processEnv,
+    }));
   }
 
-  return out;
+  if (params.agentId === 'opencode') {
+    return resolveOpenCodeSessionRuntimePreferences({
+      settings: params.settings,
+      processEnv: params.processEnv,
+    });
+  }
+
+  return {};
 }
 
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
   context: CommandContext;
-  loadRun: () => Promise<(opts: CommonBackendRunOptions & Extra) => Promise<void>>;
+  backendIdForSessionRuntime: string;
   agentIdForDeprecatedAliases?: AgentId;
   agentIdForAccountSettings?: AgentId;
   loadAccountSettings?: boolean;
@@ -91,6 +117,13 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args) : ({} as Extra);
     const startedBy = resolved.startedBy ?? 'terminal';
 
+    const selfMigration = await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
+    if (selfMigration) {
+      logger.debug('[session] Self-migrated daemon-spawned runner out of daemon service cgroup', {
+        migration: selfMigration,
+      });
+    }
+
     const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
     if (normalizedExistingSessionId) {
       const lock = await acquireSessionRunnerLock({ sessionId: normalizedExistingSessionId });
@@ -104,8 +137,10 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       }
       releaseSessionRunnerLock = lock.release;
     }
-
-    const runPromise = params.loadRun();
+    const backendId = params.backendIdForSessionRuntime.trim();
+    if (!backendId) {
+      throw new Error('Session command is missing a backend id for session startup');
+    }
 
     let credentials = await readCredentials();
     if (!credentials) {
@@ -125,8 +160,6 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         });
       }
     }
-
-    const run = await runPromise;
 
     let accountSettingsContext: AccountSettingsContext | null = null;
     const agentIdForProfiles = params.agentIdForAccountSettings ?? params.agentIdForDeprecatedAliases;
@@ -178,21 +211,23 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const permissionModeUpdatedAt = resolved.permissionModeUpdatedAt ?? (permissionModeSeed ? Date.now() : undefined);
     const providerSpawnExtras =
       params.agentIdForAccountSettings && accountSettingsContext
-        ? pickProviderRunOptions(resolveProviderSpawnExtrasForRuntime({
+        ? resolveProviderRunOptions({
           agentId: params.agentIdForAccountSettings,
           settings: accountSettingsContext.settings as Readonly<Record<string, unknown>>,
           processEnv: process.env,
-        }))
+        })
         : {};
 
-    await run({
+    await getSessionHostBridge().runSessionCommand(backendId, {
       credentials,
+      directory: resolveRequestedSessionDirectory(),
       terminalRuntime: params.context.terminalRuntime,
+      happyHomeDir: configuration.happyHomeDir,
       startedBy,
       permissionMode,
       permissionModeUpdatedAt,
-      agentModeId: resolved.agentModeId,
-      agentModeUpdatedAt: resolved.agentModeUpdatedAt,
+      sessionModeId: resolved.sessionModeId,
+      sessionModeUpdatedAt: resolved.sessionModeUpdatedAt,
       modelId: resolved.modelId,
       modelUpdatedAt: resolved.modelUpdatedAt,
       existingSessionId: normalizedExistingSessionId || undefined,

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 
@@ -13,6 +13,48 @@ export type DaemonLaunchSpec = Readonly<{
   args: string[];
   env?: Record<string, string>;
 }>;
+
+function normalizeExecutableBase(pathLike: string): string {
+  return basename(String(pathLike ?? '').trim()).toLowerCase();
+}
+
+function isRuntimeExecutablePath(pathLike: string): boolean {
+  const base = normalizeExecutableBase(pathLike);
+  return (
+    base === 'node'
+    || base === 'node.exe'
+    || base === 'bun'
+    || base === 'bun.exe'
+    || base === 'happier-js-runtime'
+    || base === 'happier-js-runtime.cmd'
+  );
+}
+
+function resolveBundledCurrentProcessLaunchSpec(cliArgs: readonly string[]): DaemonLaunchSpec | null {
+  const currentExecPath = String(process.execPath ?? '').trim();
+  if (!currentExecPath) return null;
+
+  if (!isRuntimeExecutablePath(currentExecPath)) {
+    return {
+      filePath: currentExecPath,
+      args: [...cliArgs],
+    };
+  }
+
+  const bundledScriptPath = String(process.argv[1] ?? '').trim();
+  if (!bundledScriptPath.startsWith('/$bunfs/root/')) {
+    return null;
+  }
+  const currentExecBase = normalizeExecutableBase(currentExecPath);
+  if (currentExecBase !== 'bun' && currentExecBase !== 'bun.exe') {
+    return null;
+  }
+
+  return {
+    filePath: currentExecPath,
+    args: [bundledScriptPath, ...cliArgs],
+  };
+}
 
 function shouldAllowDaemonTsxFallback(): boolean {
   const explicit = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
@@ -29,6 +71,11 @@ function resolveSourceEntrypoint(): string {
 }
 
 export async function resolveDaemonLaunchSpec(cliArgs: readonly string[]): Promise<DaemonLaunchSpec> {
+  const bundledCurrentProcessLaunchSpec = resolveBundledCurrentProcessLaunchSpec(cliArgs);
+  if (bundledCurrentProcessLaunchSpec) {
+    return bundledCurrentProcessLaunchSpec;
+  }
+
   const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
     isBunRuntime: false,
     currentExecPath: process.execPath,

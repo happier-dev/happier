@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdtemp, realpath, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -8,10 +8,12 @@ import * as tar from 'tar';
 import { describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
+import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/extensions/testkit/marketplaceCatalog';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
-import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/extensions/plugins/testkit/samplePluginFixture';
+import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/extensions/testkit/samplePackage';
+import { createPluginStateStore } from '@/extensions/store/state';
 
 import { handlePluginsCommand } from './plugins';
 
@@ -36,70 +38,21 @@ async function createRemoteMarketplaceServer(): Promise<Readonly<{
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
     if (url.pathname === '/catalog.json') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
-        t: 'happier_plugin_marketplace_catalog_v1',
-        schemaVersion: 1,
+      res.end(JSON.stringify(createMarketplaceCatalogDocument({
         sourceUrl: `${url.origin}/catalog.json`,
         title: 'Curated Marketplace',
         description: 'Curated plugin discovery feed',
         entries: [
-          {
-            schemaVersion: 1,
-            id: SAMPLE_PLUGIN_ID,
-            version: '1.0.0',
-            displayName: 'Acme Sample',
+          createMarketplaceCatalogEntry({
+            pluginId: SAMPLE_PLUGIN_ID,
+            title: 'Acme Sample',
             description: 'Sample plugin from the marketplace',
-            engines: {
-              happier: '^0.2.0',
-            },
-            targets: {
-              daemon: {
-                entry: './daemon.mjs',
-              },
-            },
-            contributions: {
-              providers: [
-                {
-                  kindVersion: 1,
-                  id: 'acme.sample.provider',
-                  display: {
-                    name: 'Acme Sample Provider',
-                  },
-                  ownedBackendIds: ['acme.sample.backend'],
-                },
-              ],
-              backends: [
-                {
-                  kindVersion: 1,
-                  id: 'acme.sample.backend',
-                  providerId: 'acme.sample.provider',
-                  runtimeKind: 'acp',
-                  capabilities: {},
-                  runtimeAdapters: [],
-                },
-              ],
-              hooks: [
-                {
-                  hookApiVersion: 1,
-                  id: 'backend.terminalRuntime.bindTranscript',
-                  category: 'integration',
-                  scope: 'backend',
-                  handler: {
-                    target: 'plugin',
-                    exportName: 'bindTranscript',
-                  },
-                },
-              ],
-            },
-            source: {
-              kind: 'archive',
-              locator: `${url.origin}/plugins/acme.sample.tar.gz`,
-              trustPolicy: 'prompt',
-              installPolicy: 'managed_install',
-            },
-          },
+            sourceUrl: `${url.origin}/entries/acme.sample.json`,
+            packageUrl: `${url.origin}/plugins/acme.sample.tar.gz`,
+            categories: ['providers'],
+          }),
         ],
-      }));
+      })));
       return;
     }
 
@@ -129,6 +82,54 @@ async function createRemoteMarketplaceServer(): Promise<Readonly<{
   } as const;
 }
 
+async function writeDisposableActivationPlugin(rootDir: string, disposeMarkerPath: string): Promise<void> {
+  await mkdir(join(rootDir, '.happier-plugin'), { recursive: true });
+  await writeFile(
+    join(rootDir, 'daemon.mjs'),
+    [
+      'export async function activate() {',
+      '  return {',
+      '    async dispose() {',
+      '      const { appendFile } = await import("node:fs/promises");',
+      `      await appendFile(${JSON.stringify(disposeMarkerPath)}, "disposed\\n", "utf8");`,
+      '    },',
+      '  };',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await writeFile(
+    join(rootDir, '.happier-plugin', 'plugin.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 2,
+        id: 'acme.reload-disposable',
+        version: '1.0.0',
+        displayName: 'Acme Reload Disposable',
+        description: 'Exercises reload lifecycle ownership',
+        engines: {
+          happier: '^0.2.0',
+        },
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['reload'],
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        permissions: [],
+        contributions: [],
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+}
+
 describe('handlePluginsCommand', () => {
   it('renders the plugins help page', async () => {
     const output = captureConsoleText();
@@ -137,10 +138,238 @@ describe('handlePluginsCommand', () => {
 
       expect(output.text()).toContain('happier plugins');
       expect(output.text()).toContain('happier plugins list [--json]');
-      expect(output.text()).toContain('happier plugins install <path> [--dry-run] [--force] [--json]');
-      expect(output.text()).toContain('happier plugins marketplace list <catalogUrl> [--json]');
+      expect(output.text()).toContain('happier plugins install <path|archive> [--dry-run] [--force] [--json]');
+      expect(output.text()).toContain('happier plugins reload [pluginId] [--json]');
+      expect(output.text()).toContain('happier plugins marketplace sources list [--json]');
+      expect(output.text()).toContain('happier plugins marketplace list [<sourceRef>] [--json]');
+      expect(output.text()).toContain('Package/npm/git install sources are not implemented yet.');
     } finally {
       output.restore();
+    }
+  });
+
+  it('boots the curated marketplace source into the shared registry and uses it without an explicit source reference', async () => {
+    const home = await createTempDir('happier-plugin-marketplace-curated-default-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_MARKETPLACE_CURATED_SOURCE_URL']);
+    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '', HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: '' });
+    reloadConfiguration();
+
+    const marketplace = await createRemoteMarketplaceServer();
+    envScope.patch({ HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: marketplace.catalogUrl });
+
+    try {
+      const sourcesOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['marketplace', 'sources', 'list', '--json']);
+
+        const parsed = sourcesOutput.json<{
+          v: 1;
+          ok: boolean;
+          kind: string;
+          data?: {
+            sources: Array<{
+              id: string;
+              title: string;
+              sourceUrl: string;
+              enabled: boolean;
+              origin: string;
+            }>;
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_marketplace_sources_list');
+        expect(parsed.data?.sources).toHaveLength(1);
+        expect(parsed.data?.sources[0]).toMatchObject({
+          title: 'Happier curated marketplace',
+          sourceUrl: marketplace.catalogUrl,
+          enabled: true,
+          origin: 'curated',
+        });
+        expect(parsed.data?.sources[0].id).toMatch(/^marketplace:[0-9a-f]{12}$/);
+      } finally {
+        sourcesOutput.restore();
+      }
+
+      const installOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['marketplace', 'install', SAMPLE_PLUGIN_ID, '--json']);
+
+        const parsed = installOutput.json<{
+          v: 1;
+          ok: boolean;
+          kind: string;
+          data?: {
+            plugin: {
+              pluginId: string;
+              source: { kind: string; locator: string };
+            };
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_marketplace_install');
+        expect(parsed.data?.plugin.pluginId).toBe(SAMPLE_PLUGIN_ID);
+        expect(parsed.data?.plugin.source).toMatchObject({
+          kind: 'archive',
+          locator: marketplace.archiveUrl,
+        });
+      } finally {
+        installOutput.restore();
+      }
+
+      const disableOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['marketplace', 'sources', 'disable', marketplace.catalogUrl, '--json']);
+
+        const parsed = disableOutput.json<{
+          v: 1;
+          ok: boolean;
+          kind: string;
+          data?: {
+            source: {
+              id: string;
+              sourceUrl: string;
+              enabled: boolean;
+              origin: string;
+            };
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_marketplace_sources_disable');
+        expect(parsed.data?.source).toMatchObject({
+          sourceUrl: marketplace.catalogUrl,
+          enabled: false,
+          origin: 'curated',
+        });
+      } finally {
+        disableOutput.restore();
+      }
+
+      const disabledRegistry = JSON.parse(await readFile(join(home, 'extensions', 'plugins', 'state', 'marketplace-source-registry.v1.json'), 'utf8')) as {
+        sources: Array<{ enabled: boolean }>;
+      };
+      expect(disabledRegistry.sources[0]?.enabled).toBe(false);
+    } finally {
+      await marketplace.close();
+      envScope.restore();
+      await removeTempDir(home);
+    }
+  });
+
+  it('persists marketplace sources and uses the registry when browsing without an explicit source reference', async () => {
+    const home = await createTempDir('happier-plugin-marketplace-registry-cli-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_MARKETPLACE_CURATED_SOURCE_URL']);
+    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+    reloadConfiguration();
+
+    const marketplace = await createRemoteMarketplaceServer();
+    envScope.patch({ HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: marketplace.catalogUrl });
+    try {
+      const addOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['marketplace', 'sources', 'add', marketplace.catalogUrl, '--title', 'Curated Marketplace', '--json']);
+
+        const parsed = addOutput.json<{
+          v: 1;
+          ok: boolean;
+          kind: string;
+          data?: {
+            source: {
+              id: string;
+              title: string;
+              sourceUrl: string;
+              enabled: boolean;
+              origin: string;
+            };
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_marketplace_sources_add');
+        expect(parsed.data?.source).toMatchObject({
+          title: 'Curated Marketplace',
+          sourceUrl: marketplace.catalogUrl,
+          enabled: true,
+          origin: 'curated',
+        });
+        expect(parsed.data?.source.id).toMatch(/^marketplace:[0-9a-f]{12}$/);
+      } finally {
+        addOutput.restore();
+      }
+
+      const registryPath = join(home, 'extensions', 'plugins', 'state', 'marketplace-source-registry.v1.json');
+      const registry = JSON.parse(await readFile(registryPath, 'utf8')) as { sources: ReadonlyArray<{ sourceUrl: string; title: string; enabled: boolean }> };
+      expect(registry.sources).toHaveLength(1);
+      expect(registry.sources[0]).toMatchObject({
+        title: 'Curated Marketplace',
+        sourceUrl: marketplace.catalogUrl,
+        enabled: true,
+      });
+
+      const sourcesOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['marketplace', 'sources', 'list', '--json']);
+
+        const parsed = sourcesOutput.json<{
+          v: 1;
+          ok: boolean;
+          kind: string;
+          data?: {
+            sources: Array<{
+              id: string;
+              title: string;
+              sourceUrl: string;
+              enabled: boolean;
+            }>;
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_marketplace_sources_list');
+        expect(parsed.data?.sources).toHaveLength(1);
+        expect(parsed.data?.sources[0]).toMatchObject({
+          title: 'Curated Marketplace',
+          sourceUrl: marketplace.catalogUrl,
+          enabled: true,
+        });
+      } finally {
+        sourcesOutput.restore();
+      }
+
+      const listOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['marketplace', 'list', '--json']);
+
+        const parsed = listOutput.json<{
+          v: 1;
+          ok: boolean;
+          kind: string;
+          data?: {
+            source: {
+              sourceUrl: string;
+              title: string;
+            };
+            catalog: {
+              sourceUrl: string;
+            };
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_marketplace_list');
+        expect(parsed.data?.source).toMatchObject({
+          title: 'Curated Marketplace',
+          sourceUrl: marketplace.catalogUrl,
+        });
+        expect(parsed.data?.catalog.sourceUrl).toBe(marketplace.catalogUrl);
+      } finally {
+        listOutput.restore();
+      }
+    } finally {
+      await marketplace.close();
+      await removeTempDir(home).catch(() => undefined);
     }
   });
 
@@ -176,6 +405,9 @@ describe('handlePluginsCommand', () => {
           };
         }>();
 
+        if (!parsed.ok) {
+          throw new Error(output.logs.join('\n'));
+        }
         expect(parsed.ok).toBe(true);
         expect(parsed.kind).toBe('plugins_install');
         expect(parsed.data?.alreadyInstalled).toBe(false);
@@ -188,6 +420,119 @@ describe('handlePluginsCommand', () => {
         output.restore();
       }
     } finally {
+      envScope.restore();
+      reloadConfiguration();
+      await removeTempDir(home);
+    }
+  });
+
+  it('reloads plugin runtime contributions without disposing the active registry', async () => {
+    const home = await createTempDir('happier-plugin-reload-cli-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+    reloadConfiguration();
+
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-reload-source-'));
+    const disposeMarkerPath = join(home, 'reload-dispose.log');
+    await writeDisposableActivationPlugin(sourceRoot, disposeMarkerPath);
+
+    try {
+      const installOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['install', sourceRoot, '--json']);
+        expect(installOutput.json<{ ok: boolean }>().ok).toBe(true);
+      } finally {
+        installOutput.restore();
+      }
+
+      const reloadOutput = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['reload', 'acme.reload-disposable', '--json']);
+
+        const parsed = reloadOutput.json<{
+          ok: boolean;
+          kind: string;
+          data?: {
+            registryStatus: string;
+            affectedPluginIds: readonly string[];
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_reload');
+        expect(parsed.data).toMatchObject({
+          registryStatus: 'active',
+          affectedPluginIds: ['acme.reload-disposable'],
+        });
+      } finally {
+        reloadOutput.restore();
+      }
+
+      await expect(readFile(disposeMarkerPath, 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
+      await removeTempDir(home);
+    }
+  });
+
+  it('installs a direct archive URL through the same plugin installer path', async () => {
+    const home = await createTempDir('happier-plugin-cli-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+    reloadConfiguration();
+
+    const marketplace = await createRemoteMarketplaceServer();
+
+    try {
+      const output = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['install', `${marketplace.archiveUrl}?download=1`, '--json']);
+
+        const parsed = output.json<{
+          v: 1;
+          ok: boolean;
+          kind: string;
+          data?: {
+            alreadyInstalled: boolean;
+            plugin: {
+              pluginId: string;
+              source: { kind: string; locator: string; trustPolicy: string; installPolicy: string };
+            };
+          };
+        }>();
+
+        expect(parsed.ok).toBe(true);
+        expect(parsed.kind).toBe('plugins_install');
+        expect(parsed.data?.alreadyInstalled).toBe(false);
+        expect(parsed.data?.plugin.pluginId).toBe(SAMPLE_PLUGIN_ID);
+        expect(parsed.data?.plugin.source).toMatchObject({
+          kind: 'archive',
+          locator: `${marketplace.archiveUrl}?download=1`,
+          trustPolicy: 'prompt',
+          installPolicy: 'managed_install',
+        });
+      } finally {
+        output.restore();
+      }
+
+      const store = createPluginStateStore({ happyHomeDir: home });
+      const state = await store.read();
+      expect(state.plugins[SAMPLE_PLUGIN_ID]).toMatchObject({
+        source: {
+          kind: 'archive',
+          locator: `${marketplace.archiveUrl}?download=1`,
+          trustPolicy: 'prompt',
+          installPolicy: 'managed_install',
+        },
+        install: {
+          mode: 'managed_install',
+        },
+      });
+    } finally {
+      await marketplace.close();
       envScope.restore();
       reloadConfiguration();
       await removeTempDir(home);
@@ -436,7 +781,11 @@ describe('handlePluginsCommand', () => {
         expect(parsed.kind).toBe('plugins_marketplace_show');
         expect(parsed.data.plugin.pluginId).toBe(SAMPLE_PLUGIN_ID);
         expect(parsed.data.plugin.source.locator).toBe(marketplace.archiveUrl);
-        expect(parsed.data.plugin.contributions.providers).toEqual(['acme.sample.provider']);
+        expect(parsed.data.plugin.contributions).toEqual({
+          providers: [],
+          backends: [],
+          hooks: [],
+        });
       } finally {
         showOutput.restore();
       }

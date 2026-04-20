@@ -101,7 +101,12 @@ describe('executeClaimedRun (mcpSelection)', () => {
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp/project',
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,

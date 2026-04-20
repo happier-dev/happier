@@ -1,14 +1,27 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
-import { buildLaunchdPlistXml, renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildLaunchdPlistXml, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 import { discoverInstalledDaemonServiceEntries } from './discoverInstalledDaemonServiceEntries';
 
+const { spawnSyncMock } = vi.hoisted(() => ({
+  spawnSyncMock: vi.fn<typeof import('node:child_process').spawnSync>(),
+}));
+
+vi.mock('node:child_process', () => ({
+  spawnSync: spawnSyncMock,
+}));
+
 describe('discoverInstalledDaemonServiceEntries', () => {
+  beforeEach(() => {
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockReturnValue({ status: 1, stdout: '', stderr: '' } as never);
+  });
+
   it('prefers the embedded active server id over an env-hash filename for pinned linux units', async () => {
     await withTempDir('happier-discover-service-entry-', async (homeDir) => {
       const servicesDir = join(homeDir, '.config', 'systemd', 'user');
@@ -242,6 +255,53 @@ describe('discoverInstalledDaemonServiceEntries', () => {
     });
   });
 
+  it('accepts raw legacy linux daemon units installed before default-following unit names', async () => {
+    await withTempDir('happier-discover-service-entry-linux-raw-legacy-', async (homeDir) => {
+      const servicesDir = join(homeDir, '.config', 'systemd', 'user');
+      const path = join(servicesDir, 'happier-daemon.service');
+      mkdirSync(servicesDir, { recursive: true });
+      writeFileSync(
+        path,
+        renderSystemdServiceUnit({
+          description: 'Happier Daemon',
+          execStart: [
+            '/home/tester/.happier/tools/js-runtime/current/bin/happier-js-runtime',
+            '/home/tester/.happier/cli-preview/versions/0.2.2-preview.1/package-dist/index.mjs',
+            'daemon',
+            'start-sync',
+          ],
+          env: {
+            HAPPIER_HOME_DIR: '/home/tester/.happier',
+            HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+            HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+          },
+          wantedBy: 'default.target',
+        }),
+        'utf-8',
+      );
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'linux',
+        userHomeDir: homeDir,
+        happierHomeDir: join(homeDir, '.happier'),
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          serverId: 'default',
+          name: 'Default background service',
+          happierHomeDir: '/home/tester/.happier',
+          targetMode: 'default-following',
+          releaseChannel: 'preview',
+          label: 'happier-daemon',
+          path,
+        }),
+      ]);
+    });
+  });
+
   it('ignores linux units that only declare a release channel without legacy managed home-dir markers', async () => {
     await withTempDir('happier-discover-service-entry-linux-release-only-', async (homeDir) => {
       const servicesDir = join(homeDir, '.config', 'systemd', 'user');
@@ -268,6 +328,109 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       });
 
       expect(entries).toEqual([]);
+    });
+  });
+
+  it('accepts legacy Windows wrappers installed by older Happier installers without startup-source metadata', async () => {
+    await withTempDir('happier-discover-service-entry-windows-legacy-', async (homeDir) => {
+      const servicesDir = join(homeDir, '.happier', 'services');
+      const path = join(servicesDir, 'happier-daemon.default.ps1');
+      mkdirSync(servicesDir, { recursive: true });
+      writeFileSync(
+        path,
+        renderWindowsScheduledTaskWrapperPs1({
+          workingDirectory: 'C:\\Users\\tester',
+          programArgs: [
+            'C:\\Users\\tester\\.happier\\cli\\current\\happier.exe',
+            'daemon',
+            'start-sync',
+          ],
+          env: {
+            HAPPIER_HOME_DIR: 'C:\\Users\\tester\\.happier',
+            HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+            HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+          },
+          stdoutPath: 'C:\\Users\\tester\\.happier\\logs\\daemon-service.out.log',
+          stderrPath: 'C:\\Users\\tester\\.happier\\logs\\daemon-service.err.log',
+        }),
+        'utf-8',
+      );
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'win32',
+        userHomeDir: homeDir,
+        happierHomeDir: join(homeDir, '.happier'),
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          serverId: 'default',
+          name: 'Default background service',
+          happierHomeDir: 'C:\\Users\\tester\\.happier',
+          targetMode: 'default-following',
+          releaseChannel: 'preview',
+          path,
+        }),
+      ]);
+    });
+  });
+
+  it('discovers Windows scheduled tasks even when the wrapper file is missing', async () => {
+    await withTempDir('happier-discover-service-entry-windows-orphaned-task-', async (homeDir) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      mkdirSync(join(happierHomeDir, 'services'), { recursive: true });
+
+      spawnSyncMock.mockImplementation((command, args) => {
+        if (command !== 'schtasks') {
+          return { status: 1, stdout: '', stderr: '' } as never;
+        }
+        const normalizedArgs = Array.isArray(args) ? args.map((value) => String(value)) : [];
+        if (normalizedArgs.join(' ') === '/Query /FO CSV /NH') {
+          return {
+            status: 0,
+            stdout: '"\\\\Happier\\\\happier-daemon.default","N/A"\r\n',
+            stderr: '',
+          } as never;
+        }
+        if (normalizedArgs.join(' ') === '/Query /TN Happier\\happier-daemon.default /XML') {
+          return {
+            status: 0,
+            stdout: `
+              <Task>
+                <Actions>
+                  <Exec>
+                    <Arguments>-NoProfile -ExecutionPolicy Bypass -File "C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1"</Arguments>
+                  </Exec>
+                </Actions>
+              </Task>
+            `,
+            stderr: '',
+          } as never;
+        }
+        return { status: 1, stdout: '', stderr: 'unexpected schtasks call' } as never;
+      });
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'win32',
+        userHomeDir: homeDir,
+        happierHomeDir,
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          serverId: 'default',
+          name: 'Default background service',
+          happierHomeDir: 'C:\\Users\\tester\\.happier',
+          targetMode: 'default-following',
+          releaseChannel: 'stable',
+          label: 'Happier\\happier-daemon.default',
+          path: 'C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1',
+        }),
+      ]);
     });
   });
 });

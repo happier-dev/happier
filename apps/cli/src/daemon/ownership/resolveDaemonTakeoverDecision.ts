@@ -1,13 +1,30 @@
+import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
 import type { CurrentDaemonOwner, DaemonOwnerEvaluation } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
 
 export type DaemonTakeoverDecision =
   | Readonly<{ kind: 'ok' }>
   | Readonly<{ kind: 'conflict'; owner: CurrentDaemonOwner }>
-  | Readonly<{ kind: 'manual-owner-takeover'; owner: CurrentDaemonOwner }>;
+  | Readonly<{ kind: 'manual-owner-takeover'; owner: CurrentDaemonOwner }>
+  | Readonly<{ kind: 'manual-owner-replace'; owner: CurrentDaemonOwner }>;
+
+function canImplicitlyReplaceConflictingManualOwner(
+  owner: CurrentDaemonOwner,
+  startupSource: DaemonStartupSource,
+): boolean {
+  if (startupSource !== 'manual' && startupSource !== 'self-restart') {
+    return false;
+  }
+  if (owner.serviceManaged === true) {
+    return false;
+  }
+
+  return !owner.versionMatches || !owner.releaseChannelMatches;
+}
 
 export function resolveDaemonTakeoverDecision(params: Readonly<{
   ownership: DaemonOwnerEvaluation;
   takeoverRequested: boolean;
+  startupSource: DaemonStartupSource;
 }>): DaemonTakeoverDecision {
   if (params.ownership.kind === 'none' || params.ownership.kind === 'compatible') {
     return { kind: 'ok' };
@@ -15,6 +32,10 @@ export function resolveDaemonTakeoverDecision(params: Readonly<{
 
   if (params.takeoverRequested && params.ownership.owner.serviceManaged !== true) {
     return { kind: 'manual-owner-takeover', owner: params.ownership.owner };
+  }
+
+  if (canImplicitlyReplaceConflictingManualOwner(params.ownership.owner, params.startupSource)) {
+    return { kind: 'manual-owner-replace', owner: params.ownership.owner };
   }
 
   return { kind: 'conflict', owner: params.ownership.owner };

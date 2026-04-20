@@ -1,0 +1,234 @@
+---
+title: Observability
+description: Run Prometheus, Grafana, and Alertmanager for a self-hosted Happier Server deployment.
+---
+
+Happier Server already exposes Prometheus-format metrics on `/metrics`. This page explains how to turn that into a usable self-host observability stack with:
+
+- **Prometheus** for scraping and storing time-series metrics
+- **Grafana** for dashboards
+- **Alertmanager** for routing alerts
+
+If you are self-hosting with Docker or Dokploy, this is the recommended shape.
+
+## What the repo already ships
+
+The server app includes a repo-owned observability pack at:
+
+- `apps/server/observability/docker-compose.yml`
+- `apps/server/observability/prometheus/**`
+- `apps/server/observability/grafana/**`
+- `apps/server/observability/alertmanager/**`
+
+That pack includes:
+
+- a Prometheus config
+- editable scrape-target files for API and worker containers
+- four prebuilt Grafana dashboards
+- baseline Prometheus alert rules
+- a safe Alertmanager config that stores alerts locally but does not notify anywhere until you add a real receiver
+
+## How it works
+
+The flow is:
+
+1. Each Happier API and worker process exposes `/metrics`.
+2. Prometheus scrapes those endpoints every few seconds and stores metric history on disk.
+3. Grafana queries Prometheus and renders dashboards.
+4. Alertmanager receives alerts fired by Prometheus.
+
+Important:
+
+- Happier Server does **not** store metric history itself.
+- Prometheus is the metric store.
+- Grafana is the visualization UI.
+- Alertmanager is the notification router.
+
+## Before you start
+
+For a multi-replica deployment, each Happier process should run with:
+
+- `METRICS_ENABLED=true`
+- `METRICS_PORT=9090`
+
+Prometheus should scrape:
+
+- every API replica directly
+- every worker replica directly
+
+Do **not** scrape only the public load balancer. Replica-local metrics such as event-loop lag, memory, active socket counts, and worker presence activity are process-specific.
+
+## Quick start (Docker / Compose)
+
+1. Copy the env template:
+
+```bash
+cp apps/server/observability/.env.example apps/server/observability/.env
+```
+
+2. Ensure your Happier API and worker containers are on the same Docker network named by `HAPPIER_OBSERVABILITY_TARGET_NETWORK`.
+
+3. Adjust the scrape target files if your service names differ:
+
+- `apps/server/observability/prometheus/targets/happier-api.yml`
+- `apps/server/observability/prometheus/targets/happier-worker.yml`
+
+4. Start the observability stack:
+
+```bash
+docker compose \
+  --env-file apps/server/observability/.env \
+  -f apps/server/observability/docker-compose.yml \
+  up -d
+```
+
+5. Open Grafana:
+
+- `http://127.0.0.1:3000` by default
+
+When you are finished with local validation, stop the observability stack with:
+
+```bash
+docker compose \
+  --env-file apps/server/observability/.env \
+  -f apps/server/observability/docker-compose.yml \
+  down
+```
+
+The default Compose file binds Prometheus, Grafana, and Alertmanager to `127.0.0.1` for safety. If you want remote access, place Grafana behind an authenticated reverse proxy or adjust the port bindings intentionally.
+
+## Dokploy deployment shape
+
+In Dokploy, the recommended layout is:
+
+- one Dokploy app/project for Happier Server
+- one Dokploy app/project for observability
+- both attached to the same internal Docker network
+
+Then:
+
+- keep Happier API and worker metrics internal
+- point Prometheus at the internal service names
+- expose Grafana publicly only if it is protected by Dokploy auth or your own reverse proxy
+- keep Prometheus and Alertmanager private unless you have a specific reason to expose them
+
+## Bundled dashboards
+
+The Grafana pack provisions four dashboards:
+
+- **Happier API Overview**
+  - request rate
+  - 5xx rate
+  - active socket counts
+  - p95 latency by route
+  - API event-loop lag and memory
+- **Happier WebSocket / RPC Cluster**
+  - socket connection counts by scope
+  - websocket event rate
+  - RPC rate and latency
+  - RPC failure reasons
+  - `fetchSockets()` failure rate
+- **Happier Presence / Redis Worker**
+  - session and machine alive rate
+  - presence stream reads, acks, reclaims, invalid entries
+  - Redis consumer-group pending backlog
+  - flush duration and batch sizes
+- **Happier Runtime / DB Saturation**
+  - scrape health
+  - RSS by process
+  - event-loop lag
+  - Prisma datasource query p95 and query wait p95
+  - Prisma pool wait / connection pressure
+  - database record totals
+  - database-metric updater failures
+  - socket adapter mode per process
+
+## Bundled alerts
+
+The Prometheus rules include baseline alerts for:
+
+- elevated 5xx error rate
+- elevated p95 request latency
+- event-loop lag spikes
+- elevated datasource query p95
+- elevated database query wait backlog
+- RPC `METHOD_NOT_AVAILABLE` spikes
+- `fetchSockets()` timeout spikes
+- presence reclaim spikes
+- presence backlog not draining
+- missing worker metrics target
+
+These are starting points. You should tune thresholds for your own workload.
+
+## Sticky sessions and reverse-proxy requirements
+
+If you run more than one API replica:
+
+- enable Redis fanout with `REDIS_URL` and `HAPPIER_SOCKET_ADAPTER=redis-streams`
+- configure **sticky sessions** at your load balancer
+
+Sticky sessions matter because the realtime endpoint supports Socket.IO polling plus websocket upgrade. If traffic bounces between API replicas unpredictably, reconnect behavior and realtime stability degrade.
+
+Also ensure the reverse-proxy idle timeout is greater than the server’s Socket.IO `pingInterval + pingTimeout`. The current Happier defaults require **more than 60 seconds**. Using several minutes is safer.
+
+## Metrics you get today
+
+The server currently emits metrics for:
+
+- HTTP request counts and duration
+- websocket connection counts, unique active entities, transport counts, disconnects, reconnects, and auth handshake/upgrade outcomes
+- socket message acknowledgements
+- socket adapter mode
+- event fanout dispatches, target counts, and drops
+- RPC registrations, calls, failures, lookup timing, and cluster `fetchSockets()` discovery
+- presence stream reads, acks, reclaims, invalid rows, batch sizes, Redis consumer-group pending depth, and in-process pending ack backlog
+- Redis command counts, latency histograms, and failure classification for app-owned Redis calls
+- runtime memory and event-loop lag
+- database record totals and database-metric updater failures
+
+## Product analytics vs server observability
+
+Prometheus and Grafana are for **server operations**.
+
+They are separate from:
+
+- **Sentry** for server exceptions, traces, and profiling
+- **PostHog** for low-volume product and business analytics
+
+If you use PostHog, keep it for product/domain events rather than request-level or socket-level infrastructure telemetry. If you use Sentry, keep it for failures and distributed tracing rather than Prometheus-style counters and histograms.
+
+## Recommended next steps
+
+- Keep Grafana dashboards in git and review changes like code.
+- Tune alert thresholds after observing real traffic for a while.
+- If you later want host-level metrics, add a host exporter such as `node-exporter` or a container metrics exporter such as `cAdvisor`.
+- If you need long metric retention or multi-environment aggregation later, start with Prometheus now and evaluate remote storage only when you actually need it.
+
+## What to watch while scaling
+
+When you increase replica counts or try larger workloads, watch these signals first:
+
+- **API saturation**
+  - p95 request latency
+  - 5xx rate
+  - active websocket connections
+  - event-loop lag
+- **RPC / cluster routing**
+  - `METHOD_NOT_AVAILABLE`
+  - `fetchSockets()` failures or timeouts
+  - RPC latency histograms
+- **Presence / worker pressure**
+  - consumer-group pending backlog
+  - reclaim spikes
+  - flush duration
+  - worker RSS / event-loop lag
+- **Database pressure**
+  - Prisma datasource query p95
+  - query wait p95
+  - waiting query count / pool pressure
+
+If the first thing that moves is:
+
+- API latency / websocket counts: add API replicas first
+- presence backlog / reclaim / flush lag: add worker replicas first
+- DB wait time: tune the database and connection pool before adding more app replicas blindly

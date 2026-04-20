@@ -63,7 +63,7 @@ describe('happier session run start (action executor)', () => {
         {
           sessionId: 'sess-1',
           intent: 'review',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           permissionMode: 'read_only',
           retentionPolicy: 'ephemeral',
           runClass: 'bounded',

@@ -144,6 +144,7 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.content).toContain('Environment=PATH=');
     expect(plan.files[0]?.content).toContain('/home/test/.local/bin');
     expect(plan.files[0]?.content).toContain('KillMode=process');
+    expect(plan.files[0]?.content).toContain('ManagedOOMPreference=avoid');
 
     let hasSystemctl = false;
     let systemctlArgsText = '';
@@ -177,6 +178,7 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_STARTUP_SOURCE=background-service');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_DAEMON_SERVICE_LABEL=com.happier.cli.daemon.default');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_PUBLIC_RELEASE_CHANNEL=preview');
+    expect(plan.files[0]?.content).toContain('ManagedOOMPreference=avoid');
     expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_ACTIVE_SERVER_ID=');
     expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_SERVER_URL=');
     expect(plan.files[0]?.content).not.toContain('Environment=HAPPIER_PUBLIC_SERVER_URL=');

@@ -53,13 +53,15 @@ describe('spawnSessionFromDaemon', () => {
         'x-happier-daemon-token': 'daemon-token',
       },
     });
-    expect(JSON.parse(String(init?.body))).toEqual({
+    const parsedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    expect(parsedBody).toMatchObject({
       sessionId: 'explicit-session',
       terminal: { mode: 'plain' },
       environmentVariables: { FOO: 'bar' },
       directory: '/tmp/workspace',
       agent: 'codex',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
     });
+    expect(parsedBody.spawnNonce).toEqual(expect.any(String));
   });
 });

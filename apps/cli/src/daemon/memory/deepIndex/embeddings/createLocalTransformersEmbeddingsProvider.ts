@@ -4,11 +4,17 @@ import { pathToFileURL } from 'node:url';
 import type { MemoryEmbeddingsLocalTransformersConfig } from '@happier-dev/protocol';
 
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import {
+  createInferenceRuntimeLoader,
+  readInferenceRuntimeModuleFieldWithRecoverableRetry,
+  type InferenceRuntimeLoader,
+  type InferenceRuntimeModule,
+} from '@/daemon/inference/inferenceRuntimeLoader';
 
 import type { EmbeddingsProvider } from './embeddingsProviderTypes';
 import { tensorToVectors } from './tensorToVectors';
 
-type TransformersModule = {
+type TransformersModule = InferenceRuntimeModule & {
   env?: unknown;
   pipeline?: unknown;
 };
@@ -66,6 +72,30 @@ function resolveRuntimeTransformersImportUrls(runtimeAssetExists: (path: string)
     .map((candidate) => pathToFileURL(candidate).href);
 }
 
+function createTransformersModuleLoader(
+  deps?: Partial<ImportTransformersModuleDependencies>,
+): InferenceRuntimeLoader<TransformersModule> {
+  const packageImport = deps?.packageImport ?? (async () => await import('@huggingface/transformers'));
+  const runtimeImport =
+    deps?.runtimeImport ??
+    (async (moduleUrl: string) => await new Function('moduleUrl', 'return import(moduleUrl)')(moduleUrl));
+  const runtimeAssetExists = deps?.runtimeAssetExists ?? existsSync;
+  const runtimeImportUrls = resolveRuntimeTransformersImportUrls(runtimeAssetExists);
+
+  return createInferenceRuntimeLoader<TransformersModule>({
+    resolveCandidates: () => [
+      async () => await packageImport(),
+      ...runtimeImportUrls.map((moduleUrl) => async () =>
+        await importRuntimeTransformersModule({
+          runtimeImport,
+          runtimeImportUrls: [moduleUrl],
+          originalError: new Error(`Failed to import runtime transformers module: ${moduleUrl}`),
+        })),
+    ],
+    isRecoverableLoadError: isRecoverableTransformersRuntimeFailure,
+  });
+}
+
 async function importRuntimeTransformersModule(params: Readonly<{
   runtimeImport: (moduleUrl: string) => Promise<TransformersModule>;
   runtimeImportUrls: readonly string[];
@@ -89,23 +119,7 @@ async function importRuntimeTransformersModule(params: Readonly<{
 export async function importTransformersModuleWithFallback(
   deps?: Partial<ImportTransformersModuleDependencies>,
 ): Promise<TransformersModule> {
-  const packageImport = deps?.packageImport ?? (async () => await import('@huggingface/transformers'));
-  const runtimeImport =
-    deps?.runtimeImport ??
-    (async (moduleUrl: string) => await new Function('moduleUrl', 'return import(moduleUrl)')(moduleUrl));
-  const runtimeAssetExists = deps?.runtimeAssetExists ?? existsSync;
-  const runtimeImportUrls = resolveRuntimeTransformersImportUrls(runtimeAssetExists);
-
-  try {
-    return await packageImport();
-  } catch (error) {
-    if (!isRecoverableTransformersRuntimeFailure(error)) throw error;
-    return await importRuntimeTransformersModule({
-      runtimeImport,
-      runtimeImportUrls,
-      originalError: error,
-    });
-  }
+  return await createTransformersModuleLoader(deps).load('huggingface-transformers');
 }
 
 function applyCacheDir(env: unknown, cacheDir: string): void {
@@ -117,22 +131,11 @@ async function readTransformersModuleFieldWithRecoverableRetry<T>(
   mod: TransformersModule,
   field: 'env' | 'pipeline',
 ): Promise<Readonly<{ value: T | null; error: unknown | null }>> {
-  try {
-    return { value: (mod as Record<string, T | null | undefined>)?.[field] ?? null, error: null };
-  } catch (error) {
-    if (!isRecoverableTransformersRuntimeFailure(error)) {
-      throw error;
-    }
-    await Promise.resolve();
-    try {
-      return { value: (mod as Record<string, T | null | undefined>)?.[field] ?? null, error: null };
-    } catch (retryError) {
-      if (!isRecoverableTransformersRuntimeFailure(retryError)) {
-        throw retryError;
-      }
-      return { value: null, error: retryError };
-    }
-  }
+  return await readInferenceRuntimeModuleFieldWithRecoverableRetry<T>({
+    mod,
+    field,
+    isRecoverableRuntimeError: isRecoverableTransformersRuntimeFailure,
+  });
 }
 
 async function createFeatureExtractionPipelineFromModule(params: Readonly<{

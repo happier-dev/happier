@@ -78,7 +78,6 @@ function ensureCopiedNodeModulesEntries(sourceNodeModulesDir: string, destNodeMo
 }
 
 function ensureCopiedTextFile(destPath: string, sourcePath: string): void {
-  if (existsSync(destPath)) return;
   mkdirSync(dirname(destPath), { recursive: true });
   try {
     writeFileSync(destPath, readFileSync(sourcePath));
@@ -118,6 +117,15 @@ function collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath: string):
     .map((name) => ({ name, optional: true }));
 
   return [...required, ...optional];
+}
+
+function readPackageNameFromPackageJson(packageJsonPath: string): string | null {
+  try {
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { name?: unknown };
+    return typeof pkg.name === 'string' && pkg.name.trim() ? pkg.name.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 function ensureWorkspacePackageRuntimeDependencyFallbacks(
@@ -351,6 +359,67 @@ function ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir: str
 
     ensureExternalPackageRuntimeDependencyTree(packagePath, rootDir, visited);
   }
+}
+
+function ensurePackageRuntimeDependenciesFromPackageJson(params: {
+  packageJsonPath: string;
+  destNodeModulesDir: string;
+  rootDir: string;
+  visited: Set<string>;
+}): void {
+  const packageName = readPackageNameFromPackageJson(params.packageJsonPath);
+
+  for (const dep of collectExternalRuntimeDepNamesFromPackageJson(params.packageJsonPath)) {
+    const destDepPath = resolve(params.destNodeModulesDir, ...dep.name.split('/'));
+    const sourceCandidates = [
+      ...(packageName
+        ? [resolve(params.rootDir, 'apps', 'cli', 'node_modules', ...packageName.split('/'), 'node_modules', ...dep.name.split('/'))]
+        : []),
+      resolve(params.rootDir, 'apps', 'cli', 'node_modules', ...dep.name.split('/')),
+      resolve(params.rootDir, 'node_modules', ...dep.name.split('/')),
+    ];
+
+    if (!existsSync(destDepPath)) {
+      for (const sourcePath of sourceCandidates) {
+        if (!existsSync(sourcePath)) continue;
+        ensureCopiedDirectory(destDepPath, sourcePath);
+        break;
+      }
+    }
+
+    if (isDirectoryEntry(destDepPath)) {
+      ensureExternalPackageRuntimeDependencyTree(destDepPath, params.rootDir, params.visited);
+    }
+  }
+}
+
+export function ensureCliPackSnapshotRuntimeDependencies(params: {
+  snapshotDir: string;
+  rootDir: string;
+}): void {
+  const snapshotNodeModulesDir = resolve(params.snapshotDir, 'node_modules');
+  mkdirSync(snapshotNodeModulesDir, { recursive: true });
+
+  const visited = new Set<string>();
+  ensurePackageRuntimeDependenciesFromPackageJson({
+    packageJsonPath: resolve(params.snapshotDir, 'package.json'),
+    destNodeModulesDir: snapshotNodeModulesDir,
+    rootDir: params.rootDir,
+    visited,
+  });
+
+  const bundledScopeDir = resolve(snapshotNodeModulesDir, '@happier-dev');
+  for (const entry of listScopedPackageEntries(bundledScopeDir)) {
+    const packageDir = resolve(bundledScopeDir, entry.name);
+    ensurePackageRuntimeDependenciesFromPackageJson({
+      packageJsonPath: resolve(packageDir, 'package.json'),
+      destNodeModulesDir: resolve(packageDir, 'node_modules'),
+      rootDir: params.rootDir,
+      visited,
+    });
+  }
+
+  ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
 }
 
 export function ensureCliDistSnapshotNodeModules(params: {

@@ -1,6 +1,6 @@
 import { basename, dirname, join } from 'node:path';
 
-import { projectPath } from '@/projectPath';
+import { projectPath } from '../../projectPath';
 
 function normalizePathLike(pathLike: string): string {
   return String(pathLike ?? '').trim().replaceAll('\\', '/');

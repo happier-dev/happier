@@ -30,6 +30,7 @@ vi.mock('@/api/client/loopbackUrl', () => ({
 vi.mock('@/configuration', () => ({
     configuration: {
         apiServerUrl: 'https://api.example.test',
+        publicReleaseRing: 'stable',
     },
 }));
 
@@ -138,6 +139,31 @@ describe('server background service follow-up helpers', () => {
         expect(output.join('\n')).toContain('Background service was not restarted');
         expect(output.join('\n')).toContain('happier auth login');
         expect(output.join('\n')).toContain('happier service restart');
+    });
+
+    it('prompts for authentication when the profile probe returns an auth failure through the shared carrier shape', async () => {
+        readCredentialsMock.mockResolvedValueOnce({
+            token: 'token-123',
+        });
+        axiosGetMock.mockRejectedValueOnce({
+            response: { status: 403 },
+        });
+
+        const promptInput = vi.fn(async (prompt: string) => prompt.includes('Authenticate Happier') ? 'n' : 'y');
+        const output: string[] = [];
+
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: true,
+            promptInput,
+            runCliAction: vi.fn(async () => undefined),
+            targetServerUrl: 'https://b.example.test',
+            authState: 'logged_in',
+            log: (message) => output.push(message),
+            services: [createDaemonServiceListEntry()],
+        });
+
+        expect(promptInput).toHaveBeenCalledWith('Authenticate Happier against https://b.example.test now? [Y/n]: ');
+        expect(output.join('\n')).toContain('happier auth login');
     });
 
     it('logs manual restart guidance in non-interactive mode', async () => {
@@ -252,6 +278,30 @@ describe('server background service follow-up helpers', () => {
 
         expect(runCliAction).not.toHaveBeenCalled();
         expect(output.join('\n')).toContain('Multiple default-following background services are installed');
+        expect(output.join('\n')).toContain('sudo happier service repair --yes');
+    });
+
+    it('requires repair guidance when a default-following service is missing Happier home metadata', async () => {
+        const output: string[] = [];
+        const runCliAction = vi.fn(async () => undefined);
+
+        await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+            interactive: false,
+            promptInput: async () => '',
+            runCliAction,
+            targetServerUrl: 'https://b.example.test',
+            authState: 'logged_in',
+            log: (message) => output.push(message),
+            services: [
+                createDaemonServiceListEntry({
+                    releaseChannel: 'preview',
+                    happierHomeDir: null,
+                }),
+            ],
+        });
+
+        expect(runCliAction).not.toHaveBeenCalled();
+        expect(output.join('\n')).toContain('missing Happier home metadata');
         expect(output.join('\n')).toContain('happier service repair --yes');
     });
 

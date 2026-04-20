@@ -32,6 +32,7 @@ export interface RelayRuntimeStatusSnapshot {
   }>;
   baseUrl: string;
   healthy?: boolean | null;
+  warnings?: readonly string[];
 }
 
 type RelayRuntimeStatusResult = Readonly<{
@@ -40,6 +41,7 @@ type RelayRuntimeStatusResult = Readonly<{
   relayUrl: string;
   healthy: boolean;
   service: RelayRuntimeStatusSnapshot['service'];
+  warnings?: readonly string[];
 }>;
 
 export type RelayRuntimeKindDeps = Readonly<{
@@ -161,6 +163,7 @@ async function buildRelayRuntimeStatusResult(
     relayUrl: snapshot.baseUrl,
     healthy,
     service: snapshot.service,
+    ...(snapshot.warnings && snapshot.warnings.length > 0 ? { warnings: snapshot.warnings } : {}),
   };
 }
 

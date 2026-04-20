@@ -9,6 +9,7 @@ import {
   type InstalledDaemonServiceEntry,
 } from '@/daemon/service/discoverInstalledDaemonServiceEntries';
 import { type DaemonStartupSource, isDaemonStartupSourceServiceManaged } from '@/daemon/ownership/daemonOwnershipMetadata';
+import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHomeDirComparableKey';
 import type { DaemonServiceCliRuntime, DaemonServiceListEntry } from '@/daemon/service/cli';
 import type { DaemonServiceMode } from '@/daemon/service/plan';
 
@@ -115,11 +116,6 @@ function readSettingsSnapshotForHomeDir(homeDir: string | null | undefined): Set
   }
 }
 
-function normalizeHomeDirComparableKey(homeDir: string | null | undefined): string | null {
-  const value = String(homeDir ?? '').trim().replace(/[\\/]+$/, '');
-  return value || null;
-}
-
 function resolveDefaultFollowingRelayMatchFromSettings(
   settings: SettingsSnapshot | null,
   runtime: DaemonServiceCliRuntime,
@@ -170,7 +166,7 @@ async function resolveDefaultFollowingRelayMatchForInstalledService(
 
   const serviceSettings = readSettingsSnapshotForHomeDir(serviceHomeDir);
   if (!serviceSettings) {
-    return normalizeHomeDirComparableKey(serviceHomeDir) === normalizeHomeDirComparableKey(runtime.happierHomeDir)
+    return resolveHappierHomeDirComparableKey(serviceHomeDir) === resolveHappierHomeDirComparableKey(runtime.happierHomeDir)
       ? await resolveDefaultFollowingRelayMatch(runtime)
       : false;
   }

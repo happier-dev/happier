@@ -1,12 +1,14 @@
-import { getProviderCliInstallGuideUrl, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
+import type { CatalogAgentLookupId } from '@/backends/types';
+
+import { resolveProviderCliRuntimeSpecForLookupId } from './requireProviderCliCommand';
 
 export function buildProviderCliUnavailableMessage(params: Readonly<{
-  agentId: AgentId;
+  agentId: CatalogAgentLookupId;
   resolvedCommand?: string | null;
   alternativeCommandHint?: string | null;
 }>): string {
-  const runtimeSpec = getProviderCliRuntimeSpec(params.agentId);
-  const setupGuideUrl = getProviderCliInstallGuideUrl(params.agentId);
+  const runtimeSpec = resolveProviderCliRuntimeSpecForLookupId(params.agentId);
+  const setupGuideUrl = runtimeSpec.installGuideUrl ?? runtimeSpec.docsUrl ?? null;
   const resolvedCommand = typeof params.resolvedCommand === 'string' ? params.resolvedCommand.trim() : '';
   const alternativeCommandHint = typeof params.alternativeCommandHint === 'string'
     ? params.alternativeCommandHint.trim()

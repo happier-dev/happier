@@ -91,11 +91,10 @@ function resolveDaemonServiceIdentitySegment(params: Readonly<{
     : instanceId;
 }
 
-function shouldApplyLegacyCloudCleanup(params: Readonly<{
-  instanceId: string;
+function shouldApplyRawLegacyDefaultFollowingCleanup(params: Readonly<{
   targetMode: DaemonServiceTargetMode;
 }>): boolean {
-  return params.instanceId === 'cloud';
+  return params.targetMode === 'default-following';
 }
 
 function resolveLegacyChannelScopedDefaultFollowingIdentitySegment(channel: PublicReleaseRingId): string | null {
@@ -294,7 +293,7 @@ export function planDaemonServiceInstall(params: Readonly<{
         commands.push({ cmd: 'launchctl', args: ['kickstart', '-k', `gui/${uid}/${label}`] });
       } else {
       // Back-compat: if the legacy (non-instance) service is enabled, disable it so it won't auto-load on login.
-        if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+        if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
           commands.push({ cmd: 'launchctl', args: ['bootout', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
           commands.push({ cmd: 'launchctl', args: ['disable', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
         }
@@ -341,10 +340,10 @@ export function planDaemonServiceInstall(params: Readonly<{
     });
 
     const commands: DaemonServicePlannedCommand[] = [];
-    if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+    if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
       const legacyUnitLabel = DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX;
-      commands.push({ cmd: 'schtasks', args: ['/End', '/TN', `Happier\\${legacyUnitLabel}`] });
-      commands.push({ cmd: 'schtasks', args: ['/Delete', '/F', '/TN', `Happier\\${legacyUnitLabel}`] });
+      commands.push({ cmd: 'schtasks', args: ['/End', '/TN', `Happier\\${legacyUnitLabel}`], ignoreFailure: true });
+      commands.push({ cmd: 'schtasks', args: ['/Delete', '/F', '/TN', `Happier\\${legacyUnitLabel}`], ignoreFailure: true });
       // Note: legacy wrapper path is best-effort removed via filesToRemove on uninstall.
     }
     commands.push(...basePlan.commands.map((c) => ({ cmd: c.cmd, args: c.args })));
@@ -377,13 +376,14 @@ export function planDaemonServiceInstall(params: Readonly<{
       ...pinnedTargetEnv,
     },
     killMode: 'process',
+    managedOomPreference: 'avoid',
     restart: 'on-failure',
     runAsUser: mode === 'system' ? systemUser : '',
     wantedBy: mode === 'system' ? 'multi-user.target' : 'default.target',
   });
 
   const commands: DaemonServicePlannedCommand[] = [{ cmd: 'systemctl', args: [...prefix, 'daemon-reload'] }];
-  if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+  if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
     commands.push({
       cmd: 'systemctl',
       args: [...prefix, 'disable', '--now', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME],
@@ -438,7 +438,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
           commands.push({ cmd: 'launchctl', args: ['disable', `gui/${uid}/${legacyLabel}`], ignoreFailure: true });
         }
       }
-      if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+      if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
         commands.push({ cmd: 'launchctl', args: ['bootout', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
         commands.push({ cmd: 'launchctl', args: ['disable', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
       }
@@ -455,7 +455,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
         pushUniquePath(filesToRemove, legacyPath);
       }
     }
-    if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+    if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
       pushUniquePath(filesToRemove, join(params.userHomeDir, 'Library', 'LaunchAgents', `${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}.plist`));
     }
     return { platform: 'darwin', filesToRemove, commands };
@@ -490,7 +490,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
         commands.push({ cmd: 'schtasks', args: ['/Delete', '/F', '/TN', `Happier\\${legacyUnitLabel}`], ignoreFailure: true });
       }
     }
-    if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+    if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
       const legacyUnitLabel = DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX;
       commands.push({ cmd: 'schtasks', args: ['/End', '/TN', `Happier\\${legacyUnitLabel}`] });
       commands.push({ cmd: 'schtasks', args: ['/Delete', '/F', '/TN', `Happier\\${legacyUnitLabel}`] });
@@ -507,7 +507,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
         }
       }
     }
-    if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+    if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
       pushUniquePath(filesToRemove, win32Path.join(happierHomeDir, 'services', `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.ps1`));
     }
     return {
@@ -545,7 +545,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
   if (legacyScopedDefaultUnitPath && legacyScopedDefaultUnitPath !== unitPath) {
     pushUniquePath(filesToRemove, legacyScopedDefaultUnitPath);
   }
-  if (shouldApplyLegacyCloudCleanup({ instanceId, targetMode })) {
+  if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
     pushUniquePath(filesToRemove, legacyUnitPath);
   }
   return {
@@ -568,7 +568,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
             },
           ]
         : []),
-      ...(shouldApplyLegacyCloudCleanup({ instanceId, targetMode })
+      ...(shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })
         ? [
             {
               cmd: 'systemctl',

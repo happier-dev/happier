@@ -85,6 +85,7 @@ function resolveUiWebMetroSpawnEnv(params: Readonly<{
   const baseEnv: NodeJS.ProcessEnv = {
     ...params.env,
     EXPO_NO_TELEMETRY: '1',
+    EXPO_NO_INTERACTIVE: '1',
     EXPO_UNSTABLE_WEB_MODAL: '1',
     BROWSER: 'none',
     ...(typeof params.env.HAPPIER_UI_METRO_WATCH_MONOREPO_ROOT_NODE_MODULES === 'string'

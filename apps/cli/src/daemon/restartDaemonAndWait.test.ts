@@ -66,4 +66,31 @@ describe('restartDaemonAndWait', () => {
         expect(firstCall).toBeDefined();
         expect(firstCall).not.toHaveProperty('env.HAPPIER_DAEMON_TAKEOVER');
     });
+
+    it('does not report success when stopping the old daemon fails', async () => {
+        const { restartDaemonAndWait } = await importSubject();
+        stopDaemonMock.mockRejectedValueOnce(new Error('stop failed'));
+
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
+
+        expect(stopDaemonMock).toHaveBeenCalledWith({ stopSessions: true });
+        expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
+            startupSource: 'self-restart',
+            env: expect.objectContaining({
+                HAPPIER_DAEMON_TAKEOVER: '1',
+            }),
+        }));
+        expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report success when the restarted daemon is not proven running', async () => {
+        const { restartDaemonAndWait } = await importSubject();
+        waitForDaemonRunningWithinBudgetMock.mockResolvedValueOnce(false);
+
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
+
+        expect(stopDaemonMock).toHaveBeenCalledWith({ stopSessions: true });
+        expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledTimes(1);
+        expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledTimes(1);
+    });
 });

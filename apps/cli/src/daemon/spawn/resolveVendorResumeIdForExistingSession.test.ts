@@ -40,5 +40,24 @@ describe('resolveVendorResumeIdForExistingSession', () => {
 
     expect(resolveVendorResumeIdForExistingSession({ agent: 'codex', credentials, rawSession })).toBe('vendor-e2ee-1');
   });
-});
 
+  it('ignores legacy customAcp explicit agents and uses canonical metadata inference instead', () => {
+    const rawSession = {
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        flavor: 'customAcp',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: { backendMode: 'appServer', vendorSessionId: 'vendor-compat-1' },
+        },
+        codexSessionId: 'vendor-compat-1',
+      }),
+      dataEncryptionKey: null,
+    };
+
+    expect(resolveVendorResumeIdForExistingSession({ agent: 'customAcp', credentials: null, rawSession })).toBe(
+      'vendor-compat-1',
+    );
+  });
+});

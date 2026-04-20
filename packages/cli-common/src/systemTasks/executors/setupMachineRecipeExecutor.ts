@@ -14,6 +14,7 @@ const DEFAULT_DAEMON_READY_POLL_MS = 500;
 export type SetupMachineRecipeExecutorOptions = Readonly<{
   includeRelayArgsInAuthCommands?: boolean;
   persistAuthCommands?: boolean;
+  takeOverManualRelayRuntime?: boolean;
 }>;
 
 export function createSetupMachineRecipeExecutorFromHappierJsonExecutor(params: Readonly<{
@@ -22,6 +23,7 @@ export function createSetupMachineRecipeExecutorFromHappierJsonExecutor(params: 
 }>): SetupMachineRecipeExecutor {
   const includeRelayArgsInAuthCommands = params.options?.includeRelayArgsInAuthCommands === true;
   const persistAuthCommands = params.options?.persistAuthCommands === true;
+  const takeOverManualRelayRuntime = params.options?.takeOverManualRelayRuntime === true;
 
   let lastRelayProfile: SetupMachineRelayProfile | null = null;
 
@@ -37,6 +39,7 @@ export function createSetupMachineRecipeExecutorFromHappierJsonExecutor(params: 
   };
 
   const buildPersistArgs = (): string[] => (persistAuthCommands ? ['--persist'] : []);
+  const buildServiceTakeoverArgs = (): string[] => (takeOverManualRelayRuntime ? ['--takeover'] : []);
 
   const readDaemonStatus = async (): Promise<SetupMachineDaemonStatus> => {
     const parsed = await params.executor.runHappierJson(['daemon', 'status', '--json']);
@@ -118,7 +121,7 @@ export function createSetupMachineRecipeExecutorFromHappierJsonExecutor(params: 
         }
         throw new SystemTaskExecutionError(
           errorCode || 'auth_status_unavailable',
-          'Could not determine authentication status for the selected server.',
+          'Could not determine authentication status for the selected Relay.',
         );
       }
 
@@ -174,11 +177,11 @@ export function createSetupMachineRecipeExecutorFromHappierJsonExecutor(params: 
     },
 
     async installDaemonService() {
-      await params.executor.runHappierJson(['service', 'install', '--json']);
+      await params.executor.runHappierJson(['service', 'install', ...buildServiceTakeoverArgs(), '--json']);
     },
 
     async startDaemonService() {
-      await params.executor.runHappierJson(['service', 'start', '--json']);
+      await params.executor.runHappierJson(['service', 'start', ...buildServiceTakeoverArgs(), '--json']);
     },
 
     waitForReadyDaemon,

@@ -1,4 +1,4 @@
-import { BackendTargetKeySchema, buildBackendTargetKey, parseBackendTargetKey } from '@happier-dev/protocol';
+import { BackendTargetKeySchema, buildBackendTargetKey, parseBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 function normalizeBackendTargetKeyFromInput(entry: string): string | null {
   const parsed = BackendTargetKeySchema.safeParse(entry);
@@ -25,4 +25,13 @@ export function normalizeBackendTargetKeysFromCsv(value: string | null): string[
     .filter((entry) => entry.length > 0)
     .map((entry) => normalizeBackendTargetKeyFromInput(entry))
     .filter((entry): entry is string => Boolean(entry));
+}
+
+export function parseSingleBackendTargetFromFlag(value: string | null): BackendTargetRefV1 | null {
+  const backendTargetKeys = normalizeBackendTargetKeysFromCsv(value);
+  if (backendTargetKeys.length !== 1) {
+    return null;
+  }
+
+  return parseBackendTargetKey(backendTargetKeys[0]);
 }

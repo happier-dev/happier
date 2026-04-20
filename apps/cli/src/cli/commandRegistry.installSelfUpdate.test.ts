@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { commandRegistry } from './commandRegistry';
+import {
+  commandRegistry,
+  resolveCommandDispatchRegistry,
+} from './commandRegistry';
+import { resolveCommandSurfaceCatalog } from './commandSurfaceManifest';
 
 describe('commandRegistry install/update aliases', () => {
   it('registers bug-report top-level command', () => {
@@ -32,6 +36,10 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.session).toBeTypeOf('function');
   });
 
+  it('registers sessions top-level alias', () => {
+    expect(commandRegistry.sessions).toBeTypeOf('function');
+  });
+
   it('registers profiles command namespace + alias', () => {
     expect(commandRegistry.profiles).toBeTypeOf('function');
     expect(commandRegistry.profile).toBeTypeOf('function');
@@ -57,12 +65,36 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.uninstall).toBeTypeOf('function');
   });
 
-  it('registers built-in generic ACP agent commands', () => {
-    expect(commandRegistry.customAcp).toBeTypeOf('function');
-    expect(commandRegistry.kiro).toBeTypeOf('function');
+  it('registers built-in agent commands without a customAcp built-in shim', () => {
+    const registry = commandRegistry as Record<string, unknown>;
+    expect(registry.customAcp).toBeUndefined();
+    expect(registry.kiro).toBeTypeOf('function');
   });
 
   it('registers the configured ACP catalog command namespace', () => {
     expect(commandRegistry['acp-catalog']).toBeTypeOf('function');
+  });
+
+  it('exposes canonical command-dispatch descriptors', () => {
+    const dispatchRegistry = resolveCommandDispatchRegistry();
+    const installDescriptor = dispatchRegistry.findByCommand('install');
+    expect(installDescriptor).not.toBeNull();
+    expect(installDescriptor).toMatchObject({
+      id: 'install',
+      command: 'install',
+      handler: expect.any(Function),
+    });
+  });
+
+  it('exposes canonical command-surface descriptors', () => {
+    const surfaceCatalog = resolveCommandSurfaceCatalog();
+    const installSurface = surfaceCatalog.findByCommand('install');
+    expect(installSurface).not.toBeNull();
+    expect(installSurface).toMatchObject({
+      id: 'install',
+      command: 'install',
+      rootHelpLabel: 'happier install',
+      rootHelpDescription: 'Install provider CLIs and helpers',
+    });
   });
 });

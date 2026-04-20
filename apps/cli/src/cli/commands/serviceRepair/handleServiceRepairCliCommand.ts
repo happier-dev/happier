@@ -8,6 +8,10 @@ import { assertDaemonServiceModeSupported } from '../../../daemon/service/assert
 
 import { isInteractiveTerminal, promptInput } from '../server/commandUtilities';
 import { renderServiceRepairPlan } from './renderServiceRepairPlan';
+import {
+  assertRepairPlanSystemUserAvailable,
+  resolveBackgroundServiceRepairSystemUser,
+} from './repairSystemUser';
 
 function resolveModeFromText(raw: string, source: string): 'user' | 'system' {
   const value = String(raw ?? '').trim().toLowerCase();
@@ -68,15 +72,20 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
   commandPath: string;
 }>): Promise<void> {
   const parsed = parseRepairInvocation(params.argv);
+  const systemUser = resolveBackgroundServiceRepairSystemUser({
+    preferredMode: parsed.mode,
+    systemUser: parsed.systemUser,
+  });
   const { runtime, plan } = await resolveBackgroundServiceRepairPlanForCurrentRuntime({
     preferredMode: parsed.mode,
     includeAllModes: !parsed.modeExplicit,
-    systemUser: parsed.systemUser,
+    systemUser,
   });
   assertDaemonServiceModeSupported(runtime.platform, parsed.mode);
   if (parsed.modeExplicit && parsed.mode === 'system' && runtime.platform === 'linux' && runtime.uid !== 0) {
     throw new Error('Root privileges are required for system mode background-service repair');
   }
+  assertRepairPlanSystemUserAvailable({ plan, systemUser });
   const requiresRootForPlan = runtime.platform === 'linux'
     && runtime.uid !== 0
     && plan.actions.some((action) => action.kind === 'remove-service'
@@ -108,7 +117,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
 
     const result = await applyBackgroundServiceRepairPlan(plan, {
       platform: runtime.platform,
-      systemUser: parsed.systemUser,
+      systemUser,
       uid: runtime.uid,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
@@ -153,7 +162,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
 
   const result = await applyBackgroundServiceRepairPlan(plan, {
     platform: runtime.platform,
-    systemUser: parsed.systemUser,
+    systemUser,
     uid: runtime.uid,
     userHomeDir: runtime.userHomeDir,
     happierHomeDir: runtime.happierHomeDir,

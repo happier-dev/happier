@@ -6,11 +6,13 @@ describe('applyBackgroundServiceSetupGuidance', () => {
   const baseGuidance: BackgroundServiceSetupGuidance = {
     targetReleaseChannel: 'preview',
     targetServerUrl: 'https://relay.example.test',
+    currentHappierHomeDir: null,
     currentDefaultReleaseChannel: 'stable',
     managedReleaseChannels: [],
     manualRelayOwner: null,
     exactDefaultServiceExists: false,
     conflictingServices: [],
+    foreignHomeConflictingServices: [],
     shouldOfferDefaultReleaseChannelSwitch: true,
     shouldPromptForManualRelayTakeover: false,
     shouldPromptForServiceReplacement: true,

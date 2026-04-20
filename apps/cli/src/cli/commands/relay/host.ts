@@ -5,10 +5,12 @@ import { basename, dirname, join } from 'node:path';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { inferPublicReleaseRingIdFromEnvAndArgv } from '@/cli/runtime/publicReleaseChannel';
+import { configuration, reloadConfiguration } from '@/configuration';
 import { createOutputBuilder, ok } from '@happier-dev/cli-common/output';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { ensureSshAskpassScriptPath, SSH_PASSWORD_ENV } from '@/capabilities/systemTasks/ssh/sshAskpass';
+import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
 
 import { readKnownHostsTextSync, sshKeyscanSync, writeKnownHostsTextSync } from '@happier-dev/cli-common/ssh';
 
@@ -29,6 +31,7 @@ import {
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '../server/commandUtilities';
 
 type RelayHostStatusJson = Readonly<{
   installed: boolean;
@@ -36,12 +39,78 @@ type RelayHostStatusJson = Readonly<{
   service: RelayRuntimeStatusSnapshot['service'];
   relayUrl: string | null;
   healthy: boolean | null;
+  warnings?: readonly string[];
 }>;
 
 type RelayHostInstallJson = Readonly<{
   relayUrl: string;
   mode: 'user' | 'system';
 }>;
+
+function normalizeRelayUrlForComparison(raw: string): string {
+  const value = String(raw ?? '').trim();
+  if (!value) return '';
+  try {
+    return new URL(value).toString().replace(/\/+$/, '');
+  } catch {
+    return value.replace(/\/+$/, '');
+  }
+}
+
+function relayUrlsMatch(left: string, right: string): boolean {
+  const normalizedLeft = normalizeRelayUrlForComparison(left);
+  const normalizedRight = normalizeRelayUrlForComparison(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function resolveInstalledRelayProfileTarget(params: Readonly<{
+  relayUrl: string;
+  activeProfileBeforeInstall: Awaited<ReturnType<typeof getActiveServerProfile>> | null;
+}>): Readonly<{
+  name: string;
+  serverUrl: string;
+  localServerUrl?: string;
+  webappUrl: string;
+}> {
+  const relayUrl = params.relayUrl;
+  const configuredServerUrl = configuration.serverUrl;
+  const configuredApiServerUrl = configuration.apiServerUrl;
+  const configuredWebappUrl = configuration.webappUrl;
+  const active = params.activeProfileBeforeInstall;
+  const activeMatchesInstalledRelay =
+    active && active.id !== 'cloud' && (
+      relayUrlsMatch(active.serverUrl, relayUrl) ||
+      (active.localServerUrl ? relayUrlsMatch(active.localServerUrl, relayUrl) : false)
+    );
+
+  if (
+    relayUrlsMatch(configuredApiServerUrl, relayUrl) &&
+    configuredServerUrl &&
+    !relayUrlsMatch(configuredServerUrl, relayUrl)
+  ) {
+    return {
+      name: active && active.id !== 'cloud' ? active.name : defaultNameFromUrl(configuredServerUrl),
+      serverUrl: configuredServerUrl,
+      localServerUrl: relayUrl,
+      webappUrl: configuredWebappUrl || defaultWebappUrlFromServerUrl(configuredServerUrl),
+    };
+  }
+
+  if (activeMatchesInstalledRelay && active && !relayUrlsMatch(active.serverUrl, relayUrl)) {
+    return {
+      name: active.name,
+      serverUrl: active.serverUrl,
+      localServerUrl: relayUrl,
+      webappUrl: active.webappUrl,
+    };
+  }
+
+  return {
+    name: active && active.id !== 'cloud' ? active.name : defaultNameFromUrl(relayUrl),
+    serverUrl: relayUrl,
+    webappUrl: defaultWebappUrlFromServerUrl(relayUrl),
+  };
+}
 
 const TEST_FIRST_PARTY_PAYLOAD_ROOT_ENV = 'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT';
 const TEST_FIRST_PARTY_PAYLOAD_VERSION_ID_ENV = 'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID';
@@ -642,7 +711,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const op = String(args[0] ?? '').trim();
   if (!op) {
-    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--ssh-user <user> --ssh-host <host>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-port <port>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--yes] [--json]');
+    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--ssh-user <user> --ssh-host <host>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-port <port>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--preserve-active-server] [--yes] [--json]');
   }
 
   const interactive = isInteractiveTerminal();
@@ -676,6 +745,8 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = sshPort.rest;
   const sshAuth = takeFlagValue(rest, '--ssh-auth');
   rest = sshAuth.rest;
+  const preserveActiveServerFlag = takeFlag(rest, '--preserve-active-server');
+  rest = preserveActiveServerFlag.rest;
   const yesFlag = takeFlag(rest, '--yes');
   rest = yesFlag.rest;
   const jsonFlag = takeFlag(rest, '--json');
@@ -687,6 +758,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
 
   const channel = normalizeChannel(channelFlag.value);
   const mode = normalizeMode(modeFlag.value);
+  const preserveActiveServer = preserveActiveServerFlag.present;
 
   if (sshFlag.value && (sshUserFlag.value || sshHostFlag.value)) {
     throw new Error('Do not combine --ssh with --ssh-user/--ssh-host.');
@@ -797,6 +869,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       service: snapshot.service,
       relayUrl: snapshot.installed ? snapshot.baseUrl : null,
       healthy: typeof snapshot.healthy === 'boolean' ? snapshot.healthy : null,
+      ...(snapshot.warnings && snapshot.warnings.length > 0 ? { warnings: snapshot.warnings } : {}),
     };
 
     if (json) {
@@ -815,6 +888,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
         { label: 'installed', value: status.installed ? 'yes' : 'no' },
         ...(status.version ? [{ label: 'version', value: status.version }] : []),
         { label: 'service', value: status.service.active ? 'running' : 'stopped' },
+        ...(status.warnings ?? []).map((warning) => ({ label: 'warning', value: warning })),
       ], { indent: '  ' });
     });
     console.log(out.render());
@@ -923,7 +997,17 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
           }
         })();
 
+    const activeProfileBeforeInstall = await getActiveServerProfile().catch(() => null);
     const payload: RelayHostInstallJson = await result;
+    const installedProfile = resolveInstalledRelayProfileTarget({
+      relayUrl: payload.relayUrl,
+      activeProfileBeforeInstall,
+    });
+    await upsertServerProfileByUrl({
+      ...installedProfile,
+      use: !preserveActiveServer,
+    });
+    reloadConfiguration();
 
     if (json) {
       printJsonEnvelope({

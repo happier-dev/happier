@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   gotoDomContentLoadedWithPathFallback,
   gotoDomContentLoadedWithRetries,
+  hasPathname,
   normalizeLoopbackBaseUrl,
 } from './pageNavigation';
 import * as pageNavigation from './pageNavigation';
@@ -67,12 +68,12 @@ describe('gotoDomContentLoadedWithRetries', () => {
     expect(goto).toHaveBeenCalledTimes(3);
     expect(goto).toHaveBeenNthCalledWith(
       1,
-      'http://localhost:3000',
+      'http://127.0.0.1:3000',
       expect.objectContaining({ waitUntil: 'domcontentloaded' }),
     );
     expect(goto).toHaveBeenNthCalledWith(
       2,
-      'http://127.0.0.1:3000',
+      'http://localhost:3000',
       expect.objectContaining({ waitUntil: 'domcontentloaded' }),
     );
     expect(goto).toHaveBeenNthCalledWith(
@@ -83,10 +84,63 @@ describe('gotoDomContentLoadedWithRetries', () => {
     expect(waitForTimeout).not.toHaveBeenCalled();
   });
 
+  it('treats navigation-interrupted errors as retryable and falls back to other loopback candidates', async () => {
+    const goto = vi
+      .fn<(_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>>()
+      .mockImplementation(async (url) => {
+        if (url.startsWith('http://127.0.0.1:3000')) {
+          throw new Error(
+            'Navigation to "http://127.0.0.1:3000" is interrupted by another navigation to "http://localhost:3000".',
+          );
+        }
+      });
+    const waitForTimeout = vi.fn(async () => {});
+
+    const page = {
+      goto,
+      waitForTimeout,
+      url: () => 'about:blank',
+    };
+
+    await gotoDomContentLoadedWithRetries(page as never, 'http://127.0.0.1:3000');
+
+    expect(goto).toHaveBeenCalledTimes(2);
+    expect(goto).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:3000',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(goto).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:3000',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(waitForTimeout).not.toHaveBeenCalled();
+  });
+
   it('retries retryable network errors before succeeding', async () => {
     const goto = vi
       .fn<(_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>>()
       .mockRejectedValueOnce(new Error('net::ERR_CONNECTION_RESET'))
+      .mockResolvedValueOnce(undefined);
+    const waitForTimeout = vi.fn(async () => {});
+
+    const page = {
+      goto,
+      waitForTimeout,
+      url: () => 'about:blank',
+    };
+
+    await gotoDomContentLoadedWithRetries(page as never, 'http://localhost:3000');
+
+    expect(goto).toHaveBeenCalledTimes(2);
+    expect(waitForTimeout).toHaveBeenCalledWith(500);
+  });
+
+  it('retries raw ECONNRESET transport errors before succeeding', async () => {
+    const goto = vi
+      .fn<(_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('read ECONNRESET'))
       .mockResolvedValueOnce(undefined);
     const waitForTimeout = vi.fn(async () => {});
 
@@ -217,13 +271,25 @@ describe('gotoCommittedWithRetries', () => {
 
 describe('normalizeLoopbackBaseUrl', () => {
   it('preserves explicitly routable loopback hosts and only rewrites derived loopback aliases', () => {
+    // Canonicalize loopback hosts to IPv4 to avoid flaky IPv6-only binds in CI/Metro.
     expect(normalizeLoopbackBaseUrl('http://127.0.0.1:60674/')).toBe('http://127.0.0.1:60674');
-    expect(normalizeLoopbackBaseUrl('http://localhost:60674/')).toBe('http://localhost:60674');
-    expect(normalizeLoopbackBaseUrl('http://[::1]:60674/')).toBe('http://[::1]:60674');
-    expect(normalizeLoopbackBaseUrl('http://0.0.0.0:60674/')).toBe('http://localhost:60674');
+    expect(normalizeLoopbackBaseUrl('http://localhost:60674/')).toBe('http://127.0.0.1:60674');
+    expect(normalizeLoopbackBaseUrl('http://[::1]:60674/')).toBe('http://127.0.0.1:60674');
+    expect(normalizeLoopbackBaseUrl('http://0.0.0.0:60674/')).toBe('http://127.0.0.1:60674');
     expect(normalizeLoopbackBaseUrl('http://happier-transcript-rollout-unify-0405.localhost:60674/')).toBe(
-      'http://localhost:60674',
+      'http://127.0.0.1:60674',
     );
+  });
+});
+
+describe('hasPathname', () => {
+  it('matches the same route across loopback host variants', () => {
+    expect(hasPathname('http://127.0.0.1:49801/v1/auth/external/github/finalize-keyless', '/v1/auth/external/github/finalize-keyless')).toBe(true);
+    expect(hasPathname('http://localhost:49801/v1/auth/external/github/finalize-keyless', '/v1/auth/external/github/finalize-keyless')).toBe(true);
+  });
+
+  it('returns false for a different pathname', () => {
+    expect(hasPathname('http://localhost:49801/v1/auth/external/github/params', '/v1/auth/external/github/finalize-keyless')).toBe(false);
   });
 });
 

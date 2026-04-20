@@ -135,7 +135,7 @@ describe('happier session run start (integration)', () => {
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted).toMatchObject({
           intent: 'review',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         });
 
         const resultPayload = { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
@@ -193,7 +193,7 @@ describe('happier session run start (integration)', () => {
       expect(parsed.data?.runId).toBe('run_1');
       expect(parsed.data?.callId).toBe('call_1');
       expect(parsed.data?.backendId).toBe('claude');
-      expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });
     } finally {
       output.restore();
     }
@@ -304,7 +304,7 @@ describe('happier session run start (integration)', () => {
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_123');
       expect(parsed.data?.backendId).toBe('claude');
-      expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });
     } finally {
       output.restore();
     }
@@ -324,7 +324,7 @@ describe('happier session run start (integration)', () => {
         const decrypted = decrypt(new Uint8Array(32).fill(3), 'dataKey', decodedParams) as any;
         expect(decrypted).toMatchObject({
           intent: 'voice_agent',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           runClass: 'long_lived',
           ioMode: 'streaming',
         });
@@ -359,7 +359,7 @@ describe('happier session run start (integration)', () => {
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.data?.runId).toBe('run_voice_1');
       expect(parsed.data?.backendId).toBe('claude');
-      expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });
     } finally {
       output.restore();
     }
@@ -379,7 +379,12 @@ describe('happier session run start (integration)', () => {
         const decrypted = decrypt(new Uint8Array(32).fill(3), 'dataKey', decodedParams) as any;
         expect(decrypted).toMatchObject({
           intent: 'delegate',
-          backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+          backendTarget: {
+            kind: 'backend',
+            backendId: 'review-bot',
+            configuredBackendId: 'review-bot',
+            sourceKind: 'configured',
+          },
         });
 
         const resultPayload = { runId: 'run_custom_1', callId: 'call_custom_1', sidechainId: 'call_custom_1' };
@@ -413,7 +418,12 @@ describe('happier session run start (integration)', () => {
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_123');
       expect(parsed.data?.runId).toBe('run_custom_1');
       expect(parsed.data?.backendId).toBe('review-bot');
-      expect(parsed.data?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+      expect(parsed.data?.backendTarget).toEqual({
+        kind: 'backend',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+        sourceKind: 'configured',
+      });
     } finally {
       output.restore();
     }

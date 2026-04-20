@@ -169,10 +169,10 @@ describe('daemonServiceInventory', () => {
 
             envScope.patch({
                 HAPPIER_HOME_DIR: currentCliHomeDir,
-                HAPPIER_ACTIVE_SERVER_ID: 'stack_repo-dev-a1cc5e0671__id_default',
-                HAPPIER_SERVER_URL: 'http://127.0.0.1:53288',
-                HAPPIER_WEBAPP_URL: 'http://localhost:53288',
-                HAPPIER_PUBLIC_SERVER_URL: 'http://127.0.0.1:53288',
+                HAPPIER_ACTIVE_SERVER_ID: 'company',
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:24880',
+                HAPPIER_WEBAPP_URL: 'http://localhost:24880',
+                HAPPIER_PUBLIC_SERVER_URL: 'http://127.0.0.1:24880',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                 HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
                 HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: userHomeDir,
@@ -191,14 +191,14 @@ describe('daemonServiceInventory', () => {
             await writeSettings({
                 schemaVersion: 6,
                 onboardingCompleted: false,
-                activeServerId: 'stack_repo-dev-a1cc5e0671__id_default',
+                activeServerId: 'company',
                 servers: {
-                    'stack_repo-dev-a1cc5e0671__id_default': {
-                        id: 'stack_repo-dev-a1cc5e0671__id_default',
-                        name: 'Repo dev',
-                        serverUrl: 'http://127.0.0.1:53288',
-                        localServerUrl: 'http://127.0.0.1:53288',
-                        webappUrl: 'http://localhost:53288',
+                    company: {
+                        id: 'company',
+                        name: 'Company',
+                        serverUrl: 'http://127.0.0.1:24880',
+                        localServerUrl: 'http://127.0.0.1:24880',
+                        webappUrl: 'http://localhost:24880',
                         createdAt: 1,
                         updatedAt: 1,
                         lastUsedAt: 1,
@@ -218,14 +218,14 @@ describe('daemonServiceInventory', () => {
                     {
                         schemaVersion: 6,
                         onboardingCompleted: false,
-                        activeServerId: 'stack_repo-dev-a1cc5e0671__id_default',
+                        activeServerId: 'company',
                         servers: {
-                            'stack_repo-dev-a1cc5e0671__id_default': {
-                                id: 'stack_repo-dev-a1cc5e0671__id_default',
-                                name: 'Repo dev',
-                                serverUrl: 'http://127.0.0.1:53288',
-                                localServerUrl: 'http://127.0.0.1:53288',
-                                webappUrl: 'http://localhost:53288',
+                            company: {
+                                id: 'company',
+                                name: 'Company',
+                                serverUrl: 'http://127.0.0.1:24880',
+                                localServerUrl: 'http://127.0.0.1:24880',
+                                webappUrl: 'http://localhost:24880',
                                 createdAt: 1,
                                 updatedAt: 1,
                                 lastUsedAt: 1,
@@ -272,8 +272,19 @@ describe('daemonServiceInventory', () => {
             );
 
             const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+            expect(runtime.instanceId).toBe('company');
+            expect(runtime.serverUrl).toBe('http://127.0.0.1:24880');
+            const { discoverInstalledDaemonServiceEntries } = await import('@/daemon/service/discoverInstalledDaemonServiceEntries');
+            const discovered = await discoverInstalledDaemonServiceEntries({
+                platform: runtime.platform,
+                userHomeDir: runtime.userHomeDir,
+                happierHomeDir: runtime.happierHomeDir,
+                mode: 'user',
+                serversById: {},
+            });
             const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
 
+            expect(discovered).toHaveLength(1);
             expect(services).toHaveLength(1);
             expect(services[0]?.label).toBe('com.happier.cli.daemon.default');
         });

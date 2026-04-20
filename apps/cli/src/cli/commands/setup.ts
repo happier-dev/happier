@@ -18,6 +18,7 @@ import {
     syncInstalledFirstPartyShims,
     writeDefaultManagedReleaseChannel,
 } from '@happier-dev/cli-common/firstPartyRuntime';
+import { getProviderCliSetupRecommendedIds } from '@happier-dev/agents';
 import { resolvePublicReleaseRingIdForLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
@@ -31,6 +32,10 @@ import {
 } from '@happier-dev/cli-common/systemTasks';
 
 function buildSetupHelpPage(): HelpPageOptions {
+    const recommendedProviderIds = getProviderCliSetupRecommendedIds();
+    const providerExample = recommendedProviderIds.length > 0
+        ? `happier setup --relay-url https://relay.example.test ${recommendedProviderIds.map((id) => `--provider ${id}`).join(' ')}`
+        : 'happier setup --relay-url https://relay.example.test --provider <id>';
     return {
         title: 'setup',
         subtitle: 'Guided setup',
@@ -49,7 +54,7 @@ function buildSetupHelpPage(): HelpPageOptions {
                 title: 'Examples:',
                 rows: [
                     { label: cmd('happier setup --relay-url https://relay.example.test'), description: '' },
-                    { label: cmd('happier setup --relay-url https://relay.example.test --provider codex --provider claude'), description: '' },
+                    { label: cmd(providerExample), description: '' },
                     { label: cmd('happier setup plan --relay-url https://relay.example.test'), description: '' },
                 ],
             },
@@ -105,7 +110,7 @@ function normalizeRelayUrl(raw: string): string {
 }
 
 type SetupStep = Readonly<{
-    id: 'auth_login' | 'daemon_install' | 'providers_setup';
+    id: 'auth_login' | 'daemon_install' | 'daemon_start' | 'providers_setup';
     argv: readonly string[];
     display: string;
 }>;
@@ -137,6 +142,11 @@ function buildSetupPlan(params: Readonly<{
             id: 'daemon_install',
             argv: ['service', 'install'],
             display: 'happier service install',
+        });
+        steps.push({
+            id: 'daemon_start',
+            argv: ['service', 'start'],
+            display: 'happier service start',
         });
     }
     if (params.includeProviders) {
@@ -383,7 +393,21 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
     }
 
     const daemonSetupPreflightSteps: string[][] = [];
-    let shouldRunDaemonInstallStep = !skipDaemon;
+    let daemonStepOverrides: readonly Readonly<{ id: 'daemon_install' | 'daemon_start'; argv: readonly string[]; display: string }>[] =
+      skipDaemon
+        ? []
+        : [
+            {
+                id: 'daemon_install',
+                argv: ['service', 'install'],
+                display: 'happier service install',
+            },
+            {
+                id: 'daemon_start',
+                argv: ['service', 'start'],
+                display: 'happier service start',
+            },
+        ];
     if (!skipDaemon) {
         const guidance = await readBackgroundServiceSetupGuidanceFn({
             targetReleaseChannel: configuration.publicReleaseRing,
@@ -427,9 +451,7 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
                     processEnv: process.env,
                 });
             },
-            takeOverManualRelayRuntime: async () => {
-                daemonSetupPreflightSteps.push(['daemon', 'start', '--takeover']);
-            },
+            takeOverManualRelayRuntime: async () => undefined,
             replaceExistingServices: async () => {
                 daemonSetupPreflightSteps.push(['service', 'uninstall', '--all', '--yes']);
             },
@@ -442,10 +464,44 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
             return;
         }
 
-        shouldRunDaemonInstallStep = !guidance.exactDefaultServiceExists || guidanceResult.replacedExistingServices;
+        if (guidance.exactDefaultServiceExists && !guidanceResult.replacedExistingServices) {
+            daemonStepOverrides = guidanceResult.tookOverManualRelayRuntime
+                ? [{
+                    id: 'daemon_start',
+                    argv: ['service', 'start', '--takeover'],
+                    display: 'happier service start --takeover',
+                }]
+                : [];
+        } else {
+            daemonStepOverrides = [
+                {
+                    id: 'daemon_install',
+                    argv: ['service', 'install', ...(guidanceResult.tookOverManualRelayRuntime ? ['--takeover'] : [])],
+                    display: `happier service install${guidanceResult.tookOverManualRelayRuntime ? ' --takeover' : ''}`,
+                },
+                {
+                    id: 'daemon_start',
+                    argv: ['service', 'start', ...(guidanceResult.tookOverManualRelayRuntime ? ['--takeover'] : [])],
+                    display: `happier service start${guidanceResult.tookOverManualRelayRuntime ? ' --takeover' : ''}`,
+                },
+            ];
+        }
     }
 
-    const setupSteps = plan.steps.filter((step) => step.id !== 'daemon_install' || shouldRunDaemonInstallStep);
+    const setupSteps = plan.steps.flatMap((step) => {
+        if (step.id !== 'daemon_install' && step.id !== 'daemon_start') {
+            return [step];
+        }
+        const override = daemonStepOverrides.find((entry) => entry.id === step.id);
+        if (!override) {
+            return [];
+        }
+        return [{
+            ...step,
+            argv: override.argv,
+            display: override.display,
+        }];
+    });
     for (const step of [...daemonSetupPreflightSteps.map((argv) => ({ argv })), ...setupSteps]) {
         const exitCode = await runHappyCliStepFn(step.argv);
         if (exitCode !== 0) {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import { repoRootDir } from '../paths';
@@ -15,6 +15,7 @@ export type CliTestLaunchSpec = Readonly<{
 
 type CliLaunchOptions = Parameters<typeof ensureCliDistSnapshotEntrypoint>[1] & {
   preferSourceEntrypoint?: boolean;
+  preparedDistSnapshotOnly?: boolean;
 };
 
 function resolveCliSourceEntrypoint(rootDir: string): string {
@@ -27,6 +28,16 @@ function resolveCliSnapshotSourceEntrypoint(snapshotDir: string): string {
 
 function resolveCliTsconfigPath(snapshotDir: string): string {
   return resolve(snapshotDir, 'tsconfig.json');
+}
+
+function resolvePreparedDistSnapshotEntrypoint(snapshotDir: string): string {
+  const entrypoint = resolve(snapshotDir, 'dist', 'index.mjs');
+  const readyMarker = resolve(snapshotDir, '.cli-dist-snapshot.ready.json');
+  const nodeModulesDir = resolve(snapshotDir, 'node_modules');
+  if (!existsSync(readyMarker) || !existsSync(entrypoint) || !existsSync(nodeModulesDir)) {
+    throw new Error(`Expected an already-prepared CLI dist snapshot at ${snapshotDir}`);
+  }
+  return entrypoint;
 }
 
 function ensureCliSourceSnapshot(
@@ -56,6 +67,14 @@ function ensureCliSourceSnapshot(
         : 'auto';
 
   const snapshotNodeModulesDir = resolve(snapshotDir, 'node_modules');
+  if (
+    snapshotNodeModulesMode === 'copy'
+    && existsSync(snapshotNodeModulesDir)
+    && lstatSync(snapshotNodeModulesDir).isSymbolicLink()
+  ) {
+    rmSync(snapshotNodeModulesDir, { recursive: true, force: true });
+  }
+
   const ensureSymlinkNodeModules = (): void => {
     if (existsSync(snapshotNodeModulesDir)) return;
     const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
@@ -75,7 +94,10 @@ function ensureCliSourceSnapshot(
     ensureSymlinkNodeModules();
   }
 
-  if (!existsSync(snapshotNodeModulesDir) && snapshotNodeModulesMode !== 'symlink') {
+  if (
+    snapshotNodeModulesMode !== 'symlink'
+    && (!existsSync(snapshotNodeModulesDir) || !lstatSync(snapshotNodeModulesDir).isSymbolicLink())
+  ) {
     ensureCliDistSnapshotNodeModules({
       snapshotDir,
       snapshotDistDir: resolve(snapshotDir, 'dist'),
@@ -97,11 +119,12 @@ async function resolveCliSourceLaunchSpec(
   rootDir: string,
   options: CliLaunchOptions,
 ): Promise<CliTestLaunchSpec> {
-  if (!shouldSkipCliSharedDepsBuild(params.env)) {
+  const skipSharedDepsBuild = shouldSkipCliSharedDepsBuild(params.env);
+  if (!skipSharedDepsBuild) {
     await ensureCliSharedDepsBuilt(params, {
       repoRoot: rootDir,
       runCommand: options.runCommand,
-      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
+      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck ?? true,
       timeoutMs: options.timeoutMs,
       pollIntervalMs: options.pollIntervalMs,
       staleAfterMs: options.staleAfterMs,
@@ -161,6 +184,13 @@ export async function resolveCliTestLaunchSpec(
   options: CliLaunchOptions,
 ): Promise<CliTestLaunchSpec> {
   const rootDir = options.repoRoot ?? repoRootDir();
+
+  if (options.preparedDistSnapshotOnly) {
+    return {
+      command: process.execPath,
+      args: ['--preserve-symlinks', resolvePreparedDistSnapshotEntrypoint(options.snapshotDir)],
+    };
+  }
 
   if (options.preferSourceEntrypoint || shouldUseCliSourceEntrypoint(params.env)) {
     return await resolveCliSourceLaunchSpec(params, rootDir, options);

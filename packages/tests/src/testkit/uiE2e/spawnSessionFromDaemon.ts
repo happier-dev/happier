@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { StartedDaemon } from '../daemon/daemon';
 import { normalizeSpawnSessionRequestBody } from '../daemon/normalizeSpawnSessionRequestBody';
 
@@ -13,6 +15,10 @@ export async function spawnSessionFromDaemon(params: Readonly<{
     ...(params.request ?? {}),
     directory: params.directory,
     agent: params.agent ?? 'claude',
+    spawnNonce:
+      typeof params.request?.spawnNonce === 'string' && params.request.spawnNonce.trim().length > 0
+        ? params.request.spawnNonce
+        : randomUUID(),
   });
 
   const res = await fetch(`http://127.0.0.1:${params.daemon.state.httpPort}/spawn-session`, {

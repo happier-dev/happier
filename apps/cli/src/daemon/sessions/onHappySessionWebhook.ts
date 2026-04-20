@@ -3,7 +3,7 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { readCredentials } from '@/persistence';
 
-import { AGENTS_CORE, inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { getAgentResumeConfig, inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -267,7 +267,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
     const mergeKnownVendorResumeIdIntoMetadata = (vendorResumeId: string | null): Metadata => {
       if (!vendorResumeId) return normalizedMetadata;
       const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
-      const resumeConfig = AGENTS_CORE[agentId].resume;
+      const resumeConfig = getAgentResumeConfig(agentId);
       const vendorResumeIdField = 'vendorResumeIdField' in resumeConfig ? resumeConfig.vendorResumeIdField ?? null : null;
       if (!vendorResumeIdField) return normalizedMetadata;
       if (resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata)) return normalizedMetadata;

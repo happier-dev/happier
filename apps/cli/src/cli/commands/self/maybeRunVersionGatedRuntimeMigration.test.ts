@@ -49,6 +49,22 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
+  it('treats legacy installs without version markers as crossing the 0.2.3 migration boundary', async () => {
+    const { hasCrossedBackgroundServiceMigrationBoundary } = await import('./maybeRunVersionGatedRuntimeMigration');
+
+    expect(hasCrossedBackgroundServiceMigrationBoundary({
+      fromVersion: null,
+      toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: true,
+    })).toBe(true);
+
+    expect(hasCrossedBackgroundServiceMigrationBoundary({
+      fromVersion: null,
+      toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
+    })).toBe(false);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     handleServiceRepairCliCommandMock.mockClear();
@@ -57,6 +73,20 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
   });
 
   it('delegates to one aggregated repair pass when an update crosses the 0.2.3 migration boundary and repair work exists', async () => {
+    resolveDaemonServiceCliRuntimeFromEnvMock.mockImplementation((_params?: unknown) => ({
+      platform: 'linux',
+      mode: 'user',
+      systemUser: '',
+      channel: 'preview',
+      targetMode: 'default-following',
+      instanceId: 'company',
+      uid: 1000,
+      userHomeDir: '/tmp/user',
+      happierHomeDir: '/tmp/user/.happier',
+      serverUrl: 'https://company.example.test',
+      publicServerUrl: 'https://company.example.test',
+      webappUrl: 'https://company.example.test',
+    }));
     resolveDaemonServiceListEntriesMock.mockImplementation(async (_runtime: unknown, options?: unknown) => {
       const normalizedOptions = options as { mode?: 'user' | 'system' } | undefined;
       if (normalizedOptions?.mode === 'user') {
@@ -80,6 +110,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     await expect(maybeRunVersionGatedRuntimeMigration({
       fromVersion: '0.2.2',
       toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
       argv: ['repair'],
       commandPath: 'happier self migrate',
     })).resolves.toBe(true);
@@ -98,6 +129,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     await expect(maybeRunVersionGatedRuntimeMigration({
       fromVersion: '0.2.3',
       toVersion: '0.2.4',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
       argv: ['repair'],
       commandPath: 'happier self migrate',
     })).resolves.toBe(false);
@@ -130,6 +162,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     await expect(maybeRunVersionGatedRuntimeMigration({
       fromVersion: '0.2.2',
       toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
       argv: ['repair'],
       commandPath: 'happier self migrate',
     })).resolves.toBe(false);
@@ -164,7 +197,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
         systemUser: '',
         channel: 'preview',
         targetMode: 'default-following',
-        instanceId: 'default',
+        instanceId: 'company',
         uid: 1000,
         userHomeDir: '/tmp/user',
         happierHomeDir: '/tmp/user/.happier',
@@ -181,6 +214,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     await expect(maybeRunVersionGatedRuntimeMigration({
       fromVersion: '0.2.2',
       toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
       argv: ['repair'],
       commandPath: 'happier self migrate',
       installedRuntimeNodePath: '/opt/happier/cli/current/happier',

@@ -1,13 +1,16 @@
-import type { AgentId } from '@happier-dev/agents';
+import type { CatalogAgentLookupId } from '@/backends/types';
 
-import { buildMissingProviderCliCommandErrorMessage } from './requireProviderCliCommand';
-import { resolveProviderCliCommand } from './providerCliResolution';
+import {
+  buildMissingProviderCliCommandErrorMessage,
+  resolveProviderCliRuntimeSpecForLookupId,
+} from './requireProviderCliCommand';
+import { resolveProviderCliCommandForRuntime } from './providerCliResolution';
 
-export async function validateProviderCliSpawn(params: Readonly<{ agentId: AgentId }>): Promise<
+export async function validateProviderCliSpawn(params: Readonly<{ agentId: CatalogAgentLookupId }>): Promise<
   | { ok: true }
   | { ok: false; errorMessage: string }
 > {
-  const resolved = resolveProviderCliCommand(params.agentId);
+  const resolved = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(params.agentId));
   if (resolved) return { ok: true };
 
   return {

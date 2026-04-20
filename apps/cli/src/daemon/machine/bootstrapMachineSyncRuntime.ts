@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { Machine, MachineMetadata } from '@/api/types';
-import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/sessionHandoff/rpcHandlers.sessionHandoff';
+import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/sessionHandoff/handlers';
 import { createFileTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { DirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { resolvePromptAssetDownloadSource } from '@/transfers/targets/resolvePromptAssetDownloadSource';
@@ -15,11 +15,13 @@ import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metada
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
+import type { VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
 import { createDaemonConnectivityCoordinator } from '../connection/createDaemonConnectivityCoordinator';
 import type { ConnectedServiceQuotasLoopHandle } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { logger } from '@/ui/logger';
-import type { PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
-import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
+import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
+import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 type ConnectedServiceRefreshLoopHandle = Readonly<{
   stop: () => void;
@@ -37,6 +39,7 @@ export type BootstrapMachineSyncRuntimeResult = Readonly<{
   apiMachineForSessions: ApiMachineClient | null;
   automationWorker: AutomationWorkerHandle | null;
   memoryWorker: MemoryWorkerHandle | null;
+  voiceInferenceWorker: VoiceInferenceWorkerHandle | null;
   daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null;
   machineConnectionStateCleanup: (() => void) | null;
 }>;
@@ -48,6 +51,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   preferredHost: string;
   happyHomeDir: string;
   happyLibDir: string;
+  filesystemAccessPolicy: FilesystemAccessPolicy;
   takeoverRequested: boolean;
   isShuttingDown: () => boolean;
   createConnectedApiMachine: (machine: Machine) => ApiMachineClient | null;
@@ -66,6 +70,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   directTransferPromptRegistryRegistry: PromptRegistryRegistry;
   connectedServiceRefreshLoopHandle: ConnectedServiceRefreshLoopHandle | null;
   connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null;
+  startVoiceInferenceWorkerForMachine: (machineId: string) => Promise<VoiceInferenceWorkerHandle | null>;
 }>;
 
 export async function bootstrapMachineSyncRuntime(
@@ -77,6 +82,7 @@ export async function bootstrapMachineSyncRuntime(
       apiMachineForSessions: null,
       automationWorker: null,
       memoryWorker: null,
+      voiceInferenceWorker: null,
       daemonConnectivityCoordinator: null,
       machineConnectionStateCleanup: null,
     };
@@ -89,6 +95,7 @@ export async function bootstrapMachineSyncRuntime(
 
   let automationWorker: AutomationWorkerHandle | null = null;
   let memoryWorker: MemoryWorkerHandle | null = null;
+  let voiceInferenceWorker: VoiceInferenceWorkerHandle | null = null;
 
   const directPeerServerLifecycle = params.directPeerServerLifecycle;
   const directPeerTransferHandlers: SessionHandoffDirectPeerTransferHandle | null = directPeerServerLifecycle
@@ -162,6 +169,7 @@ export async function bootstrapMachineSyncRuntime(
                       workingDirectory: input.workingDirectory,
                       path: input.path,
                       asZip: input.asZip,
+                      accessPolicy: params.filesystemAccessPolicy,
                       sessionRpcTransferMaxBytes: null,
                     })
                   : { success: false as const, error: 'Unsupported direct transfer export request' };
@@ -209,6 +217,7 @@ export async function bootstrapMachineSyncRuntime(
     automationWorker = params.startAutomationWorkerForMachine(params.machineId);
     const activeAutomationWorker = automationWorker;
     memoryWorker = await params.startMemoryWorkerForMachine(params.machineId);
+    voiceInferenceWorker = await params.startVoiceInferenceWorkerForMachine(params.machineId);
 
     connectedApiMachine.setRPCHandlers(
       {
@@ -226,6 +235,7 @@ export async function bootstrapMachineSyncRuntime(
           void params.beforeShutdown().finally(() => params.requestShutdown('happier-app'));
         },
         ...(memoryWorker ? { memory: memoryWorker } : {}),
+        ...(voiceInferenceWorker ? { voiceInference: voiceInferenceWorker } : {}),
         machineTransferChannel: {
           onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
           sendEnvelope: (payload) => connectedApiMachine.sendMachineTransferEnvelope(payload),
@@ -374,6 +384,7 @@ export async function bootstrapMachineSyncRuntime(
     apiMachineForSessions: connectedApiMachine,
     automationWorker,
     memoryWorker,
+    voiceInferenceWorker,
     daemonConnectivityCoordinator,
     machineConnectionStateCleanup,
   };

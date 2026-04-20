@@ -1,12 +1,13 @@
 import { statSync, utimesSync } from 'node:fs';
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { buildServiceCommandEnv } from '@happier-dev/cli-common/service';
 
 import type { DaemonServiceInstallPlan, DaemonServiceUninstallPlan, DaemonServicePlannedCommand } from './plan';
 import { commandExistsInPath } from './commandExistsInPath';
+import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 export type DaemonServiceCommandFailureMode = 'best-effort' | 'strict';
 
@@ -16,9 +17,11 @@ function formatDaemonServiceCommand(command: DaemonServicePlannedCommand): strin
 
 function runCommand(command: DaemonServicePlannedCommand): { ok: boolean; out: string | null } {
   try {
+    const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000);
     const res = spawnSync(command.cmd, [...command.args], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: buildServiceCommandEnv({ cmd: command.cmd, args: command.args, env: process.env }),
+      timeout: timeoutMs,
     });
     const ok = (res.status ?? 1) === 0;
     const out = `${res.stdout ? String(res.stdout) : ''}${res.stderr ? String(res.stderr) : ''}`.trim();
@@ -62,6 +65,20 @@ function isBenignLaunchctlCleanupFailure(
 
   const action = String(command.args[0] ?? '').trim().toLowerCase();
   if (action !== 'bootout' && action !== 'disable' && action !== 'kickstart') {
+    if (action === 'bootstrap') {
+      const output = String(result.out ?? '').trim().toLowerCase();
+      if (output.includes('input/output error')) {
+        const domain = String(command.args[1] ?? '').trim();
+        const plistPath = String(command.args.at(-1) ?? '').trim();
+        const label = plistPath.endsWith('.plist') ? basename(plistPath, '.plist') : '';
+        if (domain && label) {
+          return runCommand({
+            cmd: 'launchctl',
+            args: ['print', `${domain}/${label}`],
+          }).ok;
+        }
+      }
+    }
     return false;
   }
 
@@ -78,7 +95,7 @@ function isBenignSystemctlFailure(
   }
 
   const target = String(command.args.at(-1) ?? '').trim().toLowerCase();
-  if (target !== 'happier-daemon.service') {
+  if (!target.startsWith('happier-daemon') || !target.endsWith('.service')) {
     return false;
   }
 

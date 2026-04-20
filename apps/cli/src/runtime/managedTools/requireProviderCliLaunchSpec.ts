@@ -1,14 +1,17 @@
-import type { AgentId } from '@happier-dev/agents';
+import type { CatalogAgentLookupId } from '@/backends/types';
 import {
   providerCliPathRequiresJavaScriptRuntime,
   resolveProviderCliJavaScriptRuntimeCommand,
-  resolveProviderCliCommand,
+  resolveProviderCliCommandForRuntime,
   type ProviderCliCommandResolution,
 } from '@happier-dev/cli-common/providers';
 
-import { isBun } from '@/utils/runtime';
+import { isBun } from '../../utils/runtime';
 
-import { buildMissingProviderCliCommandErrorMessage } from './requireProviderCliCommand';
+import {
+  buildMissingProviderCliCommandErrorMessage,
+  resolveProviderCliRuntimeSpecForLookupId,
+} from './requireProviderCliCommand';
 
 export type ProviderCliLaunchSpec = Readonly<{
   source: ProviderCliCommandResolution['source'];
@@ -18,11 +21,11 @@ export type ProviderCliLaunchSpec = Readonly<{
 }>;
 
 export function resolveProviderCliLaunchSpec(
-  agentId: AgentId,
+  agentId: CatalogAgentLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): ProviderCliLaunchSpec | null {
   const processEnv = opts.processEnv ?? process.env;
-  const resolved = resolveProviderCliCommand(agentId, {
+  const resolved = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(agentId), {
     processEnv,
     isBunRuntime: isBun(),
     currentExecPath: process.execPath,
@@ -53,7 +56,7 @@ export function resolveProviderCliLaunchSpec(
 }
 
 export function requireProviderCliLaunchSpec(
-  agentId: AgentId,
+  agentId: CatalogAgentLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): ProviderCliLaunchSpec {
   const resolved = resolveProviderCliLaunchSpec(agentId, opts);

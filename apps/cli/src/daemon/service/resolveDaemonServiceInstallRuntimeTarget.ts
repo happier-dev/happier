@@ -39,6 +39,7 @@ export async function resolveDaemonServiceInstallRuntimeTarget(options: Readonly
     currentExecPath?: string | null;
     explicitNodePath?: string | null;
     explicitEntryPath?: string | null;
+    allowBootstrap?: boolean;
     targetMode?: DaemonServiceTargetMode;
     processEnv?: NodeJS.ProcessEnv;
 }> = {}): Promise<Readonly<{
@@ -48,6 +49,7 @@ export async function resolveDaemonServiceInstallRuntimeTarget(options: Readonly
     const currentExecPath = options.currentExecPath ?? process.execPath;
     const explicitNodePath = String(options.explicitNodePath ?? '').trim();
     const explicitEntryPath = String(options.explicitEntryPath ?? '').trim();
+    const allowBootstrap = options.allowBootstrap ?? true;
     const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'pinned';
     const processEnv = options.processEnv ?? process.env;
 
@@ -61,11 +63,16 @@ export async function resolveDaemonServiceInstallRuntimeTarget(options: Readonly
         }
     }
 
+    if (!allowBootstrap && !explicitNodePath && !explicitEntryPath) {
+        throw new ReferenceError('Daemon service runtime bootstrap is disabled for this resolution');
+    }
+
     const runtimeExecutable = explicitNodePath
         ? null
         : await ensureJavaScriptRuntimeExecutable({
             isBunRuntime: false,
             currentExecPath,
+            processEnv,
         });
 
     if (!explicitNodePath && !runtimeExecutable && !explicitEntryPath) {

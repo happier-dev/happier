@@ -103,7 +103,12 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
   minisignPubkeyFile?: string;
   preferVersion: string | null;
   channel?: PublicReleaseRingId;
-}>): Promise<Readonly<{ updatedTo: string; installRoot: string; previousVersionId: string | null }>> {
+}>): Promise<Readonly<{
+  updatedTo: string;
+  installRoot: string;
+  previousVersionId: string | null;
+  hadLegacyCurrentInstallWithoutVersionMarkers: boolean;
+}>> {
   const bundle = resolveCliBinaryAssetBundleFromReleaseAssets({
     assets: params.assets,
     os: params.os,
@@ -147,6 +152,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
         processEnv,
       }).installRoot,
       previousVersionId: promotion.previousVersionId,
+      hadLegacyCurrentInstallWithoutVersionMarkers: promotion.hadLegacyCurrentInstallWithoutVersionMarkers,
     };
   } finally {
     await rm(scratchRoot, { recursive: true, force: true });

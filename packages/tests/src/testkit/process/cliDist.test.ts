@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 
-import { ensureCliDistBuilt, ensureCliSharedDepsBuilt, withCliDistBuildLock } from './cliDist';
+import { ensureCliDistBuilt, ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt, withCliDistBuildLock } from './cliDist';
 import { sleep } from '../timing';
 
 const createdDirs: string[] = [];
@@ -106,6 +106,457 @@ describe('ensureCliDistBuilt', () => {
     expect(rebuildCalls).toBe(0);
   });
 
+  it('creates a replacement snapshot instead of mutating a stale ready shared snapshot', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const snapshotSentinelPath = join(snapshotDir, 'node_modules', '.snapshot-sentinel');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "stale";\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+    await writeFile(snapshotSentinelPath, 'keep-me\n', 'utf8');
+    await writeFile(canonicalEntrypoint, 'export const canonical = "fresh";\n', 'utf8');
+
+    const snapshotTime = new Date('2026-03-09T01:00:00.000Z');
+    const canonicalTime = new Date('2026-03-09T01:05:00.000Z');
+    utimesSync(snapshotDistDir, snapshotTime, snapshotTime);
+    utimesSync(snapshotEntrypoint, snapshotTime, snapshotTime);
+    utimesSync(canonicalEntrypoint, canonicalTime, canonicalTime);
+
+    let rebuildCalls = 0;
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          rebuildCalls += 1;
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(0);
+    expect(entrypoint).not.toBe(snapshotEntrypoint);
+    expect(entrypoint).toContain('cli-dist-snapshot-');
+    expect(readFileSync(snapshotEntrypoint, 'utf8')).toContain('snapshot = "stale"');
+    expect(readFileSync(entrypoint, 'utf8')).toContain('canonical = "fresh"');
+    expect(readFileSync(snapshotSentinelPath, 'utf8')).toContain('keep-me');
+  });
+
+  it('rebuilds before reusing a ready shared snapshot when canonical dist directory is missing', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalDistDir = join(repoRoot, 'apps', 'cli', 'dist');
+    const canonicalEntrypoint = join(canonicalDistDir, 'index.mjs');
+    const snapshotSentinelPath = join(snapshotDir, 'node_modules', '.snapshot-sentinel');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "stale";\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+    await writeFile(snapshotSentinelPath, 'keep-me\n', 'utf8');
+    rmSync(canonicalDistDir, { recursive: true, force: true });
+
+    const snapshotTime = new Date('2026-03-09T01:00:00.000Z');
+    const rebuiltTime = new Date('2026-03-09T01:05:00.000Z');
+    utimesSync(snapshotDistDir, snapshotTime, snapshotTime);
+    utimesSync(snapshotEntrypoint, snapshotTime, snapshotTime);
+
+    let rebuildCalls = 0;
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          rebuildCalls += 1;
+          await mkdir(canonicalDistDir, { recursive: true });
+          await writeFile(canonicalEntrypoint, 'export const canonical = "rebuilt";\n', 'utf8');
+          utimesSync(canonicalDistDir, rebuiltTime, rebuiltTime);
+          utimesSync(canonicalEntrypoint, rebuiltTime, rebuiltTime);
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(1);
+    expect(entrypoint).not.toBe(snapshotEntrypoint);
+    expect(entrypoint).toContain('cli-dist-snapshot-');
+    expect(readFileSync(snapshotEntrypoint, 'utf8')).toContain('snapshot = "stale"');
+    expect(readFileSync(entrypoint, 'utf8')).toContain('canonical = "rebuilt"');
+    expect(readFileSync(snapshotSentinelPath, 'utf8')).toContain('keep-me');
+  });
+
+  it('reuses a fresh ready replacement snapshot when the canonical shared snapshot is stale', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const replacementSnapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot-123-456-1');
+    const replacementEntrypoint = join(replacementSnapshotDir, 'dist', 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "stale";\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    await mkdir(join(replacementSnapshotDir, 'dist'), { recursive: true });
+    await writeFile(replacementEntrypoint, 'export const replacement = "fresh";\n', 'utf8');
+    await writeFile(join(replacementSnapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+    await cp(join(repoRoot, 'apps', 'cli', 'node_modules'), join(replacementSnapshotDir, 'node_modules'), { recursive: true });
+
+    await writeFile(canonicalEntrypoint, 'export const canonical = "fresh";\n', 'utf8');
+
+    const staleTime = new Date('2026-03-09T01:00:00.000Z');
+    const freshTime = new Date('2026-03-09T01:05:00.000Z');
+    const replacementNodeModulesFreshTime = new Date('2031-03-09T01:05:00.000Z');
+    utimesSync(snapshotDistDir, staleTime, staleTime);
+    utimesSync(snapshotEntrypoint, staleTime, staleTime);
+    utimesSync(canonicalEntrypoint, freshTime, freshTime);
+    utimesSync(join(replacementSnapshotDir, 'dist'), freshTime, freshTime);
+    utimesSync(replacementEntrypoint, freshTime, freshTime);
+    for (const pkgName of CLI_SHARED_DEP_PACKAGE_NAMES) {
+      utimesSync(
+        join(replacementSnapshotDir, 'node_modules', '@happier-dev', pkgName, 'dist', 'index.js'),
+        replacementNodeModulesFreshTime,
+        replacementNodeModulesFreshTime,
+      );
+    }
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          throw new Error('fresh replacement snapshot should be reused');
+        },
+      },
+    );
+
+    expect(entrypoint).toBe(replacementEntrypoint);
+    expect(readFileSync(entrypoint, 'utf8')).toContain('replacement = "fresh"');
+    expect(
+      readdirSync(join(repoRoot, '.project', 'tmp')).filter((entry) => entry.startsWith('cli-dist-snapshot-')),
+    ).toEqual(['cli-dist-snapshot-123-456-1']);
+  });
+
+  it('creates a replacement snapshot when bundled shared dependency outputs are newer than the ready snapshot copy', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const canonicalBundledProtocolIndexPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+      'dist',
+      'index.js',
+    );
+    const snapshotBundledProtocolIndexPath = join(
+      snapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+      'dist',
+      'index.js',
+    );
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "ready";\n', 'utf8');
+    await writeFile(canonicalEntrypoint, 'export const canonical = "ready";\n', 'utf8');
+    await cp(join(repoRoot, 'apps', 'cli', 'node_modules'), join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotBundledProtocolIndexPath, 'export const protocolSnapshot = "stale";\n', 'utf8');
+    await writeFile(canonicalBundledProtocolIndexPath, 'export const protocolCanonical = "fresh";\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    const baselineTime = new Date('2030-03-09T01:00:00.000Z');
+    const freshTime = new Date('2030-03-09T01:05:00.000Z');
+    utimesSync(snapshotDistDir, baselineTime, baselineTime);
+    utimesSync(snapshotEntrypoint, baselineTime, baselineTime);
+    utimesSync(canonicalEntrypoint, baselineTime, baselineTime);
+    utimesSync(snapshotBundledProtocolIndexPath, baselineTime, baselineTime);
+    utimesSync(canonicalBundledProtocolIndexPath, freshTime, freshTime);
+
+    let rebuildCalls = 0;
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          rebuildCalls += 1;
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(0);
+    expect(entrypoint).not.toBe(snapshotEntrypoint);
+    expect(entrypoint).toContain('cli-dist-snapshot-');
+    expect(readFileSync(snapshotBundledProtocolIndexPath, 'utf8')).toContain('protocolSnapshot = "stale"');
+    expect(
+      readFileSync(join(entrypoint, '..', '..', 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'), 'utf8'),
+    ).not.toContain('protocolSnapshot = "stale"');
+  });
+
+  it('prefers the newest ready replacement snapshot over the canonical shared snapshot when freshness checks are skipped', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const oldReplacementDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot-111-222-1');
+    const oldReplacementEntrypoint = join(oldReplacementDir, 'dist', 'index.mjs');
+    const newReplacementDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot-333-444-1');
+    const newReplacementEntrypoint = join(newReplacementDir, 'dist', 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "canonical";\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    for (const [dir, entrypoint, contents] of [
+      [oldReplacementDir, oldReplacementEntrypoint, 'export const replacement = "old";\n'],
+      [newReplacementDir, newReplacementEntrypoint, 'export const replacement = "new";\n'],
+    ] as const) {
+      await mkdir(join(dir, 'dist'), { recursive: true });
+      await mkdir(join(dir, 'node_modules'), { recursive: true });
+      await writeFile(entrypoint, contents, 'utf8');
+      await writeFile(join(dir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+    }
+
+    await writeFile(canonicalEntrypoint, 'export const canonical = "fresh";\n', 'utf8');
+
+    const canonicalTime = new Date('2026-03-09T01:00:00.000Z');
+    const oldReplacementTime = new Date('2026-03-09T01:05:00.000Z');
+    const newReplacementTime = new Date('2026-03-09T01:10:00.000Z');
+    utimesSync(snapshotDistDir, canonicalTime, canonicalTime);
+    utimesSync(snapshotEntrypoint, canonicalTime, canonicalTime);
+    utimesSync(canonicalEntrypoint, newReplacementTime, newReplacementTime);
+    utimesSync(join(oldReplacementDir, 'dist'), oldReplacementTime, oldReplacementTime);
+    utimesSync(oldReplacementEntrypoint, oldReplacementTime, oldReplacementTime);
+    utimesSync(join(oldReplacementDir, '.cli-dist-snapshot.ready.json'), oldReplacementTime, oldReplacementTime);
+    utimesSync(join(newReplacementDir, 'dist'), newReplacementTime, newReplacementTime);
+    utimesSync(newReplacementEntrypoint, newReplacementTime, newReplacementTime);
+    utimesSync(join(newReplacementDir, '.cli-dist-snapshot.ready.json'), newReplacementTime, newReplacementTime);
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          throw new Error('ready replacement snapshot should be reused');
+        },
+      },
+    );
+
+    expect(entrypoint).toBe(newReplacementEntrypoint);
+    expect(readFileSync(entrypoint, 'utf8')).toContain('replacement = "new"');
+  });
+
+  it('reuses a ready shared snapshot when source freshness checks are explicitly skipped', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const snapshotSentinelPath = join(snapshotDir, 'node_modules', '.snapshot-sentinel');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "stale";\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+    await writeFile(snapshotSentinelPath, 'keep-me\n', 'utf8');
+    await writeFile(canonicalEntrypoint, 'export const canonical = "fresh";\n', 'utf8');
+
+    const snapshotTime = new Date('2026-03-09T01:00:00.000Z');
+    const canonicalTime = new Date('2026-03-09T01:05:00.000Z');
+    utimesSync(snapshotDistDir, snapshotTime, snapshotTime);
+    utimesSync(snapshotEntrypoint, snapshotTime, snapshotTime);
+    utimesSync(canonicalEntrypoint, canonicalTime, canonicalTime);
+
+    let rebuildCalls = 0;
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          rebuildCalls += 1;
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(0);
+    expect(entrypoint).toBe(snapshotEntrypoint);
+    expect(readFileSync(snapshotEntrypoint, 'utf8')).toContain('snapshot = "stale"');
+    expect(readFileSync(snapshotSentinelPath, 'utf8')).toContain('keep-me');
+    expect(
+      readdirSync(join(repoRoot, '.project', 'tmp')).filter((entry) => entry.startsWith('cli-dist-snapshot-')),
+    ).toEqual([]);
+  });
+
+  it('reuses a ready shared snapshot before attempting a live CLI rebuild when freshness checks are skipped', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "ready";\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+    rmSync(canonicalEntrypoint, { force: true });
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          throw new Error('live CLI build should not run while a ready snapshot is reusable');
+        },
+      },
+    );
+
+    expect(entrypoint).toBe(snapshotEntrypoint);
+    expect(readFileSync(snapshotEntrypoint, 'utf8')).toContain('snapshot = "ready"');
+  });
+
+  it('repairs a ready shared snapshot when bundled workspace dist is missing an internal file', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const workspaceProtocolInternalPath = join(
+      repoRoot,
+      'packages',
+      'protocol',
+      'dist',
+      'machineTransfer',
+      'transferStream.js',
+    );
+    const snapshotProtocolInternalPath = join(
+      snapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+      'dist',
+      'machineTransfer',
+      'transferStream.js',
+    );
+
+    await mkdir(join(workspaceProtocolInternalPath, '..'), { recursive: true });
+    await writeFile(workspaceProtocolInternalPath, "export const marker = 'workspace-transfer-stream';\n", 'utf8');
+    await writeFile(canonicalEntrypoint, 'export const canonical = "fresh";\n', 'utf8');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "ready-but-incomplete";\n', 'utf8');
+    await writeFile(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
+      'exports.ok = true;\n',
+      'utf8',
+    );
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          throw new Error('snapshot repair should not need a live CLI rebuild');
+        },
+      },
+    );
+
+    expect(entrypoint).toBe(snapshotEntrypoint);
+    expect(readFileSync(snapshotEntrypoint, 'utf8')).toContain('snapshot = "ready-but-incomplete"');
+    expect(readFileSync(snapshotProtocolInternalPath, 'utf8')).toContain('workspace-transfer-stream');
+  });
+
+  it('preserves the original stale ready snapshot when replacement materialization hits ENOENT', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const snapshotReadyMarkerPath = join(snapshotDir, '.cli-dist-snapshot.ready.json');
+    const snapshotSentinelPath = join(snapshotDir, 'node_modules', '.snapshot-sentinel');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await mkdir(join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "stale";\n', 'utf8');
+    await writeFile(snapshotReadyMarkerPath, JSON.stringify({ v: 1 }), 'utf8');
+    await writeFile(snapshotSentinelPath, 'keep-me\n', 'utf8');
+    await writeFile(canonicalEntrypoint, 'export const canonical = "fresh";\n', 'utf8');
+
+    const snapshotTime = new Date('2026-03-09T01:00:00.000Z');
+    const canonicalTime = new Date('2026-03-09T01:05:00.000Z');
+    utimesSync(snapshotDistDir, snapshotTime, snapshotTime);
+    utimesSync(snapshotEntrypoint, snapshotTime, snapshotTime);
+    utimesSync(canonicalEntrypoint, canonicalTime, canonicalTime);
+
+    vi.resetModules();
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      return {
+        ...actual,
+        cp: async () => {
+          const error = new Error('simulated replacement materialization ENOENT') as NodeJS.ErrnoException;
+          error.code = 'ENOENT';
+          throw error;
+        },
+      };
+    });
+
+    try {
+      const { ensureCliDistSnapshotEntrypoint: ensureCliDistSnapshotEntrypointWithCopyFailure } = await import(
+        './cliDist'
+      );
+
+      await expect(
+        ensureCliDistSnapshotEntrypointWithCopyFailure(
+          { testDir: join(repoRoot, '.project'), env: process.env },
+          {
+            repoRoot,
+            snapshotDir,
+            runCommand: async () => {},
+          },
+        ),
+      ).rejects.toThrow('simulated replacement materialization ENOENT');
+    } finally {
+      vi.doUnmock('node:fs/promises');
+      vi.resetModules();
+    }
+
+    expect(existsSync(snapshotDir)).toBe(true);
+    expect(readFileSync(snapshotEntrypoint, 'utf8')).toContain('snapshot = "stale"');
+    expect(readFileSync(snapshotReadyMarkerPath, 'utf8')).toContain('"v":1');
+    expect(readFileSync(snapshotSentinelPath, 'utf8')).toContain('keep-me');
+    expect(
+      readdirSync(join(repoRoot, '.project', 'tmp')).filter((entry) => entry.startsWith('cli-dist-snapshot-')),
+    ).toEqual([]);
+  });
+
   it('reuses dist when a rebuilt chunk is newer than sources even if index.mjs stays older', async () => {
     const repoRoot = await createRepoRoot();
     const srcImplPath = join(repoRoot, 'apps', 'cli', 'src', 'feature.ts');
@@ -195,6 +646,45 @@ describe('ensureCliDistBuilt', () => {
     expect(rebuildCalls).toBe(0);
   });
 
+  it('materializes a per-test CLI dist snapshot without waiting for an unrelated held build lock', async () => {
+    const repoRoot = await createRepoRoot();
+    const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot-testdir');
+
+    let rebuildCalls = 0;
+    await withCliDistBuildLock(
+      async () => {
+        const ensurePromise = ensureCliDistSnapshotEntrypoint(
+          { testDir: join(repoRoot, '.project'), env: process.env },
+          {
+            repoRoot,
+            snapshotDir,
+            timeoutMs: 1_000,
+            runCommand: async () => {
+              rebuildCalls += 1;
+            },
+          },
+        );
+
+        const raced = await Promise.race([
+          ensurePromise.then(() => 'resolved'),
+          sleep(250).then(() => 'pending'),
+        ]);
+        expect(raced).toBe('resolved');
+        const entrypoint = await ensurePromise;
+        expect(entrypoint).toBe(join(snapshotDir, 'dist', 'index.mjs'));
+      },
+      {
+        lockPath,
+        timeoutMs: 10_000,
+        staleAfterMs: 10_000,
+      },
+    );
+
+    expect(rebuildCalls).toBe(0);
+    expect(existsSync(join(snapshotDir, 'dist', 'index.mjs'))).toBe(true);
+  });
+
   it('rebuilds when a vendored runtime dependency is missing from bundled shared deps', async () => {
     const repoRoot = await createRepoRoot();
     const protocolPackageJsonPath = join(repoRoot, 'packages', 'protocol', 'package.json');
@@ -272,6 +762,40 @@ describe('ensureCliDistBuilt', () => {
     );
 
     expect(rebuildCalls).toBe(1);
+  });
+
+  it('skips shared dependency builds when the E2E skip-build env flag is enabled', async () => {
+    const repoRoot = await createRepoRoot();
+    const bundledConnectionSupervisorDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'connection-supervisor',
+    );
+    rmSync(bundledConnectionSupervisorDir, { recursive: true, force: true });
+
+    let rebuildCalls = 0;
+    await ensureCliDistBuilt(
+      {
+        testDir: join(repoRoot, '.project'),
+        env: {
+          ...process.env,
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+        },
+      },
+      {
+        repoRoot,
+        skipSourceFreshnessCheck: true,
+        skipDistIntegrityCheck: true,
+        runCommand: async () => {
+          rebuildCalls += 1;
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(0);
   });
 
   it('rebuilds when a bundled shared dependency workspace is missing from the CLI node_modules tree', async () => {
@@ -405,6 +929,167 @@ describe('ensureCliDistBuilt', () => {
     );
 
     expect(rebuildCalls).toBe(1);
+  });
+
+  it('accepts extensionless main files in bundled runtime dependency trees', async () => {
+    const repoRoot = await createRepoRoot();
+    const workspaceCliCommonPackageJsonPath = join(repoRoot, 'packages', 'cli-common', 'package.json');
+    const bundledCliCommonPackageJsonPath = join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'package.json');
+    const bundledExtractZipDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'cli-common',
+      'node_modules',
+      'extract-zip',
+    );
+    const bundledDebugDir = join(bundledExtractZipDir, 'node_modules', 'debug');
+    const bundledMsDir = join(bundledDebugDir, 'node_modules', 'ms');
+
+    await writeFile(
+      workspaceCliCommonPackageJsonPath,
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli-common',
+          dependencies: {
+            'extract-zip': '^2.0.1',
+          },
+          exports: {
+            '.': {
+              default: './dist/index.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(
+      bundledCliCommonPackageJsonPath,
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli-common',
+          dependencies: {
+            'extract-zip': '^2.0.1',
+          },
+          exports: {
+            '.': {
+              default: './dist/index.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    await mkdir(join(bundledExtractZipDir, 'dist'), { recursive: true });
+    await writeFile(
+      join(bundledExtractZipDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'extract-zip',
+          main: './index.js',
+          dependencies: {
+            debug: '4.3.7',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(join(bundledExtractZipDir, 'index.js'), 'exports.ok = true;\n', 'utf8');
+
+    await mkdir(join(bundledDebugDir, 'dist'), { recursive: true });
+    await writeFile(
+      join(bundledDebugDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'debug',
+          main: './index.js',
+          dependencies: {
+            ms: '2.1.3',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(join(bundledDebugDir, 'index.js'), 'exports.ok = true;\n', 'utf8');
+
+    await mkdir(bundledMsDir, { recursive: true });
+    await writeFile(
+      join(bundledMsDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'ms',
+          main: './index',
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(join(bundledMsDir, 'index.js'), 'exports.ok = true;\n', 'utf8');
+
+    vi.resetModules();
+    const { ensureCliSharedDepsBuilt } = await import('./cliDist');
+
+    await expect(
+      ensureCliSharedDepsBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          skipSourceFreshnessCheck: true,
+          maxBuildAttempts: 1,
+          runCommand: async () => {},
+        },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('treats a concurrent EEXIST while repairing bundled shared deps symlinks as healthy', async () => {
+    const repoRoot = await createRepoRoot();
+    const bundledCliCommonDistDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'cli-common',
+      'dist',
+    );
+
+    rmSync(join(bundledCliCommonDistDir, 'index.js'), { force: true });
+
+    vi.resetModules();
+    const { ensureCliSharedDepsBuilt } = await import('./cliDist');
+
+    await expect(
+      ensureCliSharedDepsBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          skipSourceFreshnessCheck: true,
+          maxBuildAttempts: 1,
+          beforeRepairBundledWorkspaceDistSymlink: ({ workspaceDistDir, bundledDistDir }) => {
+            // Simulate another process winning the race and creating the same symlink
+            // just before this helper attempts to do it.
+            rmSync(bundledDistDir, { recursive: true, force: true });
+            symlinkSync(workspaceDistDir, bundledDistDir, process.platform === 'win32' ? 'junction' : 'dir');
+          },
+          runCommand: async () => {},
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(existsSync(bundledCliCommonDistDir)).toBe(true);
   });
 
   it('rebuilds when bundled workspace exports drift from workspace package.json exports', async () => {
@@ -682,6 +1367,63 @@ describe('ensureCliDistBuilt', () => {
     ).resolves.toBeUndefined();
 
     expect(buildCalls).toBe(0);
+  });
+
+  it('includes a health report when shared deps still fail after rebuilding', async () => {
+    const repoRoot = await createRepoRoot();
+    const workspacePackageJsonPath = join(repoRoot, 'packages', 'cli-common', 'package.json');
+    const bundledPackageJsonPath = join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'package.json');
+
+    await writeFile(
+      workspacePackageJsonPath,
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli-common',
+          exports: {
+            '.': {
+              default: './dist/index.js',
+            },
+            './systemTasks': {
+              default: './dist/systemTasks/index.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(
+      bundledPackageJsonPath,
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli-common',
+          exports: {
+            '.': {
+              default: './dist/index.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    vi.resetModules();
+    const { ensureCliSharedDepsBuilt } = await import('./cliDist');
+
+    await expect(
+      ensureCliSharedDepsBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          skipSourceFreshnessCheck: true,
+          maxBuildAttempts: 1,
+          runCommand: async () => {},
+        },
+      ),
+    ).rejects.toThrow(/health=/u);
   });
 
   it('honors skipSourceFreshnessCheck when validating outputs after a rebuild', async () => {

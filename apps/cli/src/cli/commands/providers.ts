@@ -12,13 +12,24 @@ import {
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { configuration } from '@/configuration';
 import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry, ResolvedProviderContribution } from '@/extensions/registry/types';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { bullets, cmd, createOutputBuilder, dim, errorFrame, fail, kv, neutral, ok, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
-import { resolveConnectTargetServiceIds } from './connect/resolveConnectTargetServiceIds';
+import { resolveConnectTargetServiceIdsFromRegistry } from './connect/resolveConnectTargetServiceIds';
 
-function usage(): string {
+function usage(providerRows: readonly ProviderStatusRow[] = []): string {
+    const providerRowsSection = providerRows.length > 0
+      ? [{
+          title: 'Available providers:',
+          rows: providerRows.map((row) => ({
+            label: cmd(`${row.title} (${row.id})`),
+            description: `Install with ${cmd(`happier providers install ${row.id}`)}`,
+          })),
+        }]
+      : [];
+
     return renderHelpPage({
         title: 'happier providers',
         subtitle: 'Provider CLI helpers',
@@ -28,8 +39,9 @@ function usage(): string {
             { label: 'happier providers install <providerId> [--dry-run] [--force]', description: 'Install one provider CLI' },
             { label: 'happier providers setup [--provider <id> ...] [--providers <id1,id2>] [--dry-run] [--force] [--yes]', description: 'Install one or more providers' },
         ],
+        sections: providerRowsSection,
         notes: [
-            'Providers are the local tools Happier can run sessions with (Codex, Claude, Gemini, OpenCode, ...).',
+            'Providers are the local tools Happier can run sessions with.',
             'Installs are binary-safe and do not require Node or a package manager.',
             `For cloud-stored API keys and subscription OAuth, use ${cmd('happier connect')}.`,
             `Non-interactive defaults: ${cmd('happier providers setup --yes')} installs the recommended providers.`,
@@ -204,20 +216,27 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
         return `providers_${subcommand}`;
     })();
 
-    if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-        console.log(usage());
-        return;
-    }
-
     const needsProviderRegistry =
         subcommand === 'list'
         || subcommand === 'status'
         || subcommand === 'install'
-        || subcommand === 'setup';
+        || subcommand === 'setup'
+        || !subcommand
+        || subcommand === 'help'
+        || subcommand === '--help'
+        || subcommand === '-h';
+    const mergedRegistry = needsProviderRegistry
+        ? await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir })
+        : null;
     const providerRows = needsProviderRegistry
-        ? listProviderStatus(await resolveMergedContributionRegistry(), process.env)
+        ? listProviderStatus(mergedRegistry!, process.env)
         : [];
     const providerRowsById = new Map(providerRows.map((row) => [row.id, row] as const));
+
+    if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+        console.log(usage(providerRows));
+        return;
+    }
 
     if (subcommand === 'list' || subcommand === 'status') {
         if (json) {
@@ -390,7 +409,11 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
         }
 
         if (!json && !flags.dryRun) {
-            const connectable = providerIds.filter((id) => resolveConnectTargetServiceIds(id).length > 0);
+            const connectable = providerIds.filter((id) => (
+                mergedRegistry
+                    ? resolveConnectTargetServiceIdsFromRegistry(id, mergedRegistry).length > 0
+                    : false
+            ));
             if (connectable.length > 0) {
                 const out = createOutputBuilder();
                 out.blank();

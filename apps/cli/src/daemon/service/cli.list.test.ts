@@ -54,8 +54,66 @@ describe('runDaemonServiceCliCommand list', () => {
           expect(output.json()).toEqual({
             ok: true,
             platform: 'linux',
+            entries: [],
             services: [],
           });
+        } finally {
+          output.restore();
+        }
+      } finally {
+        envScope.restore();
+      }
+    });
+  });
+
+  it('includes invalid installed linux units in list --deep output for diagnosis', async () => {
+    await withTempDir('happier-service-list-deep-invalid-unit-', async (homeDir) => {
+      const envScope = createEnvKeyScope([
+        'HAPPIER_HOME_DIR',
+        'HAPPIER_DAEMON_SERVICE_PLATFORM',
+        'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
+        'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+        'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
+        'HAPPIER_DAEMON_SERVICE_INSTANCE_ID',
+        'HAPPIER_DAEMON_SERVICE_CHANNEL',
+      ]);
+      envScope.patch({
+        HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'default',
+        HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+      });
+
+      try {
+        const servicesDir = join(homeDir, '.config', 'systemd', 'user');
+        mkdirSync(servicesDir, { recursive: true });
+        const installedPath = join(servicesDir, 'happier-daemon.default.service');
+        writeFileSync(
+          installedPath,
+          renderSystemdServiceUnit({
+            description: 'Happier Daemon',
+            execStart: ['/usr/bin/env', 'bash', '-lc', 'echo not-happier'],
+            env: {
+              HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+              HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+            },
+            wantedBy: 'default.target',
+          }),
+          'utf-8',
+        );
+
+        const output = captureStdoutJsonOutput<{ ok: boolean; platform: string; entries: Array<{ installed: boolean; path: string }> }>();
+        try {
+          const { runDaemonServiceCliCommand } = await import('./cli.js');
+          await runDaemonServiceCliCommand({ argv: ['list', '--json', '--deep'] });
+          expect(output.json()).toEqual(expect.objectContaining({
+            ok: true,
+            platform: 'linux',
+            entries: [expect.objectContaining({ installed: false, path: installedPath })],
+          }));
         } finally {
           output.restore();
         }

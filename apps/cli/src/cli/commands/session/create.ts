@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 
-import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 import { readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { normalizeBackendTargetKeysFromCsv } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
@@ -22,7 +21,7 @@ export async function cmdSessionCreate(
   const tag = (readFlagValue(argv, '--tag') ?? '').trim();
   const title = (readFlagValue(argv, '--title') ?? '').trim();
   const initialPrompt = (readFlagValue(argv, '--message') ?? readFlagValue(argv, '--prompt') ?? '').trim();
-  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
+  const backendRaw = (readFlagValue(argv, '--backend') ?? readFlagValue(argv, '--agent') ?? '').trim();
   const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendRaw);
   const backendTargetKey = backendTargetKeys.length === 1 ? backendTargetKeys[0] : null;
   if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
@@ -54,7 +53,7 @@ export async function cmdSessionCreate(
       'session.spawn_new',
       {
         path,
-        ...(backendTargetKey ? { backendTargetKey } : { agentId: DEFAULT_CATALOG_AGENT_ID }),
+        ...(backendTargetKey ? { backendTargetKey } : {}),
         ...(title ? { title } : {}),
         ...(tag ? { tag } : {}),
         ...(initialPrompt ? { initialMessage: initialPrompt } : {}),

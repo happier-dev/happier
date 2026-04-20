@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BackendExecutionSurfaces } from '@/backends/catalog';
+import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { AnyTerminalRuntimeOps, ProviderAttachOps } from '@/backends/types';
 import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
 import type { Credentials, Settings } from '@/persistence';
@@ -104,8 +104,11 @@ const {
   };
 });
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendExecutionSurfaces,
+}));
+
+vi.mock('@/backends/catalog', () => ({
   getProviderAttachOps,
   getTerminalRuntimeOps,
 }));

@@ -13,6 +13,7 @@ vi.mock('./commandExistsInPath', () => ({
 describe('runDaemonServiceCommands', () => {
   afterEach(() => {
     spawnSyncMock.mockReset();
+    delete process.env.HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS;
   });
 
   it('ignores missing launchctl bootout cleanup failures in strict mode', async () => {
@@ -66,6 +67,23 @@ describe('runDaemonServiceCommands', () => {
     ], { failureMode: 'strict' })).not.toThrow();
   });
 
+  it('ignores missing suffixed systemd cleanup failures in strict mode', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+
+    spawnSyncMock.mockReturnValue({
+      status: 1,
+      stdout: Buffer.from(''),
+      stderr: Buffer.from('Failed to disable unit: Unit file happier-daemon.preview.default.service does not exist.'),
+    });
+
+    expect(() => runDaemonServiceCommands([
+      {
+        cmd: 'systemctl',
+        args: ['--user', 'disable', '--now', 'happier-daemon.preview.default.service'],
+      },
+    ], { failureMode: 'strict' })).not.toThrow();
+  });
+
   it('still throws for non-benign launchctl failures in strict mode', async () => {
     const { runDaemonServiceCommands } = await import('./apply');
 
@@ -81,6 +99,36 @@ describe('runDaemonServiceCommands', () => {
         args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'],
       },
     ], { failureMode: 'strict' })).toThrow(/Background service command failed/);
+  });
+
+  it('treats a launchctl bootstrap I/O error as non-fatal when the label is already materialized in launchd', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+
+    spawnSyncMock.mockImplementation((_command: string, args: readonly string[] = []) => {
+      if (args[0] === 'bootstrap') {
+        return { status: 1, stdout: Buffer.from(''), stderr: Buffer.from('Bootstrap failed: 5: Input/output error') };
+      }
+      if (args[0] === 'print' && args[1] === 'gui/501/com.happier.cli.daemon.default') {
+        return { status: 0, stdout: Buffer.from('state = running'), stderr: Buffer.from('') };
+      }
+      return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+    });
+
+    expect(() => runDaemonServiceCommands([
+      {
+        cmd: 'launchctl',
+        args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'],
+      },
+    ], { failureMode: 'strict' })).not.toThrow();
+
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      'launchctl',
+      ['print', 'gui/501/com.happier.cli.daemon.default'],
+      expect.objectContaining({
+        env: expect.any(Object),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    );
   });
 
   it('ignores optional systemctl cleanup failures in strict mode', async () => {
@@ -126,6 +174,26 @@ describe('runDaemonServiceCommands', () => {
           DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${typeof process.getuid === 'function' ? process.getuid() : ''}/bus`,
         }),
       }),
+    );
+  });
+
+  it('bounds background service command execution time', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+
+    process.env.HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS = '42000';
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') });
+
+    runDaemonServiceCommands([
+      {
+        cmd: 'systemctl',
+        args: ['--user', 'start', 'happier-daemon.default.service'],
+      },
+    ], { failureMode: 'strict' });
+
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      'systemctl',
+      ['--user', 'start', 'happier-daemon.default.service'],
+      expect.objectContaining({ timeout: 42000 }),
     );
   });
 });

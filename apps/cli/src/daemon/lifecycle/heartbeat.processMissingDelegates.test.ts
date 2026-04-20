@@ -13,9 +13,14 @@ vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
 }));
 
-vi.mock('../sessionRegistry', () => ({
-  removeSessionMarker: vi.fn(async () => {}),
-}));
+vi.mock('../sessionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../sessionRegistry')>();
+  return {
+    ...actual,
+    removeSessionMarker: vi.fn(async () => {}),
+    promoteSessionMarkerPid: vi.fn(async () => {}),
+  };
+});
 
 import { readDaemonState } from '@/persistence';
 import { removeSessionMarker } from '../sessionRegistry';

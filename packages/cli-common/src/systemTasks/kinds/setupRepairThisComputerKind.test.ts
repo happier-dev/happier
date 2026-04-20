@@ -162,7 +162,7 @@ describe('createSetupRepairThisComputerTaskKind', () => {
       ok: false,
       error: {
         code: 'daemon_service_not_ready',
-        message: 'Background service did not reach a ready state for the selected server.',
+        message: 'Background service did not reach a ready state for the selected Relay.',
       },
     });
   });

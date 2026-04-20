@@ -34,7 +34,19 @@ export async function ensurePendingTerminalConnectReadyForApproval(params: Reado
 
   while (true) {
     const remainingTimeoutMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
-    const readySurface = await waitForTerminalConnectReadySurface(params.page, remainingTimeoutMs);
+    let readySurface: 'restore' | 'approve';
+    try {
+      readySurface = await waitForTerminalConnectReadySurface(params.page, Math.min(remainingTimeoutMs, 30_000));
+    } catch (error) {
+      if (remainingTimeoutMs <= 1) {
+        throw error;
+      }
+      await params.gotoConnectUrl(params.connectUrlForBrowser);
+      await params.page.waitForURL((url) => url.pathname.startsWith('/terminal'), {
+        timeout: remainingTimeoutMs,
+      });
+      continue;
+    }
     if (readySurface === 'approve') {
       return 'approve';
     }
