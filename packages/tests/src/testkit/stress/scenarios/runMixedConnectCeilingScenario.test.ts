@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -113,26 +113,30 @@ describe('runMixedConnectCeilingScenario', () => {
             throw new Error('missing shard request path');
           }
           const request = JSON.parse(readFileSync(requestPath, 'utf8')) as {
-            shardIndex: number;
             outputPath: string;
-            userCount: number;
+            shardPlan: {
+              shardIndex: number;
+              authIndexStart: number;
+              authIndexEndExclusive: number;
+              userCount: number;
+            };
           };
-          const machineCollectorsTotal = request.userCount * config.load.machinesPerUser * config.load.sessionsPerUser;
-          const connectedMachineCollectors = request.shardIndex === 0 ? machineCollectorsTotal : machineCollectorsTotal - 1;
-          require('node:fs').writeFileSync(
+          const machineCollectorsTotal = request.shardPlan.userCount * config.load.machinesPerUser * config.load.sessionsPerUser;
+          const connectedMachineCollectors = request.shardPlan.shardIndex === 0 ? machineCollectorsTotal : machineCollectorsTotal - 1;
+          writeFileSync(
             request.outputPath,
             `${JSON.stringify({
-              shardIndex: request.shardIndex,
-              authIndexStart: request.shardIndex * request.userCount,
-              authIndexEndExclusive: (request.shardIndex + 1) * request.userCount,
-              userDevicesTotal: request.userCount,
-              connectedUserDevices: request.userCount,
+              shardIndex: request.shardPlan.shardIndex,
+              authIndexStart: request.shardPlan.authIndexStart,
+              authIndexEndExclusive: request.shardPlan.authIndexEndExclusive,
+              userDevicesTotal: request.shardPlan.userCount,
+              connectedUserDevices: request.shardPlan.userCount,
               machineCollectorsTotal,
               connectedMachineCollectors,
               connectivitySnapshot: {
                 userDevices: {
-                  total: request.userCount,
-                  connected: request.userCount,
+                  total: request.shardPlan.userCount,
+                  connected: request.shardPlan.userCount,
                   disconnectedAuthIndexes: [],
                   disconnectedSample: [],
                 },
