@@ -1,0 +1,69 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+
+const dbMocks = createDbMocks({
+    accessKey: ["findUnique", "create"],
+    session: ["findFirst"],
+    machine: ["findFirst"],
+} as const);
+
+const isPrismaErrorCode = vi.fn((error: unknown, code: string) => {
+    return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code;
+});
+
+installDbModuleMock({
+    db: dbMocks.db,
+    isPrismaErrorCode,
+});
+
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+
+describe("accessKeysRoutes POST /v1/access-keys/:sessionId/:machineId", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dbMocks.reset();
+        isPrismaErrorCode.mockClear();
+    });
+
+    it("returns the winner row when access-key creation loses a unique race", async () => {
+        dbMocks.db.session.findFirst.mockResolvedValueOnce({ id: "s1", accountId: "u1" });
+        dbMocks.db.machine.findFirst.mockResolvedValueOnce({ id: "m1", accountId: "u1" });
+        dbMocks.db.accessKey.findUnique
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({
+                data: "winner",
+                dataVersion: 1,
+                createdAt: new Date("2026-04-19T00:00:00.000Z"),
+                updatedAt: new Date("2026-04-19T00:00:00.000Z"),
+            });
+        dbMocks.db.accessKey.create.mockRejectedValueOnce({ code: "P2002" });
+
+        const { accessKeysRoutes } = await import("./accessKeysRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/access-keys/:sessionId/:machineId",
+            registerRoutes(app) {
+                accessKeysRoutes(app as any);
+            },
+        });
+
+        const { response: res, reply } = await route.invoke({
+            userId: "u1",
+            params: { sessionId: "s1", machineId: "m1" },
+            body: { data: "created" },
+        });
+
+        expect(reply.statusCode).toBe(200);
+        expect(res).toEqual({
+            success: true,
+            accessKey: {
+                data: "winner",
+                dataVersion: 1,
+                createdAt: new Date("2026-04-19T00:00:00.000Z").getTime(),
+                updatedAt: new Date("2026-04-19T00:00:00.000Z").getTime(),
+            },
+        });
+    });
+});

@@ -41,4 +41,47 @@ describe('resolveWebAppOAuthReturnUrlFromEnv', () => {
       },
     })).toBe('http://127.0.0.1:8081/base/ui/oauth/github');
   });
+
+  it('preserves the configured reverse-proxy base path for loopback origins without a referer path', () => {
+    expect(resolveWebAppOAuthReturnUrlFromRequestHeaders({
+      env: {
+        HAPPIER_PUBLIC_SERVER_URL: 'https://stack.example.test/base/',
+        HAPPIER_SERVER_UI_DIR: '/tmp/ui',
+        HAPPIER_SERVER_UI_PREFIX: '/ui',
+      },
+      providerId: 'github',
+      headers: {
+        origin: 'http://127.0.0.1:8081',
+      },
+    })).toBe('http://127.0.0.1:8081/base/ui/oauth/github');
+  });
+
+  it('preserves the configured reverse-proxy base path when the UI is root-mounted', () => {
+    expect(resolveWebAppOAuthReturnUrlFromRequestHeaders({
+      env: {
+        HAPPIER_PUBLIC_SERVER_URL: 'https://stack.example.test/base/',
+        HAPPIER_SERVER_UI_DIR: '/tmp/ui',
+        HAPPIER_SERVER_UI_PREFIX: '/',
+      },
+      providerId: 'github',
+      headers: {
+        origin: 'http://127.0.0.1:8081',
+        referer: 'http://127.0.0.1:8081/base/settings',
+      },
+    })).toBe('http://127.0.0.1:8081/base/oauth/github');
+  });
+
+  it('preserves the configured reverse-proxy base path for root-mounted UI when only the loopback origin is available', () => {
+    expect(resolveWebAppOAuthReturnUrlFromRequestHeaders({
+      env: {
+        HAPPIER_PUBLIC_SERVER_URL: 'https://stack.example.test/base/',
+        HAPPIER_SERVER_UI_DIR: '/tmp/ui',
+        HAPPIER_SERVER_UI_PREFIX: '/',
+      },
+      providerId: 'github',
+      headers: {
+        origin: 'http://127.0.0.1:8081',
+      },
+    })).toBe('http://127.0.0.1:8081/base/oauth/github');
+  });
 });

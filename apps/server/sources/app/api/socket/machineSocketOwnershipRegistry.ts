@@ -33,11 +33,16 @@ type ClaimOwnerResult =
     | Readonly<{ result: "conflict"; owner: MachineSocketOwnerSnapshot }>;
 
 const DEFAULT_MACHINE_SOCKET_OWNER_TTL_SECONDS = 120;
+const UNKNOWN_REDIS_CONFLICT_OWNER_SOCKET_ID = "unknown";
 
 const CLAIM_IF_AVAILABLE_OR_SELF_OR_TAKEOVER_SCRIPT = [
     "local existingSocketId = redis.call('HGET', KEYS[1], 'socketId')",
     "local existingRuntimeId = redis.call('HGET', KEYS[1], 'runtimeId')",
     "local existingServiceManaged = redis.call('HGET', KEYS[1], 'serviceManaged')",
+    "local existingStartupSource = redis.call('HGET', KEYS[1], 'startupSource')",
+    "local existingServiceLabel = redis.call('HGET', KEYS[1], 'serviceLabel')",
+    "local existingStartupSourceKnown = existingStartupSource == 'manual' or existingStartupSource == 'background-service' or existingStartupSource == 'self-restart' or existingStartupSource == 'installer'",
+    "local existingServiceManagedEffective = existingServiceManaged == 'true' or (existingServiceManaged ~= 'false' and (existingStartupSource == 'background-service' or ((not existingStartupSourceKnown or existingStartupSource == 'unknown' or not existingStartupSource or existingStartupSource == '') and existingServiceLabel and existingServiceLabel ~= '')))",
     "local takeoverRequested = ARGV[11] == '1'",
     "if (not existingSocketId) or existingSocketId == ARGV[1] or (ARGV[2] ~= '' and existingRuntimeId == ARGV[2]) then",
     "  redis.call('HSET', KEYS[1], 'socketId', ARGV[1], 'runtimeId', ARGV[2], 'instanceId', ARGV[3], 'updatedAt', ARGV[4], 'cliVersion', ARGV[5], 'publicReleaseChannel', ARGV[6], 'startupSource', ARGV[7], 'serviceManaged', ARGV[8], 'serviceLabel', ARGV[9])",
@@ -45,7 +50,7 @@ const CLAIM_IF_AVAILABLE_OR_SELF_OR_TAKEOVER_SCRIPT = [
     "  if existingSocketId and (existingSocketId == ARGV[1] or (ARGV[2] ~= '' and existingRuntimeId == ARGV[2])) then return 'self' end",
     "  return 'granted'",
     "end",
-    "if takeoverRequested and existingServiceManaged ~= 'true' then",
+    "if takeoverRequested and not existingServiceManagedEffective then",
     "  redis.call('HSET', KEYS[1], 'socketId', ARGV[1], 'runtimeId', ARGV[2], 'instanceId', ARGV[3], 'updatedAt', ARGV[4], 'cliVersion', ARGV[5], 'publicReleaseChannel', ARGV[6], 'startupSource', ARGV[7], 'serviceManaged', ARGV[8], 'serviceLabel', ARGV[9])",
     "  redis.call('EXPIRE', KEYS[1], ARGV[10])",
     "  return 'takeover'",
@@ -73,19 +78,37 @@ function normalizeOwnerSnapshot(
     socketId: string,
     owner: MachineSocketOwnerInput,
 ): MachineSocketOwnerSnapshot {
+    const resolvedServiceManaged = resolveOwnerServiceManaged(owner);
     return {
         socketId,
         ...(owner.runtimeId ? { runtimeId: owner.runtimeId } : null),
         ...(owner.cliVersion ? { cliVersion: owner.cliVersion } : null),
         ...(owner.publicReleaseChannel ? { publicReleaseChannel: owner.publicReleaseChannel } : null),
         ...(owner.startupSource ? { startupSource: owner.startupSource } : null),
-        ...(typeof owner.serviceManaged === "boolean" ? { serviceManaged: owner.serviceManaged } : null),
+        ...(typeof resolvedServiceManaged === "boolean" ? { serviceManaged: resolvedServiceManaged } : null),
         ...(owner.serviceLabel ? { serviceLabel: owner.serviceLabel } : null),
     };
 }
 
+function resolveOwnerServiceManaged(owner: Readonly<{
+    serviceManaged?: boolean;
+    startupSource?: string;
+    serviceLabel?: string;
+}>): boolean | undefined {
+    if (typeof owner.serviceManaged === "boolean") {
+        return owner.serviceManaged;
+    }
+    if (owner.startupSource === "background-service") {
+        return true;
+    }
+    if (!owner.startupSource || owner.startupSource === "unknown") {
+        return normalizeOptionalString(owner.serviceLabel) ? true : undefined;
+    }
+    return undefined;
+}
+
 function isManualOwner(owner: MachineSocketOwnerSnapshot): boolean {
-    return owner.serviceManaged !== true;
+    return resolveOwnerServiceManaged(owner) !== true;
 }
 
 function resolveOwnershipKey(params: Readonly<{ accountId: string; machineId: string }>): string {
@@ -142,6 +165,15 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
         await redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, socketId);
     }
 
+    function revokeLocalOwnership(key: string, socketId: string): void {
+        const current = localOwners.get(key);
+        if (current?.socketId === socketId) {
+            localOwners.delete(key);
+            stopRefreshLoop(key);
+        }
+        disconnectSocketById(socketId);
+    }
+
     function pruneStaleLocalOwner(key: string): void {
         const current = localOwners.get(key);
         if (!current) return;
@@ -176,7 +208,7 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
             "serviceLabel",
         );
         if (typeof socketId !== "string" || socketId.trim().length === 0) return null;
-        return {
+        const owner = {
             socketId,
             ...(normalizeOptionalString(runtimeId) ? { runtimeId: normalizeOptionalString(runtimeId) } : null),
             ...(normalizeOptionalString(cliVersion) ? { cliVersion: normalizeOptionalString(cliVersion) } : null),
@@ -184,7 +216,11 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
             ...(normalizeOptionalString(startupSource) ? { startupSource: normalizeOptionalString(startupSource) } : null),
             ...(serviceManaged === "true" ? { serviceManaged: true } : serviceManaged === "false" ? { serviceManaged: false } : null),
             ...(normalizeOptionalString(serviceLabel) ? { serviceLabel: normalizeOptionalString(serviceLabel) } : null),
-        };
+        } satisfies MachineSocketOwnerSnapshot;
+        const resolvedServiceManaged = resolveOwnerServiceManaged(owner);
+        return typeof resolvedServiceManaged === "boolean"
+            ? { ...owner, serviceManaged: resolvedServiceManaged }
+            : owner;
     }
 
     function startRefreshLoop(key: string, socketId: string): void {
@@ -194,15 +230,28 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
         const intervalMs = Math.max(1000, Math.floor((ttlSeconds * 1000) / 2));
         const instanceId = params.config.instanceId;
         const timer = setInterval(() => {
-            void redis.eval(
-                REFRESH_IF_SOCKET_ID_SCRIPT,
-                1,
-                key,
-                socketId,
-                Date.now().toString(),
-                instanceId,
-                ttlSeconds.toString(),
-            );
+            void redis
+                .eval(
+                    REFRESH_IF_SOCKET_ID_SCRIPT,
+                    1,
+                    key,
+                    socketId,
+                    Date.now().toString(),
+                    instanceId,
+                    ttlSeconds.toString(),
+                )
+                .then((refreshed) => {
+                    if (refreshed !== 1) {
+                        revokeLocalOwnership(key, socketId);
+                    }
+                })
+                .catch(() => {
+                    const current = localOwners.get(key);
+                    if (current?.socketId === socketId) {
+                        void redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, socketId).catch(() => {});
+                    }
+                    revokeLocalOwnership(key, socketId);
+                });
         }, intervalMs);
         timer.unref?.();
         refreshTimers.set(key, timer);
@@ -284,6 +333,7 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
                     if (owner) {
                         return { result: "conflict", owner };
                     }
+                    return { result: "conflict", owner: { socketId: UNKNOWN_REDIS_CONFLICT_OWNER_SOCKET_ID } };
                 }
                 if (claimResult === "self") {
                     const priorSocketId =
@@ -342,7 +392,11 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
             if (!params.config.enabled) return;
 
             const redis = getRedisClient();
-            await redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, paramsForRelease.socketId);
+            try {
+                await redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, paramsForRelease.socketId);
+            } catch {
+                // best-effort only; avoid bubbling into socket disconnect handlers
+            }
         },
     };
 }

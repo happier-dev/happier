@@ -1,6 +1,7 @@
 import { buildNewSessionUpdate, eventRouter } from "@/app/events/eventRouter";
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { afterTx, inTx } from "@/storage/inTx";
+import { markAccountChangedAfterCommit } from "@/app/changes/markAccountChangedAfterCommit";
+import { inTx } from "@/storage/inTx";
+import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { z } from "zod";
@@ -41,46 +42,35 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             });
         }
 
-        const resolvedSession = await inTx(async (tx) => {
-            const existing = await tx.session.findFirst({
-                where: {
-                    accountId: userId,
-                    tag: tag,
-                },
-            });
+        const account = await db.account.findUnique({
+            where: { id: userId },
+            select: { encryptionMode: true },
+        });
+        const accountEncryptionMode: "e2ee" | "plain" = account?.encryptionMode === "plain" ? "plain" : "e2ee";
 
-            if (existing) {
-                log(
-                    { module: "session-create", sessionId: existing.id, userId, tag },
-                    `Found existing session: ${existing.id} for tag ${tag}`,
-                );
-                return existing;
-            }
+        const defaultEncryptionMode = resolveEffectiveDefaultAccountEncryptionMode(
+            policy.storagePolicy,
+            policy.defaultAccountMode,
+        );
 
+        const requestedOrAccountOrDefault: "e2ee" | "plain" =
+            requestedEncryptionMode === "plain" || requestedEncryptionMode === "e2ee"
+                ? requestedEncryptionMode
+                : accountEncryptionMode ?? defaultEncryptionMode;
+
+        const effectiveEncryptionMode: "e2ee" | "plain" =
+            policy.storagePolicy === "required_e2ee"
+                ? "e2ee"
+                : policy.storagePolicy === "plaintext_only"
+                    ? "plain"
+                    : requestedOrAccountOrDefault;
+
+        let createdFresh = false;
+
+        let resolvedSession;
+        try {
+            resolvedSession = await inTx(async (tx) => {
             log({ module: "session-create", userId, tag }, `Creating new session for user ${userId} with tag ${tag}`);
-
-            const account = await tx.account.findUnique({
-                where: { id: userId },
-                select: { encryptionMode: true },
-            });
-            const accountEncryptionMode: "e2ee" | "plain" = account?.encryptionMode === "plain" ? "plain" : "e2ee";
-
-            const defaultEncryptionMode = resolveEffectiveDefaultAccountEncryptionMode(
-                policy.storagePolicy,
-                policy.defaultAccountMode,
-            );
-
-            const requestedOrAccountOrDefault: "e2ee" | "plain" =
-                requestedEncryptionMode === "plain" || requestedEncryptionMode === "e2ee"
-                    ? requestedEncryptionMode
-                    : accountEncryptionMode ?? defaultEncryptionMode;
-
-            const effectiveEncryptionMode: "e2ee" | "plain" =
-                policy.storagePolicy === "required_e2ee"
-                    ? "e2ee"
-                    : policy.storagePolicy === "plaintext_only"
-                        ? "plain"
-                        : requestedOrAccountOrDefault;
 
             const created = await tx.session.create({
                 data: {
@@ -97,31 +87,55 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                                 : undefined,
                 },
             });
-
-            const cursor = await markAccountChanged(tx, { accountId: userId, kind: "session", entityId: created.id });
-
-            afterTx(tx, () => {
-                const updatePayload = buildNewSessionUpdate(created, cursor, randomKeyNaked(12));
-                log(
-                    {
-                        module: "session-create",
-                        userId,
-                        sessionId: created.id,
-                        updateType: "new-session",
-                        updateId: updatePayload.id,
-                        updateSeq: updatePayload.seq,
-                    },
-                    "Emitting new-session update to user-scoped connections",
-                );
-                eventRouter.emitUpdate({
-                    userId,
-                    payload: updatePayload,
-                    recipientFilter: { type: "user-scoped-only" },
-                });
-            });
-
+            createdFresh = true;
             return created;
-        });
+            });
+        } catch (error) {
+            if (!isPrismaErrorCode(error, "P2002")) {
+                throw error;
+            }
+            const existing = await db.session.findUnique({
+                where: {
+                    accountId_tag: {
+                        accountId: userId,
+                        tag,
+                    },
+                },
+            });
+            if (!existing) {
+                throw error;
+            }
+            log(
+                { module: "session-create", sessionId: existing.id, userId, tag },
+                `Found existing session after unique-create race: ${existing.id} for tag ${tag}`,
+            );
+            resolvedSession = existing;
+        }
+
+        if (createdFresh) {
+            const cursor = await markAccountChangedAfterCommit({
+                accountId: userId,
+                kind: "session",
+                entityId: resolvedSession.id,
+            });
+            const updatePayload = buildNewSessionUpdate(resolvedSession, cursor, randomKeyNaked(12));
+            log(
+                {
+                    module: "session-create",
+                    userId,
+                    sessionId: resolvedSession.id,
+                    updateType: "new-session",
+                    updateId: updatePayload.id,
+                    updateSeq: updatePayload.seq,
+                },
+                "Emitting new-session update to user-scoped connections",
+            );
+            eventRouter.emitUpdate({
+                userId,
+                payload: updatePayload,
+                recipientFilter: { type: "user-scoped-only" },
+            });
+        }
 
         log({ module: "session-create", sessionId: resolvedSession.id, userId }, `Session resolved: ${resolvedSession.id}`);
         return reply.send({

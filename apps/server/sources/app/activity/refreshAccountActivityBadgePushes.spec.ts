@@ -156,4 +156,30 @@ describe("refreshAccountActivityBadgePushes", () => {
             },
         });
     });
+
+    it("returns before computing badge counts when no push tokens exist", async () => {
+        dbSessionFindMany.mockResolvedValue([
+            {
+                accountId: "a1",
+                seq: 5,
+                pendingCount: 0,
+                lastViewedSessionSeq: 1,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            },
+        ]);
+        dbAccountPushTokenFindMany.mockResolvedValue([]);
+
+        const { refreshAccountActivityBadgePushes } = await import("./refreshAccountActivityBadgePushes");
+        await refreshAccountActivityBadgePushes({ accountIds: ["a1"] });
+
+        expect(dbAccountPushTokenFindMany).toHaveBeenCalledWith({
+            where: { accountId: { in: ["a1"] } },
+            select: { accountId: true, token: true },
+        });
+        expect(dbSessionFindMany).not.toHaveBeenCalled();
+        expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+    });
 });

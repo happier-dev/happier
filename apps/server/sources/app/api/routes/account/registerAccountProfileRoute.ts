@@ -6,6 +6,7 @@ import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverF
 import { ConnectedServiceIdSchema } from "@happier-dev/protocol";
 import { isConnectedServiceCredentialMetadataV2 } from "../connect/connectedServicesV2/credentialMetadataV2";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { collectLegacyConnectedServiceVendorKeysFromRows } from "../connect/legacyConnectedServiceVendors";
 
 export function registerAccountProfileRoute(app: Fastify): void {
     app.get('/v1/account/profile', {
@@ -41,12 +42,7 @@ export function registerAccountProfileRoute(app: Fastify): void {
             : [];
 
         const connectedVendors = connectedServicesEnabled
-            ? new Set(
-                tokens
-                    .filter((t) => t.profileId === "default")
-                    .map((t) => t.vendor)
-                    .filter((vendor) => vendor === "openai" || vendor === "anthropic" || vendor === "gemini"),
-            )
+            ? new Set(collectLegacyConnectedServiceVendorKeysFromRows(tokens))
             : new Set<string>();
 
         const connectedServicesV2 = connectedServicesEnabled

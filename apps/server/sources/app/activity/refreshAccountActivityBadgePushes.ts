@@ -75,13 +75,13 @@ export async function refreshAccountActivityBadgePushes(params: Readonly<{ accou
     const accountIds = [...new Set(params.accountIds.filter((accountId) => typeof accountId === "string" && accountId.trim().length > 0))];
     if (accountIds.length === 0) return;
 
-    const [badgeCounts, pushTokens] = await Promise.all([
-        computeAccountActivityBadgeCounts(accountIds),
-        db.accountPushToken.findMany({
-            where: { accountId: { in: accountIds } },
-            select: { accountId: true, token: true },
-        }),
-    ]);
+    const pushTokens = await db.accountPushToken.findMany({
+        where: { accountId: { in: accountIds } },
+        select: { accountId: true, token: true },
+    });
+    if (pushTokens.length === 0) return;
+
+    const badgeCounts = await computeAccountActivityBadgeCounts(accountIds);
 
     const deliveries: BadgeRefreshDelivery[] = [];
     for (const pushToken of pushTokens) {

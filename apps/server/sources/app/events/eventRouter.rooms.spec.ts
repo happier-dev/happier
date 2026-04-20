@@ -1,9 +1,31 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { register } from "@/app/monitoring/metrics/registry";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 import { eventRouter } from "./eventRouter";
 
+type MetricSample = {
+    labels: Record<string, string>;
+    value: number;
+};
+
+async function readMetricSamples(name: string): Promise<MetricSample[]> {
+    const metrics = await register.getMetricsAsJSON();
+    const metric = metrics.find((entry) => entry.name === name);
+    if (!metric) return [];
+    return metric.values.map((value) => ({
+        labels: Object.fromEntries(
+            Object.entries(value.labels ?? {}).map(([key, labelValue]) => [key, String(labelValue)]),
+        ),
+        value: Number(value.value),
+    }));
+}
+
 describe("eventRouter (rooms)", () => {
+    beforeEach(() => {
+        register.resetMetrics();
+    });
+
     afterEach(() => {
         eventRouter.clearIo();
     });
@@ -150,5 +172,26 @@ describe("eventRouter (rooms)", () => {
         });
 
         expect(except).toHaveBeenCalledWith("sock-1");
+    });
+
+    it("records room fanout target counts for room-based dispatch", async () => {
+        const ioTo = vi.fn().mockReturnValue({ emit: vi.fn() });
+        eventRouter.setIo({ to: ioTo } as any);
+
+        eventRouter.emitUpdate({
+            userId: "u1",
+            payload: { id: "x", seq: 1, body: { t: "new-message" }, createdAt: 0 } as any,
+            recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
+        });
+
+        const samples = await readMetricSamples("event_fanout_emits_total");
+        expect(samples).toContainEqual({
+            labels: {
+                dispatch_mode: "room",
+                event_name: "update",
+                filter_type: "all-interested-in-session",
+            },
+            value: 1,
+        });
     });
 });

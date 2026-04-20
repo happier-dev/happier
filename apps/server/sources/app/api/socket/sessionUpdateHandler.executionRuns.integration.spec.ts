@@ -9,7 +9,7 @@ type GetSessionParticipantUserIdsFn = typeof import("@/app/share/sessionParticip
 const emitEphemeral = vi.fn();
 const websocketEventsCounterInc = vi.fn();
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+vi.mock("@/app/monitoring/metrics/index", () => ({
     sessionAliveEventsCounter: { inc: vi.fn() },
     socketMessageAckCounter: { inc: vi.fn() },
     websocketEventsCounter: { inc: websocketEventsCounterInc },

@@ -8,6 +8,7 @@ import { buildNewMachineUpdate, buildUpdateMachineUpdate } from "@/app/events/ev
 import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { markAccountChangedAfterCommit } from "@/app/changes/markAccountChangedAfterCommit";
 import { timingSafeEqual } from "node:crypto";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import tweetnacl from "tweetnacl";
@@ -400,28 +401,30 @@ export function machinesRoutes(app: Fastify) {
                         }
                     });
 
-                    const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: created.id });
-
-                    afterTx(tx, () => {
-                        // Emit both new-machine and update-machine events for backward compatibility.
-                        // IMPORTANT: Both share the same cursor (one durable change).
-                        const newMachinePayload = buildNewMachineUpdate(created, cursor, randomKeyNaked(12));
-                        eventRouter.emitUpdate({
-                            userId,
-                            payload: newMachinePayload,
-                            recipientFilter: { type: 'user-scoped-only' }
-                        });
-
-                        const machineMetadata = { version: 1, value: metadata };
-                        const updatePayload = buildUpdateMachineUpdate(created.id, cursor, randomKeyNaked(12), machineMetadata);
-                        eventRouter.emitUpdate({
-                            userId,
-                            payload: updatePayload,
-                            recipientFilter: { type: 'machine-scoped-only', machineId: created.id }
-                        });
-                    });
-
                     return created;
+                });
+
+                const cursor = await markAccountChangedAfterCommit({
+                    accountId: userId,
+                    kind: 'machine',
+                    entityId: newMachine.id,
+                });
+
+                // Emit both new-machine and update-machine events for backward compatibility.
+                // IMPORTANT: Both share the same cursor (one durable change).
+                const newMachinePayload = buildNewMachineUpdate(newMachine, cursor, randomKeyNaked(12));
+                eventRouter.emitUpdate({
+                    userId,
+                    payload: newMachinePayload,
+                    recipientFilter: { type: 'user-scoped-only' }
+                });
+
+                const machineMetadata = { version: 1, value: metadata };
+                const updatePayload = buildUpdateMachineUpdate(newMachine.id, cursor, randomKeyNaked(12), machineMetadata);
+                eventRouter.emitUpdate({
+                    userId,
+                    payload: updatePayload,
+                    recipientFilter: { type: 'machine-scoped-only', machineId: newMachine.id }
                 });
             } catch (e) {
                 // Concurrency safety: multiple clients may race to create the same machine (e.g. daemon + session spawns).

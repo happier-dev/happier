@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBooleanEnv, parseIntEnv } from "./env";
+import { parseBooleanEnv, parseFloatEnv, parseIntEnv } from "./env";
 
 describe("config/env", () => {
     describe("parseBooleanEnv", () => {
@@ -47,5 +47,22 @@ describe("config/env", () => {
             expect(parseIntEnv("10", 3, { max: 10 })).toBe(10);
         });
     });
-});
 
+    describe("parseFloatEnv", () => {
+        it("returns fallback when unset or invalid", () => {
+            expect(parseFloatEnv(undefined, 0.5)).toBe(0.5);
+            expect(parseFloatEnv("", 0.5)).toBe(0.5);
+            expect(parseFloatEnv("wat", 0.5)).toBe(0.5);
+        });
+
+        it("parses floats with trimming", () => {
+            expect(parseFloatEnv(" 0.25 ", 0)).toBe(0.25);
+        });
+
+        it("respects min and max constraints", () => {
+            expect(parseFloatEnv("-0.1", 0.25, { min: 0 })).toBe(0.25);
+            expect(parseFloatEnv("0.5", 0.25, { min: 0, max: 1 })).toBe(0.5);
+            expect(parseFloatEnv("2", 0.25, { max: 1 })).toBe(0.25);
+        });
+    });
+});

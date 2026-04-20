@@ -19,7 +19,7 @@ vi.mock("@/app/events/eventRouter", () => ({
 
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "id") }));
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-vi.mock("@/app/monitoring/metrics2", () => ({
+vi.mock("@/app/monitoring/metrics/index", () => ({
     sessionAliveEventsCounter: { inc: vi.fn() },
     socketMessageAckCounter: { inc: vi.fn() },
     websocketEventsCounter: { inc: vi.fn() },

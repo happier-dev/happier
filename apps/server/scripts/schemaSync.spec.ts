@@ -25,7 +25,7 @@ model Account { id String @id }
         expect(mysql).toContain('provider = "mysql"');
     });
 
-    it("includes linux binaryTargets in sqlite/mysql generator blocks (cross-compiled server binaries)", () => {
+    it("includes release binaryTargets in sqlite/mysql generator blocks (cross-compiled server binaries)", () => {
         const master = `
 generator client {
     provider        = "prisma-client-js"
@@ -42,12 +42,12 @@ model Account { id String @id }
 
         const sqlite = generateSqliteSchemaFromPostgres(master);
         expect(sqlite).toMatch(
-            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x"\]/,
+            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x",\s*"darwin",\s*"darwin-arm64",\s*"windows"\]/,
         );
 
         const mysql = generateMySqlSchemaFromPostgres(master);
         expect(mysql).toMatch(
-            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x"\]/,
+            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x",\s*"darwin",\s*"darwin-arm64",\s*"windows"\]/,
         );
     });
 

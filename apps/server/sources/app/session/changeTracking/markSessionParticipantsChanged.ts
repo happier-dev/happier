@@ -8,8 +8,9 @@ export async function markSessionParticipantsChanged(params: {
     tx: Tx;
     sessionId: string;
     hint?: unknown;
+    participantUserIds?: readonly string[];
 }): Promise<SessionParticipantCursor[]> {
-    const participantUserIds = await getSessionParticipantUserIds({
+    const participantUserIds = params.participantUserIds ?? await getSessionParticipantUserIds({
         sessionId: params.sessionId,
         tx: params.tx,
     });

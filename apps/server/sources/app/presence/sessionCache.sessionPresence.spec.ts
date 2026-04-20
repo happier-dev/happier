@@ -4,9 +4,12 @@ import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+const recordPresenceFlushRetry = vi.fn();
+
+vi.mock("@/app/monitoring/metrics/index", () => ({
     sessionCacheCounter: { inc: vi.fn() },
     databaseUpdatesSkippedCounter: { inc: vi.fn() },
+    recordPresenceFlushRetry,
 }));
 
 vi.mock("@/app/share/accessControl", () => ({
@@ -158,6 +161,10 @@ describe("ActivityCache session presence", () => {
             expect.objectContaining({ level: "error" }),
             expect.stringContaining("Error updating session"),
         );
+        expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
+            entityType: "session",
+            reason: "db-error",
+        });
 
         // Second flush retries s1 (now succeeds).
         await (activityCache as any).flushPendingUpdates();
@@ -194,6 +201,10 @@ describe("ActivityCache session presence", () => {
         expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
         expect(dbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBe(machineTimestamp);
+        expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
+            entityType: "session",
+            reason: "db-backoff",
+        });
 
         await (activityCache as any).flushPendingUpdates();
         expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);

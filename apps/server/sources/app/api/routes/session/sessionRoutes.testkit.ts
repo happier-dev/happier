@@ -46,6 +46,7 @@ export const catchupFetchesInc = vi.fn();
 export const catchupReturnedInc = vi.fn();
 
 const sessionDbMocks = createDbMocks({
+    account: ["findUnique"],
     session: ["findMany", "findFirst", "findUnique", "update"],
     sessionShare: ["findMany"],
     sessionMessage: ["findMany", "findFirst", "findUnique"],
@@ -59,6 +60,7 @@ const txDbMocks = createDbMocks({
 export const sessionFindMany = sessionDbMocks.db.session.findMany;
 export const sessionFindFirst = sessionDbMocks.db.session.findFirst;
 export const sessionFindUnique = sessionDbMocks.db.session.findUnique;
+export const accountFindUnique = sessionDbMocks.db.account.findUnique;
 export const sessionUpdate = sessionDbMocks.db.session.update;
 export const sessionMessageFindMany = sessionDbMocks.db.sessionMessage.findMany;
 export const sessionMessageFindFirst = sessionDbMocks.db.sessionMessage.findFirst;
@@ -79,7 +81,7 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildUpdateSessionUpdate,
 }));
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+vi.mock("@/app/monitoring/metrics/index", () => ({
     catchupFollowupFetchesCounter: { inc: catchupFetchesInc },
     catchupFollowupReturnedCounter: { inc: catchupReturnedInc },
 }));
@@ -102,12 +104,22 @@ vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
 }));
 
-installDbModuleMock({ db: sessionDbMocks.db });
+installDbModuleMock({
+    db: sessionDbMocks.db,
+    isPrismaErrorCode(error: unknown, code: string) {
+        if (!error || typeof error !== "object") {
+            return false;
+        }
+        return (error as { code?: unknown }).code === code;
+    },
+});
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
 export const markAccountChanged = vi.fn(async () => 1);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
+export const markAccountChangedAfterCommit = vi.fn(async () => 1);
+vi.mock("@/app/changes/markAccountChangedAfterCommit", () => ({ markAccountChangedAfterCommit }));
 vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
 vi.mock("@/storage/inTx", () => ({
     inTx: vi.fn(async (fn: any) => await fn(txDbMocks.db)),
@@ -124,6 +136,7 @@ export function resetSessionRouteMocks(): void {
     sessionFindMany.mockResolvedValue([]);
     sessionFindFirst.mockResolvedValue(null);
     sessionFindUnique.mockResolvedValue(null);
+    accountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
     sessionUpdate.mockImplementation(async () => {
         throw new Error("sessionUpdate not configured for test");
     });
@@ -140,6 +153,7 @@ export function resetSessionRouteMocks(): void {
     txSessionUpdate.mockImplementation(async () => {
         throw new Error("txSessionUpdate not configured for test");
     });
+    markAccountChangedAfterCommit.mockResolvedValue(1);
 }
 
 let sessionRoutesModulePromise: Promise<typeof import("./sessionRoutes")> | null = null;

@@ -34,7 +34,7 @@ vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 const markAccountChanged = vi.fn(async () => 555);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+vi.mock("@/app/monitoring/metrics/index", () => ({
     websocketEventsCounter: { inc: vi.fn() },
 }));
 

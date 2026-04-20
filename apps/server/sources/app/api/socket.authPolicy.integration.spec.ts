@@ -172,6 +172,64 @@ describe("startSocket (auth policy enforcement)", () => {
         });
     }, 30_000);
 
+    it("disconnects a machine-scoped socket when a required login provider is missing", async () => {
+        harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: "github" });
+
+        const account = await db.account.create({
+            data: { publicKey: `pk-machine-provider-${Date.now()}` },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "m-provider-required",
+                accountId: account.id,
+                metadata: "metadata",
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                active: false,
+            },
+            select: { id: true },
+        });
+        const token = await auth.createToken(account.id);
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        const socket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            auth: {
+                token,
+                clientType: "machine-scoped",
+                machineId: "m-provider-required",
+            },
+        });
+
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+        }
+
+        expect(payload.message).toBe("provider-required");
+        expect(payload.data).toEqual({
+            error: "provider-required",
+            provider: "github",
+            statusCode: 403,
+        });
+    }, 30_000);
+
     it("disconnects a machine-scoped socket when the machine belongs to another account", async () => {
         const owningAccount = await db.account.create({
             data: { publicKey: `pk-owning-${Date.now()}` },

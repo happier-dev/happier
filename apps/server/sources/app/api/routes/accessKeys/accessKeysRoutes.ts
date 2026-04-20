@@ -1,6 +1,6 @@
 import { Fastify } from "../../types";
 import { z } from "zod";
-import { db } from "@/storage/db";
+import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 
 export function accessKeysRoutes(app: Fastify) {
@@ -146,15 +146,45 @@ export function accessKeysRoutes(app: Fastify) {
             }
 
             // Create access key
-            const accessKey = await db.accessKey.create({
-                data: {
-                    accountId: userId,
-                    machineId,
-                    sessionId,
-                    data,
-                    dataVersion: 1
+            let accessKey;
+            try {
+                accessKey = await db.accessKey.create({
+                    data: {
+                        accountId: userId,
+                        machineId,
+                        sessionId,
+                        data,
+                        dataVersion: 1
+                    }
+                });
+            } catch (error) {
+                if (isPrismaErrorCode(error, 'P2002')) {
+                    const winningAccessKey = await db.accessKey.findUnique({
+                        where: {
+                            accountId_machineId_sessionId: {
+                                accountId: userId,
+                                machineId,
+                                sessionId
+                            }
+                        }
+                    });
+
+                    if (winningAccessKey) {
+                        return reply.send({
+                            success: true,
+                            accessKey: {
+                                data: winningAccessKey.data,
+                                dataVersion: winningAccessKey.dataVersion,
+                                createdAt: winningAccessKey.createdAt.getTime(),
+                                updatedAt: winningAccessKey.updatedAt.getTime()
+                            }
+                        });
+                    }
+
+                    return reply.code(409).send({ error: 'Access key already exists' });
                 }
-            });
+                throw error;
+            }
 
             log({ module: 'access-keys', userId, sessionId, machineId }, 'Created new access key');
 

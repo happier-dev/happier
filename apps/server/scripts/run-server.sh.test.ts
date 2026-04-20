@@ -10,11 +10,23 @@ function getScriptPath(): string {
 
 async function writeFakeYarn(params: Readonly<{ dir: string; logPath: string }>): Promise<string> {
   const yarnPath = join(params.dir, 'yarn');
+  const statePath = join(params.dir, 'yarn-state');
   const content = `#!/bin/sh
 set -e
 echo "YARN $@" >> "${params.logPath}"
 echo "ENV DATABASE_URL=$DATABASE_URL" >> "${params.logPath}"
 if echo "$*" | grep -q "prisma migrate deploy"; then
+  state_path="${statePath}"
+  count=0
+  if [ -f "$state_path" ]; then
+    count="$(cat "$state_path")"
+  fi
+  count=$((count + 1))
+  echo "$count" > "$state_path"
+  if [ -n "\${YARN_FAIL_MIGRATE_ATTEMPTS:-}" ] && [ "$count" -le "\${YARN_FAIL_MIGRATE_ATTEMPTS}" ]; then
+    printf "%s\n" "\${YARN_FAIL_MIGRATE_MESSAGE:-migration failed}"
+    exit 1
+  fi
   echo "migrated"
   exit 0
 fi
@@ -87,6 +99,28 @@ describe('run-server.sh', () => {
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
     expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/schema.prisma');
+    expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start');
+  });
+
+  it('retries transient postgres connectivity failures before starting', async () => {
+    const res = spawnSync('sh', [getScriptPath()], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        HAPPIER_DB_PROVIDER: 'postgres',
+        RUN_MIGRATIONS: '1',
+        MIGRATIONS_MAX_ATTEMPTS: '3',
+        MIGRATIONS_RETRY_DELAY_SECONDS: '0',
+        YARN_FAIL_MIGRATE_ATTEMPTS: '1',
+        YARN_FAIL_MIGRATE_MESSAGE: "Error: P1001: Can't reach database server at `postgres:5432`",
+      },
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+    expect(res.status).toBe(0);
+    const lines = await readLogLines(logPath);
+    const yarnLines = lines.filter((l) => l.startsWith('YARN '));
+    expect(yarnLines.filter((l) => l.includes('prisma migrate deploy --schema prisma/schema.prisma'))).toHaveLength(2);
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start');
   });
 

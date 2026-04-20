@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { createRequire } from "node:module";
-import type { Integration } from "@sentry/core";
-import type { Log } from "@sentry/core";
+import type { Log } from "@sentry/node";
 
 import { parseOptionalBooleanEnv } from "@/config/env";
 import { redactSentryLogAttributes } from "./sentryLogRedaction";
@@ -20,21 +19,26 @@ type ServerSentryConfig = {
 
 let cachedConfig: ServerSentryConfig | null = null;
 
-function tryLoadNodeProfilingIntegration(): null | (() => Integration) {
+type LazyIntegration = Readonly<{
+    name: string;
+    setupOnce?: (...args: unknown[]) => void;
+}>;
+
+function tryLoadNodeProfilingIntegration(): null | (() => LazyIntegration) {
     try {
         const req = createRequire(import.meta.url);
         const mod: any = req("@sentry/profiling-node");
         const fn = mod?.nodeProfilingIntegration;
-        return typeof fn === "function" ? (fn as () => Integration) : null;
+        return typeof fn === "function" ? (fn as () => LazyIntegration) : null;
     } catch {
         return null;
     }
 }
 
-type IntegrationSetupOnce = Exclude<Integration["setupOnce"], undefined>;
+type IntegrationSetupOnce = Exclude<NonNullable<LazyIntegration["setupOnce"]>, undefined>;
 
-function createLazyNodeProfilingIntegration(): Integration {
-    let resolvedIntegration: Integration | null | undefined = undefined;
+function createLazyNodeProfilingIntegration(): LazyIntegration {
+    let resolvedIntegration: LazyIntegration | null | undefined = undefined;
     const setupOnce: IntegrationSetupOnce = (...args) => {
         if (resolvedIntegration === undefined) {
             const factory = tryLoadNodeProfilingIntegration();
@@ -155,7 +159,7 @@ export function initializeServerSentry(env: NodeJS.ProcessEnv): void {
             : null),
         ...(shouldConfigureIntegrations
             ? {
-                  integrations: (integrations: Integration[]) => {
+                  integrations: (integrations) => {
                       const next = [...integrations];
 
                       if (resolved.tracesSampleRate > 0) {

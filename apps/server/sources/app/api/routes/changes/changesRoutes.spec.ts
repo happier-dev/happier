@@ -14,7 +14,7 @@ const accountChangeFindMany = db.accountChange.findMany;
 const changesRequestsInc = vi.fn();
 const changesReturnedInc = vi.fn();
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+vi.mock("@/app/monitoring/metrics/index", () => ({
     changesRequestsCounter: { inc: changesRequestsInc },
     changesReturnedChangesCounter: { inc: changesReturnedInc },
 }));

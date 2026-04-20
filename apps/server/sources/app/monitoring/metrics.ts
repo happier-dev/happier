@@ -1,7 +1,8 @@
 import fastify from 'fastify';
 import { db } from '@/storage/db';
-import { register } from '@/app/monitoring/metrics2';
+import { register } from '@/app/monitoring/metrics/index';
 import { log } from '@/utils/logging/log';
+import { readMetricsServerConfigFromEnv } from '@/config/monitoring';
 
 export async function createMetricsServer() {
     const app = fastify({
@@ -35,18 +36,17 @@ export async function createMetricsServer() {
 }
 
 export async function startMetricsServer(): Promise<void> {
-    const enabled = process.env.METRICS_ENABLED !== 'false';
-    if (!enabled) {
+    const config = readMetricsServerConfigFromEnv(process.env);
+    if (!config.enabled) {
         log({ module: 'metrics' }, 'Metrics server disabled');
         return;
     }
 
-    const port = process.env.METRICS_PORT ? parseInt(process.env.METRICS_PORT, 10) : 9090;
     const app = await createMetricsServer();
     
     try {
-        await app.listen({ port, host: '0.0.0.0' });
-        log({ module: 'metrics' }, `Metrics server listening on port ${port}`);
+        await app.listen({ port: config.port, host: '0.0.0.0' });
+        log({ module: 'metrics' }, `Metrics server listening on port ${config.port}`);
     } catch (error) {
         log({ module: 'metrics', level: 'error' }, `Failed to start metrics server: ${error}`);
         throw error;

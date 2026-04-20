@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
-import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics2";
+import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics/index";
 import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";

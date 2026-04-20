@@ -1,4 +1,4 @@
-import { machineAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
+import { machineAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import { activityCache } from "@/app/presence/sessionCache";
 import { buildMachineActivityEphemeral, buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
 import { log } from "@/utils/logging/log";

@@ -13,9 +13,9 @@ vi.mock("@/utils/process/shutdown", () => ({
     onShutdown: vi.fn(),
 }));
 
-const createAdapter = vi.fn((_client: any) => ({ name: "adapter" }));
+const createAdapter = vi.fn((_client: any, opts?: any) => ({ name: "adapter", opts }));
 vi.mock("@socket.io/redis-streams-adapter", () => ({
-    createAdapter: (arg: any) => createAdapter(arg),
+    createAdapter: (arg: any, opts?: any) => createAdapter(arg, opts),
 }));
 
 const getRedisClient = vi.fn(() => ({ name: "redis" }));
@@ -52,11 +52,25 @@ describe("startSocket redis adapter config", () => {
 
         startSocket(createFastifyLikeApp());
 
-        expect(createAdapter).toHaveBeenCalledWith(expect.anything());
+        expect(createAdapter).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                maxLen: 200000,
+                readCount: 2000,
+            }),
+        );
         expect(getRedisClient).toHaveBeenCalledTimes(1);
         expect(serverCtor).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ adapter: { name: "adapter" } }),
+            expect.objectContaining({
+                adapter: {
+                    name: "adapter",
+                    opts: {
+                        maxLen: 200000,
+                        readCount: 2000,
+                    },
+                },
+            }),
         );
     });
 
@@ -69,10 +83,22 @@ describe("startSocket redis adapter config", () => {
 
         startSocket(createFastifyLikeApp());
 
-        expect(createAdapter).toHaveBeenCalledWith(expect.anything());
+        expect(createAdapter).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                maxLen: 200000,
+                readCount: 2000,
+            }),
+        );
         expect(getRedisClient).toHaveBeenCalledTimes(1);
         const options = serverCtor.mock.calls[0]?.[1];
-        expect(options?.adapter).toEqual({ name: "adapter" });
+        expect(options?.adapter).toEqual({
+            name: "adapter",
+            opts: {
+                maxLen: 200000,
+                readCount: 2000,
+            },
+        });
     });
 
     it("keeps memory adapter when redis-streams is requested without REDIS_URL", async () => {
@@ -112,7 +138,33 @@ describe("startSocket redis adapter config", () => {
 
         startSocket(createFastifyLikeApp());
 
-        expect(createAdapter).toHaveBeenCalledWith(expect.anything());
+        expect(createAdapter).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                maxLen: 200000,
+                readCount: 2000,
+            }),
+        );
         expect(getRedisClient).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes through explicit adapter tuning overrides", async () => {
+        resetSocketAdapterEnv({
+            HAPPY_SERVER_FLAVOR: "full",
+            HAPPIER_SOCKET_ADAPTER: "redis-streams",
+            REDIS_URL: "redis://localhost:6379",
+            HAPPIER_SOCKET_ADAPTER_MAXLEN: "54321",
+            HAPPIER_SOCKET_ADAPTER_READ_COUNT: "222",
+        });
+
+        startSocket(createFastifyLikeApp());
+
+        expect(createAdapter).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                maxLen: 54321,
+                readCount: 222,
+            }),
+        );
     });
 });

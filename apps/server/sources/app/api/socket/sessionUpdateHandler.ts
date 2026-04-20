@@ -1,4 +1,4 @@
-import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
+import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import { activityCache } from "@/app/presence/sessionCache";
 import {
     buildMessageUpdatedUpdate,
@@ -11,7 +11,7 @@ import {
 } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { AsyncLock } from "@/utils/runtime/lock";
-import { log } from "@/utils/logging/log";
+import { debug, log } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
 import { createSessionMessage, updateSessionAgentState, updateSessionMetadata, updateSessionReadCursor } from "@/app/session/sessionWriteService";
@@ -27,6 +27,12 @@ import { TranscriptStreamSegmentEphemeralMessageSchema } from "@happier-dev/prot
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import { canPublishFromSessionScopedSocket } from "./sessionScopedBinding";
+
+function scheduleSessionParticipantBadgeRefresh(params: Parameters<typeof refreshSessionParticipantBadgePushes>[0]): void {
+    void refreshSessionParticipantBadgePushes(params).catch((error) => {
+        log({ module: 'websocket', level: 'error' }, `Error in session badge refresh: ${error}`);
+    });
+}
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
     socket.on('update-metadata', async (data: any, callback: (response: any) => void) => {
@@ -93,7 +99,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     skipSenderConnection: accountId === userId ? connection : undefined,
                 });
             }));
-            await refreshSessionParticipantBadgePushes({
+            scheduleSessionParticipantBadgeRefresh({
                 badgeAttentionChanged: result.badgeAttentionChanged,
                 participantCursors: result.participantCursors,
             });
@@ -184,7 +190,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     skipSenderConnection: accountId === userId ? connection : undefined,
                 });
             }));
-            await refreshSessionParticipantBadgePushes({
+            scheduleSessionParticipantBadgeRefresh({
                 badgeAttentionChanged: result.badgeAttentionChanged,
                 participantCursors: result.participantCursors,
             });
@@ -241,7 +247,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     skipSenderConnection: accountId === userId ? connection : undefined,
                 });
             }));
-            await refreshSessionParticipantBadgePushes({
+            scheduleSessionParticipantBadgeRefresh({
                 badgeAttentionChanged: result.badgeAttentionChanged,
                 participantCursors: result.participantCursors,
             });
@@ -442,7 +448,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                         return 0;
                     }
                 })();
-                log(
+                debug(
                     { module: 'websocket' },
                     `Received message from socket ${socket.id}: sessionId=${sid}, messageLength=${loggedLength} bytes, connectionType=${connection.connectionType}, connectionSessionId=${connection.connectionType === 'session-scoped' ? connection.sessionId : 'N/A'}`
                 );
@@ -486,7 +492,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                         skipSenderConnection: participantUserId === userId && !echoToSender ? connection : undefined,
                     });
                 }));
-                await refreshSessionParticipantBadgePushes({
+                scheduleSessionParticipantBadgeRefresh({
                     badgeAttentionChanged: result.badgeAttentionChanged,
                     participantCursors: result.participantCursors,
                 });
@@ -567,7 +573,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                         });
                     }),
                 );
-                await refreshSessionParticipantBadgePushes({
+                scheduleSessionParticipantBadgeRefresh({
                     badgeAttentionChanged: result.badgeAttentionChanged,
                     participantCursors: [...result.participantCursorsMessage, ...result.participantCursorsPending],
                 });
@@ -620,7 +626,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 where: { id: sid },
                 data: { lastActiveAt: new Date(t), active: false }
             });
-            await refreshSessionParticipantBadgePushes({
+            scheduleSessionParticipantBadgeRefresh({
                 badgeAttentionChanged: didSessionActivityBadgeContributionChange(session, {
                     ...session,
                     active: false,

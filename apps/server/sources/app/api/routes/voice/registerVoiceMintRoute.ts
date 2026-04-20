@@ -70,7 +70,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             return trimmed.length > 0 ? trimmed : null;
         })();
 
-        log({ module: "voice" }, `Voice token request from user ${userId}`);
+        log({ module: "voice" }, "Voice token request");
 
         const env = process.env;
 
@@ -289,7 +289,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             }
             leaseId = result.leaseId;
         } catch (e) {
-            log({ module: "voice" }, "Failed to create/enforce voice session lease", e);
+            log({ module: "voice" }, "Failed to create/enforce voice session lease");
             return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
         }
 
@@ -317,7 +317,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             if (leaseId) {
                 await db.voiceSessionLease.delete({ where: { id: leaseId } }).catch(() => {});
             }
-            log({ module: "voice" }, `Failed to get 11Labs token for user ${userId}`, e);
+            log({ module: "voice" }, "Failed to get 11Labs token");
             return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
         }
 
@@ -325,7 +325,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             if (leaseId) {
                 await db.voiceSessionLease.delete({ where: { id: leaseId } }).catch(() => {});
             }
-            log({ module: "voice" }, `Failed to get 11Labs token for user ${userId}`);
+            log({ module: "voice" }, "Failed to get 11Labs token");
             return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
         }
 
@@ -338,7 +338,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
         }
 
-        log({ module: "voice" }, `Voice token issued for user ${userId}`);
+        log({ module: "voice" }, "Voice token issued");
         return reply.send({
             allowed: true,
             token,

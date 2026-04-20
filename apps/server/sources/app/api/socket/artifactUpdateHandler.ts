@@ -1,4 +1,4 @@
-import { websocketEventsCounter } from "@/app/monitoring/metrics2";
+import { websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import { buildNewArtifactUpdate, buildUpdateArtifactUpdate, buildDeleteArtifactUpdate, eventRouter } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";

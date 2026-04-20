@@ -1,15 +1,16 @@
-import { Server } from "socket.io";
 import { log } from "@/utils/logging/log";
+import { recordEventFanoutDrop, recordEventFanoutEmit } from "@/app/monitoring/metrics/index";
 import {
     type ClientConnection,
     type RecipientFilter,
     type UpdatePayload,
     type EphemeralPayload,
 } from "./eventPayloadTypes";
+import type { SocketRoomBroadcastOperator, SocketRoomEmitter } from "./socketRoomEmitter";
 
 class EventRouter {
     private userConnections = new Map<string, Set<ClientConnection>>();
-    private io: Server | null = null;
+    private io: SocketRoomEmitter | null = null;
     private warnedNoIo = false;
 
     // === CONNECTION MANAGEMENT ===
@@ -37,7 +38,7 @@ class EventRouter {
 
     // === SOCKET.IO ADAPTER (ROOM-BASED FANOUT) ===
 
-    setIo(io: Server): void {
+    setIo(io: SocketRoomEmitter): void {
         this.io = io;
     }
 
@@ -130,16 +131,28 @@ class EventRouter {
     }): void {
         if (this.io) {
             const skipSocketId = params.skipSenderConnection?.socket?.id;
+            const target = this.getEmitterTargetForFilter(params.userId, params.recipientFilter);
             const emitter = this.getEmitterForFilter(params.userId, params.recipientFilter);
             if (skipSocketId && typeof (emitter as any).except === "function") {
                 (emitter as any).except(skipSocketId).emit(params.eventName, params.payload);
             } else {
                 emitter.emit(params.eventName, params.payload);
             }
+            recordEventFanoutEmit({
+                eventName: params.eventName,
+                filterType: params.recipientFilter.type,
+                dispatchMode: "room",
+                targetKind: "room",
+                targetCount: Array.isArray(target) ? target.length : 1,
+            });
             return;
         }
 
         if (process.env.HAPPY_SOCKET_ROOMS_ONLY === "1") {
+            recordEventFanoutDrop({
+                eventName: params.eventName,
+                reason: "io_unavailable",
+            });
             throw new Error("EventRouter: Socket.IO server (io) is not initialized (HAPPY_SOCKET_ROOMS_ONLY=1)");
         }
         if (!this.warnedNoIo) {
@@ -149,10 +162,15 @@ class EventRouter {
 
         const connections = this.userConnections.get(params.userId);
         if (!connections) {
+            recordEventFanoutDrop({
+                eventName: params.eventName,
+                reason: "no_connections",
+            });
             log({ module: 'websocket', level: 'warn' }, `No connections found for user ${params.userId}`);
             return;
         }
 
+        let deliveredCount = 0;
         for (const connection of connections) {
             // Skip message echo
             if (params.skipSenderConnection && connection === params.skipSenderConnection) {
@@ -165,34 +183,45 @@ class EventRouter {
             }
 
             connection.socket.emit(params.eventName, params.payload);
+            deliveredCount += 1;
+        }
+
+        if (deliveredCount === 0) {
+            recordEventFanoutDrop({
+                eventName: params.eventName,
+                reason: "no_matching_connections",
+            });
+        }
+        recordEventFanoutEmit({
+            eventName: params.eventName,
+            filterType: params.recipientFilter.type,
+            dispatchMode: "local",
+            targetKind: "connection",
+            targetCount: deliveredCount,
+        });
+    }
+
+    private getEmitterTargetForFilter(userId: string, filter: RecipientFilter): string | string[] {
+        switch (filter.type) {
+            case "all-interested-in-session":
+                return [`session:${filter.sessionId}:${userId}`, `user-scoped:${userId}`];
+            case "user-scoped-only":
+                return `user-scoped:${userId}`;
+            case "machine-scoped-only":
+                return [`machine:${filter.machineId}:${userId}`, `user-scoped:${userId}`];
+            case "machine-only":
+                return `machine:${filter.machineId}:${userId}`;
+            case "all-user-authenticated-connections":
+            default:
+                return `user:${userId}`;
         }
     }
 
-    private getEmitterForFilter(userId: string, filter: RecipientFilter): any {
+    private getEmitterForFilter(userId: string, filter: RecipientFilter): SocketRoomBroadcastOperator {
         if (!this.io) {
             throw new Error("EventRouter.getEmitterForFilter called without io");
         }
-
-        switch (filter.type) {
-            case "all-interested-in-session": {
-                // `update` containers are per-account (cursor + possibly recipient-specific data).
-                // Never emit them to the shared `session:${sessionId}` room. Use the per-account session room instead.
-                const rooms = [`session:${filter.sessionId}:${userId}`, `user-scoped:${userId}`];
-                return this.io.to(rooms);
-            }
-            case "user-scoped-only":
-                return this.io.to(`user-scoped:${userId}`);
-            case "machine-scoped-only": {
-                const rooms = [`machine:${filter.machineId}:${userId}`, `user-scoped:${userId}`];
-                return this.io.to(rooms);
-            }
-            case "machine-only":
-                return this.io.to(`machine:${filter.machineId}:${userId}`);
-            case "all-user-authenticated-connections":
-                return this.io.to(`user:${userId}`);
-            default:
-                return this.io.to(`user:${userId}`);
-        }
+        return this.io.to(this.getEmitterTargetForFilter(userId, filter));
     }
 }
 

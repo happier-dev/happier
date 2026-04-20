@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { createRequire } from "node:module";
+import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+
+import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
 
 export type BuildDbProvider = "postgres" | "mysql" | "sqlite";
 
@@ -86,6 +89,7 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
             env: env as Record<string, string>,
             stdio: "inherit",
             shell: false,
+            cwd: resolveServerWorkspaceRoot(import.meta.url),
         });
         child.on("error", reject);
         child.on("exit", (code) => {
@@ -95,31 +99,140 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
     });
 }
 
+type OutputStatusParams = Readonly<{
+    serverRoot: string;
+    providers: ReadonlySet<BuildDbProvider>;
+    fileExists?: (path: string) => Promise<boolean>;
+    readText?: (path: string) => Promise<string>;
+}>;
+
+function defaultFileExists(path: string): Promise<boolean> {
+    return readFile(path, "utf8").then(() => true).catch(() => false);
+}
+
+function normalizePrismaSchemaText(text: string): string {
+    return String(text ?? "").replace(/\s+/g, " ").trim();
+}
+
+const PRISMA_BINARY_TARGET_ENGINE_FILES = new Map<string, string>([
+    ["debian-openssl-3.0.x", "libquery_engine-debian-openssl-3.0.x.so.node"],
+    ["linux-arm64-openssl-3.0.x", "libquery_engine-linux-arm64-openssl-3.0.x.so.node"],
+    ["darwin", "libquery_engine-darwin.dylib.node"],
+    ["darwin-arm64", "libquery_engine-darwin-arm64.dylib.node"],
+    ["windows", "query_engine-windows.dll.node"],
+]);
+
+function resolveRequiredGeneratedClientFiles(sourceSchema: string): string[] | null {
+    const binaryTargetsMatch = sourceSchema.match(/binaryTargets\s*=\s*\[([\s\S]*?)\]/m);
+    if (!binaryTargetsMatch) {
+        return null;
+    }
+
+    const requiredFiles = new Set(["index.js", "default.js", "package.json"]);
+    const binaryTargets = Array.from(binaryTargetsMatch[1]!.matchAll(/"([^"]+)"/g)).map((match) => normalizeToken(match[1] ?? ""));
+    for (const binaryTarget of binaryTargets) {
+        if (!binaryTarget || binaryTarget === "native") {
+            continue;
+        }
+        const engineFile = PRISMA_BINARY_TARGET_ENGINE_FILES.get(binaryTarget);
+        if (!engineFile) {
+            return null;
+        }
+        requiredFiles.add(engineFile);
+    }
+
+    return [...requiredFiles];
+}
+
+export async function areRequestedPrismaOutputsCurrent(params: OutputStatusParams): Promise<boolean> {
+    const serverRoot = params.serverRoot;
+    const repoRoot = join(serverRoot, "..", "..");
+    const fileExists = params.fileExists ?? defaultFileExists;
+    const readText = params.readText ?? ((path: string) => readFile(path, "utf8"));
+
+    const checks: Array<Readonly<{ sourcePath: string; generatedClientDir: string }>> = [
+        {
+            sourcePath: join(serverRoot, "prisma", "schema.prisma"),
+            generatedClientDir: join(repoRoot, "node_modules", ".prisma", "client"),
+        },
+    ];
+    if (params.providers.has("sqlite")) {
+        checks.push({
+            sourcePath: join(serverRoot, "prisma", "sqlite", "schema.prisma"),
+            generatedClientDir: join(serverRoot, "generated", "sqlite-client"),
+        });
+    }
+    if (params.providers.has("mysql")) {
+        checks.push({
+            sourcePath: join(serverRoot, "prisma", "mysql", "schema.prisma"),
+            generatedClientDir: join(serverRoot, "generated", "mysql-client"),
+        });
+    }
+
+    for (const check of checks) {
+        const generatedSchemaPath = join(check.generatedClientDir, "schema.prisma");
+        if (!(await fileExists(check.sourcePath)) || !(await fileExists(generatedSchemaPath))) {
+            return false;
+        }
+        const [sourceSchema, generatedSchema] = await Promise.all([
+            readText(check.sourcePath),
+            readText(generatedSchemaPath),
+        ]);
+        const requiredFiles = resolveRequiredGeneratedClientFiles(sourceSchema);
+        if (requiredFiles == null) {
+            return false;
+        }
+        for (const requiredFile of requiredFiles) {
+            if (!(await fileExists(join(check.generatedClientDir, requiredFile)))) {
+                return false;
+            }
+        }
+        if (normalizePrismaSchemaText(sourceSchema) !== normalizePrismaSchemaText(generatedSchema)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 async function main(): Promise<void> {
     const env: NodeJS.ProcessEnv = { ...process.env };
+    const serverRoot = resolveServerWorkspaceRoot(import.meta.url);
     const providers = resolveBuildDbProvidersFromEnv(env);
 
     await run("yarn", ["-s", "schema:sync", "--quiet"], env);
-
-    const require = createRequire(import.meta.url);
-    const prismaCliPath = require.resolve("prisma/build/index.js");
+    if (await areRequestedPrismaOutputsCurrent({ serverRoot, providers })) {
+        return;
+    }
 
     // Always generate the default client (postgres schema).
-    await run(process.execPath, [prismaCliPath, "generate"], {
-        ...env,
-        DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres"),
+    await runPrismaCli({
+        serverRoot,
+        args: ["generate"],
+        env: {
+            ...env,
+            DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres"),
+        },
     });
 
     if (providers.has("sqlite")) {
-        await run(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/sqlite/schema.prisma"], {
-            ...env,
-            DATABASE_URL: prismaGenerateDatabaseUrlForProvider("sqlite"),
+        await runPrismaCli({
+            serverRoot,
+            args: ["generate", "--schema", "prisma/sqlite/schema.prisma"],
+            env: {
+                ...env,
+                DATABASE_URL: prismaGenerateDatabaseUrlForProvider("sqlite"),
+            },
         });
     }
     if (providers.has("mysql")) {
-        await run(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/mysql/schema.prisma"], {
-            ...env,
-            DATABASE_URL: prismaGenerateDatabaseUrlForProvider("mysql"),
+        await runPrismaCli({
+            serverRoot,
+            args: ["generate", "--schema", "prisma/mysql/schema.prisma"],
+            env: {
+                ...env,
+                DATABASE_URL: prismaGenerateDatabaseUrlForProvider("mysql"),
+            },
         });
     }
 }

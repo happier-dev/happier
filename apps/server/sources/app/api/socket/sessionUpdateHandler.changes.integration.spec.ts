@@ -45,13 +45,13 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
 const socketMessageAckInc = vi.fn();
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+vi.mock("@/app/monitoring/metrics/index", () => ({
     sessionAliveEventsCounter: { inc: vi.fn() },
     websocketEventsCounter: { inc: vi.fn() },
     socketMessageAckCounter: { inc: socketMessageAckInc },
 }));
 
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn(), debug: vi.fn() }));
 
 vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: {
@@ -65,11 +65,14 @@ vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
 }));
 
 installPrismaModuleMock(() => ({
-    isPrismaErrorCode: () => false,
+    isPrismaErrorCode: (error: unknown, code: string) => (error as { code?: unknown } | null | undefined)?.code === code,
+    getDbProviderFromEnv: (_env: NodeJS.ProcessEnv, fallback: string) => fallback,
 }));
 
 const { db, reset: resetDbMocks } = createDbMocks({
-    sessionMessage: ["findFirst"],
+    session: ["findUnique"],
+    sessionShare: ["findUnique"],
+    sessionMessage: ["findFirst", "findUnique"],
 } as const);
 const txDbMocks = createDbMocks({
     session: ["findUnique", "update"],
@@ -137,9 +140,20 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
                 shares: [{ sharedWithUserId: "u2" }],
             };
         });
+        db.session.findUnique.mockImplementation(async (args: any) => {
+            if (args?.select?.id === true) {
+                return { id: "s1" };
+            }
+            return {
+                accountId: "owner",
+                shares: [{ sharedWithUserId: "u2" }],
+            };
+        });
+        db.sessionShare.findUnique.mockResolvedValue(null);
         txDbMocks.db.session.update.mockResolvedValue({ seq: 55 });
         txDbMocks.db.sessionMessage.findFirst.mockResolvedValue(null);
         txDbMocks.db.sessionMessage.findUnique.mockResolvedValue(null);
+        db.sessionMessage.findUnique.mockResolvedValue(null);
         txDbMocks.db.sessionMessage.create.mockResolvedValue({
             id: "m1",
             seq: 55,
@@ -205,7 +219,8 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
     it("emits message-updated when upserting an existing message row", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        txDbMocks.db.sessionMessage.findUnique.mockResolvedValue({
+        txDbMocks.db.sessionMessage.create.mockRejectedValue({ code: "P2002" });
+        db.sessionMessage.findUnique.mockResolvedValue({
             id: "m1",
             seq: 55,
             localId: "l1",

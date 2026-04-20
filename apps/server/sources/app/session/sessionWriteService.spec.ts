@@ -18,6 +18,11 @@ vi.mock("@/app/changes/markAccountChanged", () => ({
     markAccountChanged: (...args: any[]) => markAccountChanged(...args),
 }));
 
+const observeCreateSessionMessageStage = vi.fn();
+vi.mock("@/app/monitoring/metrics/sessionWriteMetrics", () => ({
+    observeCreateSessionMessageStage: (...args: any[]) => observeCreateSessionMessageStage(...args),
+}));
+
 const dbMocks = createDbMocks({
     session: ["findUnique"],
     sessionShare: ["findUnique"],
@@ -34,6 +39,7 @@ let updateSessionReadCursor: typeof import("./sessionWriteService").updateSessio
 describe("sessionWriteService", () => {
     const storagePolicyEnv = createEnvPatcher([
         "HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY",
+        "HAPPIER_DB_PROVIDER",
     ]);
 
     beforeAll(async () => {
@@ -43,6 +49,7 @@ describe("sessionWriteService", () => {
     beforeEach(() => {
         getSessionParticipantUserIds.mockReset();
         markAccountChanged.mockReset();
+        observeCreateSessionMessageStage.mockReset();
         dbMocks.reset();
         storagePolicyEnv.restore();
 
@@ -65,7 +72,14 @@ describe("sessionWriteService", () => {
 
     describe("createSessionMessage", () => {
         it("returns existing message for (sessionId, localId) without writing or marking changes", async () => {
-            currentTx.sessionMessage.findUnique.mockResolvedValue({
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
+
+            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
                 localId: "l1",
@@ -74,8 +88,6 @@ describe("sessionWriteService", () => {
                 createdAt: new Date(1),
                 updatedAt: new Date(2),
             });
-            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
 
             const res = await createSessionMessage({
                 actorUserId: "u1",
@@ -100,14 +112,29 @@ describe("sessionWriteService", () => {
                 },
                 participantCursors: [],
             });
-            expect(currentTx.session.update).not.toHaveBeenCalled();
-            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(currentTx.session.update).toHaveBeenCalledWith({
+                where: { id: "s1" },
+                select: { seq: true },
+                data: { seq: { increment: 1 } },
+            });
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({ sessionId: "s1", localId: "l1" }),
+                }),
+            );
             expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
             expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
         it("rejects (sessionId, localId) reuse across sidechains", async () => {
-            currentTx.sessionMessage.findUnique.mockResolvedValue({
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
+
+            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
                 localId: "l1",
@@ -116,8 +143,6 @@ describe("sessionWriteService", () => {
                 createdAt: new Date(1),
                 updatedAt: new Date(2),
             });
-            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
 
             const res = await createSessionMessage({
                 actorUserId: "u1",
@@ -128,8 +153,8 @@ describe("sessionWriteService", () => {
             });
 
             expect(res).toEqual({ ok: false, error: "invalid-params" });
-            expect(currentTx.session.update).not.toHaveBeenCalled();
-            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(currentTx.session.update).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(1);
             expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
             expect(markAccountChanged).not.toHaveBeenCalled();
         });
@@ -138,7 +163,20 @@ describe("sessionWriteService", () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
             const updatedAt = new Date("2020-01-01T00:00:00.000Z");
 
-            currentTx.sessionMessage.findUnique.mockResolvedValue({
+            currentTx.session.findUnique.mockResolvedValue({
+                accountId: "u1",
+                shares: [{ sharedWithUserId: "u2" }],
+            });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
+
+            dbMocks.db.session.findUnique.mockResolvedValue({
+                accountId: "u1",
+                shares: [{ sharedWithUserId: "u2" }],
+            });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
                 localId: "l1",
@@ -147,8 +185,6 @@ describe("sessionWriteService", () => {
                 createdAt,
                 updatedAt,
             });
-            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
 
             currentTx.sessionMessage.update.mockResolvedValue({
                 id: "m1",
@@ -185,14 +221,15 @@ describe("sessionWriteService", () => {
                 ],
             });
 
-            expect(currentTx.session.update).not.toHaveBeenCalled();
-            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(currentTx.session.update).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(1);
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: { id: "m1" },
                     data: { content: { t: "encrypted", c: "next" }, sidechainId: null },
                 }),
             );
+            expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
         });
 
         it("rejects message creation if actor has no edit access", async () => {
@@ -217,7 +254,10 @@ describe("sessionWriteService", () => {
 
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    shares: [{ sharedWithUserId: "u2" }],
+                })
                 .mockResolvedValueOnce({
                     seq: 9,
                     lastViewedSessionSeq: 9,
@@ -272,24 +312,129 @@ describe("sessionWriteService", () => {
                 entityId: "s1",
                 hint: { lastMessageSeq: 10, lastMessageId: "m1" },
             });
+            expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
+            expect(currentTx.session.findUnique).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionMessage.findUnique).not.toHaveBeenCalled();
         });
 
-        it("handles localId races by returning the winner row on P2002", async () => {
-            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
-            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
-            currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
+        it("keeps owner-only message writes on the canonical Prisma + change-marking path", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const updatedAt = new Date("2020-01-01T00:00:00.000Z");
+            storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "postgres");
 
-            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
-            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
-                id: "mExisting",
+            currentTx.session.findUnique.mockResolvedValue({
+                accountId: "u1",
+                encryptionMode: "e2ee",
+                shares: [],
                 seq: 9,
+                lastViewedSessionSeq: 9,
+                pendingCount: 0,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            });
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockResolvedValue({
+                id: "m1",
+                seq: 10,
                 localId: "l1",
                 sidechainId: null,
                 content: { t: "encrypted", c: "cipher" },
-                createdAt: new Date(1),
-                updatedAt: new Date(1),
+                createdAt,
+                updatedAt,
+            });
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "cipher",
+                localId: "l1",
+            });
+
+            expect(res.ok).toBe(true);
+            if (!res.ok || res.didWrite === false) throw new Error("expected ok + didWrite");
+            expect(res.didUpdate).toBe(false);
+            expect(res.message).toEqual({
+                id: "m1",
+                seq: 10,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "cipher" },
+                createdAt,
+                updatedAt,
+            });
+            expect(res.participantCursors).toEqual([{ accountId: "u1", cursor: 101 }]);
+            expect(currentTx.$queryRawUnsafe).toBeUndefined();
+            expect(currentTx.session.update).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(1);
+            expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
+            expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+                accountId: "u1",
+                kind: "session",
+                entityId: "s1",
+                hint: { lastMessageSeq: 10, lastMessageId: "m1" },
+            });
+            expect(observeCreateSessionMessageStage).toHaveBeenCalledWith(
+                expect.objectContaining({ stage: "access", result: "ok" }),
+            );
+            expect(observeCreateSessionMessageStage).toHaveBeenCalledWith(
+                expect.objectContaining({ stage: "persist", result: "ok" }),
+            );
+            expect(observeCreateSessionMessageStage).toHaveBeenCalledWith(
+                expect.objectContaining({ stage: "change_tracking", result: "ok" }),
+            );
+            expect(observeCreateSessionMessageStage).toHaveBeenCalledWith(
+                expect.objectContaining({ stage: "total", result: "ok" }),
+            );
+        });
+
+        it("preserves duplicate localId handling through the canonical Prisma create path", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const updatedAt = new Date("2020-01-01T00:00:00.000Z");
+            storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "postgres");
+
+            currentTx.session.findUnique.mockResolvedValue({
+                accountId: "u1",
+                encryptionMode: "e2ee",
+                shares: [],
+                seq: 9,
+                lastViewedSessionSeq: 9,
+                pendingCount: 0,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            });
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: {
+                    target: ["sessionId", "localId"],
+                },
+            });
+            dbMocks.db.session.findUnique.mockResolvedValue({
+                accountId: "u1",
+                encryptionMode: "e2ee",
+                shares: [],
+                seq: 9,
+                lastViewedSessionSeq: 9,
+                pendingCount: 0,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "cipher" },
+                createdAt,
+                updatedAt,
             });
 
             const res = await createSessionMessage({
@@ -305,82 +450,20 @@ describe("sessionWriteService", () => {
                 didUpdate: false,
                 badgeAttentionChanged: false,
                 message: {
-                    id: "mExisting",
-                    seq: 9,
+                    id: "m1",
+                    seq: 4,
                     localId: "l1",
                     sidechainId: null,
                     content: { t: "encrypted", c: "cipher" },
-                    createdAt: new Date(1),
-                    updatedAt: new Date(1),
+                    createdAt,
+                    updatedAt,
                 },
                 participantCursors: [],
             });
-        });
-
-        it("handles localId races by updating the winner row when content differs", async () => {
-            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
-            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
-            currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
-
-            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
-            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
-                id: "mExisting",
-                seq: 9,
-                localId: "l1",
-                sidechainId: null,
-                content: { t: "encrypted", c: "prev" },
-                createdAt: new Date(1),
-                updatedAt: new Date(1),
-            });
-
-            currentTx.sessionMessage.update.mockResolvedValue({
-                id: "mExisting",
-                seq: 9,
-                localId: "l1",
-                sidechainId: null,
-                content: { t: "encrypted", c: "next" },
-                createdAt: new Date(1),
-                updatedAt: new Date(2),
-            });
-
-            getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
-            markAccountChanged.mockResolvedValueOnce(101).mockResolvedValueOnce(102);
-
-            const res = await createSessionMessage({
-                actorUserId: "u1",
-                sessionId: "s1",
-                ciphertext: "next",
-                localId: "l1",
-            });
-
-            expect(res).toEqual({
-                ok: true,
-                didWrite: false,
-                didUpdate: true,
-                badgeAttentionChanged: false,
-                message: {
-                    id: "mExisting",
-                    seq: 9,
-                    localId: "l1",
-                    sidechainId: null,
-                    content: { t: "encrypted", c: "next" },
-                    createdAt: new Date(1),
-                    updatedAt: new Date(2),
-                },
-                participantCursors: [
-                    { accountId: "u1", cursor: 101 },
-                    { accountId: "u2", cursor: 102 },
-                ],
-            });
-
-            expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    where: { id: "mExisting" },
-                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null },
-                }),
-            );
+            expect(currentTx.$queryRawUnsafe).toBeUndefined();
+            expect(currentTx.session.update).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(1);
+            expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
         it("rejects encrypted writes when the session encryptionMode is plain (with a stable code)", async () => {
@@ -765,7 +848,10 @@ describe("sessionWriteService", () => {
 
         it("updates both fields in one CAS and marks participants once", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    shares: [{ sharedWithUserId: "u2" }],
+                })
                 .mockResolvedValueOnce({
                     metadataVersion: 1,
                     metadata: "m1",

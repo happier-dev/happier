@@ -44,6 +44,20 @@ function createDefaultPrismaClient(): PrismaClientType {
     return new PrismaClient();
 }
 
+export function applyConfiguredDatabaseConnectionLimit(rawUrl: string, env: NodeJS.ProcessEnv): string {
+    const rawLimit = env.HAPPIER_DB_CONNECTION_LIMIT?.trim() || env.HAPPY_DB_CONNECTION_LIMIT?.trim();
+    if (!rawLimit) {
+        return rawUrl;
+    }
+
+    const parsed = Number.parseInt(rawLimit, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+        return rawUrl;
+    }
+
+    return withConnectionLimit(rawUrl, parsed);
+}
+
 export function getDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
     const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER)?.toString().trim().toLowerCase();
     if (!raw) return fallback;
@@ -118,6 +132,9 @@ export function initDbPostgres(): void {
         throw new Error("Database client is already initialized.");
     }
     _provider = "postgres";
+    if (process.env.DATABASE_URL) {
+        process.env.DATABASE_URL = applyConfiguredDatabaseConnectionLimit(process.env.DATABASE_URL, process.env);
+    }
     _db = createDefaultPrismaClient();
 }
 

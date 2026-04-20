@@ -32,15 +32,19 @@ describe("accessControl", () => {
             dbMocks.db.session.findUnique.mockResolvedValue({
                 id: "session-1",
                 accountId: "user-1",
+                active: true,
+                lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
             } as any);
 
             const result = await checkSessionAccess("user-1", "session-1");
 
-            expect(result).toEqual({
+            expect(result).toMatchObject({
                 userId: "user-1",
                 sessionId: "session-1",
                 level: "owner",
                 isOwner: true,
+                sessionActive: true,
+                sessionLastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
             });
         });
 
@@ -56,6 +60,8 @@ describe("accessControl", () => {
             dbMocks.db.session.findUnique.mockResolvedValue({
                 id: "session-1",
                 accountId: "user-owner",
+                active: false,
+                lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
             } as any);
 
             dbMocks.db.sessionShare.findUnique.mockResolvedValue({
@@ -64,11 +70,13 @@ describe("accessControl", () => {
 
             const result = await checkSessionAccess("user-1", "session-1");
 
-            expect(result).toEqual({
+            expect(result).toMatchObject({
                 userId: "user-1",
                 sessionId: "session-1",
                 level: "view",
                 isOwner: false,
+                sessionActive: false,
+                sessionLastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
             });
         });
 

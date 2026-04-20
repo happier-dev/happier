@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createEnvReset } from "../../testkit/env";
 
 import {
+    accountFindUnique,
     createSessionRouteTestBuilder,
+    markAccountChangedAfterCommit,
     resetSessionRouteMocks,
     sessionFindFirst,
     sessionFindMany,
+    sessionFindUnique,
     sessionShareFindMany,
-    txAccountFindUnique,
-    txSessionFindFirst,
     txSessionCreate,
 } from "./sessionRoutes.testkit";
 
@@ -18,13 +19,15 @@ describe("sessionRoutes v1 sessions snapshot", () => {
     beforeEach(() => {
         resetStoragePolicyEnv();
         resetSessionRouteMocks();
+        accountFindUnique.mockReset();
+        accountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
         sessionFindMany.mockReset();
         sessionShareFindMany.mockReset();
         sessionFindFirst.mockReset();
-        txSessionFindFirst.mockReset();
-        txAccountFindUnique.mockReset();
-        txAccountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
+        markAccountChangedAfterCommit.mockReset();
         txSessionCreate.mockReset();
+        sessionFindUnique.mockReset();
+        markAccountChangedAfterCommit.mockResolvedValue(1);
     });
 
     it("GET /v1/sessions returns pendingCount + pendingVersion for owned sessions", async () => {
@@ -105,7 +108,8 @@ describe("sessionRoutes v1 sessions snapshot", () => {
 
     it("POST /v1/sessions returns pendingCount + pendingVersion when loading an existing session", async () => {
         const now = new Date(1);
-        txSessionFindFirst.mockResolvedValue({
+        txSessionCreate.mockRejectedValueOnce(Object.assign(new Error("duplicate"), { code: "P2002" }));
+        sessionFindUnique.mockResolvedValue({
             id: "s1",
             seq: 1,
             createdAt: now,
@@ -127,7 +131,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         });
 
         expect(sessionFindFirst).not.toHaveBeenCalled();
-        expect(txSessionFindFirst).toHaveBeenCalled();
+        expect(markAccountChangedAfterCommit).not.toHaveBeenCalled();
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s1",
@@ -139,7 +143,6 @@ describe("sessionRoutes v1 sessions snapshot", () => {
 
     it("POST /v1/sessions returns pendingCount + pendingVersion when creating a new session", async () => {
         const now = new Date(1);
-        txSessionFindFirst.mockResolvedValue(null);
         txSessionCreate.mockResolvedValue({
             id: "s2",
             seq: 2,
@@ -162,7 +165,11 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         });
 
         expect(sessionFindFirst).not.toHaveBeenCalled();
-        expect(txSessionFindFirst).toHaveBeenCalled();
+        expect(markAccountChangedAfterCommit).toHaveBeenCalledWith({
+            accountId: "u1",
+            kind: "session",
+            entityId: "s2",
+        });
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s2",
@@ -176,7 +183,6 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
 
         const now = new Date(1);
-        txSessionFindFirst.mockResolvedValue(null);
         txSessionCreate.mockResolvedValue({
             id: "s2",
             seq: 2,
@@ -212,8 +218,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
 
         const now = new Date(1);
-        txSessionFindFirst.mockResolvedValue(null);
-        txAccountFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+        accountFindUnique.mockResolvedValue({ encryptionMode: "plain" });
         txSessionCreate.mockResolvedValue({
             id: "s2",
             seq: 2,
@@ -247,7 +252,6 @@ describe("sessionRoutes v1 sessions snapshot", () => {
 
     it("POST /v1/sessions stores agentState when provided", async () => {
         const now = new Date(1);
-        txSessionFindFirst.mockResolvedValue(null);
         txSessionCreate.mockResolvedValue({
             id: "s2",
             seq: 2,

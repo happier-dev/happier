@@ -4,7 +4,9 @@ import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../
 import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+const logSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("@/utils/logging/log", () => ({ log: logSpy }));
 
 const dbMocks = createDbMocks({
     voiceSessionLease: ["count", "create", "findMany", "delete", "deleteMany"],
@@ -61,6 +63,12 @@ describe("voiceRoutes (secure)", () => {
         resetVoiceEnv();
         globalThis.fetch = originalFetch;
     });
+
+    function renderedLogs(): string {
+        return logSpy.mock.calls
+            .flatMap((call) => call.map((value) => (typeof value === "string" ? value : JSON.stringify(value))))
+            .join(" ");
+    }
 
     it("returns 403 when voice is disabled", async () => {
         resetVoiceEnv({
@@ -304,6 +312,7 @@ describe("voiceRoutes (secure)", () => {
 
         expect(reply.code).not.toHaveBeenCalled();
         expect(res).toEqual(expect.objectContaining({ allowed: true, token: "conv_token", leaseId: "lease_1", expiresAtMs: expect.any(Number) }));
+        expect(renderedLogs()).not.toContain("u1");
         expect(leaseCreate).toHaveBeenCalledTimes(1);
         expect(leaseDeleteMany).toHaveBeenCalledTimes(1);
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);

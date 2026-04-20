@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { RelationshipStatus, db, getDbProviderFromEnv, isPrismaErrorCode } from "./prisma";
+import {
+    RelationshipStatus,
+    applyConfiguredDatabaseConnectionLimit,
+    db,
+    getDbProviderFromEnv,
+    isPrismaErrorCode,
+} from "./prisma";
 
 function parseEnumValues(schemaText: string, enumName: string): string[] {
     const block = schemaText.match(new RegExp(`enum\\s+${enumName}\\s*\\{([\\s\\S]*?)\\}`, "m"));
@@ -25,11 +31,11 @@ describe("storage/prisma", () => {
         expect(() => (db as any).user).toThrow(/not initialized/i);
     });
 
-    it("includes linux binaryTargets in prisma/schema.prisma (cross-compiled self-host)", () => {
+    it("includes release binaryTargets in prisma/schema.prisma (cross-compiled self-host)", () => {
         const root = join(process.cwd());
         const fullSchema = readFileSync(join(root, "prisma", "schema.prisma"), "utf-8");
         expect(fullSchema).toMatch(
-            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x"\]/,
+            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x",\s*"darwin",\s*"darwin-arm64",\s*"windows"\]/,
         );
     });
 
@@ -55,5 +61,19 @@ describe("storage/prisma", () => {
         expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "mysql" }, "postgres")).toBe("mysql");
         expect(getDbProviderFromEnv({ HAPPIER_DB_PROVIDER: " sqlite " }, "postgres")).toBe("sqlite");
         expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "nope" }, "postgres")).toBe("postgres");
+    });
+
+    it("applies an explicit database connection limit from env to the database url", () => {
+        const limited = applyConfiguredDatabaseConnectionLimit(
+            "postgresql://user:pass@db.example.com:5432/happier?sslmode=require",
+            { HAPPIER_DB_CONNECTION_LIMIT: "7" },
+        );
+
+        expect(limited).toBe("postgresql://user:pass@db.example.com:5432/happier?sslmode=require&connection_limit=7");
+    });
+
+    it("leaves the database url unchanged when no explicit connection limit is configured", () => {
+        const original = "postgresql://user:pass@db.example.com:5432/happier?sslmode=require";
+        expect(applyConfiguredDatabaseConnectionLimit(original, {})).toBe(original);
     });
 });

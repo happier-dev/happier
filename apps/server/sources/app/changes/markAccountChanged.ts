@@ -1,4 +1,5 @@
 import type { Tx } from "@/storage/inTx";
+import { getDbProviderFromEnv } from "@/storage/prisma";
 import { ChangeKindSchema, type ChangeKind } from "@happier-dev/protocol/changes";
 
 function compactHint(_kind: ChangeKind, hint: unknown): unknown {
@@ -48,22 +49,84 @@ export async function markAccountChanged(
     if (!entityId) throw new Error('markAccountChanged: entityId is required');
 
     const now = new Date();
-    const fk = (() => {
-        if (kind === "session" || kind === "share") {
-            return { sessionId: entityId };
-        }
-        if (kind === "machine") {
-            return { machineId: entityId };
-        }
-        if (kind === "artifact") {
-            return { artifactId: entityId };
-        }
-        return {};
-    })();
+    const sessionId = kind === "session" || kind === "share" ? entityId : null;
+    const machineId = kind === "machine" ? entityId : null;
+    const artifactId = kind === "artifact" ? entityId : null;
 
     // Cursor strategy (locked in a.project.md):
     // - allocate a unique per-account cursor by incrementing Account.seq once per call,
     // - write that cursor value into the coalesced AccountChange row.
+    const provider = getDbProviderFromEnv(process.env, "postgres");
+    if (provider === "postgres" && typeof (tx as { $queryRawUnsafe?: unknown }).$queryRawUnsafe === "function") {
+        const rows = await (tx as {
+            $queryRawUnsafe: <TRow>(query: string, ...values: unknown[]) => Promise<TRow[]>;
+        }).$queryRawUnsafe<{ cursor: number | bigint }>(
+            `WITH next AS (
+                UPDATE "Account"
+                SET "seq" = "seq" + 1
+                WHERE "id" = $1
+                RETURNING "seq"
+            )
+            INSERT INTO "AccountChange" (
+                "accountId",
+                "kind",
+                "entityId",
+                "cursor",
+                "changedAt",
+                "hint",
+                "sessionId",
+                "machineId",
+                "artifactId"
+            )
+            SELECT
+                $1,
+                $2,
+                $3,
+                next."seq",
+                $4,
+                $5::jsonb,
+                $6,
+                $7,
+                $8
+            FROM next
+            ON CONFLICT ("accountId", "kind", "entityId")
+            DO UPDATE SET
+                "cursor" = EXCLUDED."cursor",
+                "changedAt" = EXCLUDED."changedAt",
+                "hint" = EXCLUDED."hint",
+                "sessionId" = EXCLUDED."sessionId",
+                "machineId" = EXCLUDED."machineId",
+                "artifactId" = EXCLUDED."artifactId"
+            RETURNING "cursor"`,
+            accountId,
+            kind,
+            entityId,
+            now,
+            hint === undefined ? null : JSON.stringify(hint),
+            sessionId,
+            machineId,
+            artifactId,
+        );
+        const cursorValue = rows[0]?.cursor;
+        const cursor = typeof cursorValue === "bigint" ? Number(cursorValue) : cursorValue;
+        if (!Number.isFinite(cursor)) {
+            throw new Error("markAccountChanged: failed to allocate cursor");
+        }
+        return cursor;
+    }
+
+    const fk = (() => {
+        if (sessionId) {
+            return { sessionId };
+        }
+        if (machineId) {
+            return { machineId };
+        }
+        if (artifactId) {
+            return { artifactId };
+        }
+        return {};
+    })();
     const next = await tx.account.update({
         where: { id: accountId },
         data: { seq: { increment: 1 } },

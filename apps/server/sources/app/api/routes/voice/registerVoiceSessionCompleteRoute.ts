@@ -121,7 +121,11 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
                     return reply.code(404).send({ ok: false, reason: "not_found" as const });
                 }
                 startedAt = candidateStartedAt;
-                endedAt = new Date(startedAt.getTime() + durationSeconds * 1000);
+                const candidateEndedAt = new Date(startedAt.getTime() + durationSeconds * 1000);
+                if (candidateEndedAt.getTime() < lowerBound || candidateEndedAt.getTime() > upperBound) {
+                    return reply.code(404).send({ ok: false, reason: "not_found" as const });
+                }
+                endedAt = candidateEndedAt;
             } else {
                 return reply.code(404).send({ ok: false, reason: "not_found" as const });
             }
@@ -180,11 +184,7 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
                 },
             });
         } catch (e) {
-            log({ module: "voice" }, "Failed to persist voice conversation", {
-                providerConversationId,
-                leaseId: lease.id,
-                err: e,
-            });
+            log({ module: "voice" }, "Failed to persist voice conversation");
             return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
         }
 

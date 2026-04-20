@@ -1,6 +1,12 @@
 import { db } from "@/storage/db";
 import { Fastify } from "../types";
-import { httpRequestsCounter, httpRequestDurationHistogram } from "@/app/monitoring/metrics2";
+import {
+    classifyHotEndpointFamily,
+    httpHotEndpointRequestDurationHistogram,
+    httpHotEndpointRequestsCounter,
+    httpRequestDurationHistogram,
+    httpRequestsCounter,
+} from "@/app/monitoring/metrics/index";
 import { log } from "@/utils/logging/log";
 
 export function enableMonitoring(app: Fastify) {
@@ -21,6 +27,12 @@ export function enableMonitoring(app: Fastify) {
 
         // Record request duration
         httpRequestDurationHistogram.observe({ method, route, status }, duration);
+
+        const family = classifyHotEndpointFamily(route);
+        if (family) {
+            httpHotEndpointRequestsCounter.inc({ family, method, route, status });
+            httpHotEndpointRequestDurationHistogram.observe({ family, method, route, status }, duration);
+        }
     });
 
     app.get('/health', async (request, reply) => {

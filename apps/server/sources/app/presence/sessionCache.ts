@@ -1,6 +1,6 @@
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
-import { sessionCacheCounter, databaseUpdatesSkippedCounter } from "@/app/monitoring/metrics2";
+import { sessionCacheCounter, databaseUpdatesSkippedCounter, recordPresenceFlushRetry } from "@/app/monitoring/metrics/index";
 import { checkSessionAccess } from "@/app/share/accessControl";
 
 interface SessionCacheEntry {
@@ -19,6 +19,12 @@ interface MachineCacheEntry {
     userId: string;
     active: boolean;
 }
+
+type ActivityValiditySeed = Readonly<{
+    userId: string;
+    active: boolean;
+    lastActiveAt: Date | null;
+}>;
 
 function readErrorCode(error: unknown): string | null {
     if (!error || typeof error !== 'object') {
@@ -72,6 +78,70 @@ class ActivityCache {
         this.machineCache.delete(machineId);
     }
 
+    seedSessionValidity(params: Readonly<{
+        sessionId: string;
+        userId: string;
+        active: boolean;
+        lastActiveAt: Date | null;
+    }>): void {
+        this.maybeCleanup(Date.now());
+        const cacheKey = `${params.sessionId}:${params.userId}`;
+        const existing = this.sessionCache.get(cacheKey);
+        this.sessionCache.set(cacheKey, {
+            ...this.buildSeededSessionEntry(
+                params.sessionId,
+                params.userId,
+                {
+                    userId: params.userId,
+                    active: params.active,
+                    lastActiveAt: params.lastActiveAt,
+                },
+            ),
+            pendingUpdate: existing?.pendingUpdate ?? null,
+        });
+    }
+
+    seedMachineValidity(params: Readonly<{
+        machineId: string;
+        userId: string;
+        active: boolean;
+        lastActiveAt: Date | null;
+    }>): void {
+        this.maybeCleanup(Date.now());
+        const existing = this.machineCache.get(params.machineId);
+        this.machineCache.set(params.machineId, {
+            ...this.buildSeededMachineEntry({
+                userId: params.userId,
+                active: params.active,
+                lastActiveAt: params.lastActiveAt,
+            }),
+            pendingUpdate: existing?.pendingUpdate ?? null,
+        });
+    }
+
+    private buildSeededSessionEntry(sessionId: string, userId: string, params: ActivityValiditySeed): SessionCacheEntry {
+        const now = Date.now();
+        return {
+            validUntil: now + this.CACHE_TTL,
+            lastUpdateSent: params.lastActiveAt?.getTime() ?? 0,
+            pendingUpdate: null,
+            userId,
+            sessionId,
+            active: params.active,
+        };
+    }
+
+    private buildSeededMachineEntry(params: ActivityValiditySeed): MachineCacheEntry {
+        const now = Date.now();
+        return {
+            validUntil: now + this.CACHE_TTL,
+            lastUpdateSent: params.lastActiveAt?.getTime() ?? 0,
+            pendingUpdate: null,
+            userId: params.userId,
+            active: params.active,
+        };
+    }
+
     private shouldBackoffDbFlush(error: unknown): boolean {
         const code = readErrorCode(error);
         if (code === 'SQLITE_BUSY' || code === 'P1008' || code === 'P2028') {
@@ -110,24 +180,38 @@ class ActivityCache {
             const access = await checkSessionAccess(userId, sessionId);
             
             if (access) {
-                const session = await db.session.findUnique({
-                    where: { id: sessionId },
-                    select: { lastActiveAt: true, active: true },
-                });
-                if (!session?.lastActiveAt) {
-                    // Fail closed: presence should not mark unknown sessions as valid.
-                    return false;
+                const lastActiveAt = access.sessionLastActiveAt ?? null;
+                if (!lastActiveAt) {
+                    const session = await db.session.findUnique({
+                        where: { id: sessionId },
+                        select: { lastActiveAt: true, active: true },
+                    });
+                    if (!session?.lastActiveAt) {
+                        // Fail closed: presence should not mark unknown sessions as valid.
+                        return false;
+                    }
+
+                    // Cache the result
+                    this.sessionCache.set(
+                        cacheKey,
+                        this.buildSeededSessionEntry(sessionId, userId, {
+                            userId,
+                            active: session.active,
+                            lastActiveAt: session.lastActiveAt,
+                        }),
+                    );
+                    return true;
                 }
 
                 // Cache the result
-                this.sessionCache.set(cacheKey, {
-                    validUntil: now + this.CACHE_TTL,
-                    lastUpdateSent: session.lastActiveAt.getTime(),
-                    pendingUpdate: null,
-                    userId,
-                    sessionId,
-                    active: session.active,
-                });
+                this.sessionCache.set(
+                    cacheKey,
+                    this.buildSeededSessionEntry(sessionId, userId, {
+                        userId,
+                        active: access.sessionActive ?? true,
+                        lastActiveAt,
+                    }),
+                );
                 return true;
             }
             
@@ -170,13 +254,14 @@ class ActivityCache {
                 }
 
                 // Cache the result
-                this.machineCache.set(machineId, {
-                    validUntil: now + this.CACHE_TTL,
-                    lastUpdateSent: machine.lastActiveAt?.getTime() || 0,
-                    pendingUpdate: null,
-                    userId,
-                    active: machine.active
-                });
+                this.machineCache.set(
+                    machineId,
+                    this.buildSeededMachineEntry({
+                        userId,
+                        active: machine.active,
+                        lastActiveAt: machine.lastActiveAt,
+                    }),
+                );
                 return true;
             }
             
@@ -354,6 +439,10 @@ class ActivityCache {
                     for (const entry of entries) {
                         entry.pendingUpdate = Math.max(entry.pendingUpdate ?? 0, timestamp);
                     }
+                    recordPresenceFlushRetry({
+                        entityType: "session",
+                        reason: this.shouldBackoffDbFlush(error) ? "db-backoff" : "db-error",
+                    });
                     log(
                         { module: 'session-cache', level: 'error', sessionId },
                         `Error updating session: ${error}`,
@@ -397,6 +486,10 @@ class ActivityCache {
                 } catch (error) {
                     // Keep the pending update so the next flush can retry.
                     update.entry.pendingUpdate = Math.max(update.entry.pendingUpdate ?? 0, update.timestamp);
+                    recordPresenceFlushRetry({
+                        entityType: "machine",
+                        reason: this.shouldBackoffDbFlush(error) ? "db-backoff" : "db-error",
+                    });
                     log(
                         { module: 'session-cache', level: 'error', machineId: update.machineId },
                         `Error updating machine: ${error}`,

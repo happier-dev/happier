@@ -1,4 +1,5 @@
 import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
+import { observeCreateSessionMessageStage } from "@/app/monitoring/metrics/sessionWriteMetrics";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
@@ -11,6 +12,15 @@ import { parseSessionMessageSidechainId } from "./parseSessionMessageSidechainId
 import { didSessionActivityBadgeContributionChange, type SessionActivityBadgeInputs } from "@/app/activity/accountActivityBadge";
 
 type ParticipantCursor = SessionParticipantCursor;
+type SessionMessageRow = Readonly<{
+    id: string;
+    seq: number;
+    localId: string | null;
+    sidechainId: string | null;
+    content: PrismaJson.SessionMessageContent;
+    createdAt: Date;
+    updatedAt: Date;
+}>;
 
 function selectSessionActivityBadgeInputs() {
     return {
@@ -39,22 +49,54 @@ function toSessionActivityBadgeInputs(
 }
 
 type EnsureSessionEditAccessResult =
-    | { ok: true; sessionOwnerId: string; sessionEncryptionMode: "e2ee" | "plain" }
+    | {
+        ok: true;
+        sessionOwnerId: string;
+        sessionEncryptionMode: "e2ee" | "plain";
+        participantUserIds: string[];
+        sessionActivityBadgeInputs: SessionActivityBadgeInputs;
+      }
     | { ok: false; error: "session-not-found" | "forbidden" };
+
+function extractSessionParticipantUserIds(session: {
+    accountId: string;
+    shares?: ReadonlyArray<{ sharedWithUserId: string }>;
+}): string[] {
+    const participantUserIds = new Set<string>([session.accountId]);
+
+    for (const share of session.shares ?? []) {
+        if (typeof share.sharedWithUserId === "string" && share.sharedWithUserId) {
+            participantUserIds.add(share.sharedWithUserId);
+        }
+    }
+
+    return Array.from(participantUserIds);
+}
 
 async function ensureSessionEditAccess(tx: Tx, params: { actorUserId: string; sessionId: string }): Promise<EnsureSessionEditAccessResult> {
     const session = await tx.session.findUnique({
         where: { id: params.sessionId },
-        select: { accountId: true, encryptionMode: true },
+        select: {
+            accountId: true,
+            encryptionMode: true,
+            ...selectSessionActivityBadgeInputs(),
+            shares: {
+                select: {
+                    sharedWithUserId: true,
+                },
+            },
+        },
     });
     if (!session) {
         return { ok: false, error: "session-not-found" };
     }
 
     const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+    const participantUserIds = extractSessionParticipantUserIds(session);
+    const sessionActivityBadgeInputs = toSessionActivityBadgeInputs(session);
 
     if (session.accountId === params.actorUserId) {
-        return { ok: true, sessionOwnerId: session.accountId, sessionEncryptionMode };
+        return { ok: true, sessionOwnerId: session.accountId, sessionEncryptionMode, participantUserIds, sessionActivityBadgeInputs };
     }
 
     const share = await tx.sessionShare.findUnique({
@@ -71,11 +113,26 @@ async function ensureSessionEditAccess(tx: Tx, params: { actorUserId: string; se
         return { ok: false, error: "forbidden" };
     }
 
-    return { ok: true, sessionOwnerId: session.accountId, sessionEncryptionMode };
+    return { ok: true, sessionOwnerId: session.accountId, sessionEncryptionMode, participantUserIds, sessionActivityBadgeInputs };
 }
 
 async function ensureSessionEditAccessNoTx(params: { actorUserId: string; sessionId: string }): Promise<EnsureSessionEditAccessResult> {
     return await ensureSessionEditAccess(db as unknown as Tx, params);
+}
+
+function isSessionMessageLocalIdConstraintTarget(target: unknown): boolean {
+    if (Array.isArray(target)) {
+        return target.includes("localId") && target.includes("sessionId");
+    }
+    if (typeof target === "string") {
+        return target.includes("localId") && target.includes("sessionId");
+    }
+    return true;
+}
+
+function isSessionMessageLocalIdConflict(error: unknown): boolean {
+    return isPrismaErrorCode(error, "P2002")
+        && isSessionMessageLocalIdConstraintTarget((error as { meta?: { target?: unknown } }).meta?.target);
 }
 
 export type CreateSessionMessageResult =
@@ -143,6 +200,7 @@ export async function createSessionMessage(
             | Readonly<{ content: PrismaJson.SessionMessageContent; ciphertext?: never }>
         ),
 ): Promise<CreateSessionMessageResult> {
+    const totalStartedAt = Date.now();
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const ciphertext = "ciphertext" in params && typeof params.ciphertext === "string" ? params.ciphertext : "";
@@ -168,8 +226,19 @@ export async function createSessionMessage(
 
     try {
         return await inTx(async (tx) => {
+            const accessStartedAt = Date.now();
             const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
+            observeCreateSessionMessageStage({
+                stage: "access",
+                durationMs: Date.now() - accessStartedAt,
+                result: access.ok ? "ok" : "error",
+            });
             if (!access.ok) {
+                observeCreateSessionMessageStage({
+                    stage: "total",
+                    durationMs: Date.now() - totalStartedAt,
+                    result: "error",
+                });
                 return { ok: false, error: access.error };
             }
 
@@ -178,6 +247,11 @@ export async function createSessionMessage(
             if (
                 !isStoredContentKindAllowedForSessionByStoragePolicy(encryptionPolicy.storagePolicy, access.sessionEncryptionMode, writeKind)
             ) {
+                observeCreateSessionMessageStage({
+                    stage: "total",
+                    durationMs: Date.now() - totalStartedAt,
+                    result: "error",
+                });
                 return {
                     ok: false,
                     error: "invalid-params",
@@ -189,51 +263,7 @@ export async function createSessionMessage(
                 };
             }
 
-            if (localId) {
-                const existing = await tx.sessionMessage.findUnique({
-                    where: { sessionId_localId: { sessionId, localId } },
-                    select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
-                });
-                if (existing) {
-                    if ((existing.sidechainId ?? null) !== sidechainId) {
-                        return { ok: false, error: "invalid-params" };
-                    }
-
-                    if (isDeepStrictEqual(existing.content, content)) {
-                        return { ok: true, didWrite: false, didUpdate: false, badgeAttentionChanged: false, message: existing, participantCursors: [] };
-                    }
-
-                    const updated = await tx.sessionMessage.update({
-                        where: { id: existing.id },
-                        data: {
-                            content,
-                            sidechainId,
-                        },
-                        select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
-                    });
-
-                    const participantCursors = await markSessionParticipantsChanged({
-                        tx,
-                        sessionId,
-                        hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
-                    });
-
-                    return {
-                        ok: true,
-                        didWrite: false,
-                        didUpdate: true,
-                        badgeAttentionChanged: false,
-                        message: updated,
-                        participantCursors,
-                    };
-                }
-            }
-
-            const beforeBadgeInputs = await tx.session.findUnique({
-                where: { id: sessionId },
-                select: selectSessionActivityBadgeInputs(),
-            });
-
+            const persistStartedAt = Date.now();
             const next = await tx.session.update({
                 where: { id: sessionId },
                 select: { seq: true },
@@ -250,20 +280,38 @@ export async function createSessionMessage(
                 },
                 select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
             });
+            observeCreateSessionMessageStage({
+                stage: "persist",
+                durationMs: Date.now() - persistStartedAt,
+                result: "ok",
+            });
 
+            const changeTrackingStartedAt = Date.now();
             const participantCursors = await markSessionParticipantsChanged({
                 tx,
                 sessionId,
                 hint: { lastMessageSeq: created.seq, lastMessageId: created.id },
+                participantUserIds: access.participantUserIds,
+            });
+            observeCreateSessionMessageStage({
+                stage: "change_tracking",
+                durationMs: Date.now() - changeTrackingStartedAt,
+                result: "ok",
             });
 
             const badgeAttentionChanged = didSessionActivityBadgeContributionChange(
-                toSessionActivityBadgeInputs(beforeBadgeInputs),
+                access.sessionActivityBadgeInputs,
                 {
-                    ...toSessionActivityBadgeInputs(beforeBadgeInputs),
+                    ...access.sessionActivityBadgeInputs,
                     seq: created.seq,
                 },
             );
+
+            observeCreateSessionMessageStage({
+                stage: "total",
+                durationMs: Date.now() - totalStartedAt,
+                result: "ok",
+            });
 
             return {
                 ok: true,
@@ -273,22 +321,26 @@ export async function createSessionMessage(
                 message: created,
                 participantCursors,
             };
-        });
+        }, { isolationLevel: "ReadCommitted" });
     } catch (e) {
-        if (localId && isPrismaErrorCode(e, "P2002")) {
-            const target = (e as any)?.meta?.target;
-            const isLocalIdConstraint =
-                Array.isArray(target)
-                    ? target.includes("localId") && target.includes("sessionId")
-                    : typeof target === "string"
-                        ? target.includes("localId") && target.includes("sessionId")
-                        : true;
-            if (!isLocalIdConstraint) {
+        if (localId && isSessionMessageLocalIdConflict(e)) {
+            const target = (e as any)?.meta?.target ?? (e as any)?.meta?.message;
+            if (!isSessionMessageLocalIdConstraintTarget((e as any)?.meta?.target) && !String(target ?? "").includes("SessionMessage_sessionId_localId_key")) {
                 log({ module: "session-write", level: "error", sessionId, target }, "Unexpected P2002 while creating session message");
+                observeCreateSessionMessageStage({
+                    stage: "total",
+                    durationMs: Date.now() - totalStartedAt,
+                    result: "error",
+                });
                 return { ok: false, error: "internal" };
             }
             const access = await ensureSessionEditAccessNoTx({ actorUserId, sessionId });
             if (!access.ok) {
+                observeCreateSessionMessageStage({
+                    stage: "total",
+                    durationMs: Date.now() - totalStartedAt,
+                    result: "error",
+                });
                 return { ok: false, error: access.error };
             }
             const existing = await db.sessionMessage.findUnique({
@@ -297,25 +349,54 @@ export async function createSessionMessage(
             });
             if (existing) {
                 if ((existing.sidechainId ?? null) !== sidechainId) {
+                    observeCreateSessionMessageStage({
+                        stage: "total",
+                        durationMs: Date.now() - totalStartedAt,
+                        result: "error",
+                    });
                     return { ok: false, error: "invalid-params" };
                 }
 
                 if (isDeepStrictEqual(existing.content, content)) {
+                    observeCreateSessionMessageStage({
+                        stage: "total",
+                        durationMs: Date.now() - totalStartedAt,
+                        result: "ok",
+                    });
                     return { ok: true, didWrite: false, didUpdate: false, badgeAttentionChanged: false, message: existing, participantCursors: [] };
                 }
 
                 try {
                     return await inTx(async (tx) => {
+                        const duplicateUpdateStartedAt = Date.now();
                         const updated = await tx.sessionMessage.update({
                             where: { id: existing.id },
                             data: { content, sidechainId },
                             select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
                         });
+                        observeCreateSessionMessageStage({
+                            stage: "persist",
+                            durationMs: Date.now() - duplicateUpdateStartedAt,
+                            result: "ok",
+                        });
 
+                        const duplicateChangeTrackingStartedAt = Date.now();
                         const participantCursors = await markSessionParticipantsChanged({
                             tx,
                             sessionId,
                             hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
+                            participantUserIds: access.participantUserIds,
+                        });
+                        observeCreateSessionMessageStage({
+                            stage: "change_tracking",
+                            durationMs: Date.now() - duplicateChangeTrackingStartedAt,
+                            result: "ok",
+                        });
+
+                        observeCreateSessionMessageStage({
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "ok",
                         });
 
                         return {
@@ -326,12 +407,22 @@ export async function createSessionMessage(
                             message: updated,
                             participantCursors,
                         };
-                    });
+                    }, { isolationLevel: "ReadCommitted" });
                 } catch {
+                    observeCreateSessionMessageStage({
+                        stage: "total",
+                        durationMs: Date.now() - totalStartedAt,
+                        result: "error",
+                    });
                     return { ok: false, error: "internal" };
                 }
             }
         }
+        observeCreateSessionMessageStage({
+            stage: "total",
+            durationMs: Date.now() - totalStartedAt,
+            result: "error",
+        });
         return { ok: false, error: "internal" };
     }
 }
@@ -416,7 +507,11 @@ export async function updateSessionMetadata(params: {
                 };
             }
 
-            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            const participantCursors = await markSessionParticipantsChanged({
+                tx,
+                sessionId,
+                participantUserIds: access.participantUserIds,
+            });
             const badgeAttentionChanged =
                 typeof nextLastViewedSessionSeq === "number"
                     ? didSessionActivityBadgeContributionChange(
@@ -532,7 +627,11 @@ export async function updateSessionAgentState(params: {
                 };
             }
 
-            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            const participantCursors = await markSessionParticipantsChanged({
+                tx,
+                sessionId,
+                participantUserIds: access.participantUserIds,
+            });
             const badgeAttentionChanged = didSessionActivityBadgeContributionChange(
                 toSessionActivityBadgeInputs(session),
                 {
@@ -628,7 +727,11 @@ export async function updateSessionReadCursor(params: {
                 };
             }
 
-            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            const participantCursors = await markSessionParticipantsChanged({
+                tx,
+                sessionId,
+                participantUserIds: access.participantUserIds,
+            });
             return {
                 ok: true,
                 lastViewedSessionSeq: nextCursor,
@@ -763,7 +866,11 @@ export async function patchSession(params: {
                 };
             }
 
-            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            const participantCursors = await markSessionParticipantsChanged({
+                tx,
+                sessionId,
+                participantUserIds: access.participantUserIds,
+            });
 
             return {
                 ok: true,

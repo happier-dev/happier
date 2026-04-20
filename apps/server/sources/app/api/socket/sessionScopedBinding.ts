@@ -1,6 +1,7 @@
 import type { Socket } from "socket.io";
 
 import type { ClientConnection } from "@/app/events/eventPayloadTypes";
+import { observeSessionScopedBindingStage } from "@/app/monitoring/metrics/sessionBindingMetrics";
 import { db } from "@/storage/db";
 
 export type SessionScopedBindingProof = "owner-session" | "machine-access-key";
@@ -11,8 +12,19 @@ export type SessionScopedSocketBinding = Readonly<{
     proof: SessionScopedBindingProof;
 }>;
 
+export type SessionScopedSocketBindingCacheWarmState = Readonly<{
+    session: Readonly<{
+        active: boolean;
+        lastActiveAt: Date | null;
+    }>;
+    machine: Readonly<{
+        active: boolean;
+        lastActiveAt: Date | null;
+    }> | null;
+}>;
+
 type SessionScopedBindingResolution =
-    | Readonly<{ ok: true; binding: SessionScopedSocketBinding }>
+    | Readonly<{ ok: true; binding: SessionScopedSocketBinding; cacheWarmState: SessionScopedSocketBindingCacheWarmState }>
     | Readonly<{ ok: false; statusCode: number; error: "invalid-session" | "invalid-session-access-key" }>;
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -32,15 +44,25 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
         return { ok: false, statusCode: 403, error: "invalid-session" };
     }
 
-    const session = await db.session.findUnique({
-        where: { id: sessionId },
-        select: { accountId: true },
-    });
-    if (!session || session.accountId !== params.userId) {
-        return { ok: false, statusCode: 403, error: "invalid-session" };
-    }
-
     if (!machineId) {
+        const startedAt = Date.now();
+        const session = await db.session.findUnique({
+            where: { id: sessionId },
+            select: { accountId: true, active: true, lastActiveAt: true },
+        });
+        if (!session || session.accountId !== params.userId) {
+            observeSessionScopedBindingStage({
+                stage: "owner_session_lookup",
+                result: "error",
+                durationMs: Date.now() - startedAt,
+            });
+            return { ok: false, statusCode: 403, error: "invalid-session" };
+        }
+        observeSessionScopedBindingStage({
+            stage: "owner_session_lookup",
+            result: "ok",
+            durationMs: Date.now() - startedAt,
+        });
         return {
             ok: true,
             binding: {
@@ -48,22 +70,55 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
                 machineId: null,
                 proof: "owner-session",
             },
+            cacheWarmState: {
+                session: {
+                    active: session.active,
+                    lastActiveAt: session.lastActiveAt,
+                },
+                machine: null,
+            },
         };
     }
 
+    const startedAt = Date.now();
     const accessKey = await db.accessKey.findUnique({
-        where: {
-            accountId_machineId_sessionId: {
-                accountId: params.userId,
-                machineId,
-                sessionId,
+            where: {
+                accountId_machineId_sessionId: {
+                    accountId: params.userId,
+                    machineId,
+                    sessionId,
+                },
             },
-        },
-        select: { machineId: true },
-    });
+            select: {
+                machineId: true,
+                session: {
+                    select: {
+                        active: true,
+                        lastActiveAt: true,
+                    },
+                },
+                machine: {
+                    select: {
+                        active: true,
+                        lastActiveAt: true,
+                        revokedAt: true,
+                    },
+                },
+            },
+        });
     if (!accessKey) {
+        observeSessionScopedBindingStage({
+            stage: "machine_access_key_lookup",
+            result: "error",
+            durationMs: Date.now() - startedAt,
+        });
         return { ok: false, statusCode: 403, error: "invalid-session-access-key" };
     }
+    observeSessionScopedBindingStage({
+        stage: "machine_access_key_lookup",
+        result: "ok",
+        durationMs: Date.now() - startedAt,
+    });
 
     return {
         ok: true,
@@ -71,6 +126,18 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
             sessionId,
             machineId,
             proof: "machine-access-key",
+        },
+        cacheWarmState: {
+            session: {
+                active: accessKey.session.active,
+                lastActiveAt: accessKey.session.lastActiveAt,
+            },
+            machine: accessKey.machine.revokedAt
+                ? null
+                : {
+                    active: accessKey.machine.active,
+                    lastActiveAt: accessKey.machine.lastActiveAt,
+                },
         },
     };
 }

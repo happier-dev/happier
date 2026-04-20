@@ -5,7 +5,20 @@ import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetad
 import { Server, Socket } from "socket.io";
 import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
-import { decrementWebSocketConnection, incrementWebSocketConnection, websocketEventsCounter } from "../monitoring/metrics2";
+import {
+    recordSocketAuthHandshake,
+    recordSocketAuthHandshakeStageDuration,
+    recordSocketAuthHandshakeException,
+    recordSocketConnectConvergenceDuration,
+    recordSocketConnectConvergencePhase,
+    type SocketAuthHandshakeExceptionClassification,
+    type SocketAuthHandshakeStage,
+    recordSocketTransportUpgradeOutcome,
+    setSocketAdapterModeInfo,
+    trackWebSocketConnection,
+    untrackWebSocketConnection,
+    websocketEventsCounter,
+} from "../monitoring/metrics/index";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { usageHandler } from "./socket/usageHandler";
 import { rpcHandler } from "./socket/rpcHandler";
@@ -17,16 +30,17 @@ import { transferRelayV2Handler } from "./socket/transferRelayV2Handler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
-import { getSocketRooms } from "./socketRooms";
+import { getSocketRooms, type SocketClientType } from "./socketRooms";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
-import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backends";
-import { db } from "@/storage/db";
+import { readSocketAdapterRuntimeConfigFromEnv } from "@/config/socketAdapter";
+import { db, isPrismaErrorCode } from "@/storage/db";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineTransferFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 import { createMachineSocketOwnershipRegistry } from "./socket/machineSocketOwnershipRegistry";
+import { activityCache } from "@/app/presence/sessionCache";
 
 export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
 
@@ -48,9 +62,37 @@ export function resolveSocketFastDisconnectLogThresholdMsFromEnv(env: Record<str
     return parsed;
 }
 
+export function normalizeSocketHandshakeClientType(clientType: unknown): SocketClientType {
+    if (
+        clientType === 'user-scoped' ||
+        clientType === 'session-scoped' ||
+        clientType === 'machine-scoped'
+    ) {
+        return clientType;
+    }
+    return 'user-scoped';
+}
+
+function classifySocketHandshakeException(error: unknown): SocketAuthHandshakeExceptionClassification {
+    if (isPrismaErrorCode(error, "P2037")) return "prisma-p2037";
+    if (isPrismaErrorCode(error, "P2028")) return "prisma-p2028";
+    if (isPrismaErrorCode(error, "P2024")) return "prisma-p2024";
+    if (isPrismaErrorCode(error, "P1008")) return "prisma-p1008";
+    if (isPrismaErrorCode(error, "P1001")) return "prisma-p1001";
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    if (message.includes("Response from the Engine was empty")) {
+        return "prisma-engine-empty-response";
+    }
+    if (typeof error === "object" && error !== null && "code" in error) {
+        return "prisma-unknown";
+    }
+    return "unknown";
+}
+
 export function startSocket(app: Fastify) {
-    const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
-    const shouldEnableRedisAdapter = isRedisStreamsEnabled(process.env, socketAdapter);
+    const socketAdapterConfig = readSocketAdapterRuntimeConfigFromEnv(process.env, "memory");
+    const socketAdapter = socketAdapterConfig.adapter;
+    const shouldEnableRedisAdapter = socketAdapterConfig.redisStreamsEnabled;
     const serverRoutedTransferEnabled = isServerFeatureEnabledForRequest(
         'machines.transfer.serverRouted',
         process.env,
@@ -59,6 +101,8 @@ export function startSocket(app: Fastify) {
     const fastDisconnectLogThresholdMs = resolveSocketFastDisconnectLogThresholdMsFromEnv(process.env);
 
     const instanceId = process.env.HAPPIER_INSTANCE_ID?.trim() || process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
+    const roleToken = process.env.SERVER_ROLE?.trim();
+    const role = roleToken === "api" || roleToken === "worker" ? roleToken : "all";
 
     const io = new Server(app.server, {
         cors: {
@@ -68,7 +112,7 @@ export function startSocket(app: Fastify) {
             credentials: false,
             allowedHeaders: ["authorization", "content-type"]
         },
-        ...(shouldEnableRedisAdapter ? { adapter: createAdapter(getRedisClient()) } : {}),
+        ...(shouldEnableRedisAdapter ? { adapter: createAdapter(getRedisClient(), socketAdapterConfig.redisStreamsOptions) } : {}),
         transports: ['websocket', 'polling'],
         pingTimeout: 45000,
         pingInterval: 15000,
@@ -78,6 +122,12 @@ export function startSocket(app: Fastify) {
         upgradeTimeout: 10000,
         connectTimeout: 20000,
         serveClient: false // Don't serve the client files
+    });
+
+    setSocketAdapterModeInfo({
+        adapter: socketAdapter,
+        redisEnabled: shouldEnableRedisAdapter,
+        role,
     });
 
     function rejectSocket(params: { statusCode: number; error: string; provider?: string; data?: Record<string, unknown> }) {
@@ -91,100 +141,196 @@ export function startSocket(app: Fastify) {
         return err;
     }
 
-    let rpcListeners = new Map<string, Map<string, Socket>>();
     const machineOwnershipRegistry = createMachineSocketOwnershipRegistry({
         io,
         config: shouldEnableRedisAdapter ? { enabled: true, instanceId } : { enabled: false },
     });
     app.forwardRpcForUser = createServerRpcForwarder({
         io,
-        allRpcListeners: rpcListeners,
-        redisRegistry: shouldEnableRedisAdapter ? { enabled: true, instanceId } : { enabled: false },
     });
     eventRouter.setIo(io);
 
     io.use(async (socket, next) => {
+        const handshakeStartedAt = Date.now();
         const token = socket.handshake.auth.token as string;
-        const clientType = socket.handshake.auth.clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
+        const clientType = normalizeSocketHandshakeClientType(socket.handshake.auth.clientType);
         const clientPurpose = socket.handshake.auth.clientPurpose as string | undefined;
         const sessionId = socket.handshake.auth.sessionId as string | undefined;
         const machineId = socket.handshake.auth.machineId as string | undefined;
+        let handshakeStage: SocketAuthHandshakeStage = "verify-token";
+        let handshakeStageStartedAt = handshakeStartedAt;
         const takeoverRequested =
             socket.handshake.auth.takeover === true ||
             socket.handshake.auth.takeover === "true";
+        const handshakeTransport = (socket.conn as unknown as { transport?: { name?: string } } | undefined)?.transport?.name;
+
+        const setHandshakeStage = (stage: SocketAuthHandshakeStage) => {
+            handshakeStage = stage;
+            handshakeStageStartedAt = Date.now();
+        };
+
+        const observeHandshakeStage = (result: "ok" | "error") => {
+            recordSocketAuthHandshakeStageDuration({
+                clientType,
+                transport: handshakeTransport,
+                stage: handshakeStage,
+                durationMs: Date.now() - handshakeStageStartedAt,
+                result,
+            });
+        };
+
+        const rejectHandshake = (params: { statusCode: number; error: string; provider?: string; data?: Record<string, unknown> }) => {
+            recordSocketAuthHandshake({
+                clientType,
+                transport: handshakeTransport,
+                durationMs: Date.now() - handshakeStartedAt,
+                result: "error",
+                failure: params.error,
+            });
+            return next(rejectSocket(params));
+        };
 
         if (!token) {
-            return next(rejectSocket({ statusCode: 401, error: 'invalid-token' }));
+            return rejectHandshake({ statusCode: 401, error: 'invalid-token' });
         }
 
         if (clientType === 'session-scoped' && !sessionId) {
-            return next(rejectSocket({ statusCode: 400, error: 'missing-session-id' }));
+            return rejectHandshake({ statusCode: 400, error: 'missing-session-id' });
         }
 
         if (clientType === 'machine-scoped' && !machineId) {
-            return next(rejectSocket({ statusCode: 400, error: 'missing-machine-id' }));
+            return rejectHandshake({ statusCode: 400, error: 'missing-machine-id' });
         }
+        try {
+            setHandshakeStage("verify-token");
+            const verified = await auth.verifyToken(token);
+            if (!verified) {
+                observeHandshakeStage("error");
+                return rejectHandshake({ statusCode: 401, error: 'invalid-token' });
+            }
+            observeHandshakeStage("ok");
 
-        const verified = await auth.verifyToken(token);
-        if (!verified) {
-            return next(rejectSocket({ statusCode: 401, error: 'invalid-token' }));
-        }
+            setHandshakeStage("login-eligibility");
+            const eligibility = await enforceLoginEligibility({ accountId: verified.userId, env: process.env });
+            if (!eligibility.ok) {
+                observeHandshakeStage("error");
+                return rejectHandshake({
+                    statusCode: eligibility.statusCode,
+                    error: eligibility.error,
+                    ...(eligibility.error === 'provider-required' ? { provider: eligibility.provider } : {}),
+                });
+            }
+            observeHandshakeStage("ok");
 
-        const eligibility = await enforceLoginEligibility({ accountId: verified.userId, env: process.env });
-        if (!eligibility.ok) {
-            return next(rejectSocket({
-                statusCode: eligibility.statusCode,
-                error: eligibility.error,
-                ...(eligibility.error === 'provider-required' ? { provider: eligibility.provider } : {}),
-            }));
-        }
+            if (clientType === 'machine-scoped') {
+                setHandshakeStage("machine-lookup");
+                const machine = await db.machine.findFirst({
+                    where: { accountId: verified.userId, id: machineId },
+                    select: { id: true, active: true, lastActiveAt: true, revokedAt: true },
+                });
+                if (!machine) {
+                    observeHandshakeStage("error");
+                    return rejectHandshake({ statusCode: 403, error: 'invalid-machine' });
+                }
+                observeHandshakeStage("ok");
 
-        if (clientType === 'machine-scoped') {
-            const machine = await db.machine.findFirst({
-                where: { accountId: verified.userId, id: machineId },
-                select: { id: true },
-            });
-            if (!machine) {
-                return next(rejectSocket({ statusCode: 403, error: 'invalid-machine' }));
+                setHandshakeStage("machine-ownership");
+                const ownershipClaim = await machineOwnershipRegistry.claimOwner({
+                    accountId: verified.userId,
+                    machineId: machineId!,
+                    socketId: socket.id,
+                    owner: {
+                        ...readMachineDaemonOwnershipMetadataFromSocketAuth(socket.handshake.auth),
+                        takeoverRequested,
+                    },
+                });
+                if (ownershipClaim.result === 'conflict') {
+                    observeHandshakeStage("error");
+                    const { socketId: _socketId, ...owner } = ownershipClaim.owner;
+                    return rejectHandshake({
+                        statusCode: 409,
+                        error: 'machine-owner-conflict',
+                        data: buildMachineOwnerConflictSocketPayload(readMachineDaemonOwnershipMetadataFromSocketAuth(owner)),
+                    });
+                }
+                observeHandshakeStage("ok");
+
+                if (!machine.revokedAt) {
+                    activityCache.seedMachineValidity({
+                        machineId: machine.id,
+                        userId: verified.userId,
+                        active: machine.active,
+                        lastActiveAt: machine.lastActiveAt,
+                    });
+                }
             }
 
-            const ownershipClaim = await machineOwnershipRegistry.claimOwner({
-                accountId: verified.userId,
-                machineId: machineId!,
-                socketId: socket.id,
-                owner: {
-                    ...readMachineDaemonOwnershipMetadataFromSocketAuth(socket.handshake.auth),
-                    takeoverRequested,
+            if (clientType === 'session-scoped' && sessionId) {
+                setHandshakeStage("session-binding");
+                const binding = await resolveSessionScopedSocketBinding({
+                    userId: verified.userId,
+                    sessionId,
+                    machineId,
+                });
+                if (!binding.ok) {
+                    observeHandshakeStage("error");
+                    return rejectHandshake({ statusCode: binding.statusCode, error: binding.error });
+                }
+                observeHandshakeStage("ok");
+
+                activityCache.seedSessionValidity({
+                    sessionId: binding.binding.sessionId,
+                    userId: verified.userId,
+                    active: binding.cacheWarmState.session.active,
+                    lastActiveAt: binding.cacheWarmState.session.lastActiveAt,
+                });
+                if (binding.cacheWarmState.machine && binding.binding.machineId) {
+                    activityCache.seedMachineValidity({
+                        machineId: binding.binding.machineId,
+                        userId: verified.userId,
+                        active: binding.cacheWarmState.machine.active,
+                        lastActiveAt: binding.cacheWarmState.machine.lastActiveAt,
+                    });
+                }
+                (socket.data as any).sessionScopedBinding = binding.binding;
+            }
+
+            (socket.data as any).userId = verified.userId;
+            (socket.data as any).clientType = clientType;
+            (socket.data as any).clientPurpose = clientPurpose;
+            (socket.data as any).sessionId = sessionId;
+            (socket.data as any).machineId = machineId;
+            recordSocketAuthHandshake({
+                clientType,
+                transport: handshakeTransport,
+                durationMs: Date.now() - handshakeStartedAt,
+                result: "ok",
+            });
+            return next();
+        } catch (error) {
+            observeHandshakeStage("error");
+            const classification = classifySocketHandshakeException(error);
+            recordSocketAuthHandshakeException({
+                clientType,
+                transport: handshakeTransport,
+                stage: handshakeStage,
+                classification,
+            });
+            log(
+                {
+                    module: "websocket-auth-handshake",
+                    socketId: socket.id,
+                    clientType,
+                    handshakeStage,
+                    classification,
+                    sessionId,
+                    machineId,
+                    err: error,
                 },
-            });
-            if (ownershipClaim.result === 'conflict') {
-                const { socketId: _socketId, ...owner } = ownershipClaim.owner;
-                return next(rejectSocket({
-                    statusCode: 409,
-                    error: 'machine-owner-conflict',
-                    data: buildMachineOwnerConflictSocketPayload(readMachineDaemonOwnershipMetadataFromSocketAuth(owner)),
-                }));
-            }
+                "Socket authentication handshake failed unexpectedly",
+            );
+            return rejectHandshake({ statusCode: 503, error: "upstream_error" });
         }
-
-        if (clientType === 'session-scoped' && sessionId) {
-            const binding = await resolveSessionScopedSocketBinding({
-                userId: verified.userId,
-                sessionId,
-                machineId,
-            });
-            if (!binding.ok) {
-                return next(rejectSocket({ statusCode: binding.statusCode, error: binding.error }));
-            }
-            (socket.data as any).sessionScopedBinding = binding.binding;
-        }
-
-        (socket.data as any).userId = verified.userId;
-        (socket.data as any).clientType = clientType;
-        (socket.data as any).clientPurpose = clientPurpose;
-        (socket.data as any).sessionId = sessionId;
-        (socket.data as any).machineId = machineId;
-        return next();
     });
 
     io.on("connection", async (socket) => {
@@ -207,14 +353,41 @@ export function startSocket(app: Fastify) {
             `New connection attempt from socket: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
         );
         const userId = (socket.data as any).userId as string | undefined;
-        const clientType = (socket.data as any).clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
+        const clientType = normalizeSocketHandshakeClientType((socket.data as any).clientType);
         const clientPurpose = (socket.data as any).clientPurpose as string | undefined;
         const sessionId =
             (socket.data as any).sessionScopedBinding?.sessionId as string | undefined
             ?? (socket.data as any).sessionId as string | undefined;
         const machineId = (socket.data as any).machineId as string | undefined;
+        let connectConvergenceFinished = false;
+        let connectReady = false;
+
+        const finalizeConnectConvergence = (result: "ready" | "disconnect_before_ready") => {
+            if (connectConvergenceFinished) {
+                return;
+            }
+            connectConvergenceFinished = true;
+            recordSocketConnectConvergencePhase({
+                clientType,
+                transport,
+                phase: result === "ready" ? "complete" : "disconnect_before_ready",
+            });
+            recordSocketConnectConvergenceDuration({
+                clientType,
+                transport,
+                result,
+                durationMs: Date.now() - connectedAtMs,
+            });
+        };
+
+        recordSocketConnectConvergencePhase({
+            clientType,
+            transport,
+            phase: "start",
+        });
 
         if (!userId) {
+            finalizeConnectConvergence("disconnect_before_ready");
             socket.disconnect();
             return;
         }
@@ -224,7 +397,7 @@ export function startSocket(app: Fastify) {
                 module: 'websocket',
                 socketId: socket.id,
                 userId,
-                clientType: clientType || 'user-scoped',
+                clientType,
                 clientPurpose: clientPurpose || 'unknown',
                 sessionId: sessionId || 'none',
                 machineId: machineId || 'none',
@@ -232,11 +405,11 @@ export function startSocket(app: Fastify) {
                 userAgent,
                 transport,
             },
-            `Token verified: ${userId}, clientType: ${clientType || 'user-scoped'}, purpose: ${clientPurpose || 'unknown'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+            `Token verified: ${userId}, clientType: ${clientType}, purpose: ${clientPurpose || 'unknown'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
         );
 
         // Store connection based on type
-        const metadata = { clientType: clientType || 'user-scoped', clientPurpose: clientPurpose || 'unknown', sessionId, machineId };
+        const metadata = { clientType, clientPurpose: clientPurpose || 'unknown', sessionId, machineId };
         let connection: ClientConnection;
         if (metadata.clientType === 'session-scoped' && sessionId) {
             connection = {
@@ -260,30 +433,21 @@ export function startSocket(app: Fastify) {
             };
         }
         eventRouter.addConnection(userId, connection);
-        incrementWebSocketConnection(connection.connectionType);
-
-        // Join Socket.IO rooms for multi-process fanout (Phase 5).
-        // Note: we keep the existing in-memory routing for now; rooms are a forward-compat hook.
-        await socket.join(getSocketRooms({
+        trackWebSocketConnection({
+            socketId: socket.id,
             userId,
-            clientType: metadata.clientType,
+            clientType: connection.connectionType,
             sessionId,
             machineId,
-        }));
-
-        // Broadcast daemon online status
-        if (connection.connectionType === 'machine-scoped') {
-            // Broadcast daemon online
-            const machineActivity = buildMachineActivityEphemeral(machineId!, true, Date.now());
-            eventRouter.emitEphemeral({
-                userId,
-                payload: machineActivity,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
-        }
+            transport,
+        });
 
         socket.on('disconnect', (reason) => {
             websocketEventsCounter.inc({ event_type: 'disconnect' });
+
+            if (!connectReady) {
+                finalizeConnectConvergence("disconnect_before_ready");
+            }
 
             if (connection.connectionType === 'machine-scoped') {
                 void machineOwnershipRegistry.releaseOwner({
@@ -295,7 +459,10 @@ export function startSocket(app: Fastify) {
 
             // Cleanup connections
             eventRouter.removeConnection(userId, connection);
-            decrementWebSocketConnection(connection.connectionType);
+            untrackWebSocketConnection({
+                socketId: socket.id,
+                reason: String(reason),
+            });
 
             const durationMs = Math.max(0, Date.now() - connectedAtMs);
             const isFastDisconnect = fastDisconnectLogThresholdMs > 0 && durationMs <= fastDisconnectLogThresholdMs;
@@ -329,16 +496,42 @@ export function startSocket(app: Fastify) {
             }
         });
 
-        // Handlers
-        let userRpcListeners = rpcListeners.get(userId);
-        if (!userRpcListeners) {
-            userRpcListeners = new Map<string, Socket>();
-            rpcListeners.set(userId, userRpcListeners);
+        if (transport === "polling") {
+            (socket.conn as unknown as { on?: (event: string, listener: (...args: any[]) => void) => void } | undefined)?.on?.(
+                "upgrade",
+                (upgradedTransport: { name?: string } | undefined) => {
+                    recordSocketTransportUpgradeOutcome({
+                        socketId: socket.id,
+                        fromTransport: "polling",
+                        toTransport: upgradedTransport?.name,
+                        result: "success",
+                    });
+                },
+            );
         }
-        rpcHandler(userId, socket, userRpcListeners, rpcListeners, {
+
+        // Join the canonical Socket.IO rooms used for multi-replica fanout and RPC routing.
+        await socket.join(getSocketRooms({
+            userId,
+            clientType: metadata.clientType,
+            sessionId,
+            machineId,
+        }));
+
+        // Broadcast daemon online status
+        if (connection.connectionType === 'machine-scoped') {
+            // Broadcast daemon online
+            const machineActivity = buildMachineActivityEphemeral(machineId!, true, Date.now());
+            eventRouter.emitEphemeral({
+                userId,
+                payload: machineActivity,
+                recipientFilter: { type: 'user-scoped-only' }
+                });
+        }
+
+        // Handlers
+        rpcHandler(userId, socket, {
             io,
-            // Cluster-aware RPC routing only works when a shared Socket.IO adapter is enabled.
-            redisRegistry: shouldEnableRedisAdapter ? { enabled: true, instanceId } : { enabled: false },
         });
         usageHandler(userId, socket);
         sessionUpdateHandler(userId, socket, connection);
@@ -360,6 +553,8 @@ export function startSocket(app: Fastify) {
         accessKeyHandler(userId, socket);
 
         // Ready
+        connectReady = true;
+        finalizeConnectConvergence("ready");
         log(
             {
                 module: 'websocket',

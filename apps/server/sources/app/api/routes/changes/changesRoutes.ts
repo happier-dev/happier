@@ -1,7 +1,7 @@
 import { db } from "@/storage/db";
 import { z } from "zod";
 import { type Fastify } from "../../types";
-import { changesRequestsCounter, changesReturnedChangesCounter } from "@/app/monitoring/metrics2";
+import { changesRequestsCounter, changesReturnedChangesCounter } from "@/app/monitoring/metrics/index";
 import { debug, warn } from "@/utils/logging/log";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 

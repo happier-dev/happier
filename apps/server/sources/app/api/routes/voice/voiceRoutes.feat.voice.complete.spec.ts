@@ -4,7 +4,9 @@ import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+const logSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("@/utils/logging/log", () => ({ log: logSpy }));
 
 const dbMocks = createDbMocks({
     voiceSessionLease: ["findFirst"],
@@ -48,6 +50,12 @@ describe("voiceRoutes (session complete)", () => {
         resetVoiceEnv();
         globalThis.fetch = originalFetch;
     });
+
+    function renderedLogs(): string {
+        return logSpy.mock.calls
+            .flatMap((call) => call.map((value) => (typeof value === "string" ? value : JSON.stringify(value))))
+            .join(" ");
+    }
 
     it("fetches conversation details and stores duration for a valid lease", async () => {
         (globalThis.fetch as any).mockResolvedValueOnce({
@@ -137,5 +145,42 @@ describe("voiceRoutes (session complete)", () => {
 
         expect(reply.code).toHaveBeenCalledWith(503);
         expect(res).toEqual({ ok: false, reason: "upstream_error" });
+        expect(renderedLogs()).not.toContain("lease_1");
+        expect(renderedLogs()).not.toContain("conv_123");
+    });
+
+    it("returns 404 when the provider-reported duration exceeds the lease window", async () => {
+        const startedAt = new Date("2026-02-01T00:50:00.000Z");
+        const startedAtUnixSecs = Math.floor(startedAt.getTime() / 1000);
+
+        (globalThis.fetch as any).mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+                conversation_id: "conv_123",
+                agent_id: "agent_dev",
+                metadata: {
+                    start_time_unix_secs: startedAtUnixSecs,
+                    // Lease expires at 01:00Z (+5m slack), so this pushes endedAt beyond the upper bound.
+                    call_duration_secs: 20 * 60,
+                },
+            }),
+        });
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/session/complete",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { response: res, reply } = await route.invoke({
+            userId: "u1",
+            body: { leaseId: "lease_1", providerConversationId: "conv_123" },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(404);
+        expect(res).toEqual({ ok: false, reason: "not_found" });
+        expect(conversationUpsert).not.toHaveBeenCalled();
     });
 });

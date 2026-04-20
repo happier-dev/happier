@@ -3,7 +3,33 @@ import { describe, expect, it, vi } from "vitest";
 import { markAccountChanged } from "./markAccountChanged";
 
 describe("markAccountChanged", () => {
-    it("allocates a unique cursor and upserts the coalesced row", async () => {
+    it("uses the atomic postgres fast path when raw query execution is available", async () => {
+        process.env.HAPPIER_DB_PROVIDER = "postgres";
+        const tx: any = {
+            $queryRawUnsafe: vi.fn().mockResolvedValue([{ cursor: 7 }]),
+            account: {
+                update: vi.fn(),
+            },
+            accountChange: {
+                upsert: vi.fn(),
+            },
+        };
+
+        const cursor = await markAccountChanged(tx, {
+            accountId: "a1",
+            kind: "session",
+            entityId: "s1",
+            hint: { lastMessageSeq: 123 },
+        });
+
+        expect(cursor).toBe(7);
+        expect(tx.$queryRawUnsafe).toHaveBeenCalledTimes(1);
+        expect(tx.account.update).not.toHaveBeenCalled();
+        expect(tx.accountChange.upsert).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the Prisma update + upsert path outside the postgres raw fast path", async () => {
+        process.env.HAPPIER_DB_PROVIDER = "sqlite";
         const tx: any = {
             account: {
                 update: vi.fn().mockResolvedValue({ seq: 7 }),

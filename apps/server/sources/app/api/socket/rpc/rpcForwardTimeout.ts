@@ -1,14 +1,14 @@
 function parsePositiveIntOrDefault(value: string | undefined, fallback: number): number {
-    if (typeof value !== 'string') return fallback;
+    if (typeof value !== "string") return fallback;
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function parsePositiveInt(value: unknown): number | null {
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
         return Math.floor(value);
     }
-    if (typeof value !== 'string') return null;
+    if (typeof value !== "string") return null;
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
@@ -24,7 +24,7 @@ const RPC_FORWARD_MAX_TIMEOUT_MS = parsePositiveIntOrDefault(
 );
 
 function resolveRpcDefaultForwardTimeoutMs(method: string): number {
-    return method.endsWith(':capabilities.invoke') || method.endsWith(':capabilities.detect') || method.endsWith(':capabilities.describe')
+    return method.endsWith(":capabilities.invoke") || method.endsWith(":capabilities.detect") || method.endsWith(":capabilities.describe")
         ? RPC_FORWARD_CAPABILITIES_TIMEOUT_MS
         : RPC_FORWARD_TIMEOUT_MS;
 }

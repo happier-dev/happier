@@ -6,21 +6,50 @@ import { delay } from "@/utils/runtime/delay";
 import { shutdownSignal } from "@/utils/process/shutdown";
 import { log } from "@/utils/logging/log";
 import { randomUUID } from "node:crypto";
+import { readPresenceRedisWorkerConfigFromEnv, readPresenceStreamConfigFromEnv } from "@/config/presence";
+import {
+    observePresenceStreamFlush,
+    recordPresenceStreamAck,
+    recordPresenceStreamInvalidEntry,
+    recordPresenceStreamRedisPendingRefreshFailure,
+    recordPresenceStreamRead,
+    recordPresenceStreamReclaim,
+    setPresenceStreamPendingEntries,
+    setPresenceStreamRedisPendingEntries,
+} from "@/app/monitoring/metrics/index";
 
 const STREAM_KEY = "presence:alive:v1";
 const GROUP = "presence-worker";
-const DEFAULT_MAXLEN = 100_000;
-const DEFAULT_RECLAIM_IDLE_MS = 60_000;
 
 type PresenceKind = "session" | "machine";
 
+async function runWithConcurrencyLimit<T>(
+    items: readonly T[],
+    concurrency: number,
+    iteratee: (item: T) => Promise<void>,
+): Promise<void> {
+    if (items.length === 0) {
+        return;
+    }
+
+    let index = 0;
+    const workerCount = Math.min(Math.max(1, concurrency), items.length);
+    await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+            while (true) {
+                const currentIndex = index;
+                index += 1;
+                if (currentIndex >= items.length) {
+                    return;
+                }
+                await iteratee(items[currentIndex]);
+            }
+        }),
+    );
+}
+
 function getStreamMaxLen(env: NodeJS.ProcessEnv): number | null {
-    const raw = env.HAPPY_PRESENCE_STREAM_MAXLEN?.trim();
-    if (!raw) return DEFAULT_MAXLEN;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) return DEFAULT_MAXLEN;
-    if (n === 0) return null;
-    return Math.floor(n);
+    return readPresenceStreamConfigFromEnv(env).streamMaxLen;
 }
 
 function getConsumerName(env: NodeJS.ProcessEnv): string {
@@ -86,57 +115,88 @@ function parseFields(fields: Array<string>): Record<string, string> {
     return out;
 }
 
-async function flushBatch(batcher: PresenceBatcher): Promise<void> {
+async function flushBatch(batcher: PresenceBatcher, dbWriteConcurrency: number): Promise<void> {
+    const startedAt = Date.now();
     const snapshot = batcher.snapshot();
     const { sessions, machines } = snapshot;
 
     if (sessions.length > 0) {
-        const results = await Promise.allSettled(
-            sessions.map((s) =>
-                db.session.update({
-                    where: { id: s.sessionId },
-                    data: { lastActiveAt: new Date(s.timestamp), active: true },
-                }),
-            ),
+        await runWithConcurrencyLimit(
+            sessions,
+            dbWriteConcurrency,
+            async (sessionPresence) => {
+                try {
+                    await db.session.updateMany({
+                        where: { id: sessionPresence.sessionId },
+                        data: { lastActiveAt: new Date(sessionPresence.timestamp), active: true },
+                    });
+                } catch (error) {
+                    // Presence is best-effort; ignore missing/deleted entities and keep the worker alive.
+                    log(
+                        { module: "presence-redis-worker", level: "warn" },
+                        `Session presence update failed: ${error}`,
+                    );
+                }
+            },
         );
-        for (const r of results) {
-            if (r.status === "rejected") {
-                // Presence is best-effort; ignore missing/deleted entities and keep the worker alive.
-                log({ module: "presence-redis-worker", level: "warn" }, `Session presence update failed: ${r.reason}`);
-            }
-        }
     }
 
     if (machines.length > 0) {
-        const results = await Promise.allSettled(
-            machines.map((m) =>
-                db.machine.update({
-                    where: { accountId_id: { accountId: m.accountId, id: m.machineId } },
-                    data: { lastActiveAt: new Date(m.timestamp), active: true },
-                }),
-            ),
+        await runWithConcurrencyLimit(
+            machines,
+            dbWriteConcurrency,
+            async (machinePresence) => {
+                try {
+                    await db.machine.updateMany({
+                        where: {
+                            accountId: machinePresence.accountId,
+                            id: machinePresence.machineId,
+                            revokedAt: null,
+                        },
+                        data: { lastActiveAt: new Date(machinePresence.timestamp), active: true },
+                    });
+                } catch (error) {
+                    log(
+                        { module: "presence-redis-worker", level: "warn" },
+                        `Machine presence update failed: ${error}`,
+                    );
+                }
+            },
         );
-        for (const r of results) {
-            if (r.status === "rejected") {
-                log({ module: "presence-redis-worker", level: "warn" }, `Machine presence update failed: ${r.reason}`);
-            }
-        }
     }
 
     batcher.commit(snapshot);
+    observePresenceStreamFlush({
+        durationMs: Date.now() - startedAt,
+        sessionCount: sessions.length,
+        machineCount: machines.length,
+    });
+}
+
+async function refreshRedisPendingEntries(redis: ReturnType<typeof getRedisClient>): Promise<void> {
+    try {
+        const summary = await (redis as any).xpending(STREAM_KEY, GROUP);
+        const count = Array.isArray(summary) ? Number(summary[0]) : 0;
+        setPresenceStreamRedisPendingEntries(Number.isFinite(count) ? count : 0);
+    } catch {
+        recordPresenceStreamRedisPendingRefreshFailure();
+    }
 }
 
 export function startPresenceRedisWorker(params?: {
+    dbWriteConcurrency?: number;
     flushIntervalMs?: number;
     readBlockMs?: number;
     readCount?: number;
     consumerName?: string;
     reclaimIdleMs?: number;
 }): { stop: () => Promise<void> } {
-    const flushIntervalMs = params?.flushIntervalMs ?? 5000;
-    const readBlockMs = params?.readBlockMs ?? 5000;
-    const readCount = params?.readCount ?? 200;
-    const reclaimIdleMs = params?.reclaimIdleMs ?? DEFAULT_RECLAIM_IDLE_MS;
+    const defaults = readPresenceRedisWorkerConfigFromEnv(process.env);
+    const dbWriteConcurrency = params?.dbWriteConcurrency ?? defaults.dbWriteConcurrency;
+    const flushIntervalMs = params?.flushIntervalMs ?? defaults.flushIntervalMs;
+    const readBlockMs = params?.readBlockMs ?? defaults.readBlockMs;
+    const readCount = params?.readCount ?? defaults.readCount;
+    const reclaimIdleMs = params?.reclaimIdleMs ?? defaults.reclaimIdleMs;
 
     const redis = getRedisClient();
     const batcher = new PresenceBatcher();
@@ -147,11 +207,14 @@ export function startPresenceRedisWorker(params?: {
 
     const startTimer = () => {
         flushTimer = setInterval(() => {
-            flushBatch(batcher)
+            flushBatch(batcher, dbWriteConcurrency)
                 .then(async () => {
                     if (pendingAckIds.length === 0) return;
                     const ids = pendingAckIds.splice(0, pendingAckIds.length);
                     await redis.xack(STREAM_KEY, GROUP, ...ids);
+                    recordPresenceStreamAck(ids.length);
+                    setPresenceStreamPendingEntries(pendingAckIds.length);
+                    await refreshRedisPendingEntries(redis);
                 })
                 .catch((e) => {
                 log({ module: "presence-redis-worker", level: "error" }, `Error flushing presence batch: ${e}`);
@@ -165,11 +228,14 @@ export function startPresenceRedisWorker(params?: {
             clearInterval(flushTimer);
             flushTimer = null;
         }
-        await flushBatch(batcher);
+        await flushBatch(batcher, dbWriteConcurrency);
         if (pendingAckIds.length > 0) {
             const ids = pendingAckIds.splice(0, pendingAckIds.length);
             await redis.xack(STREAM_KEY, GROUP, ...ids);
+            recordPresenceStreamAck(ids.length);
         }
+        setPresenceStreamPendingEntries(pendingAckIds.length);
+        await refreshRedisPendingEntries(redis);
     };
 
     void forever("presence-redis-worker", async () => {
@@ -192,6 +258,8 @@ export function startPresenceRedisWorker(params?: {
                         readCount,
                     );
                     const entries = Array.isArray(res) ? res[1] : [];
+                    recordPresenceStreamReclaim(entries.length);
+                    recordPresenceStreamRead("reclaim", entries.length);
                     for (const [id, fields] of entries as any[]) {
                         const map = parseFields(fields as any);
                         const kind = map.kind as PresenceKind | undefined;
@@ -200,7 +268,9 @@ export function startPresenceRedisWorker(params?: {
                         const accountId = map.accountId || "";
 
                         if (!kind || !entityId || !Number.isFinite(ts)) {
+                            recordPresenceStreamInvalidEntry();
                             pendingAckIds.push(id);
+                            setPresenceStreamPendingEntries(pendingAckIds.length);
                             continue;
                         }
 
@@ -211,7 +281,9 @@ export function startPresenceRedisWorker(params?: {
                         }
 
                         pendingAckIds.push(id);
+                        setPresenceStreamPendingEntries(pendingAckIds.length);
                     }
+                    await refreshRedisPendingEntries(redis);
                 } catch (e) {
                     // Best-effort: do not kill the worker if reclaim fails.
                     log({ module: "presence-redis-worker", level: "warn" }, `Presence reclaim failed: ${e}`);
@@ -236,7 +308,9 @@ export function startPresenceRedisWorker(params?: {
                 continue;
             }
 
+            let readEntryCount = 0;
             for (const [, entries] of res as any) {
+                readEntryCount += Array.isArray(entries) ? entries.length : 0;
                 for (const [id, fields] of entries as any[]) {
                     const map = parseFields(fields as any);
                     const kind = map.kind as PresenceKind | undefined;
@@ -245,7 +319,9 @@ export function startPresenceRedisWorker(params?: {
                     const accountId = map.accountId || "";
 
                     if (!kind || !entityId || !Number.isFinite(ts)) {
+                        recordPresenceStreamInvalidEntry();
                         pendingAckIds.push(id);
+                        setPresenceStreamPendingEntries(pendingAckIds.length);
                         continue;
                     }
 
@@ -256,8 +332,11 @@ export function startPresenceRedisWorker(params?: {
                     }
 
                     pendingAckIds.push(id);
+                    setPresenceStreamPendingEntries(pendingAckIds.length);
                 }
             }
+            recordPresenceStreamRead("stream", readEntryCount);
+            await refreshRedisPendingEntries(redis);
         }
     });
 

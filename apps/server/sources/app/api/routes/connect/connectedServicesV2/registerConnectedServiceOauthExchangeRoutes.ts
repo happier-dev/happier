@@ -13,6 +13,7 @@ import {
   ConnectedServiceOauthStateMismatchError,
   ConnectedServiceOauthTimeoutError,
   exchangeConnectedServiceOauthTokens,
+  resolveConnectedServiceOauthExchangeBlockedReason,
 } from "./exchangeConnectedServiceOauthTokens";
 
 const CONNECTED_SERVICE_OAUTH_PUBLIC_KEY_MAX_LEN = 512;
@@ -64,7 +65,7 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
     },
   }, async (request, reply) => {
     const serviceId = request.params.serviceId satisfies ConnectedServiceId;
-    if (serviceId === "anthropic" || serviceId === "openai") {
+    if (resolveConnectedServiceOauthExchangeBlockedReason(serviceId)) {
       return reply.code(400).send({ error: CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed });
     }
     try {

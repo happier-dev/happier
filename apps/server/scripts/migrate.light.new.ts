@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import tmp from 'tmp';
+import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -51,7 +52,7 @@ async function main() {
 
     // Use an isolated temp DB file so creating migrations never touches a user's real light DB.
     const dbFile = tmp.fileSync({ prefix: 'happy-server-light-migrate-', postfix: '.sqlite' }).name;
-    env.DATABASE_URL = `file:${dbFile}`;
+    env.DATABASE_URL = renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: dbFile, platform: process.platform });
 
     await run('yarn', ['-s', 'schema:sync', '--quiet'], env);
     await run(

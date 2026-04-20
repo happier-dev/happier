@@ -19,6 +19,10 @@ export interface SessionAccess {
     level: AccessLevel;
     /** Whether user is session owner */
     isOwner: boolean;
+    /** Cached session activity state, when available from the access lookup */
+    sessionActive?: boolean;
+    /** Cached session last-active timestamp, when available from the access lookup */
+    sessionLastActiveAt?: Date | null;
 }
 
 /**
@@ -35,7 +39,11 @@ export async function checkSessionAccess(
     // First check if user owns the session
     const session = await db.session.findUnique({
         where: { id: sessionId },
-        select: { accountId: true }
+        select: {
+            accountId: true,
+            active: true,
+            lastActiveAt: true,
+        }
     });
 
     if (!session) {
@@ -47,7 +55,9 @@ export async function checkSessionAccess(
             userId,
             sessionId,
             level: 'owner',
-            isOwner: true
+            isOwner: true,
+            sessionActive: session.active,
+            sessionLastActiveAt: session.lastActiveAt,
         };
     }
 
@@ -67,7 +77,9 @@ export async function checkSessionAccess(
             userId,
             sessionId,
             level: share.accessLevel,
-            isOwner: false
+            isOwner: false,
+            sessionActive: session.active,
+            sessionLastActiveAt: session.lastActiveAt,
         };
     }
 

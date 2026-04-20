@@ -75,6 +75,17 @@ type OauthExchangePayload = Readonly<{
     raw: unknown;
 }>;
 
+type SupportedConnectedServiceOauthExchangeId = "openai-codex" | "gemini" | "claude-subscription";
+
+type ConnectedServiceOauthExchangeHandler = (params: Readonly<{
+    code: string;
+    verifier: string;
+    redirectUri: string;
+    state?: string | null;
+    now: number;
+    fetcher: typeof fetch;
+}>) => Promise<OauthExchangePayload>;
+
 function parseRecipientPublicKey(publicKeyB64Url: string): Uint8Array {
     const bytes = decodeBase64(publicKeyB64Url, "base64url");
     if (bytes.length !== BOX_BUNDLE_PUBLIC_KEY_BYTES) {
@@ -103,6 +114,17 @@ function createFetchWithTimeout(fetcher: typeof fetch, timeoutMs: number): typeo
             clearTimeout(timeout);
         }
     };
+}
+
+const CONNECTED_SERVICE_OAUTH_EXCHANGE_BLOCKED_REASON_BY_SERVICE_ID = {
+    anthropic: "Anthropic OAuth exchange is not supported. Use an API key instead.",
+    openai: "OpenAI API key service does not support OAuth exchange.",
+} as const satisfies Readonly<Record<"anthropic" | "openai", string>>;
+
+export function resolveConnectedServiceOauthExchangeBlockedReason(serviceId: ConnectedServiceId): string | null {
+    return serviceId in CONNECTED_SERVICE_OAUTH_EXCHANGE_BLOCKED_REASON_BY_SERVICE_ID
+        ? CONNECTED_SERVICE_OAUTH_EXCHANGE_BLOCKED_REASON_BY_SERVICE_ID[serviceId as keyof typeof CONNECTED_SERVICE_OAUTH_EXCHANGE_BLOCKED_REASON_BY_SERVICE_ID]
+        : null;
 }
 
 async function exchangeOpenAiCodex(params: Readonly<{
@@ -279,6 +301,27 @@ async function exchangeClaudeSubscription(params: Readonly<{
     };
 }
 
+const CONNECTED_SERVICE_OAUTH_EXCHANGE_HANDLERS = {
+    "openai-codex": exchangeOpenAiCodex,
+    gemini: exchangeGemini,
+    "claude-subscription": async (params) => {
+        const state = typeof params.state === "string" ? params.state.trim() : "";
+        if (!state) throw new ConnectedServiceOauthStateMismatchError();
+        return await exchangeClaudeSubscription({
+            code: params.code,
+            verifier: params.verifier,
+            redirectUri: params.redirectUri,
+            state,
+            now: params.now,
+            fetcher: params.fetcher,
+        });
+    },
+} as const satisfies Readonly<Record<SupportedConnectedServiceOauthExchangeId, ConnectedServiceOauthExchangeHandler>>;
+
+function resolveConnectedServiceOauthExchangeHandler(serviceId: ConnectedServiceId): ConnectedServiceOauthExchangeHandler | null {
+    return (CONNECTED_SERVICE_OAUTH_EXCHANGE_HANDLERS as Partial<Record<ConnectedServiceId, ConnectedServiceOauthExchangeHandler>>)[serviceId] ?? null;
+}
+
 export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeInput): Promise<Readonly<{
     bundleB64Url: string;
 }>> {
@@ -288,42 +331,23 @@ export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeI
     const recipientPublicKey = parseRecipientPublicKey(params.publicKeyB64Url);
 
     const payload = await (async () => {
-        if (params.serviceId === "openai-codex") {
-            return await exchangeOpenAiCodex({
+        const handler = resolveConnectedServiceOauthExchangeHandler(params.serviceId);
+        if (handler) {
+            return await handler({
                 code: params.code,
                 verifier: params.verifier,
                 redirectUri: params.redirectUri,
+                state: params.state ?? null,
                 now: params.now,
                 fetcher,
             });
         }
-        if (params.serviceId === "anthropic") {
-            throw new Error("Anthropic OAuth exchange is not supported. Use an API key instead.");
+
+        const blockedReason = resolveConnectedServiceOauthExchangeBlockedReason(params.serviceId);
+        if (blockedReason) {
+            throw new Error(blockedReason);
         }
-        if (params.serviceId === "openai") {
-            throw new Error("OpenAI API key service does not support OAuth exchange.");
-        }
-        if (params.serviceId === "claude-subscription") {
-            const state = params.state?.trim() ?? "";
-            if (!state) throw new ConnectedServiceOauthStateMismatchError();
-            return await exchangeClaudeSubscription({
-                code: params.code,
-                verifier: params.verifier,
-                redirectUri: params.redirectUri,
-                state,
-                now: params.now,
-                fetcher,
-            });
-        }
-        if (params.serviceId === "gemini") {
-            return await exchangeGemini({
-                code: params.code,
-                verifier: params.verifier,
-                redirectUri: params.redirectUri,
-                now: params.now,
-                fetcher,
-            });
-        }
+
         throw new Error("Unsupported connected service");
     })();
 

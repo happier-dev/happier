@@ -1,4 +1,4 @@
-import type { Log } from "@sentry/core";
+import type { Log } from "@sentry/node";
 
 const REDACTED_VALUE = "[redacted]";
 

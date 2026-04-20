@@ -6,6 +6,7 @@ vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 // Keep change tracking/events out of scope for this behavior test.
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 0) }));
+vi.mock("@/app/changes/markAccountChangedAfterCommit", () => ({ markAccountChangedAfterCommit: vi.fn(async () => 0) }));
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate: vi.fn() },
     buildNewMachineUpdate: vi.fn(),

@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
 import { PGlite } from '@electric-sql/pglite';
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
 import { acquirePgliteDirLock } from '../sources/storage/locks/pgliteLock';
+import { applyPostgresMigrations } from './prismaMigrations';
+import { resolveServerWorkspaceRoot } from './prismaCli';
+import { join } from 'node:path';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -13,6 +15,7 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
             env: env as Record<string, string>,
             stdio: 'inherit',
             shell: false,
+            cwd: resolveServerWorkspaceRoot(import.meta.url),
         });
         child.on('error', reject);
         child.on('exit', (code) => {
@@ -24,6 +27,7 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
 
 async function main() {
     const env: NodeJS.ProcessEnv = { ...process.env };
+    const serverRoot = resolveServerWorkspaceRoot(import.meta.url);
     applyLightDefaultEnv(env);
 
     const dataDir = requireLightDataDir(env);
@@ -57,9 +61,10 @@ async function main() {
         url.searchParams.set('connection_limit', '1');
         env.DATABASE_URL = url.toString();
 
-        const require = createRequire(import.meta.url);
-        const prismaCliPath = require.resolve('prisma/build/index.js');
-        await run(process.execPath, [prismaCliPath, 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], env);
+        await applyPostgresMigrations({
+            db: pglite,
+            migrationsDir: join(serverRoot, 'prisma', 'migrations'),
+        });
     } finally {
         await server?.stop().catch(() => {});
         await pglite?.close().catch(() => {});

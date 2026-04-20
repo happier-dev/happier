@@ -110,7 +110,7 @@ const markAccountChanged = vi.fn(async (_tx: any, params: any) => {
 });
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+vi.mock("@/app/monitoring/metrics/index", () => ({
     sessionAliveEventsCounter: { inc: vi.fn() },
     websocketEventsCounter: { inc: vi.fn() },
 }));

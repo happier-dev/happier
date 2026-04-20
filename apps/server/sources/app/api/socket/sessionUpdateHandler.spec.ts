@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
-const createSessionMessage = vi.fn(async () => ({ ok: false, error: "invalid-params" }));
+const createSessionMessage = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ ok: false, error: "invalid-params" }));
 const emitEphemeral = vi.fn();
 vi.mock("@/app/session/sessionWriteService", () => ({
     createSessionMessage,
@@ -36,7 +36,13 @@ const getSessionParticipantUserIds = vi.fn(async () => ["user-1"]);
 vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
 }));
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+const refreshSessionParticipantBadgePushes = vi.fn(async () => {});
+vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
+    refreshSessionParticipantBadgePushes,
+}));
+const logInfo = vi.fn();
+const logDebug = vi.fn();
+vi.mock("@/utils/logging/log", () => ({ log: logInfo, debug: logDebug }));
 
 describe("sessionUpdateHandler", () => {
     let registerSessionUpdateHandler: (userId: string, socket: any, connection: any) => void;
@@ -51,6 +57,9 @@ describe("sessionUpdateHandler", () => {
         checkSessionAccess.mockClear();
         requireAccessLevel.mockClear();
         getSessionParticipantUserIds.mockClear();
+        refreshSessionParticipantBadgePushes.mockClear();
+        logInfo.mockClear();
+        logDebug.mockClear();
     });
 
     it("does not crash on invalid message payloads and acks with invalid-params when callback is provided", async () => {
@@ -137,6 +146,100 @@ describe("sessionUpdateHandler", () => {
             sidechainId: null,
         });
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: "invalid-params" }));
+    });
+
+    it("writes the inbound message trace through debug logging instead of info logging", async () => {
+        const socket = createFakeSocket();
+
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "message");
+        const callback = vi.fn();
+        await handler({ sid: "s-1", message: "enc", localId: "l-1" }, callback);
+
+        expect(logDebug).toHaveBeenCalledWith(
+            { module: "websocket" },
+            expect.stringContaining("Received message from socket"),
+        );
+        expect(logInfo).not.toHaveBeenCalledWith(
+            { module: "websocket" },
+            expect.stringContaining("Received message from socket"),
+        );
+    });
+
+    it("does not hold the per-socket message lock on slow badge refresh work", async () => {
+        let resolveFirstRefresh: (() => void) | undefined;
+        const firstRefresh = new Promise<void>((resolve) => {
+            resolveFirstRefresh = () => resolve();
+        });
+        refreshSessionParticipantBadgePushes
+            .mockImplementationOnce(() => firstRefresh)
+            .mockResolvedValueOnce(undefined);
+        createSessionMessage
+            .mockResolvedValueOnce({
+                ok: true,
+                didWrite: true,
+                didUpdate: false,
+                badgeAttentionChanged: true,
+                message: {
+                    id: "m-1",
+                    seq: 1,
+                    localId: "l-1",
+                    sidechainId: null,
+                    content: { t: "encrypted", c: "enc-1" },
+                    createdAt: new Date(1),
+                    updatedAt: new Date(1),
+                },
+                participantCursors: [{ accountId: "user-1", cursor: 1 }],
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                didWrite: true,
+                didUpdate: false,
+                badgeAttentionChanged: true,
+                message: {
+                    id: "m-2",
+                    seq: 2,
+                    localId: "l-2",
+                    sidechainId: null,
+                    content: { t: "encrypted", c: "enc-2" },
+                    createdAt: new Date(2),
+                    updatedAt: new Date(2),
+                },
+                participantCursors: [{ accountId: "user-1", cursor: 2 }],
+            });
+
+        const socket = createFakeSocket();
+
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "message");
+
+        const firstCallback = vi.fn();
+        const secondCallback = vi.fn();
+        const firstPromise = Promise.resolve(handler({ sid: "s-1", message: "enc-1", localId: "l-1" }, firstCallback));
+        await Promise.resolve();
+        const secondPromise = Promise.resolve(handler({ sid: "s-1", message: "enc-2", localId: "l-2" }, secondCallback));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(createSessionMessage).toHaveBeenCalledTimes(2);
+        expect(firstCallback).toHaveBeenCalledWith(expect.objectContaining({ ok: true, id: "m-1", seq: 1, localId: "l-1" }));
+        expect(secondCallback).toHaveBeenCalledWith(expect.objectContaining({ ok: true, id: "m-2", seq: 2, localId: "l-2" }));
+
+        if (!resolveFirstRefresh) {
+            throw new Error("expected first refresh resolver");
+        }
+        resolveFirstRefresh();
+        await Promise.all([firstPromise, secondPromise]);
     });
 
 });

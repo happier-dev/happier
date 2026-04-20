@@ -1,6 +1,9 @@
 import { Redis } from "ioredis";
 
+import { instrumentRedisClient } from "@/app/monitoring/metrics/instrumentRedisClient";
+
 let _redis: Redis | null = null;
+let _instrumentedRedis: Redis | null = null;
 
 export function getRedisClient(): Redis {
     const url = process.env.REDIS_URL?.trim();
@@ -9,6 +12,7 @@ export function getRedisClient(): Redis {
     }
     if (!_redis) {
         _redis = new Redis(url);
+        _instrumentedRedis = instrumentRedisClient(_redis) as Redis;
     }
-    return _redis;
+    return _instrumentedRedis!;
 }

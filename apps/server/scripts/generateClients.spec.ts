@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isMainModule, prismaGenerateDatabaseUrlForProvider, resolveBuildDbProvidersFromEnv } from "./generateClients";
+import {
+    areRequestedPrismaOutputsCurrent,
+    isMainModule,
+    prismaGenerateDatabaseUrlForProvider,
+    resolveBuildDbProvidersFromEnv,
+} from "./generateClients";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -64,5 +69,137 @@ describe("prismaGenerateDatabaseUrlForProvider", () => {
         expect(prismaGenerateDatabaseUrlForProvider("postgres")).toMatch(/^postgresql:\/\//);
         expect(prismaGenerateDatabaseUrlForProvider("mysql")).toMatch(/^mysql:\/\//);
         expect(prismaGenerateDatabaseUrlForProvider("sqlite")).toMatch(/^file:/);
+    });
+});
+
+describe("areRequestedPrismaOutputsCurrent", () => {
+    it("returns true when the generated clients already match the requested schemas", async () => {
+        const serverRoot = "/repo/apps/server";
+        const sharedSchema = `
+            generator client {
+                provider = "prisma-client-js"
+                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
+            }
+        `;
+        const files = new Map<string, string>([
+            ["/repo/apps/server/prisma/schema.prisma", sharedSchema],
+            ["/repo/node_modules/.prisma/client/schema.prisma", sharedSchema],
+            ["/repo/node_modules/.prisma/client/index.js", "module.exports = {}\n"],
+            ["/repo/node_modules/.prisma/client/default.js", "module.exports = {}\n"],
+            ["/repo/node_modules/.prisma/client/package.json", "{\n}\n"],
+            ["/repo/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-darwin.dylib.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-darwin-arm64.dylib.node", ""],
+            ["/repo/node_modules/.prisma/client/query_engine-windows.dll.node", ""],
+            ["/repo/apps/server/prisma/sqlite/schema.prisma", sharedSchema],
+            ["/repo/apps/server/generated/sqlite-client/schema.prisma", sharedSchema],
+            ["/repo/apps/server/generated/sqlite-client/index.js", "module.exports = {}\n"],
+            ["/repo/apps/server/generated/sqlite-client/default.js", "module.exports = {}\n"],
+            ["/repo/apps/server/generated/sqlite-client/package.json", "{\n}\n"],
+            ["/repo/apps/server/generated/sqlite-client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
+            ["/repo/apps/server/generated/sqlite-client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
+            ["/repo/apps/server/generated/sqlite-client/libquery_engine-darwin.dylib.node", ""],
+            ["/repo/apps/server/generated/sqlite-client/libquery_engine-darwin-arm64.dylib.node", ""],
+            ["/repo/apps/server/generated/sqlite-client/query_engine-windows.dll.node", ""],
+            ["/repo/apps/server/prisma/mysql/schema.prisma", sharedSchema],
+            ["/repo/apps/server/generated/mysql-client/schema.prisma", sharedSchema],
+            ["/repo/apps/server/generated/mysql-client/index.js", "module.exports = {}\n"],
+            ["/repo/apps/server/generated/mysql-client/default.js", "module.exports = {}\n"],
+            ["/repo/apps/server/generated/mysql-client/package.json", "{\n}\n"],
+            ["/repo/apps/server/generated/mysql-client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
+            ["/repo/apps/server/generated/mysql-client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
+            ["/repo/apps/server/generated/mysql-client/libquery_engine-darwin.dylib.node", ""],
+            ["/repo/apps/server/generated/mysql-client/libquery_engine-darwin-arm64.dylib.node", ""],
+            ["/repo/apps/server/generated/mysql-client/query_engine-windows.dll.node", ""],
+        ]);
+
+        const current = await areRequestedPrismaOutputsCurrent({
+            serverRoot,
+            providers: new Set(["postgres", "sqlite", "mysql"]),
+            fileExists: async (path) => files.has(path),
+            readText: async (path) => {
+                const value = files.get(path);
+                if (typeof value !== "string") {
+                    throw new Error(`Unexpected file read: ${path}`);
+                }
+                return value;
+            },
+        });
+
+        expect(current).toBe(true);
+    });
+
+    it("returns false when a requested generated schema drifts from the source schema", async () => {
+        const serverRoot = "/repo/apps/server";
+        const sharedSchema = `
+            generator client {
+                provider = "prisma-client-js"
+                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
+            }
+        `;
+        const files = new Map<string, string>([
+            ["/repo/apps/server/prisma/schema.prisma", sharedSchema],
+            ["/repo/node_modules/.prisma/client/schema.prisma", `${sharedSchema}\n// drifted`],
+            ["/repo/node_modules/.prisma/client/index.js", "module.exports = {}\n"],
+            ["/repo/node_modules/.prisma/client/default.js", "module.exports = {}\n"],
+            ["/repo/node_modules/.prisma/client/package.json", "{\n}\n"],
+            ["/repo/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-darwin.dylib.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-darwin-arm64.dylib.node", ""],
+            ["/repo/node_modules/.prisma/client/query_engine-windows.dll.node", ""],
+        ]);
+
+        const current = await areRequestedPrismaOutputsCurrent({
+            serverRoot,
+            providers: new Set(["postgres"]),
+            fileExists: async (path) => files.has(path),
+            readText: async (path) => {
+                const value = files.get(path);
+                if (typeof value !== "string") {
+                    throw new Error(`Unexpected file read: ${path}`);
+                }
+                return value;
+            },
+        });
+
+        expect(current).toBe(false);
+    });
+
+    it("returns false when a requested generated client is missing a declared Prisma engine binary", async () => {
+        const serverRoot = "/repo/apps/server";
+        const sharedSchema = `
+            generator client {
+                provider = "prisma-client-js"
+                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
+            }
+        `;
+        const files = new Map<string, string>([
+            ["/repo/apps/server/prisma/schema.prisma", sharedSchema],
+            ["/repo/node_modules/.prisma/client/schema.prisma", sharedSchema],
+            ["/repo/node_modules/.prisma/client/index.js", "module.exports = {}\n"],
+            ["/repo/node_modules/.prisma/client/default.js", "module.exports = {}\n"],
+            ["/repo/node_modules/.prisma/client/package.json", "{\n}\n"],
+            ["/repo/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
+            ["/repo/node_modules/.prisma/client/libquery_engine-darwin.dylib.node", ""],
+            ["/repo/node_modules/.prisma/client/query_engine-windows.dll.node", ""],
+        ]);
+
+        const current = await areRequestedPrismaOutputsCurrent({
+            serverRoot,
+            providers: new Set(["postgres"]),
+            fileExists: async (path) => files.has(path),
+            readText: async (path) => {
+                const value = files.get(path);
+                if (typeof value !== "string") {
+                    throw new Error(`Unexpected file read: ${path}`);
+                }
+                return value;
+            },
+        });
+
+        expect(current).toBe(false);
     });
 });

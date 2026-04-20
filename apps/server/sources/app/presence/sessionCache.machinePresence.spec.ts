@@ -4,9 +4,12 @@ import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-vi.mock("@/app/monitoring/metrics2", () => ({
+const recordPresenceFlushRetry = vi.fn();
+
+vi.mock("@/app/monitoring/metrics/index", () => ({
     sessionCacheCounter: { inc: vi.fn() },
     databaseUpdatesSkippedCounter: { inc: vi.fn() },
+    recordPresenceFlushRetry,
 }));
 
 vi.mock("@/app/share/accessControl", () => ({
@@ -97,6 +100,24 @@ describe("ActivityCache machine presence", () => {
         expect(ok).toBe(false);
     });
 
+    it("reuses a seeded machine validation without issuing any machine lookup", async () => {
+        ({ activityCache } = await import("./sessionCache"));
+
+        activityCache.seedMachineValidity({
+            machineId: "m1",
+            userId: "u1",
+            active: true,
+            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
+        });
+
+        dbMocks.db.machine.findUnique.mockClear();
+
+        const ok = await activityCache.isMachineValid("m1", "u1");
+
+        expect(ok).toBe(true);
+        expect(dbMocks.db.machine.findUnique).not.toHaveBeenCalled();
+    });
+
     it("does not issue concurrent machine update queries while flushing pending updates", async () => {
         const { log } = await import("@/utils/logging/log");
         let inFlight = 0;
@@ -158,6 +179,10 @@ describe("ActivityCache machine presence", () => {
             expect.objectContaining({ level: "error" }),
             expect.stringContaining("Error updating machine"),
         );
+        expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
+            entityType: "machine",
+            reason: "db-error",
+        });
 
         // Second flush retries m1 (now succeeds).
         await (activityCache as any).flushPendingUpdates();

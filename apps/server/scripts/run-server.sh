@@ -50,10 +50,17 @@ if [ "$should_migrate" = "1" ] && [ "${RUN_MIGRATIONS:-1}" != "0" ]; then
 
     if [ "$provider" = "postgres" ] || [ "$provider" = "postgresql" ]; then
       if echo "$out" | grep -q "Timed out trying to acquire a postgres advisory lock"; then
-      echo "[entrypoint] Advisory lock timeout; retrying in ${delay}s..."
-      sleep "$delay"
-      i=$((i + 1))
-      continue
+        echo "[entrypoint] Advisory lock timeout; retrying in ${delay}s..."
+        sleep "$delay"
+        i=$((i + 1))
+        continue
+      fi
+
+      if echo "$out" | grep -Eq "P1001|Can't reach database server|connection refused|ECONNREFUSED"; then
+        echo "[entrypoint] Database not reachable yet; retrying in ${delay}s..."
+        sleep "$delay"
+        i=$((i + 1))
+        continue
       fi
     fi
 
