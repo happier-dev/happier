@@ -25,11 +25,12 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/sync/domains/state/storage', async () => {
-    return {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
         storage: {
             getState: (...args: unknown[]) => (getStateMock as any)(...args),
-        },
-    };
+        } as any,
+    });
 });
 
 const fetchSnapshotForSessionMock = vi.hoisted(() => vi.fn());

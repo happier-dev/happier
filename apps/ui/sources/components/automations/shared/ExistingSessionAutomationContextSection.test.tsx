@@ -65,7 +65,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
     agentId: 'codex',
-    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    backendTarget: { kind: 'backend', backendId: 'codex' },
     transcriptStorage: 'direct',
     profileId: 'profile-1',
     environmentVariables: null,
@@ -134,7 +134,7 @@ describe('ExistingSessionAutomationContextSection', () => {
         );
 
         expect(capturedItems).toEqual([
-            { title: 'Backend', subtitle: 'codex' },
+            { title: 'Backend', subtitle: 'agentInput.agent.codex' },
             { title: 'Encryption', subtitle: 'End-to-end encrypted' },
             { title: 'Transcript', subtitle: 'Direct' },
             { title: 'Machine', subtitle: 'Leeroy Mac' },
@@ -181,8 +181,8 @@ describe('ExistingSessionAutomationContextSection', () => {
                         machineId: 'machine-1',
                         eligibility: {
                             eligible: true,
-                            agentId: 'codex',
                             strategy: 'happy_attach',
+                            compatBackendId: 'review-bot',
                         },
                     },
                 })}

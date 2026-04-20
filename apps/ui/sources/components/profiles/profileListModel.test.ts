@@ -81,17 +81,17 @@ describe('profileListModel', () => {
         const profile = {
             ...buildProfile({}),
             compatibilityByTargetKey: {
-                'acpBackend:custom-backend': true,
-                'agent:claude': false,
+                'backend:custom-backend:configured:custom-backend': true,
+                'backend:claude': false,
             },
         } satisfies ProfileCompatibilitySummary;
 
         expect(getProfileSubtitle({
             profile,
-            enabledAgentIds: ['claude', 'customAcp'],
+            enabledAgentIds: ['claude'],
             backendEntries: [
-                { targetKey: 'agent:claude', title: 'Claude' },
-                { targetKey: 'acpBackend:custom-backend', title: 'Custom Backend' },
+                { backendTargetKey: 'backend:claude', title: 'Claude' },
+                { backendTargetKey: 'backend:custom-backend:configured:custom-backend', title: 'Custom Backend' },
             ],
             strings,
         })).toBe('Custom · Custom Backend');

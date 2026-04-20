@@ -23,6 +23,7 @@ import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
 import { useSetting } from '@/sync/domains/state/storage';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
@@ -81,6 +82,7 @@ export interface ProfilesListProps {
 type ProfileRowProps = {
     testID: string;
     profile: AIBackendProfile;
+    backendEntries: ReturnType<typeof getResolvedBackendCatalogEntries>;
     displayName: string;
     isSelected: boolean;
     isFavorite: boolean;
@@ -147,7 +149,7 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
             key={props.profile.id}
             title={props.displayName}
             subtitle={subtitle}
-            leftElement={<ProfileCompatibilityIcon profile={props.profile} />}
+            leftElement={<ProfileCompatibilityIcon profile={props.profile} backendEntries={props.backendEntries} />}
             showChevron={false}
             selected={props.isSelected}
             disabled={props.isDisabled}
@@ -165,13 +167,28 @@ export function ProfilesList(props: ProfilesListProps) {
     const enabledAgentIds = React.useMemo(() => {
         return getEnabledAgentIds({ backendEnabledByTargetKey });
     }, [backendEnabledByTargetKey]);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: props.machineId,
+        enabled: Boolean(props.machineId),
+        staleMs: 60_000,
+    });
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
             acpCatalogSettingsV1,
             backendEnabledByTargetKey,
+            discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
+            mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
         });
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds]);
+    }, [
+        acpCatalogSettingsV1,
+        backendEnabledByTargetKey,
+        daemonMergedProjection.inputs?.discoveredBackendIds,
+        daemonMergedProjection.inputs?.mergedBackendProjectionById,
+        daemonMergedProjection.inputs?.mergedProviderProjectionById,
+        enabledAgentIds,
+    ]);
     const strings = React.useMemo(() => getDefaultProfileListStrings(enabledAgentIds), [enabledAgentIds]);
     const {
         extraActions,
@@ -368,6 +385,7 @@ export function ProfilesList(props: ProfilesListProps) {
                                 key={profile.id}
                                 testID={`profiles-list-row:${profile.id}`}
                                 profile={profile}
+                                backendEntries={resolvedBackendEntries}
                                 displayName={displayName}
                                 isSelected={isSelected}
                                 isFavorite={true}
@@ -414,6 +432,7 @@ export function ProfilesList(props: ProfilesListProps) {
                                 key={profile.id}
                                 testID={`profiles-list-row:${profile.id}`}
                                 profile={profile}
+                                backendEntries={resolvedBackendEntries}
                                 displayName={displayName}
                                 isSelected={isSelected}
                                 isFavorite={isFavorite}
@@ -484,6 +503,7 @@ export function ProfilesList(props: ProfilesListProps) {
                             key={profile.id}
                             testID={`profiles-list-row:${profile.id}`}
                             profile={profile}
+                            backendEntries={resolvedBackendEntries}
                             displayName={displayName}
                             isSelected={isSelected}
                             isFavorite={isFavorite}

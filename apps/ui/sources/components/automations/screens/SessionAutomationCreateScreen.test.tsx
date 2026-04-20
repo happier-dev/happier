@@ -432,7 +432,7 @@ describe('SessionAutomationCreateScreen', () => {
             directory: '/tmp/project',
             prompt: 'Send the latest automation QA summary into this session.',
             displayText: 'Send the latest automation QA summary into this session.',
-            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,

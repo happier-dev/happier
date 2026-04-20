@@ -73,6 +73,8 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
     DEFAULT_AGENT_ID: 'claude',
+    isAgentId: (value: unknown): value is 'claude' | 'customAcp' =>
+        typeof value === 'string' && ['claude', 'customAcp'].includes(value),
     getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
 }));
 
@@ -132,12 +134,12 @@ describe('ProfileEditForm (native preview machine picker)', () => {
 
         expect(profileEditFormTestState.modalShowSpy).not.toHaveBeenCalled();
         expect(profileEditFormTestState.routerPushSpy).toHaveBeenCalledTimes(1);
-        expect(profileEditFormTestState.routerPushSpy).toHaveBeenCalledWith({
+        expect(profileEditFormTestState.routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
             pathname: '/new/pick/preview-machine',
-            params: {
-                agentType: 'customAcp',
-                backendTargetKey: 'acpBackend:review-bot',
-            },
-        });
+            params: expect.objectContaining({
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
+                backendTarget: expect.stringContaining('"backendId":"review-bot"'),
+            }),
+        }));
     });
 });

@@ -27,14 +27,7 @@ function buildPromptBody(prompt: ReturnType<typeof resolveThisComputerSetupPromp
     }
 
     if (prompt.kind === 'daemon.takeOverManualRelayRuntimeForSetup') {
-        const lines = [
-            prompt.targetServerUrl,
-            prompt.targetReleaseChannel,
-            prompt.currentReleaseChannel && prompt.currentCliVersion
-                ? `${prompt.currentReleaseChannel} • ${prompt.currentCliVersion}`
-                : prompt.currentReleaseChannel ?? prompt.currentCliVersion ?? null,
-        ].filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
-        return lines.length > 0 ? lines.join('\n') : undefined;
+        return undefined;
     }
 
     return buildBackgroundServiceReplacementPromptBody({

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 const state = vi.hoisted(() => ({
     activeServerSnapshot: {
@@ -29,9 +30,11 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: () => state.serverProfiles,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+const storageMock = createStorageModuleStub({
     useSetting: (key: keyof typeof state.settings) => state.settings[key],
-}));
+});
+
+vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 describe('useResolvedActiveServerSelection', () => {
     afterEach(() => {

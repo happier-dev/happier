@@ -21,6 +21,12 @@ const asyncStorageState = vi.hoisted(() => {
     };
 });
 
+const serverProfilesState = vi.hoisted(() => ({
+    activeServerId: 'server-a',
+    activeServerUrl: 'https://server-a.example.test',
+    profiles: [{ id: 'server-a', serverUrl: 'https://server-a.example.test' }],
+}));
+
 type DevGlobal = typeof globalThis & {
     __DEV__?: boolean;
 };
@@ -33,9 +39,9 @@ function createIosSecureStoreEntitlementError(): Error {
 
 function installServerProfilesMock(): void {
     vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-        getActiveServerId: () => 'server-a',
-        getActiveServerUrl: () => 'https://server-a.example.test',
-        listServerProfiles: () => [{ id: 'server-a', serverUrl: 'https://server-a.example.test' }],
+        getActiveServerId: () => serverProfilesState.activeServerId,
+        getActiveServerUrl: () => serverProfilesState.activeServerUrl,
+        listServerProfiles: () => serverProfilesState.profiles,
     }));
 }
 
@@ -162,5 +168,27 @@ describe('TokenStorage (native secure-store entitlement fallback)', () => {
         ]);
 
         expect(result).toBeNull();
+    });
+
+    it('clears same-URL credentials for every server profile during global logout', async () => {
+        serverProfilesState.activeServerId = 'server-a';
+        serverProfilesState.activeServerUrl = 'https://shared.example.test';
+        serverProfilesState.profiles = [
+            { id: 'server-a', serverUrl: 'https://shared.example.test' },
+            { id: 'server-b', serverUrl: 'https://shared.example.test' },
+        ];
+
+        const { TokenStorage } = await import('./tokenStorage');
+
+        await expect(TokenStorage.setCredentials({ token: 'token-a', secret: 'secret-a' })).resolves.toBe(true);
+
+        serverProfilesState.activeServerId = 'server-b';
+        await expect(TokenStorage.setCredentials({ token: 'token-b', secret: 'secret-b' })).resolves.toBe(true);
+
+        serverProfilesState.activeServerId = 'server-a';
+        await expect(TokenStorage.removeCredentials()).resolves.toBe(true);
+
+        await expect(TokenStorage.getCredentialsForServerUrl(serverProfilesState.activeServerUrl, { serverId: 'server-a' })).resolves.toBeNull();
+        await expect(TokenStorage.getCredentialsForServerUrl(serverProfilesState.activeServerUrl, { serverId: 'server-b' })).resolves.toBeNull();
     });
 });

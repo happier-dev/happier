@@ -4,7 +4,7 @@ import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 
 export interface ProfileListBackendEntry {
-    targetKey: string;
+    backendTargetKey: string;
     title: string;
     builtInAgentId?: AgentId | null;
 }
@@ -37,7 +37,7 @@ export function getProfileBackendSubtitle(params: {
     const backendEntries = params.backendEntries ?? [];
     if (backendEntries.length > 0) {
         for (const entry of backendEntries) {
-            const compatibleViaTargetKey = params.profile.compatibilityByTargetKey?.[entry.targetKey] === true;
+            const compatibleViaTargetKey = params.profile.compatibilityByTargetKey?.[entry.backendTargetKey] === true;
             const compatibleViaBuiltInAgent =
                 entry.builtInAgentId != null && isProfileCompatibleWithAgent(params.profile, entry.builtInAgentId);
             if (!compatibleViaTargetKey && !compatibleViaBuiltInAgent) {

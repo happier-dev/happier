@@ -71,30 +71,37 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => ({ status: 'unknown', login: { codex: false, customAcp: false } }),
+    useCLIDetection: () => ({ status: 'unknown', login: { codex: false } }),
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => ['codex', 'customAcp'],
+    useEnabledAgentIds: () => ['codex'],
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex', 'customAcp'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: (agentId: string) => ({
-        permissions: { modeGroup: 'codexLike' },
-        cli: { machineLoginKey: agentId === 'customAcp' ? 'customAcp' : 'codex' },
-        ui: { agentPickerIconName: 'terminal-outline' },
-        sessionStorage: { direct: false },
-        displayNameKey: agentId === 'customAcp' ? 'agent.customAcp' : 'agent.codex',
-        subtitleKey: 'profiles.aiBackend.subtitle',
-    }),
-    getAgentBehavior: () => ({
-        newSession: {
-            supportsTranscriptStorageMode: () => true,
-        },
-    }),
-}));
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+
+    return {
+        ...actual,
+        AGENT_IDS: ['codex'],
+        DEFAULT_AGENT_ID: 'codex',
+        isAgentId: (value: unknown): value is typeof actual.DEFAULT_AGENT_ID =>
+            typeof value === 'string' && value === 'codex',
+        getAgentCore: (agentId: string) => ({
+            permissions: { modeGroup: 'codexLike' },
+            cli: { machineLoginKey: 'codex' },
+            ui: { agentPickerIconName: 'terminal-outline' },
+            sessionStorage: { direct: false },
+            displayNameKey: 'agent.codex',
+            subtitleKey: 'profiles.aiBackend.subtitle',
+        }),
+        getAgentBehavior: () => ({
+            newSession: {
+                supportsTranscriptStorageMode: () => true,
+            },
+        }),
+    };
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: ({ title, onPress }: any) => {
@@ -114,7 +121,7 @@ function buildProfile(): AIBackendProfile {
         defaultPermissionModeByTargetKey: {},
         defaultPersistenceModeByAgent: {},
         defaultPersistenceModeByTargetKey: {},
-        compatibility: { codex: true, customAcp: false },
+        compatibility: { codex: true },
         compatibilityByTargetKey: {
             [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
         },
@@ -183,41 +190,5 @@ describe('ProfileEditForm backend targets', () => {
             requiresMachineLoginTargetKey: buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' }),
             requiresMachineLogin: undefined,
         }));
-    });
-
-    it('migrates legacy custom ACP compatibility onto the canonical configured backend target on save', async () => {
-        const saveRef = { current: null as null | (() => boolean) };
-        const onSave = vi.fn((_: AIBackendProfile) => true);
-        const legacyCustomAcpTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });
-        const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
-        const { ProfileEditForm } = await loadProfileEditForm();
-
-        await renderScreen(React.createElement(ProfileEditForm, {
-            profile: AIBackendProfileSchema.parse({
-                ...buildProfile(),
-                compatibility: { codex: false, customAcp: true },
-                compatibilityByTargetKey: {
-                    [legacyCustomAcpTargetKey]: true,
-                },
-                authMode: 'machineLogin',
-            }),
-            machineId: null,
-            onSave,
-            onCancel: vi.fn(),
-            saveRef,
-        }));
-
-        const result = saveRef.current?.();
-        expect(result).toBe(true);
-        expect(onSave).toHaveBeenCalledTimes(1);
-        const savedProfile = onSave.mock.calls[0]?.[0] as AIBackendProfile | undefined;
-        expect(savedProfile).toEqual(expect.objectContaining({
-            authMode: 'machineLogin',
-            requiresMachineLoginTargetKey: configuredTargetKey,
-        }));
-        expect(savedProfile?.compatibilityByTargetKey).toEqual(expect.objectContaining({
-            [configuredTargetKey]: true,
-        }));
-        expect(savedProfile?.compatibilityByTargetKey?.[legacyCustomAcpTargetKey]).toBeUndefined();
     });
 });

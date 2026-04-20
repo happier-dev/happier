@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { syncSwitchServer } from '@/sync/sync';
-import { clearPersistence } from '@/sync/domains/state/persistence';
+import { clearPersistence } from '@/sync/domains/state/persistenceLifecycle';
 import { trackLogout } from '@/track';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';

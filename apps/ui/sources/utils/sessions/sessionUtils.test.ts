@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { installSessionUtilsCommonModuleMocks } from './sessionUtilsTestHelpers';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { StorageState } from '@/sync/store/types';
 
 type MockStorageState = {
     sessionMessages: Record<string, { messages: unknown[]; messagesVersion?: number }>;
@@ -17,6 +18,8 @@ const mockStorageState: MockStorageState = {
     machines: {},
     getProjectForSession: () => null,
 };
+const readMockStorageState = () => mockStorageState as unknown as StorageState;
+let storageGetStateShouldThrow = false;
 
 installSessionUtilsCommonModuleMocks({
     text: async () => {
@@ -29,7 +32,12 @@ installSessionUtilsCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             storage: {
-                getState: () => mockStorageState,
+                getState: () => {
+                    if (storageGetStateShouldThrow) {
+                        throw new Error('storage.getState should not be used in this test');
+                    }
+                    return mockStorageState;
+                },
                 setState: (updater: ((state: typeof mockStorageState) => typeof mockStorageState) | typeof mockStorageState) => {
                     const next = typeof updater === 'function' ? updater(mockStorageState) : updater;
                     mockStorageState.sessionMessages = next.sessionMessages;
@@ -45,12 +53,15 @@ afterEach(() => {
     standardCleanup();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     vi.resetModules();
     mockStorageState.sessionMessages = {};
     mockStorageState.sessions = {};
     mockStorageState.machines = {};
     mockStorageState.getProjectForSession = () => null;
+    storageGetStateShouldThrow = false;
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    registerStorageStateReader(readMockStorageState);
 });
 
 function createBaseSession(overrides: Partial<Session> = {}): Session {
@@ -97,6 +108,53 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('permission_required');
         expect(status.isConnected).toBe(true);
         expect(status.shouldShowStatus).toBe(true);
+    });
+
+    it('returns permission_required when pending transcript requests only exist in the registered storage state', async () => {
+        storageGetStateShouldThrow = true;
+
+        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+        const { getSessionStatus } = await import('./sessionUtils');
+        registerStorageStateReader(readMockStorageState);
+
+        mockStorageState.sessionMessages = {
+            s1: {
+                messages: [
+                    {
+                        kind: 'tool-call',
+                        id: 'm-tool-1',
+                        localId: null,
+                        createdAt: 10,
+                        children: [],
+                        tool: {
+                            id: 'req1',
+                            name: 'writeTextFile',
+                            state: 'running',
+                            input: { path: '/tmp/test.txt' },
+                            createdAt: 10,
+                            permission: {
+                                id: 'req1',
+                                status: 'pending',
+                                kind: 'permission',
+                            },
+                        },
+                    },
+                ],
+                messagesVersion: 1,
+            },
+        };
+        const session = createBaseSession({
+            agentState: {
+                controlledByUser: null,
+                requests: {},
+                completedRequests: null,
+            },
+        });
+
+        const status = getSessionStatus(session, 1_000, 0);
+
+        expect(status.state).toBe('permission_required');
+        expect(status.isConnected).toBe(true);
     });
 
     it('does not surface permission_required when a session is inactive (even if stale pending flags exist)', async () => {

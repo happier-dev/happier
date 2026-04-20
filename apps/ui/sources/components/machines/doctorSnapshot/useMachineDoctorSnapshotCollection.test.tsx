@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import {
     clearCachedMachineDoctorSnapshot,
     writeCachedMachineDoctorSnapshot,
@@ -13,9 +14,8 @@ vi.mock('@/sync/ops/machines', () => ({
     machineCollectBugReportDiagnostics: machineCollectBugReportDiagnosticsMock,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+const textMock = createTextModuleMock({ translate: (key: string) => key });
+vi.mock('@/text', () => textMock);
 
 describe('useMachineDoctorSnapshotCollection', () => {
     beforeEach(() => {

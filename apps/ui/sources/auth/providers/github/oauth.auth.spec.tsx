@@ -64,6 +64,7 @@ afterEach(() => {
 
 describe('/oauth/[provider] (auth flow)', () => {
     it('uses the pending external auth serverUrl for finalize requests when present', async () => {
+        setActiveServerSnapshot({ serverUrl: 'http://api.example.test' });
         setPendingExternalAuthState({ provider: 'github', secret: OAUTH_SECRET, serverUrl: 'http://api.example.test' });
         replaceSpy.mockReset();
         loginSpy.mockClear();
@@ -358,7 +359,7 @@ describe('/oauth/[provider] (auth flow)', () => {
     });
 
     it('includes reset=true in finalize when pending external auth intent=reset', async () => {
-        setActiveServerSnapshot({ serverUrl: 'http://default.example.test' });
+        setActiveServerSnapshot({ serverUrl: 'http://api.example.test' });
         setPendingExternalAuthState({
             provider: 'github',
             secret: OAUTH_SECRET,
@@ -394,9 +395,7 @@ describe('/oauth/[provider] (auth flow)', () => {
                 expect.stringContaining('/v1/auth/external/github/finalize'),
                 expect.anything(),
             );
-            expect(upsertAndActivateServerSpy).toHaveBeenCalledWith(
-                expect.objectContaining({ serverUrl: 'http://api.example.test' }),
-            );
+            expect(upsertAndActivateServerSpy).not.toHaveBeenCalled();
             expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
         });
     });

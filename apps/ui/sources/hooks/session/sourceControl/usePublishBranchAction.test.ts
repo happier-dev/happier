@@ -2,6 +2,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 
 const sessionScmRemotePublishSpy = vi.fn();
 const invalidateFromMutationAndAwaitSpy = vi.fn();
@@ -16,11 +17,8 @@ vi.mock('@/scm/scmStatusSync', () => ({
     },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-    },
-}));
+const modalMock = createModalModuleMock();
+vi.mock('@/modal', () => modalMock.module);
 
 describe('usePublishBranchAction', () => {
     beforeEach(() => {

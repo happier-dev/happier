@@ -145,6 +145,40 @@ describe('ModelPickerOverlay', () => {
         expect(onSelect).not.toHaveBeenCalled();
     });
 
+    it('keeps the custom editor open across parent rerenders while the selected listed model has not changed yet', async () => {
+        const onSubmitCustomModel = vi.fn();
+        const onSelect = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
+
+        const renderOverlay = () => (
+            <ModelPickerOverlay
+                title="Model"
+                effectiveLabel="Default"
+                notes={[]}
+                options={[
+                    { value: 'default', label: 'Default', description: '' },
+                ]}
+                selectedValue="default"
+                emptyText="empty"
+                canEnterCustomModel
+                customLabel="Custom model"
+                onSubmitCustomModel={onSubmitCustomModel}
+                onSelect={onSelect}
+            />
+        );
+
+        const screen = await renderScreen(renderOverlay());
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
+
+        await act(async () => {
+            screen.tree.update(renderOverlay());
+        });
+
+        expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
+    });
+
     it('shows a loading indicator when models are being probed', async () => {
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
@@ -186,7 +220,7 @@ describe('ModelPickerOverlay', () => {
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
-    it('renders selected model controls inside the selected model card and routes option changes', async () => {
+    it('renders selected model controls in a dedicated section and routes option changes', async () => {
         const onSelectOptionControlValue = vi.fn();
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
@@ -238,18 +272,23 @@ describe('ModelPickerOverlay', () => {
 
         const selectedCard = screen.findByTestId('model-picker-overlay-option:gpt-5.4');
         expect(selectedCard).not.toBeNull();
+        expect(selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:reasoning_effort')).toHaveLength(0);
+        expect(selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:speed')).toHaveLength(0);
+
+        const selectedControlsSection = screen.findByTestId('model-picker-overlay-selected-controls');
+        expect(selectedControlsSection).toBeTruthy();
         expect(
-            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:reasoning_effort'),
+            selectedControlsSection?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:reasoning_effort'),
         ).not.toHaveLength(0);
         expect(
-            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:speed'),
+            selectedControlsSection?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:speed'),
         ).not.toHaveLength(0);
 
         await screen.pressByTestIdAsync('model-picker-overlay-selected-option-control-option:reasoning_effort:high');
 
         expect(onSelectOptionControlValue).toHaveBeenCalledWith('reasoning_effort', 'high');
 
-        const speedControl = selectedCard?.findAll((node) => (
+        const speedControl = selectedControlsSection?.findAll((node) => (
             node.props?.testID === 'model-picker-overlay-selected-option-control:speed'
         ))[0];
         const speedSwitch = speedControl?.findAll((node) => (
@@ -259,7 +298,7 @@ describe('ModelPickerOverlay', () => {
 
         expect(speedSwitch).toBeTruthy();
         expect(
-            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control-switch:speed'),
+            selectedControlsSection?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control-switch:speed'),
         ).toHaveLength(1);
 
         await act(async () => {

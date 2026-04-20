@@ -50,6 +50,8 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex'],
     DEFAULT_AGENT_ID: 'codex',
+    isAgentId: (value: unknown): value is 'codex' | 'customAcp' =>
+        typeof value === 'string' && ['codex', 'customAcp'].includes(value),
     getAgentCore: () => ({
         sessionStorage: { direct: true, persisted: true },
         permissions: { modeGroup: 'codexLike' },

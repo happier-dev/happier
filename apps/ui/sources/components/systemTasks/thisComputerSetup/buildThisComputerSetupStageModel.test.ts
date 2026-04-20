@@ -6,6 +6,8 @@ import type { ThisComputerSetupPrompt } from './resolveThisComputerSetupPrompt';
 
 const basePreflight = {
     activeRelayUrl: 'https://relay.example.test',
+    activeWebappUrl: 'https://relay.example.test',
+    activeLocalRelayUrl: null,
     localCliReady: false,
     serviceInstalled: false,
     daemonRunning: false,

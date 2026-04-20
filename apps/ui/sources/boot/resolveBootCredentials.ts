@@ -5,7 +5,7 @@ import { TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY } from '@/utils/path/termina
 import { bootstrapActiveServerFromWebLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { readWebRuntimeConfigServerContext, readWebRuntimeConfigServerUrl } from '@/sync/runtime/webRuntimeConfig';
+import { activateStackRuntimeServer, readStackRuntimeServerUrl } from '@/sync/domains/server/stackRuntimeServer';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 
 function resolveBootServerUrlFromTerminalConnectHash(): string | null {
@@ -49,10 +49,11 @@ function isDesktopBootCredentials(value: unknown): value is AuthCredentials {
 
 function canUseStackDesktopBootCredentials(bootServerUrl?: string | null): boolean {
     if (!isTauriDesktop()) return false;
-    if (readWebRuntimeConfigServerContext().trim().toLowerCase() !== 'stack') return false;
+    const stackRuntimeServerUrl = readStackRuntimeServerUrl();
+    if (!stackRuntimeServerUrl) return false;
     if (!bootServerUrl) return true;
 
-    const runtimeServerComparableKey = createServerUrlComparableKey(readWebRuntimeConfigServerUrl());
+    const runtimeServerComparableKey = createServerUrlComparableKey(stackRuntimeServerUrl);
     const bootServerComparableKey = createServerUrlComparableKey(bootServerUrl);
     if (!runtimeServerComparableKey || !bootServerComparableKey) {
         return false;
@@ -90,7 +91,7 @@ export async function resolveBootCredentials(platformOs: string): Promise<AuthCr
     const webServerOverride = platformOs === 'web'
         ? bootstrapActiveServerFromWebLocation({ scope: 'device' })
         : null;
-    const stackRuntimeServerUrl = platformOs === 'web' ? readWebRuntimeConfigServerUrl() : null;
+    const stackRuntimeServerUrl = platformOs === 'web' ? readStackRuntimeServerUrl() : null;
 
     const bootServerUrl = webServerOverride?.serverUrl
         ?? (platformOs === 'web' ? resolveBootServerUrlFromTerminalConnectHash() : null);
@@ -109,13 +110,7 @@ export async function resolveBootCredentials(platformOs: string): Promise<AuthCr
     }
 
     if (canUseStackDesktopBootCredentials(stackRuntimeServerUrl)) {
-        const stackRuntimeServerProfile = stackRuntimeServerUrl
-            ? upsertAndActivateServer({
-                serverUrl: stackRuntimeServerUrl,
-                source: 'stack-env',
-                scope: 'device',
-            })
-            : null;
+        const stackRuntimeServerProfile = activateStackRuntimeServer({ scope: 'device' });
         if (stackRuntimeServerUrl) {
             const credentials = await TokenStorage.getCredentialsForServerUrl(stackRuntimeServerUrl, {
                 serverId: stackRuntimeServerProfile?.id,

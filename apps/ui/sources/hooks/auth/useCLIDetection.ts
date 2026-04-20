@@ -3,10 +3,17 @@ import { useMachine } from '@/sync/domains/state/storage';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import type { CapabilityDetectResult, CliAuthStatusData, CliCapabilityData, TmuxCapabilityData } from '@/sync/api/capabilities/capabilitiesProtocol';
-import { AGENT_IDS, type AgentId, getAgentCore } from '@/agents/catalog/catalog';
-import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
+import {
+    CANONICAL_AGENT_IDS,
+    getAgentLocalCliConfig,
+    type AgentId,
+    type CanonicalAgentId,
+    isAgentAuthProbeSafeForBackgroundChecks,
+} from '@happier-dev/agents';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+
+const CLI_PROBE_AGENT_IDS: readonly CanonicalAgentId[] = CANONICAL_AGENT_IDS;
 
 export type CLIAvailability = Readonly<{
     available: Readonly<Record<AgentId, boolean | null>>; // null = unknown/loading, true = installed, false = not installed
@@ -90,27 +97,27 @@ function readCliResolutionSource(result: CapabilityDetectResult | undefined): 'o
         : null;
 }
 
-function normalizeRequestedAgentIds(agentIds: readonly AgentId[] | null | undefined): AgentId[] {
-    const normalized: AgentId[] = [];
-    const seen = new Set<AgentId>();
+function normalizeRequestedAgentIds(agentIds: readonly AgentId[] | null | undefined): CanonicalAgentId[] {
+    const normalized: CanonicalAgentId[] = [];
+    const seen = new Set<CanonicalAgentId>();
     for (const agentId of agentIds ?? []) {
-        if (!AGENT_IDS.includes(agentId)) continue;
-        if (seen.has(agentId)) continue;
-        seen.add(agentId);
-        normalized.push(agentId);
+        if (!(CLI_PROBE_AGENT_IDS as readonly AgentId[]).includes(agentId)) continue;
+        if (seen.has(agentId as CanonicalAgentId)) continue;
+        seen.add(agentId as CanonicalAgentId);
+        normalized.push(agentId as CanonicalAgentId);
     }
     return normalized;
 }
 
-function resolveAutomaticLoginStatusAgentIds(includeLoginStatus: boolean, explicitAgentIds?: readonly AgentId[]): AgentId[] {
+function resolveAutomaticLoginStatusAgentIds(includeLoginStatus: boolean, explicitAgentIds?: readonly AgentId[]): CanonicalAgentId[] {
     if (!includeLoginStatus) return [];
     const normalizedExplicit = normalizeRequestedAgentIds(explicitAgentIds);
     if (normalizedExplicit.length > 0) return normalizedExplicit;
-    return AGENT_IDS.filter((agentId) => isAgentAuthProbeSafeForBackgroundChecks(agentId));
+    return CLI_PROBE_AGENT_IDS.filter((agentId) => isAgentAuthProbeSafeForBackgroundChecks(agentId));
 }
 
-function buildCliCapabilityId(agentId: AgentId): `cli.${string}` {
-    return `cli.${getAgentCore(agentId).cli.detectKey}`;
+function buildCliCapabilityId(agentId: CanonicalAgentId): `cli.${string}` {
+    return `cli.${getAgentLocalCliConfig(agentId).detectKey}`;
 }
 
 function buildCliDetectionRequest(params: Readonly<{
@@ -120,7 +127,7 @@ function buildCliDetectionRequest(params: Readonly<{
 }>) {
     const requestedAgentIds = normalizeRequestedAgentIds(params.agentIds);
     const loginStatusAgentIds = normalizeRequestedAgentIds(params.loginStatusAgentIds);
-    const targetAgentIds = requestedAgentIds.length > 0 ? requestedAgentIds : AGENT_IDS;
+    const targetAgentIds = requestedAgentIds.length > 0 ? requestedAgentIds : CLI_PROBE_AGENT_IDS;
     const scopedLoginStatusAgentIds = loginStatusAgentIds.filter((agentId) => targetAgentIds.includes(agentId));
     const bypassCache = params.bypassCache === true;
     if (requestedAgentIds.length === 0 && scopedLoginStatusAgentIds.length === 0 && !bypassCache) {
@@ -142,7 +149,7 @@ function buildCliDetectionRequest(params: Readonly<{
     }
 
     const overrides: Record<string, { params: { includeLoginStatus?: true; bypassCache?: true } }> = {};
-    for (const agentId of AGENT_IDS) {
+    for (const agentId of CLI_PROBE_AGENT_IDS) {
         const shouldIncludeLoginStatus = scopedLoginStatusAgentIds.includes(agentId);
         overrides[buildCliCapabilityId(agentId)] = {
             params: {
@@ -231,7 +238,7 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
             const resolvedPath: Record<AgentId, string | null> = {} as any;
             const resolvedCommand: Record<AgentId, string | null> = {} as any;
             const resolutionSource: Record<AgentId, 'override' | 'system' | 'managed' | null> = {} as any;
-            for (const agentId of AGENT_IDS) {
+            for (const agentId of CLI_PROBE_AGENT_IDS) {
                 available[agentId] = null;
                 login[agentId] = null;
                 authStatus[agentId] = null;
@@ -304,7 +311,7 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
             const resolvedPath: Record<AgentId, string | null> = {} as any;
             const resolvedCommand: Record<AgentId, string | null> = {} as any;
             const resolutionSource: Record<AgentId, 'override' | 'system' | 'managed' | null> = {} as any;
-            for (const agentId of AGENT_IDS) {
+            for (const agentId of CLI_PROBE_AGENT_IDS) {
                 available[agentId] = null;
                 login[agentId] = null;
                 authStatus[agentId] = null;
@@ -333,7 +340,7 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
         const resolvedPath: Record<AgentId, string | null> = {} as any;
         const resolvedCommand: Record<AgentId, string | null> = {} as any;
         const resolutionSource: Record<AgentId, 'override' | 'system' | 'managed' | null> = {} as any;
-        for (const agentId of AGENT_IDS) {
+        for (const agentId of CLI_PROBE_AGENT_IDS) {
             const capId = buildCliCapabilityId(agentId);
             available[agentId] = readCliAvailable(resultsById[capId]);
             login[agentId] = readCliLogin(resultsById[capId]);

@@ -185,7 +185,7 @@ describe('useThisComputerSetupPromptModals', () => {
         const snapshot = createSnapshot(taskId);
         const prompt: SystemTaskPromptEnvelope = {
             kind: 'daemon.takeOverManualRelayRuntimeForSetup',
-            message: 'Stop the current manual relay runtime and enable the background service for this computer?',
+            message: 'This computer is currently using a temporary relay process for https://relay.example.test. Continue to stop that process and switch this computer to the background service?',
             data: {
                 kind: 'daemon.takeOverManualRelayRuntimeForSetup',
                 targetReleaseChannel: 'preview',
@@ -207,6 +207,13 @@ describe('useThisComputerSetupPromptModals', () => {
         await flushHookEffects();
 
         expect(modalSpies.confirm).toHaveBeenCalledTimes(1);
+        const confirmCalls = modalSpies.confirm.mock.calls as unknown as ReadonlyArray<readonly [
+            string,
+            string | undefined,
+            Readonly<{ confirmText: string; cancelText: string }>,
+        ]>;
+        expect(confirmCalls[0]?.[0]).toBe(prompt.message);
+        expect(confirmCalls[0]?.[1]).toBeUndefined();
         expect(respond).toHaveBeenCalledWith(taskId, { takeOverManualRelayRuntime: true });
     });
 });

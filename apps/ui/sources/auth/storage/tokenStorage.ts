@@ -192,6 +192,34 @@ async function getPendingExternalConnectKey(): Promise<string> {
     return (await getServerScopedKeys(PENDING_EXTERNAL_CONNECT_KEY)).primary;
 }
 
+async function resolvePendingExternalScopedKeysForClear(
+    baseKey: string,
+    globalKey: string,
+    validator: (value: unknown) => value is PendingExternalServerContext,
+): Promise<ReadonlyArray<string>> {
+    const scopedKeys = new Set<string>();
+    const activeKeys = await getServerScopedKeys(baseKey);
+    scopedKeys.add(activeKeys.primary);
+    if (activeKeys.legacy) {
+        scopedKeys.add(activeKeys.legacy);
+    }
+
+    const globalValue = await readStoredJson(globalKey, baseKey, validator);
+    if (!globalValue) {
+        return [...scopedKeys];
+    }
+
+    const originalKeys = await getServerScopedKeys(baseKey, globalValue.serverUrl, {
+        serverId: globalValue.serverId,
+    });
+    scopedKeys.add(originalKeys.primary);
+    if (originalKeys.legacy) {
+        scopedKeys.add(originalKeys.legacy);
+    }
+
+    return [...scopedKeys];
+}
+
 function getPendingExternalConnectGlobalKey(): string {
     const scope = Platform.OS === 'web' ? null : readStorageScopeFromEnv();
     return scopedStorageId(PENDING_EXTERNAL_CONNECT_GLOBAL_KEY, scope);
@@ -264,6 +292,11 @@ export interface PendingExternalConnect {
     serverUrl?: string;
 }
 
+export type PendingExternalReadState<T> = Readonly<{
+    value: T | null;
+    serverMismatch: boolean;
+}>;
+
 function isNonEmptyString(value: unknown): value is string {
     return typeof value === 'string' && value.trim().length > 0;
 }
@@ -323,7 +356,12 @@ function doesPendingExternalStateMatchActiveServer(
 
     const pendingServerUrl = normalizeUrl(typeof value.serverUrl === 'string' ? value.serverUrl : '');
     if (!pendingServerUrl) {
-        return !options.requireExplicitServerContext;
+        if (!options.requireExplicitServerContext) {
+            return true;
+        }
+        const activeServerId = normalizeServerId(getActiveServerId());
+        const activeServerUrl = normalizeUrl(getActiveServerUrl());
+        return !activeServerId && !activeServerUrl;
     }
 
     const activeServerUrl = normalizeUrl(getActiveServerUrl());
@@ -560,17 +598,31 @@ async function removeCredentialByKey(key: string): Promise<boolean> {
     }
 }
 
-function listKnownServerUrlsForCredentialCleanup(): string[] {
-    const urls = [getActiveServerUrl(), ...listServerProfiles().map((profile) => profile.serverUrl)];
+type CredentialCleanupTarget = Readonly<{
+    serverUrl: string;
+    serverId?: string | null;
+}>;
+
+function listKnownServerCleanupTargets(): CredentialCleanupTarget[] {
     const seen = new Set<string>();
-    const unique: string[] = [];
-    for (const raw of urls) {
-        const normalized = normalizeUrl(raw);
-        if (!normalized || seen.has(normalized)) continue;
-        seen.add(normalized);
-        unique.push(normalized);
+    const targets: CredentialCleanupTarget[] = [];
+
+    const append = (serverUrlRaw: unknown, serverIdRaw?: unknown): void => {
+        const serverUrl = normalizeUrl(String(serverUrlRaw ?? ''));
+        if (!serverUrl) return;
+        const serverId = normalizeServerId(typeof serverIdRaw === 'string' ? serverIdRaw : null);
+        const key = serverId ?? `url:${serverUrl}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        targets.push(serverId ? { serverUrl, serverId } : { serverUrl });
+    };
+
+    append(getActiveServerUrl(), getActiveServerId());
+    for (const profile of listServerProfiles()) {
+        append(profile.serverUrl, profile.id);
     }
-    return unique;
+
+    return targets;
 }
 
 function listWebScopedCredentialKeysForCleanup(): string[] {
@@ -782,9 +834,12 @@ export const TokenStorage = {
         // Reset any suppression so subsequent auth flows can run normally.
         await TokenStorage.setAuthAutoRedirectSuppressedUntil(0);
         let allRemoved = true;
-        const knownServerUrls = listKnownServerUrlsForCredentialCleanup();
-        for (const serverUrl of knownServerUrls) {
-            const keys = await getAuthKeys(serverUrl);
+        const knownServerTargets = listKnownServerCleanupTargets();
+        for (const target of knownServerTargets) {
+            const keys = await getAuthKeys(
+                target.serverUrl,
+                target.serverId ? { serverId: target.serverId } : {},
+            );
             const primaryRemoved = await removeCredentialByKey(keys.primary);
             allRemoved = allRemoved && primaryRemoved;
             if (keys.legacy) {
@@ -840,16 +895,36 @@ export const TokenStorage = {
         return false;
     },
 
-    async getPendingExternalAuth(): Promise<PendingExternalAuth | null> {
+    async readPendingExternalAuthState(): Promise<PendingExternalReadState<PendingExternalAuth>> {
         const key = await getPendingExternalAuthKey();
         const scoped = await readStoredJson(key, 'pending external auth', isPendingExternalAuthRecord);
         if (scoped) {
-            return doesPendingExternalStateMatchActiveServer(scoped, { requireExplicitServerContext: false }) ? scoped : null;
+            const serverMismatch = !doesPendingExternalStateMatchActiveServer(scoped, { requireExplicitServerContext: true });
+            return {
+                value: scoped,
+                serverMismatch,
+            };
         }
         const globalKey = getPendingExternalAuthGlobalKey();
         const global = await readStoredJson(globalKey, 'pending external auth', isPendingExternalAuthRecord);
-        if (!global) return null;
-        return doesPendingExternalStateMatchActiveServer(global, { requireExplicitServerContext: true }) ? global : null;
+        if (!global) {
+            return {
+                value: null,
+                serverMismatch: false,
+            };
+        }
+        return {
+            value: global,
+            serverMismatch: !doesPendingExternalStateMatchActiveServer(global, { requireExplicitServerContext: true }),
+        };
+    },
+
+    async getPendingExternalAuth(): Promise<PendingExternalAuth | null> {
+        const state = await this.readPendingExternalAuthState();
+        if (!state.value || state.serverMismatch) {
+            return null;
+        }
+        return state.value;
     },
 
     async setPendingExternalAuth(value: PendingExternalAuth): Promise<boolean> {
@@ -864,9 +939,17 @@ export const TokenStorage = {
     },
 
     async clearPendingExternalAuth(): Promise<boolean> {
-        const key = await getPendingExternalAuthKey();
-        const ok = await removeStoredValue(key, 'pending external auth');
         const globalKey = getPendingExternalAuthGlobalKey();
+        const scopedKeys = await resolvePendingExternalScopedKeysForClear(
+            PENDING_EXTERNAL_AUTH_KEY,
+            globalKey,
+            isPendingExternalAuthRecord,
+        );
+        let ok = false;
+        for (const key of scopedKeys) {
+            const removed = await removeStoredValue(key, 'pending external auth');
+            ok = removed || ok;
+        }
         await removeStoredValue(globalKey, 'pending external auth').catch(() => false);
         return ok;
     },
@@ -895,9 +978,17 @@ export const TokenStorage = {
     },
 
     async clearPendingExternalConnect(): Promise<boolean> {
-        const key = await getPendingExternalConnectKey();
-        const ok = await removeStoredValue(key, 'pending external connect');
         const globalKey = getPendingExternalConnectGlobalKey();
+        const scopedKeys = await resolvePendingExternalScopedKeysForClear(
+            PENDING_EXTERNAL_CONNECT_KEY,
+            globalKey,
+            isPendingExternalConnectRecord,
+        );
+        let ok = false;
+        for (const key of scopedKeys) {
+            const removed = await removeStoredValue(key, 'pending external connect');
+            ok = removed || ok;
+        }
         await removeStoredValue(globalKey, 'pending external connect').catch(() => false);
         return ok;
     },

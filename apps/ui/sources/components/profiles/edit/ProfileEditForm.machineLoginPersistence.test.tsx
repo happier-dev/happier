@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import {
@@ -34,7 +35,7 @@ vi.doMock('react-native-unistyles', async () => {
 });
 
 vi.doMock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => ({ status: 'unknown', login: { codex: false, customAcp: false } }),
+    useCLIDetection: () => ({ status: 'unknown', login: { codex: false } }),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -64,19 +65,21 @@ vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', (
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => ['codex', 'customAcp'],
+    useEnabledAgentIds: () => ['codex'],
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex', 'customAcp'],
+    AGENT_IDS: ['codex'],
     DEFAULT_AGENT_ID: 'codex',
+    isAgentId: (value: unknown): value is 'codex' =>
+        typeof value === 'string' && value === 'codex',
     getAgentCore: (agentId: string) => ({
         permissions: { modeGroup: 'codexLike' },
-        // Both targets share the same machine-login key; this is the scenario that used to save an ambiguous profile.
+        // Both targets share the same machine-login key; this is the scenario that must clear persistence selection.
         cli: { machineLoginKey: 'codex' },
         ui: { agentPickerIconName: 'terminal-outline' },
         sessionStorage: { direct: false },
-        displayNameKey: agentId === 'customAcp' ? 'agent.customAcp' : 'agent.codex',
+        displayNameKey: 'agent.codex',
         subtitleKey: 'profiles.aiBackend.subtitle',
     }),
     getAgentBehavior: () => ({
@@ -137,7 +140,9 @@ vi.mock('@/components/secrets/requirements', () => ({
 }));
 
 function buildProfile(): AIBackendProfile {
-    return AIBackendProfileSchema.parse({
+    const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
+
+    return {
         id: 'p1',
         name: 'P',
         environmentVariables: [],
@@ -145,10 +150,10 @@ function buildProfile(): AIBackendProfile {
         defaultPermissionModeByTargetKey: {},
         defaultPersistenceModeByAgent: {},
         defaultPersistenceModeByTargetKey: {},
-        compatibility: { codex: true, customAcp: true },
+        compatibility: { codex: true },
         compatibilityByTargetKey: {
             [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
-            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' })]: true,
+            [configuredTargetKey]: true,
         },
         authMode: 'machineLogin',
         envVarRequirements: [],
@@ -156,7 +161,7 @@ function buildProfile(): AIBackendProfile {
         createdAt: 0,
         updatedAt: 0,
         version: '1.0.0',
-    });
+    } satisfies AIBackendProfile;
 }
 
 describe('ProfileEditForm machine-login persistence', () => {
@@ -164,7 +169,6 @@ describe('ProfileEditForm machine-login persistence', () => {
         const { ProfileEditForm } = await import('./ProfileEditForm');
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
-        const legacyCustomAcpTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });
         const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
 
         await renderScreen(React.createElement(ProfileEditForm, {
@@ -174,6 +178,9 @@ describe('ProfileEditForm machine-login persistence', () => {
                     onCancel: vi.fn(),
                     saveRef,
                 }));
+
+        // Flush machine-login reconciliation effects.
+        await act(async () => {});
 
         const result = saveRef.current?.();
         expect(result).toBe(true);
@@ -187,6 +194,5 @@ describe('ProfileEditForm machine-login persistence', () => {
             [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
             [configuredTargetKey]: true,
         }));
-        expect(savedProfile?.compatibilityByTargetKey?.[legacyCustomAcpTargetKey]).toBeUndefined();
     });
 });

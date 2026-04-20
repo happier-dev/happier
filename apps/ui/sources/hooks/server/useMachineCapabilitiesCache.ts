@@ -4,8 +4,7 @@ import {
     type MachineCapabilitiesDetectResult,
 } from '@/sync/ops';
 import type { CapabilitiesDetectRequest, CapabilitiesDetectResponse, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
-import { AGENT_IDS } from '@/agents/catalog/catalog';
+import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
@@ -199,7 +198,7 @@ export function resolveMachineCapabilitiesTimeoutMs(request: CapabilitiesDetectR
     const hasSlowVersionCheck = requests.some((r) => Boolean((r.params as any)?.includeLatestVersion) || Boolean((r.params as any)?.includeRegistry));
     const hasExecutionRunsCheck = requests.some((r) => r?.id === 'tool.executionRuns');
     const hasSlowLoginStatusCheck = hasSlowLoginStatusProbe(request);
-    const isResumeChecklist = AGENT_IDS.some((agentId) => request.checklistId === resumeChecklistId(agentId));
+    const isResumeChecklist = typeof request.checklistId === 'string' && request.checklistId.startsWith('resume.');
     const isMachineDetailsChecklist = request.checklistId === CHECKLIST_IDS.MACHINE_DETAILS;
     const isNewSessionChecklist = request.checklistId === CHECKLIST_IDS.NEW_SESSION;
     if (hasSlowLoginStatusCheck) return Math.max(fallback, DEFAULT_CLI_LOGIN_STATUS_TIMEOUT_MS);

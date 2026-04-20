@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installAuthHookCommonModuleMocks } from './authHookTestHelpers';
 
@@ -7,6 +7,22 @@ import { installAuthHookCommonModuleMocks } from './authHookTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useMachineCapabilitiesCacheMock = vi.fn();
+const agentsPackageState = vi.hoisted(() => ({
+    AGENT_IDS: ['claude', 'codex', 'gemini', 'kiro'],
+    CANONICAL_AGENT_IDS: ['claude', 'codex', 'gemini', 'kiro'],
+    AGENT_LOCAL_CLI_CONFIG: {
+        claude: { detectKey: 'claude' },
+        codex: { detectKey: 'codex' },
+        gemini: { detectKey: 'gemini' },
+        kiro: { detectKey: 'kiro-cli' },
+    },
+    isAgentAuthProbeSafeForBackgroundChecks: (agentId: string) => agentId !== 'kiro',
+}));
+
+function resolvePackageDetectKey(agentId: string): string {
+    const entry = (agentsPackageState.AGENT_LOCAL_CLI_CONFIG as Record<string, { detectKey: string }>)[agentId];
+    return entry?.detectKey ?? agentId;
+}
 
 installAuthHookCommonModuleMocks({
     storage: async () => {
@@ -17,17 +33,21 @@ installAuthHookCommonModuleMocks({
     },
 });
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['claude', 'codex', 'gemini', 'kiro'],
-    getAgentCore: (agentId: string) => ({
-        cli: {
-            detectKey: ({
-                claude: 'claude',
-                codex: 'codex',
-                gemini: 'gemini',
-                kiro: 'kiro-cli',
-            } as Record<string, string>)[agentId] ?? agentId,
-        },
+vi.mock('@happier-dev/agents', () => ({
+    ...agentsPackageState,
+    getAgentLocalCliConfig: (agentId: string) => ({
+        agentId,
+        detectKey: resolvePackageDetectKey(agentId),
+        machineLoginKey: agentId,
+        supportKind: 'login_terminal',
+        loginLaunch: null,
+    }),
+    getAgentAuthProbeConfig: (agentId: string) => ({
+        agentId,
+        binaryNames: [resolvePackageDetectKey(agentId)],
+        statusCommand: null,
+        parser: 'unknown',
+        backgroundChecks: agentsPackageState.isAgentAuthProbeSafeForBackgroundChecks(agentId) ? 'safe' : 'manual_only',
     }),
 }));
 
@@ -46,6 +66,10 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => {
 const { useCLIDetection } = await import('./useCLIDetection');
 
 describe('useCLIDetection (hook)', () => {
+    beforeEach(() => {
+        agentsPackageState.AGENT_LOCAL_CLI_CONFIG.codex.detectKey = 'codex';
+    });
+
     async function renderHookState(run: () => unknown) {
         let latest: unknown = null;
         function Test() {
@@ -210,6 +234,27 @@ describe('useCLIDetection (hook)', () => {
         expect(firstCall?.request?.overrides?.['cli.kiro']?.params?.includeLoginStatus).toBeUndefined();
         expect(latest?.isDetecting).toBe(true);
         expect(Object.values(latest?.login ?? {}).every((value) => value === null)).toBe(true);
+    });
+
+    it('uses canonical provider auth metadata detect keys for scoped CLI requests', async () => {
+        agentsPackageState.AGENT_LOCAL_CLI_CONFIG.codex.detectKey = 'codex-alt';
+
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: { status: 'loading' },
+            refresh: vi.fn(),
+        });
+
+        await renderHookState(() => useCLIDetection('m1', {
+            autoDetect: false,
+            agentIds: ['codex'],
+        }));
+
+        const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
+        expect(firstCall?.request?.requests).toEqual([
+            {
+                id: 'cli.codex-alt',
+            },
+        ]);
     });
 
     it('can scope detection to a single provider capability instead of the whole checklist', async () => {

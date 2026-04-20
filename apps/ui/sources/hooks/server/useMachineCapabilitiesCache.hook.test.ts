@@ -51,6 +51,16 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         }, 2_500)).toBe(12_000);
     });
 
+    it('treats any resume.* checklist as a slow checklist without a built-in agent-id inventory', async () => {
+        vi.resetModules();
+
+        const { resolveMachineCapabilitiesTimeoutMs } = await import('./useMachineCapabilitiesCache');
+
+        expect(resolveMachineCapabilitiesTimeoutMs({
+            checklistId: 'resume.delta',
+        }, 2_500)).toBe(12_000);
+    });
+
     it('scopes cache entries by active server when serverId is omitted', async () => {
         vi.resetModules();
 

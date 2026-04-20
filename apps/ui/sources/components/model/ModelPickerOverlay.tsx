@@ -64,17 +64,24 @@ export function ModelPickerOverlay(props: {
         : '';
     const [customValue, setCustomValue] = React.useState(selectedCustomValue);
     const [customEditorVisible, setCustomEditorVisible] = React.useState(selectedCustomValue.length > 0);
+    const previousSelectedValueRef = React.useRef(selectedValue);
 
     React.useEffect(() => {
+        const previousSelectedValue = previousSelectedValueRef.current;
+        previousSelectedValueRef.current = selectedValue;
+
         if (selectedCustomValue.length > 0) {
             setCustomValue(selectedCustomValue);
             setCustomEditorVisible(true);
             return;
         }
+        if (customEditorVisible && previousSelectedValue === selectedValue) {
+            return;
+        }
         if (optionValues.has(selectedValue)) {
             setCustomEditorVisible(false);
         }
-    }, [optionValues, selectedCustomValue, selectedValue]);
+    }, [customEditorVisible, optionValues, selectedCustomValue, selectedValue]);
 
     const filteredOptions = React.useMemo(() => {
         if (!showSearch || !normalizedQuery) return props.options;
@@ -288,14 +295,14 @@ export function ModelPickerOverlay(props: {
                                                 {option.description}
                                             </Text>
                                         ) : null}
-                                        {isSelected ? (
-                                            <View style={styles.inlineSelectedControls}>
-                                                {renderSelectedOptionControls()}
-                                            </View>
-                                        ) : null}
                                     </Pressable>
                                 );
                             })}
+                        </View>
+                    ) : null}
+                    {!customEditorVisible && (props.selectedOptionControls?.length ?? 0) > 0 ? (
+                        <View testID="model-picker-overlay-selected-controls" style={styles.selectedControlsPanel}>
+                            {renderSelectedOptionControls()}
                         </View>
                     ) : null}
                     {props.canEnterCustomModel ? (
@@ -457,10 +464,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 13,
         color: theme.colors.textSecondary,
     },
-    inlineSelectedControls: {
-        marginTop: 1,
+    selectedControlsPanel: {
+        marginTop: 8,
         gap: 5,
-        paddingTop: 0,
+        padding: 10,
+        borderRadius: 13,
+        backgroundColor: theme.colors.surface,
     },
     selectedControlGroup: {
         gap: 3,

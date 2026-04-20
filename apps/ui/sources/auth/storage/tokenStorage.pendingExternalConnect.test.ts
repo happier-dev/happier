@@ -118,6 +118,88 @@ describe('TokenStorage pending external connect (web)', () => {
         vi.doUnmock('@/sync/domains/server/serverProfiles');
     });
 
+    it('clears the original scoped pending external connect key even after the active server changes', async () => {
+        const state = {
+            activeServerId: 'server-a',
+            activeServerUrl: 'https://shared.example.test',
+            profiles: [
+                { id: 'server-a', serverUrl: 'https://shared.example.test', name: 'Server A' },
+                { id: 'server-b', serverUrl: 'https://shared.example.test', name: 'Server B' },
+            ],
+        };
+
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerId: () => state.activeServerId,
+                getActiveServerUrl: () => state.activeServerUrl,
+                listServerProfiles: () => state.profiles,
+            };
+        });
+
+        const { TokenStorage } = await import('./tokenStorage');
+
+        await expect(
+            (TokenStorage as any).setPendingExternalConnect({
+                provider: 'github',
+                returnTo: '/friends',
+                serverUrl: state.activeServerUrl,
+                serverId: state.activeServerId,
+            }),
+        ).resolves.toBe(true);
+
+        state.activeServerId = 'server-b';
+
+        await expect((TokenStorage as any).clearPendingExternalConnect()).resolves.toBe(true);
+
+        if (!localStorageHandle) {
+            throw new Error('Expected localStorage mock handle');
+        }
+        const remainingScopedKeys = [...localStorageHandle.store.keys()].filter(
+            (key) => key.includes('pending_external_connect') && key.includes('__srv_'),
+        );
+        expect(remainingScopedKeys).toEqual([]);
+        vi.doUnmock('@/sync/domains/server/serverProfiles');
+    });
+
+    it('accepts scoped pending external connect records that omit explicit server context', async () => {
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerId: () => 'server-a',
+                getActiveServerUrl: () => 'https://relay.example.test',
+                listServerProfiles: () => [{ id: 'server-a', serverUrl: 'https://relay.example.test', name: 'Server A' }],
+            };
+        });
+
+        const { TokenStorage } = await import('./tokenStorage');
+
+        await expect(
+            (TokenStorage as any).setPendingExternalConnect({ provider: 'github', returnTo: '/friends' }),
+        ).resolves.toBe(true);
+
+        if (!localStorageHandle) {
+            throw new Error('Expected localStorage mock handle');
+        }
+
+        for (const key of [...localStorageHandle.store.keys()]) {
+            if (key.includes('pending_external_connect') && key.includes('__srv_')) {
+                localStorageHandle.store.set(key, JSON.stringify({ provider: 'github', returnTo: '/friends' }));
+            }
+            if (key.includes('pending_external_connect') && key.includes('__global')) {
+                localStorageHandle.store.delete(key);
+            }
+        }
+
+        await expect((TokenStorage as any).getPendingExternalConnect()).resolves.toEqual({
+            provider: 'github',
+            returnTo: '/friends',
+        });
+        vi.doUnmock('@/sync/domains/server/serverProfiles');
+    });
+
     it('returns null for malformed pending external connect payloads', async () => {
         const { TokenStorage } = await import('./tokenStorage');
         ((localStorage as any).getItem as any).mockReturnValueOnce(JSON.stringify({ provider: 'github', returnTo: 123 }));

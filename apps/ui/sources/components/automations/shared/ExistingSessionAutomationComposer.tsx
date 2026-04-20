@@ -13,7 +13,7 @@ import {
 import type { ExistingSessionAutomationAuthoringContext } from '@/components/sessions/authoring/context/sessionAuthoringContext';
 import { Modal } from '@/modal';
 import { nowServerMs } from '@/sync/runtime/time';
-import { t } from '@/text';
+import { t, tLoose } from '@/text';
 
 export function ExistingSessionAutomationComposer(props: Readonly<{
     context: ExistingSessionAutomationAuthoringContext;
@@ -40,8 +40,8 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
             autocompleteSuggestions={(query) => getSuggestions(props.context.session.id, query)}
             sessionId={props.context.session.id}
             metadata={props.context.session.metadata}
-            agentType={composerState.agentId}
-            agentLabel={t(getAgentCore(composerState.agentId).displayNameKey)}
+            agentType={composerState.agentId ?? undefined}
+            agentLabel={composerState.agentId ? t(getAgentCore(composerState.agentId).displayNameKey) : tLoose('common.unknown')}
             permissionMode={composerState.permissionMode}
             onPermissionModeChange={(mode) => {
                 props.onChangeDraft((current) => current

@@ -1,4 +1,5 @@
 import { SYSTEM_TASK_PROTOCOL_VERSION, type SystemTaskSpec } from '@happier-dev/protocol';
+import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 
 type LocalDaemonServiceTaskKind =
     | 'daemon.service.status.v1'
@@ -13,9 +14,13 @@ const LOCAL_DAEMON_SERVICE_PARAMS = {
 };
 
 export function buildLocalDaemonServiceSystemTaskSpec(kind: LocalDaemonServiceTaskKind): SystemTaskSpec {
+    const channel = resolvePreferredPublicReleaseRingLabelForCurrentApp();
     return {
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
         kind,
-        params: LOCAL_DAEMON_SERVICE_PARAMS,
+        params: {
+            ...LOCAL_DAEMON_SERVICE_PARAMS,
+            channel,
+        },
     };
 }

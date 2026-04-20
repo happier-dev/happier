@@ -342,6 +342,40 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(authApproveSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('does not switch to a different loopback server URL when the active server is already loopback', async () => {
+        routerReplaceSpy.mockClear();
+        setPendingTerminalConnectSpy.mockClear();
+        modalAlertSpy.mockClear();
+        upsertActivateAndSwitchServerSpy.mockClear();
+
+        activeServerUrl = 'http://127.0.0.1:43005';
+        authCredentials = null;
+        storedCredentials = null;
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        let result = true;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl('happier://terminal?key=abc123&server=http%3A%2F%2F127.0.0.1%3A3005');
+        });
+
+        expect(result).toBe(false);
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(setPendingTerminalConnectSpy).toHaveBeenCalledWith({
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'http://127.0.0.1:43005',
+        });
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/?server=http%3A%2F%2F127.0.0.1%3A43005');
+    });
+
     it('does not switch to a loopback server URL from the link when the active server is already non-loopback', async () => {
         routerReplaceSpy.mockClear();
         setPendingTerminalConnectSpy.mockClear();

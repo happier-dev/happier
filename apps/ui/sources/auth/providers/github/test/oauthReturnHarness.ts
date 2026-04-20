@@ -38,6 +38,7 @@ let pendingExternalAuthState: PendingExternalAuth | null = {
     provider: 'github',
     secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 };
+let pendingExternalAuthServerMismatch = false;
 let pendingExternalConnectState: PendingExternalConnect | null = null;
 let storedCredentialsState: { token: string; secret: string } | null = null;
 let authState: {
@@ -53,6 +54,10 @@ export const clearPendingExternalConnectMock = vi.fn(async () => true);
 
 export function setPendingExternalAuthState(next: PendingExternalAuth | null) {
     pendingExternalAuthState = next;
+}
+
+export function setPendingExternalAuthServerMismatch(next: boolean) {
+    pendingExternalAuthServerMismatch = next;
 }
 
 export function setPendingExternalConnectState(next: PendingExternalConnect | null) {
@@ -120,7 +125,11 @@ vi.mock('@/auth/storage/tokenStorage', async () => {
         ...actual,
         TokenStorage: {
             ...actual.TokenStorage,
-            getPendingExternalAuth: async () => pendingExternalAuthState,
+            getPendingExternalAuth: async () => (pendingExternalAuthServerMismatch ? null : pendingExternalAuthState),
+            readPendingExternalAuthState: async () => ({
+                value: pendingExternalAuthState,
+                serverMismatch: pendingExternalAuthServerMismatch,
+            }),
             clearPendingExternalAuth: clearPendingExternalAuthMock,
             getPendingExternalConnect: async () => pendingExternalConnectState,
             clearPendingExternalConnect: clearPendingExternalConnectMock,
@@ -207,6 +216,7 @@ export function resetOAuthHarness() {
         provider: 'github',
         secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     });
+    setPendingExternalAuthServerMismatch(false);
     setPendingExternalConnectState(null);
     setStoredCredentialsState(null);
     setAuthState({

@@ -1,5 +1,7 @@
 import { isAgentId } from '@/agents/catalog/catalog';
-import { buildBackendTargetKey, parseBackendTargetKey } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol';
+
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export type BackendNewSessionOptionStateByTargetKey = Record<string, Record<string, unknown>>;
 
@@ -15,12 +17,14 @@ function normalizeBackendNewSessionOptionStateKey(rawKey: string): string {
     }
 
     try {
-        return buildBackendTargetKey(parseBackendTargetKey(trimmedKey));
+        return resolveBackendTargetKeyV2(readBackendTargetRefV2(trimmedKey as BackendTargetRefV2Input));
     } catch {
-        if (isAgentId(trimmedKey)) {
-            return buildBackendTargetKey({ kind: 'builtInAgent', agentId: trimmedKey });
+        const backendId = isAgentId(trimmedKey) ? trimmedKey : trimmedKey;
+        try {
+            return resolveBackendTargetKeyV2({ kind: 'backend', backendId } satisfies BackendTargetRefV2Input);
+        } catch {
+            return trimmedKey;
         }
-        return trimmedKey;
     }
 }
 

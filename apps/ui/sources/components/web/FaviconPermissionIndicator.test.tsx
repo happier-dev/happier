@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -26,6 +26,7 @@ vi.mock('@/utils/web/faviconGenerator', () => ({
 }));
 
 let storageSnapshot: any = null;
+const readStorageSnapshot = () => storageSnapshot;
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -83,6 +84,11 @@ afterEach(() => {
     }
 });
 
+beforeEach(async () => {
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    registerStorageStateReader(readStorageSnapshot as any);
+});
+
 describe('FaviconPermissionIndicator', () => {
     it('does not signal permissions for inactive sessions', async () => {
         setGlobalWindow({});
@@ -108,5 +114,55 @@ describe('FaviconPermissionIndicator', () => {
 
         expect(updateFaviconWithNotification).not.toHaveBeenCalled();
         expect(resetFavicon).toHaveBeenCalled();
+    });
+
+    it('signals permissions from hydrated pending transcript state for active sessions', async () => {
+        setGlobalWindow({});
+        setGlobalDocument({});
+
+        storageSnapshot = {
+            sessions: {
+                s1: {
+                    id: 's1',
+                    presence: 'online',
+                    active: true,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {},
+                        completedRequests: null,
+                    },
+                },
+            },
+            sessionMessages: {
+                s1: {
+                    messages: [
+                        {
+                            kind: 'tool-call',
+                            id: 'm-tool-1',
+                            localId: null,
+                            createdAt: 100,
+                            children: [],
+                            tool: {
+                                id: 'req1',
+                                name: 'Bash',
+                                state: 'running',
+                                input: { command: 'ls' },
+                                createdAt: 100,
+                                permission: {
+                                    id: 'req1',
+                                    status: 'pending',
+                                    kind: 'permission',
+                                },
+                            },
+                        },
+                    ],
+                },
+            },
+        };
+
+        const { FaviconPermissionIndicator } = await import('./FaviconPermissionIndicator');
+        await renderScreen(<FaviconPermissionIndicator />);
+
+        expect(updateFaviconWithNotification).toHaveBeenCalledTimes(1);
     });
 });

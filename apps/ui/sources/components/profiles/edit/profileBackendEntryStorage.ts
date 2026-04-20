@@ -1,30 +1,24 @@
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import {
+    BackendTargetKeySchema,
+    buildBackendTargetKey,
+    convertBackendTargetRefV2ToV1,
+} from '@happier-dev/protocol';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { isAgentId } from '@/agents/catalog/catalog';
 
 type ProfileTargetValueRecord<TValue> = Readonly<Record<string, TValue | undefined>> | null | undefined;
 
-function getLegacyProviderSentinelTargetKey(entry: ResolvedBackendCatalogEntry): string | null {
-    if (entry.builtInAgentId != null) return null;
-    return buildBackendTargetKey({ kind: 'builtInAgent', agentId: entry.providerAgentId });
+export function resolveProfileBackendTargetKeyForEntry(entry: ResolvedBackendCatalogEntry): string {
+    return buildBackendTargetKey(convertBackendTargetRefV2ToV1(entry.backendTarget));
 }
 
 export function readProfileTargetKeyValueForEntry<TValue>(
     record: ProfileTargetValueRecord<TValue>,
     entry: ResolvedBackendCatalogEntry,
 ): TValue | undefined {
-    const exact = record?.[entry.targetKey];
-    if (exact !== undefined) {
-        return exact;
-    }
-
-    const legacyProviderSentinelTargetKey = getLegacyProviderSentinelTargetKey(entry);
-    if (!legacyProviderSentinelTargetKey) {
-        return undefined;
-    }
-
-    return record?.[legacyProviderSentinelTargetKey];
+    return record?.[resolveProfileBackendTargetKeyForEntry(entry)];
 }
 
 export function isProfileCompatibleWithResolvedBackendEntry(
@@ -40,22 +34,27 @@ export function isProfileCompatibleWithResolvedBackendEntry(
         return profile.compatibility[entry.builtInAgentId] === true;
     }
 
-    if (typeof profile.compatibility?.[entry.providerAgentId] === 'boolean') {
-        return profile.compatibility[entry.providerAgentId] === true;
+    if (isAgentId(entry.providerId) && typeof profile.compatibility?.[entry.providerId] === 'boolean') {
+        return profile.compatibility[entry.providerId] === true;
     }
 
-    return profile.isBuiltIn ? false : entry.family === 'builtInAgent';
+    return profile.isBuiltIn ? false : entry.kind === 'builtInAgent';
 }
 
 export function stripLegacyProviderSentinelTargetKeys<TValue>(
     record: ProfileTargetValueRecord<TValue>,
     entries: readonly ResolvedBackendCatalogEntry[],
 ): Record<string, TValue | undefined> {
-    const next = { ...(record ?? {}) };
-    for (const entry of entries) {
-        const legacyProviderSentinelTargetKey = getLegacyProviderSentinelTargetKey(entry);
-        if (!legacyProviderSentinelTargetKey) continue;
-        delete next[legacyProviderSentinelTargetKey];
+    void entries;
+    if (!record || typeof record !== 'object') {
+        return {};
     }
-    return next;
+
+    const out: Record<string, TValue | undefined> = {};
+    for (const [rawKey, value] of Object.entries(record)) {
+        if (BackendTargetKeySchema.safeParse(rawKey).success) {
+            out[rawKey] = value;
+        }
+    }
+    return out;
 }
