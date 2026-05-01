@@ -4,6 +4,7 @@
   "description": "Mobile and Web client for Claude Code and Codex",
   "bin": {
     "happier": "./bin/happier.mjs",
+    "happier-dev": "./bin/happier-dev.mjs",
     "happier-mcp": "./bin/happier-mcp.mjs"
   },
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",
