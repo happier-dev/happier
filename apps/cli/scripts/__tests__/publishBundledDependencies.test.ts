@@ -15,6 +15,7 @@ describe('apps/cli package publish contract', () => {
 
     expect(cliPackageJson.bin).toEqual({
       happier: './bin/happier.mjs',
+      'happier-dev': './bin/happier-dev.mjs',
       'happier-mcp': './bin/happier-mcp.mjs',
     });
   });
