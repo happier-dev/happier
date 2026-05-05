@@ -41,6 +41,7 @@ export async function runClaudeAgentSdkStreamLoop(params: {
         onTurnStartBoundary: () => void;
         onPreparedIncomingMessage: (incomingMessageType: unknown) => void;
         finalizeCurrentTurn: (options?: { completionEvent?: string }) => Promise<void>;
+        finalizeSubagentTurn: () => Promise<void>;
         isTurnFinalized: () => boolean;
         getLastTurnFlushSummary: () => StreamedTranscriptFlushSummary | null;
     };
@@ -99,12 +100,12 @@ export async function runClaudeAgentSdkStreamLoop(params: {
             } else if (subtype === 'task_progress') {
                 params.interruptController.noteTaskProgress((system as any).task_id);
             } else if (subtype === 'task_notification') {
-                const shouldFinalize = params.interruptController.noteTaskNotification(
+                const shouldFlushSubagent = params.interruptController.noteTaskNotification(
                     (system as any).task_id,
                     (system as any).status,
                 );
-                if (shouldFinalize) {
-                    await params.turnLifecycle.finalizeCurrentTurn();
+                if (shouldFlushSubagent) {
+                    await params.turnLifecycle.finalizeSubagentTurn();
                 }
             }
 

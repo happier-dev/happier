@@ -9,6 +9,7 @@ export function createClaudeAgentSdkTurnLifecycle(params: {
     ) => Promise<StreamedTranscriptFlushSummary | null>;
     updateThinking: (thinking: boolean) => void;
     onReady: () => void | Promise<void>;
+    onSubagentFlush?: () => void | Promise<void>;
     onCompletionEvent?: ((message: string) => void) | undefined;
     noteDurableAssistantFlush: (summary: StreamedTranscriptFlushSummary | null) => void;
     getTurnDiagnostics: () => Record<string, unknown>;
@@ -108,6 +109,17 @@ export function createClaudeAgentSdkTurnLifecycle(params: {
             }
             await params.onReady();
             params.scheduleNextMessagePump();
+        },
+        finalizeSubagentTurn: async () => {
+            lastTurnFlushSummary = await params.flushStreamedTranscriptWriter('turn-end');
+            params.logTurnSummary({
+                ...inboundDiagnostics,
+                ...params.getTurnDiagnostics(),
+                didPublishAssistantTextThisTurn: params.getDidPublishAssistantTextThisTurn(),
+                subagentTurn: true,
+            });
+            resetInboundDiagnostics();
+            await params.onSubagentFlush?.();
         },
         isTurnFinalized: () => didFinalizeTurn,
         getLastTurnFlushSummary: () => lastTurnFlushSummary,

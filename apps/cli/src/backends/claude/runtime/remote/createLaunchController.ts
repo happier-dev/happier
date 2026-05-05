@@ -343,6 +343,7 @@ export function createClaudeRemoteLaunchController(params: Readonly<{
                     claudeArgs: params.session.claudeArgs,
                     onMessage: params.onMessage,
                     onCompletionEvent: dispatchCallbacks.onCompletionEvent,
+                    onSubagentFlush: dispatchCallbacks.onSubagentFlush,
                     onSessionReset: () => {
                         forceNewSession = true;
                         queuedPromptCoordinator.resetForNewSession();

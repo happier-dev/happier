@@ -39,6 +39,7 @@ export type RunClaudeRemoteAgentSdkOptions = {
     jsRuntime?: JsRuntime;
     nextMessage: () => Promise<{ message: string; mode: EnhancedMode } | null>;
     onReady: () => void | Promise<void>;
+    onSubagentFlush?: () => void | Promise<void>;
     isAborted: (toolCallId: string) => boolean;
     onSessionFound: (id: string, data?: SessionHookData) => void;
     onThinkingChange?: (thinking: boolean) => void;

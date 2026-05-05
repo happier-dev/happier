@@ -19,6 +19,7 @@ export type ClaudeRemoteDispatchCallbacks = Readonly<{
     onCompletionEvent: (message: string) => void;
     onSessionReset: () => void;
     onReady: () => Promise<void>;
+    onSubagentFlush: () => Promise<void>;
 }>;
 
 export function createClaudeRemoteDispatchCallbacks(params: Readonly<{
@@ -97,6 +98,9 @@ export function createClaudeRemoteDispatchCallbacks(params: Readonly<{
         onReady: async () => {
             await params.messageQueue.flush();
             readyHandler();
+        },
+        onSubagentFlush: async () => {
+            await params.messageQueue.flush();
         },
     };
 }

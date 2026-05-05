@@ -1412,6 +1412,61 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
+  it('flushes queued subagent output without emitting ready', async () => {
+    const { session, client, sendToAllDevices, sendClaudeSessionMessage, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+    session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } satisfies EnhancedMode);
+
+    const dispatchStarted = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      dispatchStarted.resolve(undefined);
+      await waitForAbort((opts as RemoteDispatchMockOptions).signal);
+    });
+
+    const { launchClaudeRemoteSession: claudeRemoteLauncher } = await import('./launcher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const switchHandler = await switchHandlerReady;
+    await dispatchStarted.promise;
+    type SubagentFlushDispatchOptions = RemoteDispatchMockOptions & {
+      nextMessage?: () => Promise<unknown>;
+      onMessage?: (message: unknown) => void;
+      onSubagentFlush?: () => Promise<void>;
+    };
+    const dispatchOpts = mockClaudeRemoteDispatch.mock.calls[0]?.[0] as SubagentFlushDispatchOptions | undefined;
+    expect(typeof dispatchOpts?.onSubagentFlush).toBe('function');
+
+    await dispatchOpts?.nextMessage?.();
+
+    const queuedMessage = {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_delayed', name: 'Bash', input: {} }],
+      },
+    };
+    mockConvert.mockReturnValueOnce(queuedMessage);
+
+    dispatchOpts?.onMessage?.({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_delayed', name: 'Bash', input: {} }],
+      },
+    });
+
+    expect(sendClaudeSessionMessage).not.toHaveBeenCalled();
+
+    await dispatchOpts?.onSubagentFlush?.();
+
+    expect(sendClaudeSessionMessage).toHaveBeenCalledWith(queuedMessage, undefined);
+    expect(client.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+    expect(sendToAllDevices).not.toHaveBeenCalled();
+
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
   it('does not mount Ink UI for daemon-started sessions even when a TTY is available', async () => {
     // `process.stdout.isTTY` is not reliably writable across Node versions. Mock the decision helper
     // instead to simulate a TTY-capable environment.

@@ -182,6 +182,7 @@ export async function runClaudeRemoteAgentSdk(opts: RunClaudeRemoteAgentSdkOptio
             flushStreamedTranscriptWriter,
             updateThinking,
             onReady: opts.onReady,
+            onSubagentFlush: opts.onSubagentFlush,
             onCompletionEvent: opts.onCompletionEvent,
             noteDurableAssistantFlush: turnOutputRuntime.noteDurableAssistantFlush,
             getTurnDiagnostics: turnOutputRuntime.getTurnDiagnostics,
