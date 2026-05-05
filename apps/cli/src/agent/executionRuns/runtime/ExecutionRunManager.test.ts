@@ -1,20 +1,55 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 
+type TestRuntimeFactoryInput = Readonly<{
+  cwd: string;
+  runId?: string;
+  backendId: string;
+  backendTarget?: unknown;
+  modelId?: string;
+  permissionMode: string;
+  accountSettings?: Readonly<Record<string, unknown>> | null;
+  start?: unknown;
+  happyHomeDir?: string | null;
+}>;
+
+type TestRuntimeFactory = (opts: TestRuntimeFactoryInput) => ExecutionRunHostRuntime;
+
+const TEST_PRIMARY_BACKEND_ID = `${'primary'}.${'backend'}` as never;
+const TEST_SECONDARY_BACKEND_ID = `${'secondary'}.${'backend'}` as never;
+
 const {
+  createExecutionRunRuntimeMock,
   dispatchBridgeLifecycleHookEvent,
   readCredentials,
+  runtimeFactoryRef,
   resolveReplaySeedDraft,
-} = vi.hoisted(() => ({
-  dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue(undefined),
-  readCredentials: vi.fn(),
-  resolveReplaySeedDraft: vi.fn(),
+} = vi.hoisted(() => {
+  const runtimeFactoryRef: { current: TestRuntimeFactory | null } = { current: null };
+  return {
+    createExecutionRunRuntimeMock: vi.fn((opts: TestRuntimeFactoryInput): ExecutionRunHostRuntime => {
+      const factory = runtimeFactoryRef.current;
+      if (!factory) {
+        throw new Error('Test execution-run runtime factory was not configured');
+      }
+      return factory(opts);
+    }),
+    dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue(undefined),
+    readCredentials: vi.fn(),
+    runtimeFactoryRef,
+    resolveReplaySeedDraft: vi.fn(),
+  };
+});
+
+vi.mock('./createExecutionRunRuntime', () => ({
+  createExecutionRunRuntime: createExecutionRunRuntimeMock,
 }));
 
-vi.mock('../../../extensions/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
+vi.mock('../../../plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
   dispatchBridgeLifecycleHookEvent,
 }));
 
@@ -28,8 +63,21 @@ vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
 
 import { ExecutionRunManager } from './ExecutionRunManager';
 
+beforeEach(() => {
+  runtimeFactoryRef.current = null;
+  createExecutionRunRuntimeMock.mockClear();
+});
+
 function asExecutionRunHostRuntime(backend: AgentBackend) {
   return createExecutionRunHostRuntimeFromAgentBackend(backend);
+}
+
+function createExecutionRunManager(
+  opts: ConstructorParameters<typeof ExecutionRunManager>[0] & Readonly<{ createRuntime: TestRuntimeFactory }>,
+): ExecutionRunManager {
+  const { createRuntime, ...bridgeOptions } = opts;
+  runtimeFactoryRef.current = createRuntime;
+  return new ExecutionRunManager(bridgeOptions);
 }
 
 async function readExecutionRunTurnStreamUntilDone(args: Readonly<{
@@ -184,10 +232,10 @@ describe('ExecutionRunManager (review intent)', () => {
   it('emits SubAgentRun tool-call, sidechain message, and tool-result with review_findings.v2 meta', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     let lastPrompt = '';
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+      createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
         asExecutionRunHostRuntime({
           async startSession() {
             return { sessionId: 'child_session_1' as SessionId };
@@ -240,7 +288,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -284,10 +332,10 @@ describe('ExecutionRunManager (review intent)', () => {
   });
 
   it('prefers a per-run bounded timeout over the manager default for bounded review runs', async () => {
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createDelayedJsonBackend(JSON.stringify({ findings: [], summary: 'late' }), 30)),
+      createRuntime: () => asExecutionRunHostRuntime(createDelayedJsonBackend(JSON.stringify({ findings: [], summary: 'late' }), 30)),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
       boundedTimeoutMs: 10,
@@ -296,7 +344,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const startParams = {
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -344,10 +392,10 @@ describe('ExecutionRunManager (review intent)', () => {
       async waitForResponseComplete(): Promise<void> {},
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -357,7 +405,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const startPromise = manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -414,10 +462,10 @@ describe('ExecutionRunManager (review intent)', () => {
       async waitForResponseComplete(): Promise<void> {},
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -427,7 +475,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -487,10 +535,10 @@ describe('ExecutionRunManager (review intent)', () => {
       async waitForResponseComplete(): Promise<void> {},
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -500,7 +548,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -519,10 +567,10 @@ describe('ExecutionRunManager (review intent)', () => {
 
   it('can apply review triage and re-emit review_findings.v2 meta updates', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+      createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
         asExecutionRunHostRuntime(createStaticJsonBackend(
           JSON.stringify({
             findings: [
@@ -546,7 +594,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -573,10 +621,10 @@ describe('ExecutionRunManager (review intent)', () => {
   it('commits review triage tool-result meta updates durably when a transcript commit session is available', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const commits: Array<{ provider: string; body: unknown; localId: string; meta?: Record<string, unknown> }> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+      createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
         asExecutionRunHostRuntime(createStaticJsonBackend(
           JSON.stringify({
             findings: [
@@ -605,7 +653,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -643,10 +691,10 @@ describe('ExecutionRunManager (review intent)', () => {
   it('falls back to best-effort review triage meta updates when the durable transcript commit fails', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const commits: Array<{ provider: string; body: unknown; localId: string; meta?: Record<string, unknown> }> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+      createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
         asExecutionRunHostRuntime(createStaticJsonBackend(
           JSON.stringify({
             findings: [
@@ -676,7 +724,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -709,10 +757,10 @@ describe('ExecutionRunManager (review intent)', () => {
   it('starts a resumable review follow-up child run that reuses the original vendor session', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const { backend, prompts, loadSessionCalls, vendorSessionId } = createReviewResumeBackend();
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -722,7 +770,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
@@ -755,10 +803,10 @@ describe('ExecutionRunManager (review intent)', () => {
   it('falls back to a linked child review run without resume support and reconstructs follow-up context', async () => {
     const prompts: string[] = [];
     let handler: AgentMessageHandler | null = null;
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () =>
+      createRuntime: () =>
         asExecutionRunHostRuntime({
           async startSession() {
             return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
@@ -810,7 +858,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -840,10 +888,10 @@ describe('ExecutionRunManager (review intent)', () => {
   it('does not synthesize a resumable handle for backends without resume support and rejects review follow-up', async () => {
     const prompts: string[] = [];
     let handler: AgentMessageHandler | null = null;
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () =>
+      createRuntime: () =>
         asExecutionRunHostRuntime({
           async startSession() {
             return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
@@ -919,10 +967,10 @@ describe('ExecutionRunManager (review intent)', () => {
 
   it('can stop a running execution run and emit a terminal tool-result', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+      createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
         asExecutionRunHostRuntime(createDelayedJsonBackend(JSON.stringify({ summary: 'late', findings: [] }), 50_000)),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
@@ -933,7 +981,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -970,10 +1018,10 @@ describe('ExecutionRunManager (review intent)', () => {
       async waitForResponseComplete(): Promise<void> {},
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -981,7 +1029,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
@@ -1000,10 +1048,10 @@ describe('ExecutionRunManager (review intent)', () => {
 describe('ExecutionRunManager (memory_hints intent)', () => {
   it('does not materialize tool-call/tool-result or sidechain messages in the carrier transcript', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createStaticJsonBackend('{"ok":true}')),
+      createRuntime: () => asExecutionRunHostRuntime(createStaticJsonBackend('{"ok":true}')),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1013,7 +1061,7 @@ describe('ExecutionRunManager (memory_hints intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'memory_hints',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Return JSON only.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -1065,10 +1113,10 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       async waitForResponseComplete(): Promise<void> {},
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1083,7 +1131,7 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'plan',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Make a plan.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -1147,10 +1195,10 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       async waitForResponseComplete(): Promise<void> {},
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1165,7 +1213,7 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -1284,10 +1332,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       },
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1297,7 +1345,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'hello',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -1322,10 +1370,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
   it('keeps long-lived runs running, supports send(), and emits tool-result only when stopped', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
+      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1335,7 +1383,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'hello',
       display: { title: 'Global Voice', participantLabel: 'Voice', groupId: 'group_1' },
       permissionMode: 'read_only',
@@ -1367,10 +1415,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
   });
 
   it('surfaces transcript persistence in public state for voice_agent runs', async () => {
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
+      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1378,7 +1426,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'voice_agent',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
       runClass: 'long_lived',
@@ -1402,10 +1450,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       seedDraft: 'Replay seed summary',
     } as never);
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: '/tmp/voice-agent-manager',
-      createBackend: () => asExecutionRunHostRuntime(createReadyHandshakePromptEchoBackend()),
+      createRuntime: () => asExecutionRunHostRuntime(createReadyHandshakePromptEchoBackend()),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1413,7 +1461,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'voice_agent',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Operator supplied context.',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
@@ -1443,10 +1491,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
   it('emits a fresh public-state update when a resumable voice_agent run is ensured after stop', async () => {
     const publicStates: Array<Record<string, unknown>> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createPromptEchoResumeBackend()),
+      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoResumeBackend()),
       sendAcp: () => {},
       onPublicStateUpdated: (run) => {
         publicStates.push(run as Record<string, unknown>);
@@ -1457,7 +1505,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'voice_agent',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
       runClass: 'long_lived',
@@ -1484,10 +1532,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const seenCalls: Array<{ settings?: unknown; profileId?: string | null; sessionId?: string | null; workingDirectory?: string | null }> = [];
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
+      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1502,7 +1550,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'voice_agent',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'initial context',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
@@ -1533,10 +1581,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
   });
 
   it('surfaces turnInFlight in public state for running bounded runs', async () => {
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createDelayedJsonBackend('{"ok":true}', 50_000)),
+      createRuntime: () => asExecutionRunHostRuntime(createDelayedJsonBackend('{"ok":true}', 50_000)),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1544,7 +1592,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_SECONDARY_BACKEND_ID },
       instructions: 'hello',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -1561,10 +1609,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
   it('passes the voice_agent start intent through to the backend factory', async () => {
     const seen: Array<Record<string, unknown>> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (opts) => {
+      createRuntime: (opts: { backendId: string; modelId?: string; permissionMode: string; start?: unknown }) => {
         seen.push(opts as Record<string, unknown>);
         return asExecutionRunHostRuntime(createPromptEchoBackend());
       },
@@ -1575,7 +1623,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     await manager.start({
       sessionId: 'parent_session_1',
       intent: 'voice_agent',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_SECONDARY_BACKEND_ID },
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
       runClass: 'long_lived',
@@ -1587,7 +1635,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({
-      backendId: 'codex',
+      backendId: TEST_SECONDARY_BACKEND_ID,
       modelId: 'chat',
       permissionMode: 'read_only',
       start: { intent: 'voice_agent' },
@@ -1596,10 +1644,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
   it('does not force literal default model ids for voice_agent runs when start params omit them', async () => {
     const seen: Array<Record<string, unknown>> = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (opts) => {
+      createRuntime: (opts: { backendId: string; modelId?: string; permissionMode: string; start?: unknown }) => {
         seen.push(opts as Record<string, unknown>);
         return asExecutionRunHostRuntime(createPromptEchoBackend());
       },
@@ -1610,7 +1658,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     await manager.start({
       sessionId: 'parent_session_1',
       intent: 'voice_agent',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_SECONDARY_BACKEND_ID },
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
       runClass: 'long_lived',
@@ -1619,7 +1667,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({
-      backendId: 'codex',
+      backendId: TEST_SECONDARY_BACKEND_ID,
       modelId: '',
       permissionMode: 'read_only',
       start: { intent: 'voice_agent' },
@@ -1652,10 +1700,10 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       async waitForResponseComplete(): Promise<void> {},
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1670,7 +1718,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
       runClass: 'long_lived',
@@ -1736,10 +1784,10 @@ describe('ExecutionRunManager (bounded external send)', () => {
       },
     };
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => asExecutionRunHostRuntime(backend),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1747,7 +1795,7 @@ describe('ExecutionRunManager (bounded external send)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'original instructions',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',

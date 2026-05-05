@@ -4,7 +4,7 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { ClaudeLocalPermissionBridge } from './localPermissionBridge';
 
-function createSessionStub(sendToAllDevicesAsync: ReturnType<typeof vi.fn>): any {
+function createSessionStub(sendToAllDevicesAsync: ReturnType<typeof vi.fn> | null): any {
   const client: any = {
     sessionId: 's1',
     updateAgentState: vi.fn((updater: any) => updater({ requests: {}, completedRequests: {}, capabilities: {} })),
@@ -12,7 +12,7 @@ function createSessionStub(sendToAllDevicesAsync: ReturnType<typeof vi.fn>): any
   };
   return {
     client,
-    pushSender: { sendToAllDevicesAsync },
+    pushSender: sendToAllDevicesAsync ? { sendToAllDevicesAsync } : null,
     accountSettings: null,
     getOrCreatePermissionRpcRouter: () => ({ registerConsumer: () => {}, removeConsumer: () => {} } as any),
     fetchRecentTranscriptTextItemsForAcpImport: vi.fn(async () => []),
@@ -46,13 +46,14 @@ describe('ClaudeLocalPermissionBridge push policy', () => {
 
   it('sends permission-request pushes when enabled in account settings', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => {});
-    const session = createSessionStub(sendToAllDevicesAsync);
+    const session = createSessionStub(null);
     session.accountSettings = accountSettingsParse({
       notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
     });
 
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 10_000 });
     bridge.activate();
+    session.pushSender = { sendToAllDevicesAsync };
 
     const p = bridge.handlePermissionHook({
       tool_use_id: 'tool1',
@@ -70,6 +71,7 @@ describe('ClaudeLocalPermissionBridge push policy', () => {
       'Permission Request',
       expect.stringContaining('Read'),
       expect.objectContaining({ sessionId: 's1', requestId: 'tool1' }),
+      { sound: 'happier_urgent.wav', priority: 'high', androidSoundId: 'urgent' },
     );
   });
 });

@@ -68,7 +68,7 @@ describe('ReviewProfile', () => {
     expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
-  it('parses CodeRabbit plain output into review_findings.v2 when backendId=coderabbit', () => {
+  it('fails CodeRabbit plain output in the core review profile without a runtimeCore-owned normalizer', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
@@ -103,25 +103,9 @@ describe('ReviewProfile', () => {
       finishedAtMs: 2,
     });
 
-    expect(res.status).toBe('succeeded');
-    expect(res.structuredMeta?.kind).toBe('review_findings.v2');
-    const payload = (res.structuredMeta as any)?.payload;
-    expect(payload.summary).toContain('CodeRabbit');
-    expect(payload.overviewMarkdown).toContain('CodeRabbit review');
-    expect(Array.isArray(payload.findings)).toBe(true);
-    expect(payload.findings.length).toBe(1);
-    expect(payload.findings[0]).toEqual(
-      expect.objectContaining({
-        title: expect.any(String),
-        category: 'correctness',
-        severity: 'high',
-        filePath: 'src/foo.ts',
-        startLine: 10,
-        endLine: 12,
-        summary: expect.stringContaining('Null deref'),
-        suggestion: expect.stringContaining('Add a guard'),
-      }),
-    );
+    expect(res.status).toBe('failed');
+    expect(res.structuredMeta).toBeUndefined();
+    expect((res.toolResultOutput as { error?: { code?: string } }).error?.code).toBe('invalid_output');
   });
 
   it('rejects triage actions when start params are missing required policy fields', () => {

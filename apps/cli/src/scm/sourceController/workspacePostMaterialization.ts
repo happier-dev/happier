@@ -1,4 +1,4 @@
-import { defaultScmBackendRegistry } from '../defaultRegistry';
+import { defaultScmBackendRegistry } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
 import { createScmSourceControllerCheckoutMaterializationRequest } from './checkoutMaterialization';

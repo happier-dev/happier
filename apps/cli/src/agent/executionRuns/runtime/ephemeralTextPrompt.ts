@@ -6,7 +6,7 @@ import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionR
 import { configuration } from '@/configuration';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
-export type EphemeralExecutionRunTextPromptBackendFactory = (opts: Readonly<{
+export type EphemeralExecutionRunTextPromptRuntimeFactory = (opts: Readonly<{
   cwd: string;
   runId: string;
   backendId: string;
@@ -16,7 +16,7 @@ export type EphemeralExecutionRunTextPromptBackendFactory = (opts: Readonly<{
   start: Readonly<{ sessionId: string; intent: string; retentionPolicy: 'ephemeral' }>;
 }>) => ExecutionRunHostRuntime;
 
-function createDefaultBackendFactory(): EphemeralExecutionRunTextPromptBackendFactory {
+function createDefaultRuntimeFactory(): EphemeralExecutionRunTextPromptRuntimeFactory {
   return (opts) =>
     createExecutionRunRuntime({
       cwd: opts.cwd,
@@ -38,15 +38,15 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
   permissionMode: string;
   intent: string;
   prompt: string;
-  createBackend?: EphemeralExecutionRunTextPromptBackendFactory;
+  createRuntime?: EphemeralExecutionRunTextPromptRuntimeFactory;
   configureSession?: (sessionId: string) => Promise<void>;
   timeoutMs?: number | null;
 }>): Promise<string> {
   const intent = String(params.intent ?? '').trim() || 'execution_run';
   const runId = `${intent}_${randomUUID()}`;
-  const createBackend = params.createBackend ?? createDefaultBackendFactory();
+  const createRuntime = params.createRuntime ?? createDefaultRuntimeFactory();
 
-  const runtime = createBackend({
+  const runtime = createRuntime({
     cwd: params.cwd,
     runId,
     backendId: params.backendId,

@@ -1,8 +1,7 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { buildSettingArtifacts, defineSettingDefinitions, WorkspaceRefV1Schema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { SessionSplitCanvasLayoutsSchema } from '@/sync/domains/session/sessionSplitCanvasPersistence';
-import { WorkspaceRefV1Schema } from '@/sync/domains/workspaces/workspaceRefModel';
 
 function objectKeyCount(value: unknown): number {
     return value && typeof value === 'object' && !Array.isArray(value)

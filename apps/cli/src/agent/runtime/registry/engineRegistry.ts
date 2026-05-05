@@ -1,34 +1,57 @@
-import { DirectSessionsProviderIdSchema } from '@happier-dev/protocol';
+import {
+    DirectSessionsProviderIdSchema,
+    accountSettingsParse,
+    isFeatureId,
+    type AccountSettings,
+} from '@happier-dev/protocol';
 
-import { resolveMergedContributionRegistry } from '../../../extensions/registry/createResolvedContributionRegistry';
+import { resolveMergedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
 import type {
     ResolvedBackendContribution,
     ResolvedCatalogEntry,
     ResolvedContributionRegistry,
     ResolvedProviderContribution,
-} from '../../../extensions/registry/types';
-import { pluginReloadController } from '../../../extensions/reload/singleton';
-import { resolveExecutablePluginRuntimeRegistry } from '../../../extensions/runtime/resolveExecutablePluginRuntimeRegistry';
-import type { ResolvedExecutablePluginRuntimeRegistry } from '../../../extensions/runtime/resolveExecutablePluginRuntimeRegistry';
+} from '../../../plugins/projection/registry/types';
+import { pluginReloadController } from '../../../plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import {
     createEmptyBackendExecutionSurfaces,
     type BackendExecutionSurfaces,
-    type CliBindingsGetter,
+    type CliRuntimeCoreGetter,
     type CliEngineAdapter,
-    type CliRuntimeBindings,
+    type CliRuntimeCore,
     type EngineAdapterResolution,
     type EngineResolutionSelectedSource,
     type ResolvedCliEngineRegistry,
 } from './engineRegistryTypes';
-import { createMissingCliEngineAdapter } from './createCliBindings';
+import { createMissingCliEngineAdapter } from './createCliRuntimeCore';
+import {
+    readPluginDaemonConnectionStateSource,
+    type PluginDaemonConnectionStateSource,
+} from './pluginConnectionStateSource';
 import { resolvePluginRuntimeAdapterSurfaces } from './resolvePluginRuntimeAdapterSurfaces';
-import type { ExtensionContextV1, RegisterBackendEngineV1 } from '@happier-dev/extension-sdk';
+import {
+    defineAcpBackend,
+    readAcpBackendSpec,
+    type ConnectionRuntimeServiceV1,
+    type ConnectionStateV1,
+    type FetchRuntimeServiceV1,
+    type PluginContextV1,
+    type PluginSessionGetParamsV1,
+    type PluginSessionRefV1,
+    type PluginSessionWatchEventV1,
+    type PluginSessionWatchParamsV1,
+    type RegisterBackendEngineV1,
+    type SessionScopedServicesV1,
+    type SubscriptionV1,
+} from '@happier-dev/plugin-sdk';
 import { configuration } from '@/configuration';
-import { isFeatureId } from '@happier-dev/protocol';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { logger } from '@/ui/logger';
-import { resolveProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { readCredentials } from '@/persistence';
+import { resolveProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import type { CatalogAgentLookupId } from '@/backends/types';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import {
@@ -37,25 +60,155 @@ import {
 } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
-import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import {
+    createAcpRuntimeCoreFromDefinition,
+    normalizePluginAcpDefinition,
+    normalizePluginBackendContributionAcpDefinition,
+} from '@/agent/acp/runtime/definition';
+import { createBuiltInNotificationRegistry, createNotificationsService } from '@/notifications/service';
+import { createNotificationRegistryFromPluginRuntime } from '@/notifications/pluginRuntimeRegistry';
+import { createPluginFetchService } from '@/plugins/runtime/fetch/service';
+import {
+    getActiveAccountSettingsSnapshot,
+    setActiveAccountSettingsSnapshot,
+    subscribeActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import {
+    createAccountSettingsService,
+    createProjectsService,
+    type WorkspaceRefScopeV1,
+} from '@/settings/accountSettings/workspaceRefsV1';
 
-const EXTENSION_CONTEXT_V1_BINDER = Symbol('happier.extensionContextV1.binder');
+const PLUGIN_CONTEXT_V1_BINDER = Symbol('happier.pluginContextV1.binder');
 
-type ExtensionContextV1Binder = Readonly<{
+const IDLE_DAEMON_CONNECTION_STATE: ConnectionStateV1 = Object.freeze({
+    phase: 'idle',
+    reason: null,
+    attempt: 0,
+    nextRetryAt: null,
+    lastConnectedAt: null,
+    lastDisconnectedAt: null,
+    lastErrorMessage: null,
+});
+
+type PluginContextV1Binder = Readonly<{
     bindHostSessionRuntime: (params: HostSessionRuntimeFactoryParams) => void;
     bindExecutionRun: (params: Readonly<{ permissionMode?: string | null }>) => void;
 }>;
 
-function readExtensionContextV1Binder(ctx: ExtensionContextV1): ExtensionContextV1Binder | null {
+const UNSUPPORTED_PLUGIN_BACKEND_ENGINE_SURFACES = Object.freeze([
+    'terminalRuntimeSurface',
+    'externalSessionSurface',
+    'attachSurface',
+    'sessionHandoffSurface',
+] as const);
+
+function readPluginContextV1Binder(ctx: PluginContextV1): PluginContextV1Binder | null {
     const record = ctx as unknown as Record<PropertyKey, unknown>;
-    const binder = record[EXTENSION_CONTEXT_V1_BINDER];
-    return binder && typeof binder === 'object' ? (binder as ExtensionContextV1Binder) : null;
+    const binder = record[PLUGIN_CONTEXT_V1_BINDER];
+    return binder && typeof binder === 'object' ? (binder as PluginContextV1Binder) : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readNumberOrNull(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readConnectionPhase(value: unknown): ConnectionStateV1['phase'] {
+    switch (value) {
+        case 'idle':
+        case 'connecting':
+        case 'online':
+        case 'offline':
+        case 'auth_failed':
+        case 'shutting_down':
+            return value;
+        default:
+            return 'idle';
+    }
+}
+
+function projectConnectionStateV1(state: unknown): ConnectionStateV1 {
+    if (!isRecord(state)) {
+        return IDLE_DAEMON_CONNECTION_STATE;
+    }
+    const projected = {
+        phase: readConnectionPhase(state.phase),
+        reason: typeof state.reason === 'string' ? state.reason : null,
+        attempt: typeof state.attempt === 'number' && Number.isFinite(state.attempt) ? state.attempt : 0,
+        nextRetryAt: readNumberOrNull(state.nextRetryAt),
+        lastConnectedAt: readNumberOrNull(state.lastConnectedAt),
+        lastDisconnectedAt: readNumberOrNull(state.lastDisconnectedAt),
+        lastErrorMessage: typeof state.lastErrorMessage === 'string' ? state.lastErrorMessage : null,
+    } satisfies ConnectionStateV1;
+    return Object.freeze(projected);
+}
+
+function createIdleConnectionStateSource(): PluginDaemonConnectionStateSource {
+    return Object.freeze({
+        onConnectionStateChange(listener: (state: unknown) => void) {
+            listener(IDLE_DAEMON_CONNECTION_STATE);
+            return () => undefined;
+        },
+    });
+}
+
+function createConnectionRuntimeService(params?: Readonly<{
+    source?: PluginDaemonConnectionStateSource | null;
+}>): ConnectionRuntimeServiceV1 {
+    const resolveSource = (): PluginDaemonConnectionStateSource => (
+        params?.source
+        ?? readPluginDaemonConnectionStateSource()
+        ?? createIdleConnectionStateSource()
+    );
+    const readCurrentState = (): ConnectionStateV1 => {
+        let current = IDLE_DAEMON_CONNECTION_STATE;
+        const source = resolveSource();
+        const unsubscribe = source.onConnectionStateChange((state) => {
+            current = projectConnectionStateV1(state);
+        });
+        unsubscribe();
+        return current;
+    };
+
+    const service: ConnectionRuntimeServiceV1 = Object.freeze({
+        getDaemonLinkState: readCurrentState,
+        watchDaemonLink(listener: Parameters<ConnectionRuntimeServiceV1['watchDaemonLink']>[0]) {
+            let unsubscribed = false;
+            const source = resolveSource();
+            const unsubscribeSource = source.onConnectionStateChange((state) => {
+                if (unsubscribed) {
+                    return;
+                }
+                const projected = projectConnectionStateV1(state);
+                try {
+                    listener(projected);
+                } catch (error) {
+                    logger.warn('[PluginContextV1] ctx.connection watcher failed (ignored)', {
+                        error,
+                    });
+                }
+            });
+            return Object.freeze({
+                unsubscribe: () => {
+                    if (unsubscribed) {
+                        return;
+                    }
+                    unsubscribed = true;
+                    unsubscribeSource();
+                },
+            });
+        },
+        isDaemonOnline: () => readCurrentState().phase === 'online',
+    });
+    return service;
 }
 
 function sanitizePathSegment(value: string): string {
@@ -74,6 +227,23 @@ function sanitizeEnvKeySegment(value: string): string {
         .replace(/[^A-Z0-9]+/g, '_')
         .replace(/^_+/, '')
         .replace(/_+$/, '') || 'UNKNOWN';
+}
+
+function assertNoUnsupportedPluginBackendEngineSurfaces(params: Readonly<{
+    backendId: string;
+    engine: unknown;
+}>): void {
+    if (!isRecord(params.engine)) {
+        return;
+    }
+    const engine = params.engine;
+    const unsupportedSurface = UNSUPPORTED_PLUGIN_BACKEND_ENGINE_SURFACES.find((key) => engine[key] != null);
+    if (!unsupportedSurface) {
+        return;
+    }
+    throw new Error(
+        `Plugin backend '${params.backendId}' returned unsupported BackendEngineV1 executable surface '${unsupportedSurface}'. A.6 exposes the typed substrate, but this host runtime only executes runtimeCore, facets, and messageMeta until the owning surface packet wires that capability.`,
+    );
 }
 
 function parseEnvBoundedInt(name: string, opts: Readonly<{ min: number; max: number; fallback: number }>): number {
@@ -106,16 +276,100 @@ function resolveExtensionArtifactsDir(params: Readonly<{ backendId: string }>): 
 
     const globalRoot = process.env.HAPPIER_DEBUG_ARTIFACTS_DIR;
     if (typeof globalRoot === 'string' && globalRoot.trim().length > 0) {
-        return `${globalRoot.trim()}/extensions/${backendId}`;
+        return `${globalRoot.trim()}/plugins/${backendId}`;
     }
 
     // Default location is safe, but only used when explicitly enabled by env gating above.
-    return join(configuration.happyHomeDir, 'cli', 'logs', 'extensions', backendId);
+    return join(configuration.happyHomeDir, 'cli', 'logs', 'plugins', backendId);
+}
+
+function createUnavailablePluginActionMethod(actionId: string): (input: unknown) => Promise<never> {
+    return async (_input: unknown): Promise<never> => {
+        throw new Error(`Plugin action '${actionId}' is not available in this runtime context`);
+    };
+}
+
+function createPluginContextActionsService(): PluginContextV1['actions'] {
+    return Object.freeze({
+        scm: Object.freeze({
+            pullRequest: Object.freeze({
+                list: createUnavailablePluginActionMethod('scm.pullRequest.list'),
+                get: createUnavailablePluginActionMethod('scm.pullRequest.get'),
+                openOrReuse: createUnavailablePluginActionMethod('scm.pullRequest.openOrReuse'),
+                openCompose: createUnavailablePluginActionMethod('scm.pullRequest.openCompose'),
+                checkout: createUnavailablePluginActionMethod('scm.pullRequest.checkout'),
+                prepareWorktree: createUnavailablePluginActionMethod('scm.pullRequest.prepareWorktree'),
+                runStacked: createUnavailablePluginActionMethod('scm.pullRequest.runStacked'),
+            }),
+            repository: Object.freeze({
+                init: createUnavailablePluginActionMethod('scm.repository.init'),
+                removeIndexLock: createUnavailablePluginActionMethod('scm.repository.removeIndexLock'),
+            }),
+            hostingRepository: Object.freeze({
+                describePublishTargets: createUnavailablePluginActionMethod('scm.hostingRepository.describePublishTargets'),
+                publish: createUnavailablePluginActionMethod('scm.hostingRepository.publish'),
+            }),
+        }),
+    });
+}
+
+function createNoopPluginSubscription(): SubscriptionV1 {
+    return Object.freeze({
+        unsubscribe: () => undefined,
+    });
+}
+
+function createUnavailablePluginSubagentsService(): PluginContextV1['sessions']['subagents'] {
+    const rejectWrite = async (): Promise<never> => {
+        throw new Error('ctx.sessions.subagents write operations are unavailable until the owning subagent ActionSpec packet binds a host adapter');
+    };
+
+    return Object.freeze({
+        list: async () => Object.freeze([]),
+        get: async () => null,
+        watch: () => createNoopPluginSubscription(),
+        upsert: rejectWrite,
+        updateStatus: rejectWrite,
+        complete: rejectWrite,
+    });
+}
+
+function createUnavailablePluginExternalSessionsService(): PluginContextV1['sessions']['external'] {
+    const unavailable = 'ctx.sessions.external is unavailable until the owning external-session ActionSpec packet binds a host adapter';
+    return Object.freeze({
+        listCandidates: async () => Object.freeze({
+            candidates: Object.freeze([]),
+            nextCursor: null,
+        }),
+        attach: async () => Object.freeze({
+            ok: false,
+            error: unavailable,
+        }),
+        takeover: async () => Object.freeze({
+            ok: false as const,
+            errorCode: 'capability_unsupported' as const,
+            error: unavailable,
+        }),
+        pageTranscript: async () => Object.freeze({
+            ok: false as const,
+            errorCode: 'provider_unavailable' as const,
+            error: unavailable,
+        }),
+        readAfterTranscript: async () => Object.freeze({
+            ok: false as const,
+            errorCode: 'provider_unavailable' as const,
+            error: unavailable,
+        }),
+        followTranscript: () => createNoopPluginSubscription(),
+    });
 }
 
 type BoundContextScope =
     | Readonly<{
         kind: 'hostSession';
+        serverId: string;
+        machineId: string;
+        rootPath: string;
         getSession: () => ApiSessionClient;
         getTranscriptSession: () => TranscriptSessionPort;
         getPermissionHandler: () => ProviderEnforcedPermissionHandler;
@@ -127,7 +381,35 @@ type BoundContextScope =
         permissionHandler: ReturnType<typeof createExecutionRunPermissionHandler>;
     }>;
 
-function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): ExtensionContextV1 {
+type HostSessionContextScope = Extract<BoundContextScope, Readonly<{ kind: 'hostSession' }>>;
+
+function readRequestedPluginSessionId(params: PluginSessionGetParamsV1): string | null {
+    if (typeof params === 'string' && params.trim().length > 0) {
+        return params.trim();
+    }
+    if (isRecord(params) && typeof params.sessionId === 'string' && params.sessionId.trim().length > 0) {
+        return params.sessionId.trim();
+    }
+    return null;
+}
+
+function createPluginSessionRef(scope: HostSessionContextScope): PluginSessionRefV1 {
+    const session = scope.getSession();
+    const metadata = session.getMetadataSnapshot();
+    const agentState = session.getAgentStateSnapshot();
+    const metadataRecord: Record<string, unknown> | null = isRecord(metadata) ? metadata : null;
+    const titleValue = metadataRecord ? metadataRecord['title'] : null;
+    const title = typeof titleValue === 'string' ? titleValue : null;
+
+    return Object.freeze({
+        sessionId: session.sessionId,
+        ...(title ? { title } : {}),
+        ...(metadataRecord ? { metadata: metadataRecord } : {}),
+        ...(isRecord(agentState) ? { agentState } : {}),
+    });
+}
+
+function createHostPluginContextV1(params?: ResolveEngineRegistryParams): PluginContextV1 {
     const configValues = Object.freeze({
         currentCliVersion: configuration.currentCliVersion,
         happyHomeDir: params?.happyHomeDir ?? null,
@@ -135,7 +417,7 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
 
     // Keep this stable and side-effect-free. Implementations may memoize feature queries.
     const featureEnabledMemo = new Map<string, boolean>();
-    const features: ExtensionContextV1['features'] = Object.freeze({
+    const features: PluginContextV1['features'] = Object.freeze({
         isEnabled: (featureIdRaw: string) => {
             const cached = featureEnabledMemo.get(featureIdRaw);
             if (cached !== undefined) {
@@ -217,7 +499,7 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
             mkdirSync(dirname(filePath), { recursive: true });
             appendBoundedLineSync({ filePath, line: `${JSON.stringify(record)}\n`, kind: params2.kind });
         } catch (error) {
-            logger.debug('[ExtensionContextV1] Failed to write extension record (non-fatal)', error);
+            logger.debug('[PluginContextV1] Failed to write plugin record (non-fatal)', error);
         }
     }
 
@@ -229,7 +511,7 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
         return currentScope!;
     };
 
-    const binder: ExtensionContextV1Binder = Object.freeze({
+    const binder: PluginContextV1Binder = Object.freeze({
         bindHostSessionRuntime: (runtimeParams) => {
             const getSession = () => runtimeParams.session as unknown as ApiSessionClient;
             const getTranscriptSession = () => runtimeParams.transcriptSession as unknown as TranscriptSessionPort;
@@ -237,6 +519,9 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
             const getPermissionMode = () => runtimeParams.getPermissionMode?.() ?? 'default';
             currentScope = Object.freeze({
                 kind: 'hostSession',
+                serverId: configuration.activeServerId,
+                machineId: runtimeParams.machineId,
+                rootPath: runtimeParams.directory,
                 getSession,
                 getTranscriptSession,
                 getPermissionHandler,
@@ -264,6 +549,228 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
         },
     });
 
+    const getCurrentAccountSettings = (): AccountSettings | null => getActiveAccountSettingsSnapshot()?.settings ?? null;
+    const subscribeCurrentAccountSettings = (listener: (settings: AccountSettings | null) => void): (() => void) => (
+        subscribeActiveAccountSettingsSnapshot((snapshot) => listener(snapshot?.settings ?? null))
+    );
+    const getActiveProjectScope = (): WorkspaceRefScopeV1 | null => {
+        const scope = currentScope;
+        if (!scope || scope.kind !== 'hostSession') return null;
+        return Object.freeze({
+            serverId: scope.serverId,
+            machineId: scope.machineId,
+            rootPath: scope.rootPath,
+        });
+    };
+    const updateCurrentAccountSettings = async (
+        mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+    ): Promise<AccountSettings> => {
+        const credentials = await readCredentials();
+        if (!credentials) {
+            throw new Error('ctx.account.settings.set requires authenticated account settings credentials');
+        }
+        const result = await updateAccountSettingsV2WithRetry({ credentials, mutate });
+        const previous = getActiveAccountSettingsSnapshot();
+        const settings = result.settings ?? previous?.settings ?? accountSettingsParse({});
+        setActiveAccountSettingsSnapshot({
+            source: 'network',
+            settings,
+            settingsVersion: result.version,
+            loadedAtMs: Date.now(),
+            settingsSecretsReadKeys: previous?.settingsSecretsReadKeys ?? [],
+        });
+        return settings;
+    };
+
+    const subagentsService = createUnavailablePluginSubagentsService();
+    const externalSessionsService = createUnavailablePluginExternalSessionsService();
+
+    const sendSession: PluginContextV1['sessions']['send'] = async (request) => {
+        const scope = await ensureScope();
+        if (scope.kind === 'executionRun') {
+            logger.debug('[PluginContextV1] sessions.send (execution-run no-op)', { request });
+            return { ok: true };
+        }
+        const session = scope.getSession();
+        if (!isRecord(request) || typeof request.kind !== 'string') {
+            logger.debug('[PluginContextV1] sessions.send invalid request (ignored)', { request });
+            return { ok: false, error: 'invalid_request' };
+        }
+        if (request.kind === 'userText' && typeof request.text === 'string') {
+            session.sendUserTextMessage(request.text, isRecord(request.opts) ? request.opts as any : undefined);
+            return { ok: true };
+        }
+        if (request.kind === 'sessionEvent' && request.event) {
+            session.sendSessionEvent(request.event as any, typeof request.id === 'string' ? request.id : undefined);
+            return { ok: true };
+        }
+        if (request.kind === 'agentMessageEphemeral' && typeof request.provider === 'string' && request.body && isRecord(request.opts)) {
+            const localId = typeof request.opts.localId === 'string' ? request.opts.localId : '';
+            const createdAt = typeof request.opts.createdAt === 'number' ? request.opts.createdAt : Date.now();
+            session.sendAgentMessageEphemeral(request.provider as any, request.body as any, {
+                localId,
+                createdAt,
+                updatedAt: typeof request.opts.updatedAt === 'number' ? request.opts.updatedAt : createdAt,
+                ...(request.opts.meta ? { meta: request.opts.meta as any } : {}),
+            });
+            return { ok: true };
+        }
+        if (request.kind === 'agentMessageCommitted' && typeof request.provider === 'string' && request.body && isRecord(request.opts)) {
+            const localId = typeof request.opts.localId === 'string' ? request.opts.localId : '';
+            await session.sendAgentMessageCommitted(request.provider as any, request.body as any, {
+                localId,
+                ...(request.opts.meta ? { meta: request.opts.meta as any } : {}),
+            });
+            return { ok: true };
+        }
+        logger.debug('[PluginContextV1] sessions.send unknown kind (ignored)', { kind: request.kind });
+        return { ok: false, error: 'unsupported_kind' };
+    };
+
+    const subscribeSession: PluginContextV1['sessions']['subscribe'] = (request, onEvent) => {
+        let unsubscribed = false;
+        let unsubscribeImpl: (() => void) | null = null;
+
+        void ensureScope().then((scope) => {
+            if (unsubscribed) return;
+            if (scope.kind === 'executionRun') {
+                return;
+            }
+            const sessionAny = scope.getSession() as any;
+            const eventName =
+                isRecord(request) && typeof request.eventName === 'string' ? request.eventName : 'metadata-updated';
+            if (typeof sessionAny.on !== 'function' || typeof sessionAny.off !== 'function') {
+                return;
+            }
+            const handler = (payload: unknown) => onEvent(payload);
+            sessionAny.on(eventName, handler);
+            unsubscribeImpl = () => {
+                try {
+                    sessionAny.off(eventName, handler);
+                } catch {
+                    // Best effort
+                }
+            };
+        }).catch(() => {
+            // Best effort
+        });
+
+        return Object.freeze({
+            unsubscribe: () => {
+                unsubscribed = true;
+                unsubscribeImpl?.();
+            },
+        });
+    };
+
+    const writeSessionMetadata: PluginContextV1['sessions']['writeMetadata'] = async (request) => {
+        const scope = await ensureScope();
+        if (scope.kind === 'executionRun') {
+            logger.debug('[PluginContextV1] sessions.writeMetadata (execution-run no-op)', { request });
+            return;
+        }
+        const session = scope.getSession();
+        if (!isRecord(request) || typeof request.kind !== 'string') return;
+        if (request.kind === 'set') {
+            const next = isRecord(request.metadata) ? request.metadata : {};
+            await session.updateMetadata(() => next as any);
+        } else if (request.kind === 'update' && typeof request.handler === 'function') {
+            await session.updateMetadata(request.handler as any);
+        }
+    };
+
+    const writeSessionAgentState: PluginContextV1['sessions']['writeAgentState'] = async (request) => {
+        const scope = await ensureScope();
+        if (scope.kind === 'executionRun') {
+            logger.debug('[PluginContextV1] sessions.writeAgentState (execution-run no-op)', { request });
+            return;
+        }
+        const session = scope.getSession();
+        if (!isRecord(request) || typeof request.kind !== 'string') return;
+        if (request.kind === 'set') {
+            const next = isRecord(request.agentState) ? request.agentState : {};
+            await session.updateAgentState(() => next as any);
+        } else if (request.kind === 'update' && typeof request.handler === 'function') {
+            await session.updateAgentState(request.handler as any);
+        }
+    };
+
+    const createScopedSessionServices = (scope: HostSessionContextScope): SessionScopedServicesV1 => Object.freeze({
+        sessionId: scope.getSession().sessionId,
+        send: sendSession,
+        subscribe: subscribeSession,
+        writeMetadata: writeSessionMetadata,
+        writeAgentState: writeSessionAgentState,
+        subagents: subagentsService,
+        external: externalSessionsService,
+    });
+
+    const sessions: PluginContextV1['sessions'] = Object.freeze({
+        list: async () => {
+            const scope = await ensureScope();
+            if (scope.kind === 'executionRun') {
+                return Object.freeze([]);
+            }
+            return Object.freeze([createPluginSessionRef(scope)]);
+        },
+        get: async (request: PluginSessionGetParamsV1) => {
+            const requestedSessionId = readRequestedPluginSessionId(request);
+            if (!requestedSessionId) {
+                return null;
+            }
+            const scope = await ensureScope();
+            if (scope.kind === 'executionRun') {
+                return null;
+            }
+            return scope.getSession().sessionId === requestedSessionId
+                ? createScopedSessionServices(scope)
+                : null;
+        },
+        watch: (
+            _request: PluginSessionWatchParamsV1,
+            onEvent: (event: PluginSessionWatchEventV1) => void,
+        ) => {
+            let unsubscribed = false;
+            void ensureScope().then((scope) => {
+                if (unsubscribed) {
+                    return;
+                }
+                const sessionRefs = scope.kind === 'hostSession'
+                    ? Object.freeze([createPluginSessionRef(scope)])
+                    : Object.freeze([]);
+                onEvent(Object.freeze({
+                    kind: 'snapshot',
+                    sessions: sessionRefs,
+                }));
+            }).catch((error) => {
+                logger.debug('[PluginContextV1] sessions.watch initial snapshot failed (ignored)', { error });
+            });
+            return Object.freeze({
+                unsubscribe: () => {
+                    unsubscribed = true;
+                },
+            });
+        },
+        send: sendSession,
+        subscribe: subscribeSession,
+        writeMetadata: writeSessionMetadata,
+        writeAgentState: writeSessionAgentState,
+        subagents: subagentsService,
+        external: externalSessionsService,
+    });
+    const backendEnginesByBackendId = params?.runtimeRegistry?.backendEnginesByBackendId;
+    const contextPluginId = backendEnginesByBackendId && typeof backendEnginesByBackendId.get === 'function'
+        ? backendEnginesByBackendId.get(backendId)?.pluginId ?? null
+        : null;
+    const fetchService = createPluginFetchService({
+        networkAllowed: contextPluginId
+            ? params?.runtimeRegistry?.networkAllowedPluginIds?.has(contextPluginId) === true
+            : false,
+        pluginId: contextPluginId ?? backendId,
+        adapter: params?.fetchAdapter ?? null,
+        interceptors: Object.freeze((params?.runtimeRegistry?.requestInterceptors ?? []).map((entry) => entry.registration)),
+    });
+
     return Object.freeze({
         logger: Object.freeze({
             debug: (message: string, fields?: Readonly<Record<string, unknown>>) => logger.debug(message, fields),
@@ -282,121 +789,35 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
                 return resolveProviderCliLaunchSpec(toolId as CatalogAgentLookupId, { processEnv: process.env });
             },
         }),
-        sessions: Object.freeze({
-            send: async (request: unknown) => {
-                const scope = await ensureScope();
-                if (scope.kind === 'executionRun') {
-                    logger.debug('[ExtensionContextV1] sessions.send (execution-run no-op)', { request });
-                    return { ok: true };
-                }
-                const session = scope.getSession();
-                if (!isRecord(request) || typeof request.kind !== 'string') {
-                    logger.debug('[ExtensionContextV1] sessions.send invalid request (ignored)', { request });
-                    return { ok: false, error: 'invalid_request' };
-                }
-                if (request.kind === 'userText' && typeof request.text === 'string') {
-                    session.sendUserTextMessage(request.text, isRecord(request.opts) ? request.opts as any : undefined);
-                    return { ok: true };
-                }
-                if (request.kind === 'sessionEvent' && request.event) {
-                    session.sendSessionEvent(request.event as any, typeof request.id === 'string' ? request.id : undefined);
-                    return { ok: true };
-                }
-                if (request.kind === 'agentMessageEphemeral' && typeof request.provider === 'string' && request.body && isRecord(request.opts)) {
-                    const localId = typeof request.opts.localId === 'string' ? request.opts.localId : '';
-                    const createdAt = typeof request.opts.createdAt === 'number' ? request.opts.createdAt : Date.now();
-                    session.sendAgentMessageEphemeral(request.provider as any, request.body as any, {
-                        localId,
-                        createdAt,
-                        updatedAt: typeof request.opts.updatedAt === 'number' ? request.opts.updatedAt : createdAt,
-                        ...(request.opts.meta ? { meta: request.opts.meta as any } : {}),
-                    });
-                    return { ok: true };
-                }
-                if (request.kind === 'agentMessageCommitted' && typeof request.provider === 'string' && request.body && isRecord(request.opts)) {
-                    const localId = typeof request.opts.localId === 'string' ? request.opts.localId : '';
-                    await session.sendAgentMessageCommitted(request.provider as any, request.body as any, {
-                        localId,
-                        ...(request.opts.meta ? { meta: request.opts.meta as any } : {}),
-                    });
-                    return { ok: true };
-                }
-                logger.debug('[ExtensionContextV1] sessions.send unknown kind (ignored)', { kind: request.kind });
-                return { ok: false, error: 'unsupported_kind' };
-            },
-            subscribe: (request: unknown, onEvent: (event: unknown) => void) => {
-                void onEvent;
-                let unsubscribed = false;
-                let unsubscribeImpl: (() => void) | null = null;
-
-                void ensureScope().then((scope) => {
-                    if (unsubscribed) return;
-                    if (scope.kind === 'executionRun') {
-                        // No-op: execution-run session subscription surface is not wired in V1.
-                        return;
-                    }
-                    const sessionAny = scope.getSession() as any;
-                    const eventName =
-                        isRecord(request) && typeof request.eventName === 'string' ? request.eventName : 'metadata-updated';
-                    if (typeof sessionAny.on !== 'function' || typeof sessionAny.off !== 'function') {
-                        return;
-                    }
-                    const handler = (payload: unknown) => onEvent(payload);
-                    sessionAny.on(eventName, handler);
-                    unsubscribeImpl = () => {
-                        try {
-                            sessionAny.off(eventName, handler);
-                        } catch {
-                            // Best effort
-                        }
-                    };
-                }).catch(() => {
-                    // Best effort
-                });
-
-                return {
-                    unsubscribe: () => {
-                        unsubscribed = true;
-                        unsubscribeImpl?.();
-                    },
-                };
-            },
-            writeMetadata: async (request: unknown) => {
-                const scope = await ensureScope();
-                if (scope.kind === 'executionRun') {
-                    logger.debug('[ExtensionContextV1] sessions.writeMetadata (execution-run no-op)', { request });
-                    return;
-                }
-                const session = scope.getSession();
-                if (!isRecord(request) || typeof request.kind !== 'string') return;
-                if (request.kind === 'set') {
-                    const next = isRecord(request.metadata) ? request.metadata : {};
-                    await session.updateMetadata(() => next as any);
-                } else if (request.kind === 'update' && typeof request.handler === 'function') {
-                    await session.updateMetadata(request.handler as any);
-                }
-            },
-            writeAgentState: async (request: unknown) => {
-                const scope = await ensureScope();
-                if (scope.kind === 'executionRun') {
-                    logger.debug('[ExtensionContextV1] sessions.writeAgentState (execution-run no-op)', { request });
-                    return;
-                }
-                const session = scope.getSession();
-                if (!isRecord(request) || typeof request.kind !== 'string') return;
-                if (request.kind === 'set') {
-                    const next = isRecord(request.agentState) ? request.agentState : {};
-                    await session.updateAgentState(() => next as any);
-                } else if (request.kind === 'update' && typeof request.handler === 'function') {
-                    await session.updateAgentState(request.handler as any);
-                }
+        actions: createPluginContextActionsService(),
+        acp: Object.freeze({
+            defineAcpBackend,
+            createRuntime: async () => {
+                throw new Error('ctx.acp.createRuntime is reserved for Tier 3 ACP runtime composition and is not implemented in this host packet yet. Use ctx.acp.defineAcpBackend(spec) for A.15.2 backends.');
             },
         }),
+        connection: createConnectionRuntimeService({
+            source: params?.connectionStateSource ?? null,
+        }),
+        fetch: fetchService,
+        projects: createProjectsService({
+            getSettings: getCurrentAccountSettings,
+            getActiveScope: getActiveProjectScope,
+            subscribeSettings: subscribeCurrentAccountSettings,
+        }),
+        account: Object.freeze({
+            settings: createAccountSettingsService({
+                getSettings: getCurrentAccountSettings,
+                updateSettings: updateCurrentAccountSettings,
+                subscribeSettings: subscribeCurrentAccountSettings,
+            }),
+        }),
+        sessions,
         transcripts: Object.freeze({
             append: async (turn: unknown) => {
                 const scope = await ensureScope();
                 if (scope.kind === 'executionRun') {
-                    logger.debug('[ExtensionContextV1] transcripts.append (execution-run no-op)', { turn });
+                    logger.debug('[PluginContextV1] transcripts.append (execution-run no-op)', { turn });
                     return;
                 }
                 if (!isRecord(turn) || typeof turn.kind !== 'string') return;
@@ -461,7 +882,7 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
         telemetry: Object.freeze({
             emit: (observation: unknown) => {
                 if (!telemetryEnabled) {
-                    logger.debug('[ExtensionContextV1] telemetry.emit (disabled)', { observation });
+                    logger.debug('[PluginContextV1] telemetry.emit (disabled)', { observation });
                     return;
                 }
                 appendJsonLine({ kind: 'telemetry', value: observation });
@@ -470,16 +891,24 @@ function createHostExtensionContextV1(params?: ResolveEngineRegistryParams): Ext
         artifacts: Object.freeze({
             write: async (record: unknown) => {
                 if (!artifactsEnabled) {
-                    logger.debug('[ExtensionContextV1] artifacts.write (disabled)', { record });
+                    logger.debug('[PluginContextV1] artifacts.write (disabled)', { record });
                     return;
                 }
                 appendJsonLine({ kind: 'artifacts', value: record });
             },
         }),
+        notifications: createNotificationsService({
+            registry: params?.runtimeRegistry
+                ? createNotificationRegistryFromPluginRuntime(params.runtimeRegistry)
+                : createBuiltInNotificationRegistry(),
+            pluginId: contextPluginId,
+            getSettings: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
+            getSettingsSecretsReadKeys: () => getActiveAccountSettingsSnapshot()?.settingsSecretsReadKeys ?? [],
+        }),
         abort: Object.freeze({
             signal: abortController.signal,
         }),
-        [EXTENSION_CONTEXT_V1_BINDER]: binder,
+        [PLUGIN_CONTEXT_V1_BINDER]: binder,
     });
 }
 
@@ -495,6 +924,9 @@ export type {
 type ResolveEngineRegistryParams = Readonly<{
     happyHomeDir?: string;
     backendId?: string;
+    connectionStateSource?: PluginDaemonConnectionStateSource | null;
+    fetchAdapter?: FetchRuntimeServiceV1 | null;
+    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry | null;
 }>;
 
 function toEngineSelectedSource(
@@ -527,24 +959,100 @@ async function resolveCatalogExecutionSurfacesForEntry(entry: ResolvedCatalogEnt
     };
 }
 
-function resolveBindingsGetter(entry: Readonly<{
-    getBindings?: CliBindingsGetter | undefined;
-}>): CliBindingsGetter | null {
-    return typeof entry.getBindings === 'function' ? entry.getBindings : null;
+function resolveRuntimeCoreGetter(entry: Readonly<{
+    getRuntimeCore?: CliRuntimeCoreGetter | undefined;
+}>): CliRuntimeCoreGetter | null {
+    return typeof entry.getRuntimeCore === 'function' ? entry.getRuntimeCore : null;
 }
 
-async function resolveBackendBindings(params: Readonly<{
+function bindPluginContextToRuntimeCore(
+    rawRuntimeCore: CliRuntimeCore,
+    binder: PluginContextV1Binder | null,
+): CliRuntimeCore {
+    return Object.freeze({
+        async createSessionRuntime(sessionParams: unknown) {
+            const plan = await rawRuntimeCore.createSessionRuntime(sessionParams);
+            if (!binder) return plan as any;
+            if (!plan || typeof plan !== 'object') return plan as any;
+            const planRecord = plan as any;
+            const config = planRecord.config;
+            const createSessionRuntime = config?.createSessionRuntime;
+            if (typeof createSessionRuntime !== 'function') return plan as any;
+            const wrappedConfig = Object.freeze({
+                ...config,
+                createSessionRuntime: async (runtimeParams: HostSessionRuntimeFactoryParams) => {
+                    binder.bindHostSessionRuntime(runtimeParams);
+                    return await createSessionRuntime(runtimeParams);
+                },
+            });
+            return Object.freeze({
+                ...planRecord,
+                config: wrappedConfig,
+            });
+        },
+        createExecutionRunBackend(opts: any) {
+            binder?.bindExecutionRun({ permissionMode: opts?.permissionMode });
+            return rawRuntimeCore.createExecutionRunBackend(opts);
+        },
+    });
+}
+
+function shouldNormalizeManifestOnlyAcpBackend(backend: ResolvedBackendContribution): boolean {
+    if (backend.runtimeKind === 'acp') {
+        return true;
+    }
+    const richDefinition = backend.richDefinition;
+    if (richDefinition?.provenance !== 'external' || !isRecord(richDefinition.definition)) {
+        return false;
+    }
+    if (richDefinition.definition.runtimeKind === 'acp' || Object.prototype.hasOwnProperty.call(richDefinition.definition, 'acp')) {
+        return true;
+    }
+    const engine = richDefinition.definition.engine;
+    return isRecord(engine) && engine.kind === 'acp';
+}
+
+function resolveManifestOnlyAcpBackendAdapter(params: Readonly<{
+    backend: ResolvedBackendContribution;
+    pluginContext: PluginContextV1;
+}>): CliEngineAdapter | null {
+    const richDefinition = params.backend.richDefinition;
+    if (richDefinition?.provenance !== 'external') {
+        return null;
+    }
+    if (!shouldNormalizeManifestOnlyAcpBackend(params.backend)) {
+        return null;
+    }
+
+    try {
+        const acpDefinition = normalizePluginBackendContributionAcpDefinition({
+            pluginId: params.backend.pluginId,
+            backend: richDefinition.definition,
+        });
+        const adapter = createAcpRuntimeCoreFromDefinition(acpDefinition);
+        const binder = readPluginContextV1Binder(params.pluginContext);
+        return {
+            ...adapter,
+            runtimeCore: bindPluginContextToRuntimeCore(adapter.runtimeCore, binder),
+        };
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`Invalid manifest-only ACP backend '${params.backend.id}' from plugin '${params.backend.pluginId ?? 'unknown'}': ${reason}`);
+    }
+}
+
+async function resolveBackendRuntimeCore(params: Readonly<{
     backend: ResolvedBackendContribution;
     provider: ResolvedProviderContribution;
     executionSurfaces: BackendExecutionSurfaces;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
-    extensionContext: ExtensionContextV1;
+    pluginContext: PluginContextV1;
 }>): Promise<CliEngineAdapter | null> {
-    const backendWithBinding = params.backend as ResolvedBackendContribution & Readonly<{
-        getBindings?: CliBindingsGetter | undefined;
+    const backendWithRuntimeCore = params.backend as ResolvedBackendContribution & Readonly<{
+        getRuntimeCore?: CliRuntimeCoreGetter | undefined;
     }>;
-    const getBindings = resolveBindingsGetter(backendWithBinding);
-    if (!getBindings) {
+    const getRuntimeCore = resolveRuntimeCoreGetter(backendWithRuntimeCore);
+    if (!getRuntimeCore) {
         const runtimeRegistry = params.runtimeRegistry;
         if (!runtimeRegistry) {
             return null;
@@ -552,49 +1060,44 @@ async function resolveBackendBindings(params: Readonly<{
         const engineEntry = runtimeRegistry.backendEnginesByBackendId.get(params.backend.id);
         const registration = engineEntry?.registration as RegisterBackendEngineV1 | undefined;
         if (!registration) {
-            return null;
+            return resolveManifestOnlyAcpBackendAdapter({
+                backend: params.backend,
+                pluginContext: params.pluginContext,
+            });
         }
-        const engine = await registration.create(params.extensionContext);
-        if (!engine.bindings) {
-            return null;
-        }
-        const binder = readExtensionContextV1Binder(params.extensionContext);
-        const rawBindings = engine.bindings as unknown as CliRuntimeBindings;
-        const wrappedBindings: CliRuntimeBindings = Object.freeze({
-            async createSessionRuntime(sessionParams: unknown) {
-                const plan = await rawBindings.createSessionRuntime(sessionParams);
-                if (!binder) return plan as any;
-                if (!plan || typeof plan !== 'object') return plan as any;
-                const planRecord = plan as any;
-                const config = planRecord.config;
-                const createSessionRuntime = config?.createSessionRuntime;
-                if (typeof createSessionRuntime !== 'function') return plan as any;
-                const wrappedConfig = Object.freeze({
-                    ...config,
-                    createSessionRuntime: async (runtimeParams: HostSessionRuntimeFactoryParams) => {
-                        binder.bindHostSessionRuntime(runtimeParams);
-                        return await createSessionRuntime(runtimeParams);
-                    },
-                });
-                return Object.freeze({
-                    ...planRecord,
-                    config: wrappedConfig,
-                });
-            },
-            createExecutionRunBackend(opts: any) {
-                binder?.bindExecutionRun({ permissionMode: opts?.permissionMode });
-                return rawBindings.createExecutionRunBackend(opts);
-            },
+        const engine = await registration.create(params.pluginContext);
+        assertNoUnsupportedPluginBackendEngineSurfaces({
+            backendId: params.backend.id,
+            engine,
         });
+        const acpSpec = readAcpBackendSpec(engine);
+        if (acpSpec) {
+            const acpDefinition = normalizePluginAcpDefinition({
+                pluginId: engineEntry?.pluginId,
+                spec: acpSpec,
+            });
+            const adapter = createAcpRuntimeCoreFromDefinition(acpDefinition);
+            const binder = readPluginContextV1Binder(params.pluginContext);
+            return {
+                ...adapter,
+                runtimeCore: bindPluginContextToRuntimeCore(adapter.runtimeCore, binder),
+            };
+        }
+        if (!engine.runtimeCore) {
+            return null;
+        }
+        const binder = readPluginContextV1Binder(params.pluginContext);
+        const rawRuntimeCore = engine.runtimeCore as unknown as CliRuntimeCore;
+        const wrappedRuntimeCore = bindPluginContextToRuntimeCore(rawRuntimeCore, binder);
         return {
-            bindings: wrappedBindings,
+            runtimeCore: wrappedRuntimeCore,
             facets: engine.facets ?? undefined,
             messageMeta: engine.messageMeta ?? undefined,
         };
     }
 
-    const bindingFactory = await getBindings();
-    return await bindingFactory({
+    const runtimeCoreFactory = await getRuntimeCore();
+    return await runtimeCoreFactory({
         backend: params.backend,
         provider: params.provider,
         executionSurfaces: params.executionSurfaces,
@@ -620,7 +1123,7 @@ async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
     backendId: string;
     contributions: ResolvedContributionRegistry;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
-    extensionContext: ExtensionContextV1;
+    pluginContext: PluginContextV1;
 }>): Promise<EngineAdapterResolution | null> {
     const backend = params.contributions.backendDefinitionsById.get(params.backendId);
     if (!backend) {
@@ -654,20 +1157,20 @@ async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
         const executionSurfaces = entry
             ? await resolveCatalogExecutionSurfacesForEntry(entry)
             : createEmptyBackendExecutionSurfaces();
-        const backendWithBinding = backend as ResolvedBackendContribution & Readonly<{ getBindings?: CliBindingsGetter | undefined }>;
-        const hasExplicitBindings = Boolean(resolveBindingsGetter(backendWithBinding));
-        const engineAdapter = await resolveBackendBindings({
+        const backendWithRuntimeCore = backend as ResolvedBackendContribution & Readonly<{ getRuntimeCore?: CliRuntimeCoreGetter | undefined }>;
+        const hasExplicitRuntimeCore = Boolean(resolveRuntimeCoreGetter(backendWithRuntimeCore));
+        const engineAdapter = await resolveBackendRuntimeCore({
             backend,
             provider,
             executionSurfaces,
             runtimeRegistry: params.runtimeRegistry,
-            extensionContext: params.extensionContext,
+            pluginContext: params.pluginContext,
         });
         return {
             backendId: backend.id,
             providerId: provider.id,
             provenance: backend.provenance,
-            selectedSource: !hasExplicitBindings && params.runtimeRegistry ? 'plugin' : toEngineSelectedSource(
+            selectedSource: !hasExplicitRuntimeCore && params.runtimeRegistry ? 'plugin' : toEngineSelectedSource(
                 backend.provenance,
                 provider.runtimeSpec?.sourcePreferenceDefault,
             ),
@@ -705,12 +1208,12 @@ async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
         provider,
         runtimeRegistry,
     });
-    const engineAdapter = await resolveBackendBindings({
+    const engineAdapter = await resolveBackendRuntimeCore({
         backend,
         provider,
         executionSurfaces: pluginResolution.surfaces,
         runtimeRegistry,
-        extensionContext: params.extensionContext,
+        pluginContext: params.pluginContext,
     });
     return {
         backendId: backend.id,
@@ -729,7 +1232,7 @@ export async function resolveCliEngineRegistry(
     params?: ResolveEngineRegistryParams,
 ): Promise<ResolvedCliEngineRegistry> {
     const activeRuntimeRegistry = pluginReloadController.getState().activeRegistry;
-    const contributions = activeRuntimeRegistry?.contributions
+    const contributions = activeRuntimeRegistry?.contributes
         ?? await resolveMergedContributionRegistry({
             happyHomeDir: params?.happyHomeDir,
         });
@@ -742,7 +1245,7 @@ export async function resolveCliEngineRegistry(
         if (!runtimeRegistryPromise) {
             runtimeRegistryPromise = resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir: params?.happyHomeDir,
-                contributions,
+                contributes: contributions,
             });
         }
         return await runtimeRegistryPromise;
@@ -759,16 +1262,17 @@ export async function resolveCliEngineRegistry(
                 let resolutionContributions = contributions;
                 let backend = resolutionContributions.backendDefinitionsById.get(backendId) ?? null;
                 let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
-                const extensionContext = createHostExtensionContextV1({ ...(params ?? {}), backendId });
 
-                const backendWithBinding = backend as (ResolvedBackendContribution & Readonly<{ getBindings?: CliBindingsGetter | undefined }>) | null;
-                const hasExplicitBindings = backendWithBinding ? Boolean(resolveBindingsGetter(backendWithBinding)) : false;
+                const backendWithRuntimeCore = backend as (ResolvedBackendContribution & Readonly<{ getRuntimeCore?: CliRuntimeCoreGetter | undefined }>) | null;
+                const hasExplicitRuntimeCore = backendWithRuntimeCore ? Boolean(resolveRuntimeCoreGetter(backendWithRuntimeCore)) : false;
 
-                if (!backend || backend.provenance === 'external' || !hasExplicitBindings) {
+                if (!backend || backend.provenance === 'external' || !hasExplicitRuntimeCore) {
                     runtimeRegistry = await resolveRuntimeRegistry();
-                    resolutionContributions = runtimeRegistry.contributions;
+                    resolutionContributions = runtimeRegistry.contributes;
                     backend = resolutionContributions.backendDefinitionsById.get(backendId) ?? backend;
                 }
+
+                const pluginContext = createHostPluginContextV1({ ...(params ?? {}), backendId, runtimeRegistry });
 
                 if (!backend) {
                     return null;
@@ -778,7 +1282,7 @@ export async function resolveCliEngineRegistry(
                     backendId,
                     contributions: resolutionContributions,
                     runtimeRegistry,
-                    extensionContext,
+                    pluginContext,
                 });
             })();
             resolutionPromises.set(backendId, resolutionPromise);

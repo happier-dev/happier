@@ -1,6 +1,6 @@
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { BackendIsolationBundle, BackendIsolationRequest } from '@/runtime/isolation/types';
+import type { BackendIsolationBundle, BackendIsolationRequest } from '@/packagedRuntime/isolation/types';
 
 export type ExecutionRunBackendStartContext = Readonly<{
   intentInput?: unknown;

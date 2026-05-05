@@ -52,13 +52,13 @@ describe('createExecutionRunBackend (pi)', () => {
     getExecutionRunBackendDescriptorMock.mockReset();
   });
 
-  it('creates the pi execution-run runtime through bindings without using the legacy execution-run registry directly', async () => {
+  it('creates the pi execution-run runtime through runtimeCore without using the legacy execution-run registry directly', async () => {
     const { runtime, messages } = createStubRuntime();
     const createExecutionRunBackendMock = vi.fn(() => runtime);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'pi',
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createExecutionRunBackend: createExecutionRunBackendMock,
         },
       },
@@ -103,13 +103,13 @@ describe('createExecutionRunBackend (pi)', () => {
     expect('onMessage' in executionRuntime).toBe(false);
   });
 
-  it('keeps the legacy shell bounded to AgentBackend compatibility over the bindings-owned runtime', async () => {
+  it('keeps the AgentBackend compatibility shell bounded over the runtimeCore-owned runtime', async () => {
     const { runtime } = createStubRuntime();
     const createExecutionRunBackendMock = vi.fn(() => runtime);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'pi',
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createExecutionRunBackend: createExecutionRunBackendMock,
         },
       },

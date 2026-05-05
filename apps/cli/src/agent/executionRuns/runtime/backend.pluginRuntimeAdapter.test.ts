@@ -116,16 +116,16 @@ function expectExecutionRunFallbackRuntimeDescriptor() {
   });
 }
 
-describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
+describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
   beforeEach(() => {
     vi.resetModules();
     getExecutionRunBackendDescriptorMock.mockReset();
     resolveBackendEngineAdapterResolutionMock.mockReset();
   });
 
-  it('exposes a host-owned execution-run runtime surface for bindings-backed backends', async () => {
+  it('exposes a host-owned execution-run runtime surface for runtimeCore-backed backends', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
-    const bindings = createStubRuntimeCoreBackend({
+    const runtimeCoreBackend = createStubRuntimeCoreBackend({
       runtimeDescriptor: {
         backendId: 'acme.sample.backend',
         runtimeKind: 'native',
@@ -140,7 +140,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
         },
       },
     });
-    const createExecutionRunBackendMock = vi.fn(() => bindings);
+    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'acme.sample.backend',
       providerId: 'acme.sample.provider',
@@ -159,7 +159,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
         source: { kind: 'path' },
       },
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createExecutionRunBackend: createExecutionRunBackendMock,
         },
       },
@@ -244,7 +244,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 
   it('creates an execution-run backend from plugin terminal-runtime launch when no built-in descriptor exists', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
-    const bindings = createStubRuntimeCoreBackend({
+    const runtimeCoreBackend = createStubRuntimeCoreBackend({
       runtimeDescriptor: {
         backendId: 'acme.sample.backend',
         runtimeKind: 'native',
@@ -259,7 +259,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
         },
       },
     });
-    const createExecutionRunBackendMock = vi.fn(() => bindings);
+    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'acme.sample.backend',
       providerId: 'acme.sample.provider',
@@ -278,7 +278,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
         source: { kind: 'path' },
       },
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createExecutionRunBackend: createExecutionRunBackendMock,
         },
       },
@@ -328,8 +328,8 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
       },
     }));
     expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
-    expect(bindings.calls.provisionSession).toHaveBeenCalledWith({ initialPrompt: 'boot' });
-    expect(bindings.calls.sendPrompt).toHaveBeenCalledWith('plugin-session-1', 'hello');
+    expect(runtimeCoreBackend.calls.provisionSession).toHaveBeenCalledWith({ initialPrompt: 'boot' });
+    expect(runtimeCoreBackend.calls.sendPrompt).toHaveBeenCalledWith('plugin-session-1', 'hello');
     expect(messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'event',
@@ -362,7 +362,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 
   it('preserves emitted runtime descriptors and fills missing runtime capabilities centrally', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
-    const bindings = createStubRuntimeCoreBackend({
+    const runtimeCoreBackend = createStubRuntimeCoreBackend({
 	      runtimeDescriptor: {
 	        v: 1,
 	        providerId: 'acme.sample.provider',
@@ -382,7 +382,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 	        },
 	      },
 	    });
-	    const createExecutionRunBackendMock = vi.fn(() => bindings);
+	    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
 	      providerId: 'acme.sample.provider',
@@ -401,7 +401,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 	        source: { kind: 'path' },
 	      },
 	      engineAdapter: {
-	        bindings: {
+	        runtimeCore: {
 	          createExecutionRunBackend: createExecutionRunBackendMock,
 	        },
 	      },
@@ -463,13 +463,13 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 
   it('fails closed to the generic plugin descriptor when plugin execution-run runtimeDescriptor is malformed', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
-	    const bindings = createStubRuntimeCoreBackend({
+	    const runtimeCoreBackend = createStubRuntimeCoreBackend({
 	      runtimeDescriptor: {
 	        backendId: 'acme.sample.backend',
 	        runtimeKind: 'native',
 	      },
 	    });
-	    const createExecutionRunBackendMock = vi.fn(() => bindings);
+	    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
 	      providerId: 'acme.sample.provider',
@@ -488,7 +488,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 	        source: { kind: 'path' },
 	      },
 	      engineAdapter: {
-	        bindings: {
+	        runtimeCore: {
 	          createExecutionRunBackend: createExecutionRunBackendMock,
 	        },
 	      },
@@ -526,10 +526,10 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
     expect(messages.filter((message) => message.type === 'event' && message.name === 'runtime.descriptor')).toHaveLength(1);
   });
 
-  it('publishes runtime identity centrally when a bindings-backed backend is silent', async () => {
+  it('publishes runtime identity centrally when a runtimeCore-backed backend is silent', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
-	    const bindings = createStubRuntimeCoreBackend();
-	    const createExecutionRunBackendMock = vi.fn(() => bindings);
+	    const runtimeCoreBackend = createStubRuntimeCoreBackend();
+	    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
 	      providerId: 'acme.sample.provider',
@@ -553,7 +553,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
             supported: true,
           },
         },
-	        bindings: {
+	        runtimeCore: {
 	          createExecutionRunBackend: createExecutionRunBackendMock,
 	        },
 	      },
@@ -642,7 +642,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 	        source: { kind: 'path' },
 	      },
 	      engineAdapter: {
-	        bindings: {
+	        runtimeCore: {
 	          createExecutionRunBackend: createExecutionRunBackendMock,
 	        },
 	      },
@@ -675,7 +675,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
     await expect(backend.startSession()).rejects.toThrow('Unsupported execution-run backend: acme.sample.backend');
   });
 
-  it('does not subscribe late when the caller unsubscribes before bindings resolution finishes', async () => {
+  it('does not subscribe late when the caller unsubscribes before runtimeCore resolution finishes', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
 
     let resolveEngineResolution!: (value: unknown) => void;
@@ -684,8 +684,8 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
     });
     resolveBackendEngineAdapterResolutionMock.mockReturnValue(engineResolutionPromise);
 
-    const bindings = createStubRuntimeCoreBackend();
-    const createExecutionRunBackendMock = vi.fn(() => bindings);
+    const runtimeCoreBackend = createStubRuntimeCoreBackend();
+    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 
     const runtimeModule = await import('./createExecutionRunBackend');
     const runtimeFactory = (runtimeModule as Record<string, unknown>).createExecutionRunRuntime;
@@ -723,7 +723,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 	        source: { kind: 'path' },
 	      },
 	      engineAdapter: {
-	        bindings: {
+	        runtimeCore: {
 	          createExecutionRunBackend: createExecutionRunBackendMock,
 	        },
 	      },
@@ -734,7 +734,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
     await expect(runtime.provisionSession()).resolves.toEqual({ sessionId: 'plugin-session-1' });
 
     expect(createExecutionRunBackendMock).toHaveBeenCalled();
-    expect(bindings.calls.subscribeMessages).toHaveBeenCalledTimes(1);
+    expect(runtimeCoreBackend.calls.subscribeMessages).toHaveBeenCalledTimes(1);
   });
 
   it('fails execution-run startup when plugin trust approval is still required', async () => {
@@ -758,7 +758,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 	        source: { kind: 'path' },
 	      },
 	      engineAdapter: {
-	        bindings: {
+	        runtimeCore: {
 	          createExecutionRunBackend: createExecutionRunBackendMock,
 	        },
 	      },
@@ -810,7 +810,7 @@ describe('createExecutionRunBackend (plugin runtime adapter fallback)', () => {
 	        source: { kind: 'path' },
 	      },
 	      engineAdapter: {
-	        bindings: {
+	        runtimeCore: {
 	          createExecutionRunBackend: createExecutionRunBackendMock,
 	        },
       },

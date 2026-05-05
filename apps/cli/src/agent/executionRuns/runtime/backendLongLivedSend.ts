@@ -59,7 +59,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => ExecutionRunHostRuntime;
+  createRuntime: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => ExecutionRunHostRuntime;
   maxTurns: number | null;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
@@ -95,7 +95,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         runs: args.runs,
         controllers: args.controllers,
         budgetRegistry: args.budgetRegistry,
-        createBackend: args.createBackend,
+        createRuntime: args.createRuntime,
         sendAcp: args.sendAcp,
         parentProvider: args.parentProvider,
         streamedTranscriptSession: args.streamedTranscriptSession,

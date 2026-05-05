@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
-import type { EphemeralExecutionRunTextPromptBackendFactory } from './ephemeralTextPrompt';
+import type { EphemeralExecutionRunTextPromptRuntimeFactory } from './ephemeralTextPrompt';
 
 describe('runEphemeralExecutionRunTextPrompt', () => {
   it('runs a single-turn ephemeral execution run and returns collected model output', async () => {
@@ -33,25 +33,25 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
     const out = await runEphemeralExecutionRunTextPrompt({
       cwd: '/tmp',
       sessionId: 'sess-123',
-      backendId: 'claude',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendId: 'acme.runtime.backend',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme.runtime.backend' as never },
       modelId: 'default',
       permissionMode: 'no_tools',
       intent: 'replay_summary',
       prompt: 'Return OK',
-      createBackend: ((opts) => {
+      createRuntime: ((opts) => {
         observedIntent = opts.start.intent;
         observedRetention = opts.start.retentionPolicy;
         observedBackendTarget = opts.backendTarget ?? null;
         return createExecutionRunHostRuntimeFromAgentBackend(backend);
-      }) satisfies EphemeralExecutionRunTextPromptBackendFactory,
+      }) satisfies EphemeralExecutionRunTextPromptRuntimeFactory,
       timeoutMs: 1234,
     });
 
     expect(out).toBe('OK');
     expect(observedIntent).toBe('replay_summary');
     expect(observedRetention).toBe('ephemeral');
-    expect(observedBackendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+    expect(observedBackendTarget).toEqual({ kind: 'builtInAgent', agentId: 'acme.runtime.backend' });
   });
 
   it('applies session configuration before sending the prompt', async () => {
@@ -86,7 +86,7 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
       permissionMode: 'no_tools',
       intent: 'replay_summary',
       prompt: 'Return OK',
-      createBackend: (() => createExecutionRunHostRuntimeFromAgentBackend(backend)) satisfies EphemeralExecutionRunTextPromptBackendFactory,
+      createRuntime: (() => createExecutionRunHostRuntimeFromAgentBackend(backend)) satisfies EphemeralExecutionRunTextPromptRuntimeFactory,
       configureSession: async (sessionId) => {
         events.push(`configure:${sessionId}`);
       },

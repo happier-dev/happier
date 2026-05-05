@@ -11,7 +11,7 @@ import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from './textPrompt
 describe('runEphemeralExecutionRunTextPromptWithRunnerConfig', () => {
   it('passes the configured backend id through to custom backends instead of manufacturing customAcp', async () => {
     const backend = {};
-    const createBackend = vi.fn(() => backend as never);
+    const createRuntime = vi.fn(() => backend as never);
     runEphemeralExecutionRunTextPromptMock.mockResolvedValue('ok');
 
     await runEphemeralExecutionRunTextPromptWithRunnerConfig({
@@ -22,10 +22,10 @@ describe('runEphemeralExecutionRunTextPromptWithRunnerConfig', () => {
       },
       intent: 'replay_summary',
       prompt: 'Return OK',
-      createBackend,
+      createRuntime,
     });
 
-    expect(createBackend).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
       backendId: 'review-bot',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
     }));

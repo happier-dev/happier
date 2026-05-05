@@ -4,10 +4,10 @@ import type {
     ExecutionRunHostRuntime,
     ExecutionRunHostRuntimeMessageHandler,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { listNativeReviewEngines } from '@happier-dev/protocol';
 
 const getExecutionRunBackendDescriptorMock = vi.fn();
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
+const TEST_SECONDARY_BACKEND_ID = `${'secondary'}.${'backend'}` as never;
 
 vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
     getExecutionRunBackendDescriptor: (...args: unknown[]) => getExecutionRunBackendDescriptorMock(...args),
@@ -38,6 +38,15 @@ function createStubBackend(label: string): ExecutionRunHostRuntime {
     };
 }
 
+function withFastFailure<T>(promise: Promise<T>): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+            setTimeout(() => reject(new Error('runtimeCore registry path did not settle')), 1_000);
+        }),
+    ]);
+}
+
 describe('createExecutionRunBackend (descriptor fallback governance)', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -50,22 +59,21 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
         getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
         resolveBackendEngineAdapterResolutionMock.mockResolvedValue(null);
 
-        const { createExecutionRunBackend } = await import('./backend.testkit');
-        const backend = createExecutionRunBackend({
+        const { createExecutionRunRuntime } = await import('./createExecutionRunBackend');
+        const backend = createExecutionRunRuntime({
             cwd: '/tmp',
-            backendId: 'codex',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' as never },
+            backendId: TEST_SECONDARY_BACKEND_ID,
+            backendTarget: { kind: 'builtInAgent', agentId: TEST_SECONDARY_BACKEND_ID as never },
             permissionMode: 'read_only',
         });
 
-        await expect(backend.startSession('boot')).rejects.toThrow('Unsupported execution-run backend');
+        await expect(withFastFailure(backend.provisionSession({ initialPrompt: 'boot' }))).rejects.toThrow('Unsupported execution-run backend');
         expect(descriptorFactory).not.toHaveBeenCalled();
     });
 
-    it('allows the legacy descriptor fallback only for native review engines', async () => {
-        const reviewId = listNativeReviewEngines()[0]?.id;
-        expect(typeof reviewId).toBe('string');
-        const { MissingBoundCliBindingsError } = await import('@/agent/runtime/registry/createCliBindings');
+    it('fails closed for review engines when runtimeCore is missing instead of using descriptor fallback', async () => {
+        const reviewId = 'acme.review.backend';
+        const { MissingBoundCliRuntimeCoreError } = await import('@/agent/runtime/registry/createCliRuntimeCore');
 
         const descriptorFactory = vi.fn(() => createStubBackend('review'));
         getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
@@ -76,9 +84,9 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
             backend: { id: reviewId, providerId: 'review-provider' },
             provider: { id: 'review-provider' },
             engineAdapter: {
-                bindings: {
+                runtimeCore: {
                     createExecutionRunBackend() {
-                        throw new MissingBoundCliBindingsError(reviewId as string, 'execution runs');
+                        throw new MissingBoundCliRuntimeCoreError(reviewId as string, 'execution runs');
                     },
                 },
             },
@@ -91,14 +99,14 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
             diagnostics: [],
         });
 
-        const { createExecutionRunBackend } = await import('./backend.testkit');
-        const backend = createExecutionRunBackend({
+        const { createExecutionRunRuntime } = await import('./createExecutionRunBackend');
+        const backend = createExecutionRunRuntime({
             cwd: '/tmp',
-            backendId: reviewId as string,
+            backendId: reviewId,
             permissionMode: 'read_only',
         });
 
-        await expect(backend.startSession('boot')).resolves.toEqual({ sessionId: 's_review' });
-        expect(descriptorFactory).toHaveBeenCalledTimes(1);
+        await expect(withFastFailure(backend.provisionSession({ initialPrompt: 'boot' }))).rejects.toThrow(/bound host runtimeCore|Unsupported execution-run backend/i);
+        expect(descriptorFactory).not.toHaveBeenCalled();
     });
 });

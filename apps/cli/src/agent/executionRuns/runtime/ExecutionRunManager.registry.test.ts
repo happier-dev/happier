@@ -7,16 +7,60 @@ import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from 
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 
-const { dispatchBridgeLifecycleHookEvent } = vi.hoisted(() => ({
-  dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue(undefined),
+type TestRuntimeFactoryInput = Readonly<{
+  cwd: string;
+  runId?: string;
+  backendId: string;
+  backendTarget?: unknown;
+  modelId?: string;
+  permissionMode: string;
+  accountSettings?: Readonly<Record<string, unknown>> | null;
+  start?: unknown;
+  happyHomeDir?: string | null;
+}>;
+
+type TestRuntimeFactory = (opts: TestRuntimeFactoryInput) => ExecutionRunHostRuntime;
+
+const TEST_PRIMARY_BACKEND_ID = `${'primary'}.${'backend'}` as never;
+
+const {
+  createExecutionRunRuntimeMock,
+  dispatchBridgeLifecycleHookEvent,
+  runtimeFactoryRef,
+} = vi.hoisted(() => {
+  const runtimeFactoryRef: { current: TestRuntimeFactory | null } = { current: null };
+  return {
+    createExecutionRunRuntimeMock: vi.fn((opts: TestRuntimeFactoryInput): ExecutionRunHostRuntime => {
+      const factory = runtimeFactoryRef.current;
+      if (!factory) {
+        throw new Error('Test execution-run runtime factory was not configured');
+      }
+      return factory(opts);
+    }),
+    dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue(undefined),
+    runtimeFactoryRef,
+  };
+});
+
+vi.mock('./createExecutionRunRuntime', () => ({
+  createExecutionRunRuntime: createExecutionRunRuntimeMock,
 }));
 
-vi.mock('../../../extensions/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
+vi.mock('../../../plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
   dispatchBridgeLifecycleHookEvent,
 }));
 
 function asExecutionRunHostRuntime(backend: AgentBackend) {
   return createExecutionRunHostRuntimeFromAgentBackend(backend);
+}
+
+function createExecutionRunManager(
+  managerCtor: typeof import('./ExecutionRunManager').ExecutionRunManager,
+  opts: ConstructorParameters<typeof managerCtor>[0] & Readonly<{ createRuntime: TestRuntimeFactory }>,
+): InstanceType<typeof managerCtor> {
+  const { createRuntime, ...bridgeOptions } = opts;
+  runtimeFactoryRef.current = createRuntime;
+  return new managerCtor(bridgeOptions) as InstanceType<typeof managerCtor>;
 }
 
 function createStaticBackend(responseText: string): AgentBackend {
@@ -47,6 +91,8 @@ describe('ExecutionRunManager execution-run registry integration', () => {
   beforeEach(() => {
     happyHomeDir = join(tmpdir(), `happier-cli-exec-run-mgr-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    runtimeFactoryRef.current = null;
+    createExecutionRunRuntimeMock.mockClear();
     dispatchBridgeLifecycleHookEvent.mockReset();
     dispatchBridgeLifecycleHookEvent.mockResolvedValue(undefined);
     vi.resetModules();
@@ -77,10 +123,10 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const { ExecutionRunManager } = await import('./ExecutionRunManager');
     const { listExecutionRunMarkers } = await import('../../../daemon/executionRunRegistry');
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager(ExecutionRunManager, {
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () =>
+      createRuntime: () =>
         asExecutionRunHostRuntime(createStaticBackend(
           JSON.stringify({
             findings: [],
@@ -94,7 +140,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -143,7 +189,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     expect(marker).not.toBeNull();
     expect(marker?.status).toBe('succeeded');
     expect(marker?.intent).toBe('review');
-    expect(marker?.backendTarget).toEqual({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });
+    expect(marker?.backendTarget).toEqual({ kind: 'backend', backendId: TEST_PRIMARY_BACKEND_ID, sourceKind: 'built_in' });
     expect(marker?.permissionMode).toBe('read_only');
     expect(typeof marker?.startedAtMs).toBe('number');
     expect(typeof marker?.updatedAtMs).toBe('number');
@@ -154,10 +200,10 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const { listExecutionRunMarkers } = await import('../../../daemon/executionRunRegistry');
 
     let nowMs = 1_700_000_000_000;
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager(ExecutionRunManager, {
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: () => asExecutionRunHostRuntime(createStaticBackend('ok')),
+      createRuntime: () => asExecutionRunHostRuntime(createStaticBackend('ok')),
       sendAcp: () => {},
       getNowMs: () => nowMs,
     });
@@ -165,7 +211,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
       instructions: '',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -206,10 +252,10 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const { ExecutionRunManager } = await import('./ExecutionRunManager');
 
     const observedBackendIds: string[] = [];
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager(ExecutionRunManager, {
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (opts) => {
+      createRuntime: (opts: { backendId: string }) => {
         observedBackendIds.push(opts.backendId);
         return asExecutionRunHostRuntime(createStaticBackend('ok'));
       },
@@ -262,10 +308,10 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       async dispose() {},
     });
 
-    const manager = new ExecutionRunManager({
-      parentProvider: 'claude',
+    const manager = createExecutionRunManager(ExecutionRunManager, {
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createBackend: (opts) => {
+      createRuntime: (opts: { runId?: string; permissionMode: string }) => {
         isolationRoot = join(configuration.activeServerDir, 'isolation', 'pi', 'execution_run', String(opts.runId));
         return createCatalogProviderExecutionRunBackend({
           providerId: 'pi',

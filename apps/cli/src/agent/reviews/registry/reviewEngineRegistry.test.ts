@@ -1,14 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { listNativeReviewEngines } from '@happier-dev/protocol';
-
 import { resolveReviewOutputNormalizer } from './reviewEngineRegistry';
 
 describe('reviewEngineRegistry', () => {
-  it('provides a review output normalizer for every native review engine', () => {
-    for (const engine of listNativeReviewEngines()) {
-      expect(resolveReviewOutputNormalizer(engine.id)).toBeTruthy();
-    }
+  it('does not provide descriptor-backed review output normalization after runtimeCore convergence', () => {
+    expect(resolveReviewOutputNormalizer('acme.review.backend')).toBeNull();
   });
 });
-

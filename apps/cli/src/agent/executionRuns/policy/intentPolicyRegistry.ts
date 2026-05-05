@@ -11,7 +11,6 @@ import {
   type ExecutionRunIntentStartPreflightParams,
   type ExecutionRunStartIntentPolicyResult,
 } from './executionRunStartPreflight';
-import { resolveNativeReviewStartPreflight } from '@/agent/reviews/engines/nativeReviewEngines';
 import { EXECUTION_RUN_INTENT_POLICY_MATRIX } from './executionRunIntentPolicyMatrix';
 
 export type ExecutionRunIntentPermissionModePolicy = 'safe_only' | 'permissive';
@@ -39,13 +38,6 @@ function notAllowed(error: string): ExecutionRunStartIntentPolicyResult {
   return executionRunStartNotAllowed(error);
 }
 
-async function runReviewStartPreflight(
-  params: ExecutionRunIntentStartPreflightParams,
-): Promise<ExecutionRunStartIntentPolicyResult> {
-  const preflight = resolveNativeReviewStartPreflight(params.backendId);
-  return preflight ? await preflight(params) : { ok: true };
-}
-
 export const EXECUTION_RUN_INTENT_POLICY_REGISTRY: Readonly<Record<ExecutionRunIntent, ExecutionRunIntentPolicy>> = Object.freeze(
   Object.fromEntries(
     (Object.keys(EXECUTION_RUN_INTENT_POLICY_MATRIX) as ExecutionRunIntent[]).map((intent) => {
@@ -58,7 +50,6 @@ export const EXECUTION_RUN_INTENT_POLICY_REGISTRY: Readonly<Record<ExecutionRunI
         allowedIoModes: matrix.allowedIoModes,
         usesReviewBoundedTimeoutOverride: intent === 'review',
         ...(intent === 'voice_agent' ? { requiredFeatureId: 'voice' as const } : {}),
-        ...(intent === 'review' ? { startPreflight: runReviewStartPreflight } : {}),
       };
       return [intent, policy];
     }),

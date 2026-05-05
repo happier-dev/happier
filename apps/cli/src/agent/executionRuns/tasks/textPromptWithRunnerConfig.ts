@@ -1,4 +1,4 @@
-import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptBackendFactory } from '../runtime/ephemeralTextPrompt';
+import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptRuntimeFactory } from '../runtime/ephemeralTextPrompt';
 import { resolveExecutionRunPublicBackendId } from '../runtime/backendTargets';
 import { createExecutionRunTextPromptBackendForTarget } from './textPromptBackend';
 
@@ -24,17 +24,17 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
   }>;
   intent: string;
   prompt: string;
-  createBackend?: EphemeralExecutionRunTextPromptBackendFactory;
+  createRuntime?: EphemeralExecutionRunTextPromptRuntimeFactory;
   timeoutMs?: number | null;
 }>): Promise<string> {
   const backendTarget = params.runner?.backendTarget;
   if (!backendTarget) return '';
   const modelId = normalizeNonEmptyString(params.runner?.modelId) ?? undefined;
   const permissionMode = normalizeNonEmptyString(params.runner?.permissionMode) ?? 'no_tools';
-  const resolved = params.createBackend
+  const resolved = params.createRuntime
       ? {
         backendId: resolveExecutionRunPublicBackendId(backendTarget),
-        backend: params.createBackend({
+        backend: params.createRuntime({
           cwd: params.cwd,
           runId: `${params.intent}_${Date.now()}`,
           backendId: resolveExecutionRunPublicBackendId(backendTarget),
@@ -47,6 +47,7 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
             retentionPolicy: 'ephemeral' as const,
           },
         }),
+        configureSession: undefined,
       }
     : await createExecutionRunTextPromptBackendForTarget({
         cwd: params.cwd,
@@ -66,7 +67,7 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
     permissionMode,
     intent: params.intent,
     prompt: params.prompt,
-    createBackend: () => resolved.backend,
+    createRuntime: () => resolved.backend,
     configureSession: resolved.configureSession,
     timeoutMs: params.timeoutMs,
   });

@@ -22,7 +22,7 @@ import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget
 import { writeExecutionRunMarker } from '../../../../daemon/executionRunRegistry';
 import type { ExecutionRunBackendStartContext } from '../../registry/executionRunBackendTypes';
 import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
-import { createBackendControllerMessageHandler } from '../createBackendControllerMessageHandler';
+import { createExecutionRunControllerMessageHandler } from '../createExecutionRunControllerMessageHandler';
 import { createExecutionRunSidechainStreamText } from '../sidechainStreamText';
 import {
   areExecutionRunBackendTargetsEqual,
@@ -81,7 +81,7 @@ export async function startExecutionRun(args: Readonly<{
   parentProvider: ACPProvider;
   sendAcp: SendAcp;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
-  createBackend: (opts: {
+  createRuntime: (opts: {
     runId?: string;
     backendId: string;
     backendTarget?: BackendTargetRefV1;
@@ -303,7 +303,7 @@ export async function startExecutionRun(args: Readonly<{
       return { runId, callId, sidechainId };
     }
 
-    const backend = args.createBackend({
+    const backend = args.createRuntime({
       runId,
       backendId,
       backendTarget: args.params.backendTarget,
@@ -352,7 +352,7 @@ export async function startExecutionRun(args: Readonly<{
     args.controllers.set(runId, ctrl);
     backendBeforeControllerRegistration = null;
 
-    const onMessage = createBackendControllerMessageHandler({
+    const onMessage = createExecutionRunControllerMessageHandler({
       ctrl,
       runId,
       sidechainId,

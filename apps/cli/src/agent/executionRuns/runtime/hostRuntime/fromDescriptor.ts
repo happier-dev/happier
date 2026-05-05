@@ -5,8 +5,8 @@ import {
     type ExecutionRunHostRuntime,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
-import type { BackendIsolationBundle, BackendIsolationRequest } from '@/runtime/isolation/types';
-import { resolveBackendIsolationBundle } from '@/runtime/isolation/resolveBackendIsolationBundle';
+import type { BackendIsolationBundle, BackendIsolationRequest } from '@/packagedRuntime/isolation/types';
+import { resolveBackendIsolationBundle } from '@/packagedRuntime/isolation/resolveBackendIsolationBundle';
 import { cleanupExecutionRunIsolationBundle } from '../isolation/cleanup';
 import { createLazyExecutionRunHostRuntime } from './lazy';
 import { withExecutionRunHostRuntimeCleanup } from './withCleanup';

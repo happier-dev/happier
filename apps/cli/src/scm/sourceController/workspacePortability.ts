@@ -1,5 +1,5 @@
 import type { ScmBackendRegistry } from '../registry';
-import { defaultScmBackendRegistry } from '../defaultRegistry';
+import { defaultScmBackendRegistry } from '../scmBackendCatalog';
 import {
     createScmSourceControllerPortableWorkspacePathRequest,
     resolveScmSourceControllerPortableWorkspacePathRelativePath,

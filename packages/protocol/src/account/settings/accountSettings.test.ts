@@ -4,6 +4,69 @@ import { accountSettingsParse } from './accountSettings.js';
 import { isActionEnabledByActionsSettings } from '../../actions/actionSettings.js';
 
 describe('accountSettings', () => {
+  it('defaults peer mediation preferences to direct routes disabled by product posture', () => {
+    const parsed = accountSettingsParse({});
+    const parsedRecord = parsed as unknown as { peerMediationPreferencesV1?: unknown };
+
+    expect(parsedRecord.peerMediationPreferencesV1).toEqual({
+      v: 1,
+      flows: {},
+      byMachineId: {},
+    });
+  });
+
+  it('accepts peer mediation per-machine direct-route preferences', () => {
+    const parsed = accountSettingsParse({
+      peerMediationPreferencesV1: {
+        v: 1,
+        flows: {
+          bounded_transfer: { direct: 'disabled' },
+        },
+        byMachineId: {
+          machine_1: {
+            flows: {
+              bounded_transfer: { direct: 'enabled' },
+            },
+          },
+        },
+      },
+    });
+    const parsedRecord = parsed as unknown as { peerMediationPreferencesV1?: unknown };
+
+    expect(parsedRecord.peerMediationPreferencesV1).toEqual({
+      v: 1,
+      flows: {
+        bounded_transfer: { direct: 'disabled' },
+      },
+      byMachineId: {
+        machine_1: {
+          flows: {
+            bounded_transfer: { direct: 'enabled' },
+          },
+        },
+      },
+    });
+  });
+
+  it('falls back to safe peer mediation defaults for malformed preferences', () => {
+    const parsed = accountSettingsParse({
+      peerMediationPreferencesV1: {
+        v: 1,
+        flows: {
+          bounded_transfer: { direct: 'enabled' },
+          tcp_tunnel: { direct: 'surprise' },
+        },
+      },
+    });
+    const parsedRecord = parsed as unknown as { peerMediationPreferencesV1?: unknown };
+
+    expect(parsedRecord.peerMediationPreferencesV1).toEqual({
+      v: 1,
+      flows: {},
+      byMachineId: {},
+    });
+  });
+
   it('defaults ready notification preview settings to enabled', () => {
     const parsed = accountSettingsParse({});
 
@@ -187,5 +250,63 @@ describe('accountSettings', () => {
 
     expect(isActionEnabledByActionsSettings('session.title.set' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(true);
     expect(isActionEnabledByActionsSettings('session.message.send' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(false);
+  });
+
+  it('adds the forward-compatible attention delivery policy while preserving unknown settings fields', () => {
+    const parsed = accountSettingsParse({
+      attentionDeliveryPolicyV1: {
+        v: 1,
+        futureNestedField: {
+          keep: true,
+        },
+      },
+      futureAccountField: {
+        keep: true,
+      },
+    });
+
+    expect(parsed.attentionDeliveryPolicyV1.v).toBe(1);
+    expect(parsed.attentionDeliveryPolicyV1.futureNestedField).toEqual({ keep: true });
+    expect(parsed.futureAccountField).toEqual({ keep: true });
+  });
+
+  it('defaults workspace references and preserves forward-compatible workspace fields', () => {
+    const empty = accountSettingsParse({});
+    expect(empty.workspaceRefsV1).toEqual([]);
+
+    const parsed = accountSettingsParse({
+      workspaceRefsV1: [
+        {
+          id: 'workspace_1',
+          serverId: 'server_1',
+          machineId: 'machine_1',
+          rootPath: '/repo',
+          label: null,
+          createdAtMs: 1,
+          lastOpenedAtMs: 2,
+          futureWorkspaceField: { keep: true },
+        },
+      ],
+      futureAccountField: true,
+    });
+
+    expect(parsed.workspaceRefsV1).toEqual([
+      expect.objectContaining({
+        id: 'workspace_1',
+        serverId: 'server_1',
+        machineId: 'machine_1',
+        rootPath: '/repo',
+        futureWorkspaceField: { keep: true },
+      }),
+    ]);
+    expect(parsed.futureAccountField).toBe(true);
+  });
+
+  it('falls back to an empty workspace reference list for malformed refs', () => {
+    const parsed = accountSettingsParse({
+      workspaceRefsV1: [{ id: 'workspace_missing_scope' }],
+    });
+
+    expect(parsed.workspaceRefsV1).toEqual([]);
   });
 });

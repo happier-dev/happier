@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import type { ScmBackendPreference } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { defaultScmBackendRegistry } from '@/scm/defaultRegistry';
+import { defaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import type { ScmBackendSelection } from '@/scm/registry';
 import { resolveScmSelection } from '@/scm/resolveScmSelection';

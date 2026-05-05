@@ -5,7 +5,7 @@ import {
 import { createExecutionRunHostRuntimeFromRuntimeTurnOperations } from '@/agent/runtime/bridges/executionRun/hostRuntimeFromTurnOps';
 import { isRuntimeTurnOperations, type RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { normalizePublishedRuntimeFacetsV1 } from '@/agent/runtime/facets/runtimeFacetsPublication';
-import type { ResolvedBackendContribution } from '@/extensions/registry/types';
+import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
 import type {
   RuntimeDescriptorV1,
   AgentRuntimeFacetsV1,

@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-import { defaultScmBackendRegistry } from '../defaultRegistry';
+import { defaultScmBackendRegistry } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
 import {

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   type ExecutionRunHostRuntime,
 } from './executionRunHostRuntime';
-import { createExecutionRunRuntime as createBoundExecutionRunRuntime } from '../../../executionRuns/runtime/createExecutionRunRuntime';
+import { createExecutionRunRuntime } from '../../../executionRuns/runtime/createExecutionRunRuntime';
 import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
 import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
@@ -81,15 +81,6 @@ async function prepareExecutionRunManagerStartParams(
 export type ExecutionRunHostBridgeOptions = Readonly<{
   parentProvider: ACPProvider;
   cwd: string;
-  createBackend?: (opts: {
-    runId?: string;
-    backendId: string;
-    backendTarget?: BackendTargetRefV1;
-    permissionMode: string;
-    modelId?: string;
-    accountSettings?: Readonly<Record<string, unknown>> | null;
-    start?: ExecutionRunBackendStartContext;
-  }) => ExecutionRunHostRuntime;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   streamedTranscriptSession?: StreamedTranscriptWriterSession;
   transcriptWriter?: Readonly<{
@@ -122,15 +113,6 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
 export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly parentProvider: ACPProvider;
   private readonly cwd: string;
-  private readonly createBackend: (opts: {
-    runId?: string;
-    backendId: string;
-    backendTarget?: BackendTargetRefV1;
-    permissionMode: string;
-    modelId?: string;
-    accountSettings?: Readonly<Record<string, unknown>> | null;
-    start?: ExecutionRunBackendStartContext;
-  }) => ExecutionRunHostRuntime;
   private readonly sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   private readonly streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   private readonly transcriptWriter:
@@ -190,16 +172,6 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   constructor(opts: ExecutionRunHostBridgeOptions) {
     this.parentProvider = opts.parentProvider;
     this.cwd = opts.cwd;
-    this.createBackend = opts.createBackend ?? ((createOpts) => createBoundExecutionRunRuntime({
-      cwd: this.cwd,
-      runId: createOpts.runId,
-      backendId: createOpts.backendId,
-      backendTarget: createOpts.backendTarget,
-      permissionMode: createOpts.permissionMode,
-      modelId: createOpts.modelId,
-      accountSettings: createOpts.accountSettings ?? null,
-      start: createOpts.start ?? null,
-    }));
     this.sendAcp = opts.sendAcp;
     this.streamedTranscriptSession = opts.streamedTranscriptSession ?? null;
     this.transcriptWriter = opts.transcriptWriter ?? null;
@@ -231,9 +203,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       }>) => await resolveCliVoicePromptStackBlocks({ settings, profileId }));
 
     this.voiceAgentManager = new VoiceAgentManager({
-      createBackend: ({ agentId, modelId, permissionPolicy, start }) => {
+      createRuntime: ({ agentId, modelId, permissionPolicy, start }) => {
         try {
-          return this.createBackend({
+          return this.createExecutionRunRuntime({
             backendId: agentId,
             backendTarget: { kind: 'builtInAgent', agentId },
             modelId,
@@ -259,6 +231,28 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       },
       responseTimeoutMs: configuration.voiceAgentResponseTimeoutMs,
       getNowMs: this.getNowMs,
+    });
+  }
+
+  private createExecutionRunRuntime(opts: Readonly<{
+    runId?: string;
+    backendId: string;
+    backendTarget?: BackendTargetRefV1;
+    permissionMode: string;
+    modelId?: string;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+    start?: ExecutionRunBackendStartContext;
+  }>): ExecutionRunHostRuntime {
+    return createExecutionRunRuntime({
+      cwd: this.cwd,
+      runId: opts.runId,
+      backendId: opts.backendId,
+      backendTarget: opts.backendTarget,
+      permissionMode: opts.permissionMode,
+      modelId: opts.modelId,
+      accountSettings: opts.accountSettings ?? null,
+      start: opts.start ?? null,
+      happyHomeDir: this.happyHomeDir,
     });
   }
 
@@ -448,7 +442,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       parentProvider: this.parentProvider,
       sendAcp: this.sendAcp,
       streamedTranscriptSession: this.streamedTranscriptSession,
-      createBackend: this.createBackend,
+      createRuntime: this.createExecutionRunRuntime.bind(this),
       getNowMs: this.getNowMs,
       budgetRegistry: this.budgetRegistry,
       runs: this.runs,
@@ -520,7 +514,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         runs: this.runs,
         controllers: this.controllers,
         budgetRegistry: this.budgetRegistry,
-        createBackend: ({ backendId, backendTarget, permissionMode }) => this.createBackend({ backendId, backendTarget, permissionMode }),
+        createRuntime: ({ backendId, backendTarget, permissionMode }) => this.createExecutionRunRuntime({ backendId, backendTarget, permissionMode }),
         maxTurns: this.maxTurns,
         getNowMs: this.getNowMs,
         finishRun: this.finishRun.bind(this),
@@ -618,7 +612,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createBackend: ({ backendId, backendTarget, permissionMode }) => this.createBackend({ backendId, backendTarget, permissionMode }),
+      createRuntime: ({ backendId, backendTarget, permissionMode }) => this.createExecutionRunRuntime({ backendId, backendTarget, permissionMode }),
       maxTurns: this.maxTurns,
       getNowMs: this.getNowMs,
       finishRun: this.finishRun.bind(this),
@@ -650,7 +644,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createBackend: ({ backendId, backendTarget, permissionMode }) => this.createBackend({ backendId, backendTarget, permissionMode }),
+      createRuntime: ({ backendId, backendTarget, permissionMode }) => this.createExecutionRunRuntime({ backendId, backendTarget, permissionMode }),
       sendAcp: this.sendAcp,
       parentProvider: this.parentProvider,
       streamedTranscriptSession: this.streamedTranscriptSession,

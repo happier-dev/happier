@@ -1,7 +1,6 @@
 import type { BackendTargetRefV1, ExecutionRunRetentionPolicy } from '@happier-dev/protocol';
 
 import type { ExecutionRunProfileBoundedCompleteResult } from '../../executionRuns/profiles/ExecutionRunIntentProfile';
-import { getNativeReviewEngineDescriptor } from '../engines/nativeReviewEngines';
 
 export type ReviewOutputNormalizer = (params: Readonly<{
   runId: string;
@@ -17,5 +16,6 @@ export type ReviewOutputNormalizer = (params: Readonly<{
 }>) => ExecutionRunProfileBoundedCompleteResult;
 
 export function resolveReviewOutputNormalizer(backendId: string): ReviewOutputNormalizer | null {
-  return getNativeReviewEngineDescriptor(backendId)?.reviewOutputNormalizer ?? null;
+  void backendId;
+  return null;
 }

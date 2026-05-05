@@ -6,7 +6,7 @@ import type { ExecutionRunBackendController, ExecutionRunController } from '../c
 import { failureSignal } from '../controllers/failureSignal';
 import { areExecutionRunBackendTargetsEqual } from './backendTargets';
 import type { ACPMessageData, ACPProvider } from '../../../api/session/sessionMessageTypes';
-import { createBackendControllerMessageHandler } from './createBackendControllerMessageHandler';
+import { createExecutionRunControllerMessageHandler } from './createExecutionRunControllerMessageHandler';
 import { resolveExecutionRunIntentProfile } from '../profiles/intentRegistry';
 import { createExecutionRunSidechainStreamText } from './sidechainStreamText';
 import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '../../../api/session/streamedTranscriptWriter';
@@ -18,7 +18,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => ExecutionRunHostRuntime;
+  createRuntime: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => ExecutionRunHostRuntime;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -48,7 +48,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Missing resume handle' };
   }
 
-  const backend = args.createBackend({
+  const backend = args.createRuntime({
     runId: args.runId,
     backendId: args.run.backendId,
     backendTarget: args.run.backendTarget,
@@ -111,7 +111,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
   const computeSidechainStreamText = createExecutionRunSidechainStreamText(profile);
 
-  const onMessage = createBackendControllerMessageHandler({
+  const onMessage = createExecutionRunControllerMessageHandler({
     ctrl: resumeCtrl,
     runId: args.runId,
     sidechainId: args.run.sidechainId,

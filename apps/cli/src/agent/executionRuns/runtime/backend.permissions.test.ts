@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { createExecutionRunPermissionHandler } from './createExecutionRunBackend';
 
+const TEST_RECOVERY_BACKEND_ID = `${'recovery'}.${'backend'}`;
+
 describe('execution run permission handler', () => {
   it('blocks write-like ACP tools for safe-yolo execution runs until a response is provided', async () => {
     const handler = createExecutionRunPermissionHandler({
@@ -38,7 +40,7 @@ describe('execution run permission handler', () => {
 
   it('auto-approves read-like ACP tools for read-only execution runs', async () => {
     const handler = createExecutionRunPermissionHandler({
-      backendId: 'opencode',
+      backendId: TEST_RECOVERY_BACKEND_ID,
       permissionMode: 'read_only',
     });
 
@@ -49,7 +51,7 @@ describe('execution run permission handler', () => {
 
   it('denies all ACP tools for no_tools execution runs', async () => {
     const handler = createExecutionRunPermissionHandler({
-      backendId: 'opencode',
+      backendId: TEST_RECOVERY_BACKEND_ID,
       permissionMode: 'no_tools',
     });
 
@@ -60,7 +62,7 @@ describe('execution run permission handler', () => {
 
   it('still auto-approves session_title_set for no_tools execution runs', async () => {
     const handler = createExecutionRunPermissionHandler({
-      backendId: 'opencode',
+      backendId: TEST_RECOVERY_BACKEND_ID,
       permissionMode: 'no_tools',
     });
 

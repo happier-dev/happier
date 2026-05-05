@@ -133,6 +133,84 @@ describe('CodexLikePermissionHandler', () => {
     expect(result.decision).toBe('approved');
   });
 
+  it('resolves every compatible duplicate request id from one permission response', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    handler.setPermissionMode('safe-yolo');
+
+    const input = { path: '/tmp/x', content: 'hi' };
+    const first = handler.handleToolCall('tool-duplicate', 'Write', input);
+    const second = handler.handleToolCall('tool-duplicate', 'Write', input);
+
+    expect(Object.keys(session.agentState.requests)).toEqual(['tool-duplicate']);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'tool-duplicate', approved: true, decision: 'approved' });
+
+    const firstState = await Promise.race([
+      first.then((value) => ({ status: 'resolved' as const, value })),
+      new Promise<{ status: 'timeout' }>((resolve) => setTimeout(() => resolve({ status: 'timeout' }), 20)),
+    ]);
+    const secondState = await Promise.race([
+      second.then((value) => ({ status: 'resolved' as const, value })),
+      new Promise<{ status: 'timeout' }>((resolve) => setTimeout(() => resolve({ status: 'timeout' }), 20)),
+    ]);
+
+    expect(firstState).toEqual({ status: 'resolved', value: { decision: 'approved' } });
+    expect(secondState).toEqual({ status: 'resolved', value: { decision: 'approved' } });
+    expect(session.agentState.requests['tool-duplicate']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-duplicate']).toEqual(
+      expect.objectContaining({
+        tool: 'Write',
+        status: 'approved',
+        decision: 'approved',
+      }),
+    );
+  });
+
+  it('keeps the original pending request live when the same id is retried with different input', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const first = handler.handleToolCall('tool-duplicate', 'Write', {
+      path: '/tmp/original',
+      content: 'hi',
+    });
+
+    expect(session.agentState.requests['tool-duplicate']).toEqual(
+      expect.objectContaining({
+        tool: 'Write',
+        arguments: { path: '/tmp/original', content: 'hi' },
+      }),
+    );
+
+    const second = handler.handleToolCall('tool-duplicate', 'Write', {
+      path: '/tmp/other',
+      content: 'bye',
+    });
+
+    await expect(second).rejects.toThrow('already pending with different tool input');
+    expect(session.agentState.requests['tool-duplicate']).toEqual(
+      expect.objectContaining({
+        tool: 'Write',
+        arguments: { path: '/tmp/original', content: 'hi' },
+      }),
+    );
+
+    handler.setPermissionMode('read-only', 10);
+
+    await expect(first).resolves.toEqual({ decision: 'denied' });
+    expect(session.agentState.requests['tool-duplicate']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-duplicate']).toEqual(
+      expect.objectContaining({
+        tool: 'Write',
+        status: 'denied',
+        decision: 'denied',
+      }),
+    );
+  });
+
   it('auto-approves write-like tools in yolo mode', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
@@ -298,6 +376,33 @@ describe('CodexLikePermissionHandler', () => {
         decision: 'approved',
       }),
     );
+  });
+
+  it.each([
+    `happier tools call --source happier --tool save_memory --json; touch /tmp/happier-pwn`,
+    `happier tools call --source happier --tool save_memory --json && touch /tmp/happier-pwn`,
+    `happier tools call --source happier --tool save_memory --json || touch /tmp/happier-pwn`,
+    `happier tools call --source happier --tool save_memory --json | cat`,
+    `happier tools call --source happier --tool save_memory --json $(touch /tmp/happier-pwn)`,
+    `happier tools call --source happier --tool save_memory --json \`touch /tmp/happier-pwn\``,
+    `happier tools call --source happier --tool save_memory --json extra-token`,
+  ])('does not auto-approve shell-bridge commands with trailing execution in default mode: %s', async (command) => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const pending = handler.handleToolCall('tool-1', 'bash', { command });
+
+    expect(session.agentState.requests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+      }),
+    );
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'tool-1', approved: false, decision: 'denied' });
+
+    await expect(pending).resolves.toEqual({ decision: 'denied' });
   });
 
   it('prompts for Happier shell-bridge calls with non-vetted custom sources in default mode', async () => {

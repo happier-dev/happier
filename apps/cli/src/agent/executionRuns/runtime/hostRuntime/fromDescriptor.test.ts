@@ -10,6 +10,8 @@ import type {
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 
+const TEST_PRIMARY_BACKEND_ID = `${'primary'}.${'backend'}`;
+
 function createStubRuntime(): ExecutionRunHostRuntime & Readonly<{ disposeSpy: ReturnType<typeof vi.fn> }> {
     const disposeSpy = vi.fn(async () => {});
     let _handler: ExecutionRunHostRuntimeMessageHandler | null = null;
@@ -70,7 +72,7 @@ function createExecutionRunOpts(runId: string): CreateCliExecutionRunBackendPara
     return {
         cwd: '/tmp/execution-run',
         runId,
-        backendId: 'claude',
+        backendId: TEST_PRIMARY_BACKEND_ID,
         permissionMode: 'read_only',
         start: {
             intent: 'review',
@@ -98,7 +100,7 @@ describe('createDescriptorExecutionRunHostRuntime', () => {
             reloadConfiguration();
 
             const { createDescriptorExecutionRunHostRuntime } = await import('./fromDescriptor');
-            const root = join(configuration.activeServerDir, 'isolation', 'claude', 'execution_run', 'run_resolve_throw');
+            const root = join(configuration.activeServerDir, 'isolation', TEST_PRIMARY_BACKEND_ID, 'execution_run', 'run_resolve_throw');
 
             const createdRuntime = createDescriptorExecutionRunHostRuntime(createExecutionRunOpts('run_resolve_throw'), {
                 resolveIsolation() {
@@ -126,7 +128,7 @@ describe('createDescriptorExecutionRunHostRuntime', () => {
             reloadConfiguration();
 
             const { createDescriptorExecutionRunHostRuntime } = await import('./fromDescriptor');
-            const root = join(configuration.activeServerDir, 'isolation', 'claude', 'execution_run', 'run_factory_throw');
+            const root = join(configuration.activeServerDir, 'isolation', TEST_PRIMARY_BACKEND_ID, 'execution_run', 'run_factory_throw');
             let cleanupCalls = 0;
             let cleanupFinished = false;
 
@@ -168,7 +170,7 @@ describe('createDescriptorExecutionRunHostRuntime', () => {
             reloadConfiguration();
 
             const { createDescriptorExecutionRunHostRuntime } = await import('./fromDescriptor');
-            const root = join(configuration.activeServerDir, 'isolation', 'claude', 'execution_run', 'run_success');
+            const root = join(configuration.activeServerDir, 'isolation', TEST_PRIMARY_BACKEND_ID, 'execution_run', 'run_success');
             const runtime = createStubRuntime();
             let cleanupCalls = 0;
 
@@ -210,7 +212,7 @@ describe('createDescriptorExecutionRunHostRuntime', () => {
             reloadConfiguration();
 
             const { createDescriptorExecutionRunHostRuntime } = await import('./fromDescriptor');
-            const root = join(configuration.activeServerDir, 'isolation', 'claude', 'execution_run', 'run_class_success');
+            const root = join(configuration.activeServerDir, 'isolation', TEST_PRIMARY_BACKEND_ID, 'execution_run', 'run_class_success');
             const runtime = new ClassExecutionRunRuntime();
             const messages: string[] = [];
 

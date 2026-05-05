@@ -2,6 +2,21 @@ import { z } from 'zod';
 
 import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '../../actions/actionSettings.js';
 import { AcpCatalogSettingsV1Schema } from '../../acpCatalog/settingsV1.js';
+import { WorkspaceRefV1Schema } from '../../workspaces/workspaceRefV1.js';
+import {
+  AttentionDeliveryPolicyV1Schema,
+  DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
+  type AttentionDeliveryPolicyV1,
+  type AttentionDeliveryDecision,
+  type ResolveAttentionDeliveryPolicyDecisionParams,
+} from './attentionDeliveryPolicy.js';
+import { resolveAttentionDeliveryPolicyDecision } from './attentionDeliveryPolicyDecision.js';
+import { deriveAttentionDeliveryPolicyFromLegacySettings } from './attentionDeliveryPolicyLegacy.js';
+import {
+  DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
+  PeerMediationPreferencesV1Schema,
+  type PeerMediationPreferencesV1,
+} from './peerMediationPreferencesV1.js';
 import {
   BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
   NotificationChannelsV1Schema,
@@ -156,6 +171,20 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
     ];
   }
 
+  const parsedAttentionDeliveryPolicy = next.attentionDeliveryPolicyV1 === undefined
+    ? null
+    : AttentionDeliveryPolicyV1Schema.safeParse(next.attentionDeliveryPolicyV1);
+  if (parsedAttentionDeliveryPolicy?.success === true) {
+    next.attentionDeliveryPolicyV1 = parsedAttentionDeliveryPolicy.data;
+  }
+
+  if (next.attentionDeliveryPolicyV1 === undefined || parsedAttentionDeliveryPolicy?.success === false) {
+    next.attentionDeliveryPolicyV1 = deriveAttentionDeliveryPolicyFromLegacySettings({
+      notificationsSettings: NotificationsSettingsV1Schema.parse(raw.notificationsSettingsV1),
+      notificationChannels: NotificationChannelsV1Schema.parse(next.notificationChannelsV1),
+    });
+  }
+
   if (next.actionsSettingsV1 && typeof next.actionsSettingsV1 === 'object' && !Array.isArray(next.actionsSettingsV1)) {
     const parsed = ActionsSettingsV1Schema.safeParse(next.actionsSettingsV1);
     if (parsed.success) {
@@ -189,7 +218,14 @@ export const AccountSettingsSchema = z.preprocess(
       notificationChannelsV1: NotificationChannelsV1Schema.default([
         deriveExpoPushNotificationChannelFromLegacySettings(DEFAULT_NOTIFICATIONS_SETTINGS_V1),
       ]),
+      attentionDeliveryPolicyV1: AttentionDeliveryPolicyV1Schema
+        .catch(DEFAULT_ATTENTION_DELIVERY_POLICY_V1)
+        .default(DEFAULT_ATTENTION_DELIVERY_POLICY_V1),
+      peerMediationPreferencesV1: PeerMediationPreferencesV1Schema
+        .catch(DEFAULT_PEER_MEDIATION_PREFERENCES_V1)
+        .default(DEFAULT_PEER_MEDIATION_PREFERENCES_V1),
       acpCatalogSettingsV1: AcpCatalogSettingsV1Schema.catch({ v: 2, backends: [] }).default({ v: 2, backends: [] }),
+      workspaceRefsV1: z.array(WorkspaceRefV1Schema).catch([]).default([]),
     })
     .passthrough(),
 );
@@ -218,3 +254,15 @@ export function resolveNotificationChannelsV1FromAccountSettings(settingsLike: u
 
 export { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID };
 export type { NotificationChannelV1, NotificationChannelsV1 };
+export {
+  AttentionDeliveryPolicyV1Schema,
+  DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
+  deriveAttentionDeliveryPolicyFromLegacySettings,
+  resolveAttentionDeliveryPolicyDecision,
+};
+export type {
+  AttentionDeliveryPolicyV1,
+  AttentionDeliveryDecision,
+  PeerMediationPreferencesV1,
+  ResolveAttentionDeliveryPolicyDecisionParams,
+};

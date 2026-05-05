@@ -1,12 +1,7 @@
-import { listNativeReviewEngineDescriptors } from '@/agent/reviews/engines/nativeReviewEngines';
 import type { ExecutionRunBackendDescriptor, ExecutionRunBackendFactory } from './executionRunBackendTypes';
 
 const REGISTRY: Record<string, ExecutionRunBackendDescriptor> = {
 };
-
-for (const descriptor of listNativeReviewEngineDescriptors()) {
-  REGISTRY[descriptor.id] = { factory: descriptor.executionRunBackendFactory };
-}
 
 export function resolveExecutionRunBackendDescriptor(backendId: string): ExecutionRunBackendDescriptor | null {
   const key = String(backendId ?? '').trim();

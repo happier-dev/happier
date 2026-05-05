@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { SessionId } from '@/agent/core/AgentBackend';
 import { ExecutionRunManager } from '@/agent/executionRuns/runtime/ExecutionRunManager';
-import { ClaudeSdkAgentBackend } from '@/backends/claude/sdkAgentBackend/ClaudeSdkAgentBackend';
+
+function readRecord(value: unknown): Readonly<Record<string, unknown>> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
+}
 
 function createFakeClaudeReviewEntrypointSource(): string {
   // Mimics `claude --output-format stream-json --input-format stream-json`.
@@ -117,12 +120,6 @@ rl.on('close', () => process.exit(0));
       const manager = new ExecutionRunManager({
         parentProvider: 'claude',
         cwd,
-        createBackend: (opts) =>
-          new ClaudeSdkAgentBackend({
-            cwd,
-            modelId: 'default',
-            permissionPolicy: opts.permissionMode as any,
-          }),
         sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
           sent.push({ provider, body, meta: opts?.meta });
         },
@@ -146,8 +143,11 @@ rl.on('close', () => process.exit(0));
       const sidechainToolCall = sent.find(
         (m) => m.body.type === 'tool-call' && m.body.sidechainId === started.callId && m.body.name === 'Read',
       );
-      expect(sidechainToolCall).toBeTruthy();
-      expect((sidechainToolCall!.body as any).callId).toBe(`sc:${started.callId}:toolu_1`);
+      expect(sidechainToolCall?.body.type).toBe('tool-call');
+      if (!sidechainToolCall || sidechainToolCall.body.type !== 'tool-call') {
+        throw new Error('Expected sidechain tool call');
+      }
+      expect(sidechainToolCall.body.callId).toBe(`sc:${started.callId}:toolu_1`);
 
       const sidechainToolResult = sent.find(
         (m) =>
@@ -157,13 +157,20 @@ rl.on('close', () => process.exit(0));
       );
       expect(sidechainToolResult).toBeTruthy();
 
-      const tokenCount = sent.find((m) => m.body.type === 'token_count' && m.body.sidechainId === started.callId) as any;
-      expect(tokenCount).toBeTruthy();
-      expect(tokenCount.body.tokens?.input).toBe(11);
-      expect(tokenCount.body.tokens?.output).toBe(22);
-      expect(tokenCount.body.tokens?.cache_read).toBe(3);
-      expect(tokenCount.body.tokens?.cache_creation).toBe(4);
-      expect(tokenCount.body.cost?.total).toBe(0.123);
+      const tokenCount = sent.find((m) => m.body.type === 'token_count' && m.body.sidechainId === started.callId);
+      expect(tokenCount?.body.type).toBe('token_count');
+      if (!tokenCount || tokenCount.body.type !== 'token_count') {
+        throw new Error('Expected token-count sidechain event');
+      }
+      const tokens = readRecord(tokenCount.body.tokens);
+      const cost = readRecord(tokenCount.body.cost);
+      expect(tokens).toMatchObject({
+        input: 11,
+        output: 22,
+        cache_read: 3,
+        cache_creation: 4,
+      });
+      expect(cost).toMatchObject({ total: 0.123 });
     } finally {
       if (savedClaudePath === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
       else process.env.HAPPIER_CLAUDE_PATH = savedClaudePath;
@@ -173,51 +180,45 @@ rl.on('close', () => process.exit(0));
     }
   }, 60_000);
 
-	  it('supports steer_if_supported delivery for long-lived runs without failing the run', async () => {
-	    const savedClaudePath = process.env.HAPPIER_CLAUDE_PATH;
-	    const savedDebug = process.env.DEBUG;
+  it('supports steer_if_supported delivery for long-lived runs without failing the run', async () => {
+    const savedClaudePath = process.env.HAPPIER_CLAUDE_PATH;
+    const savedDebug = process.env.DEBUG;
 
-	    let dir: string | null = null;
-	    let manager: ExecutionRunManager | null = null;
-	    let runId: string | null = null;
-	    try {
-	      delete process.env.DEBUG;
-	      dir = await mkdtemp(join(tmpdir(), 'happier-claude-exec-run-steer-'));
-	      const cwd = dir;
-	      const entry = join(dir, 'fake-claude.cjs');
+    let dir: string | null = null;
+    let manager: ExecutionRunManager | null = null;
+    let runId: string | null = null;
+    try {
+      delete process.env.DEBUG;
+      dir = await mkdtemp(join(tmpdir(), 'happier-claude-exec-run-steer-'));
+      const cwd = dir;
+      const entry = join(dir, 'fake-claude.cjs');
       await writeFile(entry, createFakeClaudeLongLivedSteerEntrypointSource(), 'utf8');
       process.env.HAPPIER_CLAUDE_PATH = entry;
 
-	      const sent: Array<{ provider: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
-	      manager = new ExecutionRunManager({
-	        parentProvider: 'claude',
-	        cwd,
-	        createBackend: (opts) =>
-	          new ClaudeSdkAgentBackend({
-	            cwd,
-            modelId: 'default',
-            permissionPolicy: opts.permissionMode as any,
-          }),
+      const sent: Array<{ provider: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+      manager = new ExecutionRunManager({
+        parentProvider: 'claude',
+        cwd,
         sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
           sent.push({ provider, body, meta: opts?.meta });
         },
-	        getNowMs: () => 1_700_000_000_000,
-	      });
+        getNowMs: () => 1_700_000_000_000,
+      });
 
-	      const started = await manager.start({
-	        sessionId: 'parent_session_1' as SessionId,
-	        intent: 'delegate',
-	        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-	        instructions: '',
+      const started = await manager.start({
+        sessionId: 'parent_session_1' as SessionId,
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: '',
         permissionMode: 'workspace_write',
         retentionPolicy: 'ephemeral',
-	        runClass: 'long_lived',
-	        ioMode: 'streaming',
-	      });
-	      runId = started.runId;
+        runClass: 'long_lived',
+        ioMode: 'streaming',
+      });
+      runId = started.runId;
 
-	      const first = await manager.send(started.runId, { message: 'hang please' });
-	      expect(first.ok).toBe(true);
+      const first = await manager.send(started.runId, { message: 'hang please' });
+      expect(first.ok).toBe(true);
 
       const second = await manager.send(started.runId, { message: 'steer me', delivery: 'steer_if_supported' });
       expect(second.ok).toBe(true);
@@ -225,31 +226,31 @@ rl.on('close', () => process.exit(0));
       // Run stays alive.
       expect(manager.get(started.runId)?.status).toBe('running');
 
-	      await vi.waitFor(
-	        () => {
-	          // The successful second turn should have streamed an assistant message into the run sidechain.
+      await vi.waitFor(
+        () => {
+          // The successful second turn should have streamed an assistant message into the run sidechain.
           const sidechainMessage = sent.find(
             (m) =>
               m.body.type === 'message' &&
               m.body.sidechainId === started.callId &&
-              String((m.body as any).message ?? '').includes('STEER_OK'),
+              m.body.message.includes('STEER_OK'),
           );
           expect(sidechainMessage).toBeTruthy();
         },
-	        { timeout: 2_000 },
-	      );
-	    } finally {
-	      if (manager && runId) {
-	        const state = manager.get(runId);
-	        if (state?.status === 'running') {
-	          await manager.stop(runId).catch(() => {});
-	        }
-	        await manager.waitForTerminal(runId).catch(() => {});
-	      }
-	      if (savedClaudePath === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
-	      else process.env.HAPPIER_CLAUDE_PATH = savedClaudePath;
-	      if (savedDebug === undefined) delete process.env.DEBUG;
-	      else process.env.DEBUG = savedDebug;
+        { timeout: 2_000 },
+      );
+    } finally {
+      if (manager && runId) {
+        const state = manager.get(runId);
+        if (state?.status === 'running') {
+          await manager.stop(runId).catch(() => {});
+        }
+        await manager.waitForTerminal(runId).catch(() => {});
+      }
+      if (savedClaudePath === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
+      else process.env.HAPPIER_CLAUDE_PATH = savedClaudePath;
+      if (savedDebug === undefined) delete process.env.DEBUG;
+      else process.env.DEBUG = savedDebug;
       if (dir) await rm(dir, { recursive: true, force: true });
     }
   }, 60_000);

@@ -24,7 +24,7 @@ class FakeSession {
 }
 
 describe('createProviderEnforcedPermissionHandler', () => {
-  it('creates a provider-enforced handler with optional safe-tool extensions', async () => {
+  it('creates a provider-enforced handler with optional safe-tool plugins', async () => {
     const session = new FakeSession();
     const handler = createProviderEnforcedPermissionHandler({
       session: session as any,

@@ -3,7 +3,7 @@ import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { ResolvedBackendContribution } from '@/extensions/registry/types';
+import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
 import type { AnyTerminalRuntimeOps } from '@/backends/types';
 import { createNormalizedRuntimeEventWriter } from '@/agent/runtime/events/createNormalizedRuntimeEventWriter';
 

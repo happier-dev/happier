@@ -6,7 +6,7 @@ import {
   requireExecutionRunHostRuntime,
   type ExecutionRunHostRuntime,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { resolveBackendIsolationBundle } from '@/runtime/isolation/resolveBackendIsolationBundle';
+import { resolveBackendIsolationBundle } from '@/packagedRuntime/isolation/resolveBackendIsolationBundle';
 import { cleanupExecutionRunIsolationBundle } from '../isolation/cleanup';
 import { createLazyExecutionRunHostRuntime } from '../hostRuntime/lazy';
 import { withExecutionRunHostRuntimeCleanup } from '../hostRuntime/withCleanup';

@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 
 import { PROTOCOL_WIRE_COMPATIBILITY_INVENTORY, validateProtocolWireCompatibilityInventory } from './lib/protocolWireCompatibilityInventory.ts';
+import { validateRpcActionCoverage } from './lib/rpcActionCoverage.ts';
 
 export async function main(): Promise<void> {
   const result = validateProtocolWireCompatibilityInventory({
@@ -8,8 +9,15 @@ export async function main(): Promise<void> {
   });
 
   console.log(`Protocol wire inventory entries: ${PROTOCOL_WIRE_COMPATIBILITY_INVENTORY.length}`);
-  if (!result.ok) {
-    for (const error of result.errors) {
+  const rpcActionCoverage = validateRpcActionCoverage();
+  console.log(`RPC ActionSpec coverage advisory unclassified methods: ${rpcActionCoverage.unclassifiedRpcMethods.length}`);
+
+  const errors = [
+    ...result.errors,
+    ...rpcActionCoverage.errors.map((error) => error.message),
+  ];
+  if (errors.length > 0) {
+    for (const error of errors) {
       console.error(`- ${error}`);
     }
     process.exitCode = 1;

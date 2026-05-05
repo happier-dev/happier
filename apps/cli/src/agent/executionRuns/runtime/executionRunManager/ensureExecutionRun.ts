@@ -20,7 +20,7 @@ export async function ensureExecutionRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: {
+  createRuntime: (opts: {
     runId?: string;
     backendId: string;
     backendTarget?: BackendTargetRefV1;
@@ -137,8 +137,8 @@ export async function ensureExecutionRun(args: Readonly<{
     runs: args.runs,
     controllers: args.controllers,
     budgetRegistry: args.budgetRegistry,
-    createBackend: ({ backendId, backendTarget, permissionMode }) =>
-      args.createBackend({ runId: args.runId, backendId, backendTarget, permissionMode }),
+    createRuntime: ({ backendId, backendTarget, permissionMode }) =>
+      args.createRuntime({ runId: args.runId, backendId, backendTarget, permissionMode }),
     sendAcp: args.sendAcp,
     parentProvider: args.parentProvider,
     streamedTranscriptSession: args.streamedTranscriptSession,

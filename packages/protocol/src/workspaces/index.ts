@@ -19,3 +19,10 @@ export {
   WorkspaceLocationScmSchema,
   type WorkspaceLocationScm,
 } from './locationSchema.js';
+
+export {
+  ProjectKeyV1Schema,
+  WorkspaceRefV1Schema,
+  type ProjectKeyV1,
+  type WorkspaceRefV1,
+} from './workspaceRefV1.js';

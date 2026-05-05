@@ -14,6 +14,7 @@ import {
   AccountSettingsV2UpdateResponseSchema,
   openAccountScopedBlobCiphertext,
   sealAccountScopedBlobCiphertext,
+  type AccountSettings,
   type AccountSettingsStoredContentEnvelope,
   type AccountSettingsV2UpdateResponse,
 } from '@happier-dev/protocol';
@@ -73,11 +74,11 @@ export async function updateAccountSettingsV2WithRetry(_params: Readonly<{
     updateSettings?: (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>) => Promise<AccountSettingsV2UpdateResponse>;
     randomBytes?: (n: number) => Uint8Array;
     nowMs?: () => number;
-    resolveCachePath?: () => string;
+    resolveCachePath?: (credentials: Credentials) => string;
     writeCache?: (path: string, cache: AccountSettingsCache) => Promise<void>;
   }>;
   maxAttempts?: number;
-}>): Promise<{ version: number }> {
+}>): Promise<{ version: number; settings?: AccountSettings }> {
   const params = _params;
   const maxAttempts = Number.isFinite(params.maxAttempts) && (params.maxAttempts as number) > 0 ? Math.floor(params.maxAttempts as number) : 3;
   const randomBytes = params.deps?.randomBytes ?? resolveDefaultRandomBytes();
@@ -136,23 +137,24 @@ export async function updateAccountSettingsV2WithRetry(_params: Readonly<{
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const parsed = await parseSettingsFromContent({ content, credentials: params.credentials });
     const nextRaw = params.mutate(parsed.raw);
+    const nextSettings = accountSettingsParse(nextRaw);
 
     const nextContent: AccountSettingsStoredContentEnvelope =
       parsed.envelopeKind === 'plain'
-        ? { t: 'plain', v: accountSettingsParse(nextRaw) }
+        ? { t: 'plain', v: nextSettings }
         : {
           t: 'encrypted',
           c: sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: resolveMaterial(params.credentials),
-            payload: accountSettingsParse(nextRaw),
+            payload: nextSettings,
             randomBytes,
           }),
         };
 
     const response = await updateSettings({ expectedVersion: version, content: nextContent });
     if (response.success === true) {
-      const cachePath = resolveCachePath();
+      const cachePath = resolveCachePath(params.credentials);
       try {
         await writeCache(cachePath, {
           version: 2,
@@ -163,7 +165,7 @@ export async function updateAccountSettingsV2WithRetry(_params: Readonly<{
       } catch (error) {
         logger.debug('[accountSettings] cache write failed after update (ignored)', serializeAxiosErrorForLog(error));
       }
-      return { version: response.version };
+      return { version: response.version, settings: nextSettings };
     }
 
     // Version mismatch: retry using the returned currentContent/version.

@@ -74,6 +74,7 @@ describe('BasePermissionHandler push notifications', () => {
       'Permission Request',
       expect.stringContaining('Write'),
       expect.objectContaining({ sessionId: 'session-test', requestId: 'perm-1' }),
+      { sound: 'happier_urgent.wav', priority: 'high', androidSoundId: 'urgent' },
     );
 
     // Resolve to avoid dangling pending promises.

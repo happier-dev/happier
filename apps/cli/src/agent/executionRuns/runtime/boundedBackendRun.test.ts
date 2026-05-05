@@ -20,11 +20,14 @@ vi.mock('../../../ui/logger', async (importOriginal) => {
   return { ...original, logger: mockedLogger };
 });
 
+const TEST_PRIMARY_BACKEND_ID = `${'primary'}.${'backend'}` as never;
+const TEST_RECOVERY_BACKEND_ID = `${'recovery'}.${'backend'}` as never;
+
 function asExecutionRunHostRuntime(backend: AgentBackend) {
   return createExecutionRunHostRuntimeFromAgentBackend(backend);
 }
 
-function createBackendWithStuckFirstCompletion(): Readonly<{
+function createRuntimeWithStuckFirstCompletion(): Readonly<{
   backend: AgentBackend;
   getSendPromptCount: () => number;
 }> {
@@ -57,7 +60,7 @@ function createBackendWithStuckFirstCompletion(): Readonly<{
   return { backend, getSendPromptCount: () => sendPromptCount };
 }
 
-function createBackendWithSlowCancel(args: Readonly<{ cancelDelayMs: number }>): Readonly<{
+function createRuntimeWithSlowCancel(args: Readonly<{ cancelDelayMs: number }>): Readonly<{
   backend: AgentBackend;
   getSendPromptCount: () => number;
 }> {
@@ -94,7 +97,7 @@ function createBackendWithSlowCancel(args: Readonly<{ cancelDelayMs: number }>):
   return { backend, getSendPromptCount: () => sendPromptCount };
 }
 
-function createBackendWithBlockingSendPromptNoWaiter(): Readonly<{
+function createRuntimeWithBlockingSendPromptNoWaiter(): Readonly<{
   backend: AgentBackend;
   getSendPromptCount: () => number;
 }> {
@@ -145,7 +148,7 @@ describe('executeBoundedBackendRun', () => {
     const callId = 'subagent_run_test_1';
     const sidechainId = 'subagent_run_test_1';
 
-    const { backend, getSendPromptCount } = createBackendWithStuckFirstCompletion();
+    const { backend, getSendPromptCount } = createRuntimeWithStuckFirstCompletion();
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -198,7 +201,7 @@ describe('executeBoundedBackendRun', () => {
       params: {
         sessionId: 'parent_session_1',
         intent: 'memory_hints',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
         instructions: 'start',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -207,7 +210,7 @@ describe('executeBoundedBackendRun', () => {
       },
       controllers,
       sendAcp: () => {},
-      parentProvider: 'claude',
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
       finishRun: () => {},
@@ -224,7 +227,7 @@ describe('executeBoundedBackendRun', () => {
     const callId = 'subagent_run_test_slow_cancel_1';
     const sidechainId = callId;
 
-    const { backend, getSendPromptCount } = createBackendWithSlowCancel({ cancelDelayMs: 200 });
+    const { backend, getSendPromptCount } = createRuntimeWithSlowCancel({ cancelDelayMs: 200 });
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -277,7 +280,7 @@ describe('executeBoundedBackendRun', () => {
       params: {
         sessionId: 'parent_session_1',
         intent: 'memory_hints',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
         instructions: 'start',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -286,7 +289,7 @@ describe('executeBoundedBackendRun', () => {
       },
       controllers,
       sendAcp: () => {},
-      parentProvider: 'claude',
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
       finishRun: (() => {}) as FinishExecutionRun,
@@ -303,7 +306,7 @@ describe('executeBoundedBackendRun', () => {
     const callId = 'subagent_run_test_blocking_send_1';
     const sidechainId = callId;
 
-    const { backend, getSendPromptCount } = createBackendWithBlockingSendPromptNoWaiter();
+    const { backend, getSendPromptCount } = createRuntimeWithBlockingSendPromptNoWaiter();
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -356,7 +359,7 @@ describe('executeBoundedBackendRun', () => {
       params: {
         sessionId: 'parent_session_1',
         intent: 'memory_hints',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
         instructions: 'start',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -365,7 +368,7 @@ describe('executeBoundedBackendRun', () => {
       },
       controllers,
       sendAcp: () => {},
-      parentProvider: 'claude',
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
       finishRun: (() => {}) as FinishExecutionRun,
@@ -466,7 +469,7 @@ describe('executeBoundedBackendRun', () => {
       params: {
         sessionId: 'parent_session_1',
         intent: 'memory_hints',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
         instructions: 'start',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -475,7 +478,7 @@ describe('executeBoundedBackendRun', () => {
       },
       controllers,
       sendAcp: () => {},
-      parentProvider: 'claude',
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
       finishRun: (() => {}) as FinishExecutionRun,
@@ -568,7 +571,7 @@ describe('executeBoundedBackendRun', () => {
       params: {
         sessionId: 'parent_session_1',
         intent: 'memory_hints',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
         instructions: 'start',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -577,7 +580,7 @@ describe('executeBoundedBackendRun', () => {
       },
       controllers,
       sendAcp: () => {},
-      parentProvider: 'claude',
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
       finishRun: () => {},
@@ -929,7 +932,7 @@ describe('executeBoundedBackendRun', () => {
       params: {
         sessionId: 'parent_session_review_repair_schema',
         intent: 'review',
-        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_RECOVERY_BACKEND_ID },
         instructions: 'review it',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -938,7 +941,7 @@ describe('executeBoundedBackendRun', () => {
       },
       controllers,
       sendAcp: () => {},
-      parentProvider: 'opencode',
+      parentProvider: TEST_RECOVERY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: null,
       finishRun,
@@ -1018,7 +1021,7 @@ describe('executeBoundedBackendRun', () => {
       params: {
         sessionId: 'parent_session_wait_timeout',
         intent: 'review',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
         instructions: 'review it',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -1027,7 +1030,7 @@ describe('executeBoundedBackendRun', () => {
       },
       controllers: new Map([[runId, ctrl]]),
       sendAcp: () => {},
-      parentProvider: 'claude',
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
       getNowMs: () => 1,
       boundedTimeoutMs: 600_000,
       finishRun,
