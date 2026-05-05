@@ -167,7 +167,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       diagnostics: [],
     });
 
-    const runtimeModule = await import('./createExecutionRunBackend');
+    const runtimeModule = await import('./createExecutionRunRuntime');
     const runtimeFactory = (runtimeModule as Record<string, unknown>).createExecutionRunRuntime;
     expect(typeof runtimeFactory).toBe('function');
     if (typeof runtimeFactory !== 'function') return;
@@ -687,7 +687,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     const runtimeCoreBackend = createStubRuntimeCoreBackend();
     const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 
-    const runtimeModule = await import('./createExecutionRunBackend');
+    const runtimeModule = await import('./createExecutionRunRuntime');
     const runtimeFactory = (runtimeModule as Record<string, unknown>).createExecutionRunRuntime;
     expect(typeof runtimeFactory).toBe('function');
     if (typeof runtimeFactory !== 'function') return;
@@ -769,7 +769,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	      }],
 	    });
 
-    const runtimeModule = await import('./createExecutionRunBackend');
+    const runtimeModule = await import('./createExecutionRunRuntime');
     const runtimeFactory = (runtimeModule as Record<string, unknown>).createExecutionRunRuntime;
     expect(typeof runtimeFactory).toBe('function');
     if (typeof runtimeFactory !== 'function') return;
@@ -821,7 +821,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       }],
     });
 
-    const runtimeModule = await import('./createExecutionRunBackend');
+    const runtimeModule = await import('./createExecutionRunRuntime');
     const runtimeFactory = (runtimeModule as Record<string, unknown>).createExecutionRunRuntime;
     expect(typeof runtimeFactory).toBe('function');
     if (typeof runtimeFactory !== 'function') return;

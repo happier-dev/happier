@@ -1,4 +1,4 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/extension-sdk';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk';
 
 import type {
   AcpRuntimeDefinitionInitV1,

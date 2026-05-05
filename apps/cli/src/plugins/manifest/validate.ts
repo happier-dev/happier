@@ -1,0 +1,395 @@
+import { extname } from 'node:path';
+
+import {
+  isHookHandlerTargetV1,
+} from '@happier-dev/protocol';
+import { compareVersions } from '@happier-dev/cli-common/update';
+
+import { configuration } from '../../configuration';
+
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { isSupportedBackendRuntimeAdapterOperation } from './adapters';
+import { readCanonicalPluginManifest } from './normalize';
+import type { CanonicalPluginManifest } from './types';
+
+const SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+
+export type PluginManifestValidationResult =
+  | Readonly<{ ok: true; manifest: CanonicalPluginManifest }>
+  | Readonly<{ ok: false; diagnostics: readonly PluginCompatibilityDiagnostic[] }>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readUnsupportedPluginTargetDiagnostics(input: unknown): PluginCompatibilityDiagnostic[] {
+  if (!isRecord(input)) {
+    return [];
+  }
+
+  const targets = input.targets;
+  if (!isRecord(targets)) {
+    return [];
+  }
+
+  const diagnostics: PluginCompatibilityDiagnostic[] = [];
+  for (const targetKey of ['uiDescriptor', 'serverDescriptor'] as const) {
+    if (!Object.prototype.hasOwnProperty.call(targets, targetKey)) {
+      continue;
+    }
+
+    diagnostics.push({
+      code: 'plugin_manifest_semantic_invalid',
+      message: `Plugin target '${targetKey}' is unsupported by the CLI runtime`,
+    });
+  }
+
+  return diagnostics;
+}
+
+function readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input: unknown): PluginCompatibilityDiagnostic[] {
+  if (!isRecord(input)) {
+    return [];
+  }
+
+  const contributes = input.contributes;
+  const backends = Array.isArray(contributes)
+    ? contributes.filter((entry) => isRecord(entry) && entry.kind === 'backend')
+    : isRecord(contributes) && Array.isArray(contributes.backends)
+      ? contributes.backends
+      : [];
+  if (backends.length === 0) {
+    return [];
+  }
+
+  const diagnostics: PluginCompatibilityDiagnostic[] = [];
+  for (const backendDefinition of backends) {
+    if (!isRecord(backendDefinition)) {
+      continue;
+    }
+
+    const runtimeCoreHooks = backendDefinition.runtimeCoreHooks;
+    if (!Array.isArray(runtimeCoreHooks)) {
+      continue;
+    }
+
+    const backendId = typeof backendDefinition.id === 'string' && backendDefinition.id.trim().length > 0
+      ? backendDefinition.id.trim()
+      : 'unknown';
+
+    for (const runtimeCoreHook of runtimeCoreHooks) {
+      if (!isRecord(runtimeCoreHook)) {
+        continue;
+      }
+
+      const handler = runtimeCoreHook.handler;
+      if (!isRecord(handler)) {
+        continue;
+      }
+
+      const handlerTarget = typeof handler.target === 'string' ? handler.target : 'unknown';
+      if (handlerTarget === 'daemon') {
+        continue;
+      }
+
+      const runtimeCoreHookId = typeof runtimeCoreHook.id === 'string' && runtimeCoreHook.id.trim().length > 0
+        ? runtimeCoreHook.id.trim()
+        : 'unknown';
+      diagnostics.push({
+        code: 'plugin_manifest_semantic_invalid',
+        message: `Plugin backend '${backendId}' runtime adapter '${runtimeCoreHookId}' uses unsupported handler target '${handlerTarget}'`,
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
+function readUnsupportedHookTargetDiagnostics(input: unknown): PluginCompatibilityDiagnostic[] {
+  if (!isRecord(input)) {
+    return [];
+  }
+
+  const contributes = input.contributes;
+  const hooks = Array.isArray(contributes)
+    ? contributes.filter((entry) => isRecord(entry) && entry.kind === 'hook')
+    : isRecord(contributes) && Array.isArray(contributes.hooks)
+      ? contributes.hooks
+      : [];
+  if (hooks.length === 0) {
+    return [];
+  }
+
+  const diagnostics: PluginCompatibilityDiagnostic[] = [];
+  for (const hookRegistration of hooks) {
+    if (!isRecord(hookRegistration)) {
+      continue;
+    }
+
+    const handler = hookRegistration.handler;
+    if (!isRecord(handler)) {
+      continue;
+    }
+
+    if (isHookHandlerTargetV1(handler.target)) {
+      continue;
+    }
+
+    const hookId = typeof hookRegistration.id === 'string' && hookRegistration.id.trim().length > 0
+      ? hookRegistration.id.trim()
+      : 'unknown';
+    const handlerTarget = typeof handler.target === 'string' ? handler.target : 'unknown';
+    diagnostics.push({
+      code: 'plugin_manifest_semantic_invalid',
+      message: `Plugin hook '${hookId}' uses unsupported hook handler target '${handlerTarget}'`,
+    });
+  }
+
+  return diagnostics;
+}
+
+function pushDuplicateIdDiagnostics(
+  diagnostics: PluginCompatibilityDiagnostic[],
+  values: readonly string[],
+  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'SCM hosting provider' | 'hook' | 'lifecycle handler',
+): void {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      diagnostics.push({
+        code: 'plugin_manifest_semantic_invalid',
+        message: `Duplicate ${kind} id: ${value}`,
+      });
+      continue;
+    }
+    seen.add(value);
+  }
+}
+
+function readDefinitionIds(definitions: readonly unknown[]): readonly string[] {
+  return definitions.flatMap((definition) => {
+    if (!isRecord(definition)) {
+      return [];
+    }
+
+    const id = definition.id;
+    return typeof id === 'string' ? [id] : [];
+  });
+}
+
+function pushDuplicateRuntimeAdapterIdDiagnostics(
+  diagnostics: PluginCompatibilityDiagnostic[],
+  manifest: CanonicalPluginManifest,
+): void {
+  for (const backend of manifest.contributes.backends) {
+    const seen = new Set<string>();
+    for (const runtimeCoreHook of backend.runtimeCoreHooks) {
+      if (seen.has(runtimeCoreHook.id)) {
+        diagnostics.push({
+          code: 'plugin_manifest_semantic_invalid',
+          message: `Duplicate runtime adapter id for backend '${backend.id}': ${runtimeCoreHook.id}`,
+        });
+        continue;
+      }
+      seen.add(runtimeCoreHook.id);
+    }
+  }
+}
+
+function pushDuplicateRuntimeAdapterOperationDiagnostics(
+  diagnostics: PluginCompatibilityDiagnostic[],
+  manifest: CanonicalPluginManifest,
+): void {
+  for (const backend of manifest.contributes.backends) {
+    const seen = new Set<string>();
+    for (const runtimeCoreHook of backend.runtimeCoreHooks) {
+      const operationKey = `${runtimeCoreHook.kind}:${runtimeCoreHook.operation}`;
+      if (seen.has(operationKey)) {
+        diagnostics.push({
+          code: 'plugin_manifest_semantic_invalid',
+          message: `Duplicate runtime adapter operation for backend '${backend.id}': ${operationKey}`,
+        });
+        continue;
+      }
+      seen.add(operationKey);
+    }
+  }
+}
+
+function pushUnsupportedRuntimeAdapterOperationIdDiagnostics(
+  diagnostics: PluginCompatibilityDiagnostic[],
+  manifest: CanonicalPluginManifest,
+): void {
+  // Runtime-adapter operations are the stable plugin-facing ABI names.
+  // Protocol parsing stays additive; host semantic validation fails closed when
+  // the current runtime does not execute the declared operation for that kind.
+  for (const backend of manifest.contributes.backends) {
+    for (const runtimeCoreHook of backend.runtimeCoreHooks) {
+      if (
+        !isSupportedBackendRuntimeAdapterOperation({
+          kind: runtimeCoreHook.kind,
+          operation: runtimeCoreHook.operation,
+        })
+      ) {
+        diagnostics.push({
+          code: 'plugin_manifest_semantic_invalid',
+          message: `Plugin backend '${backend.id}' uses unsupported runtime adapter operation '${runtimeCoreHook.operation}' for kind '${runtimeCoreHook.kind}'`,
+        });
+      }
+    }
+  }
+}
+
+function pushUnsupportedDaemonEntryDiagnostics(
+  diagnostics: PluginCompatibilityDiagnostic[],
+  manifest: CanonicalPluginManifest,
+): void {
+  const daemonEntry = manifest.targets.daemon?.entry;
+  if (!daemonEntry) {
+    return;
+  }
+
+  const extension = extname(daemonEntry).toLowerCase();
+  if (SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS.has(extension)) {
+    return;
+  }
+
+  diagnostics.push({
+    code: 'plugin_manifest_semantic_invalid',
+    message: `Plugin daemon target entry '${daemonEntry}' uses unsupported extension '${extension || '<none>'}'`,
+  });
+}
+
+function parseStableSemver(version: string): string | null {
+  const normalized = String(version ?? '').trim();
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z-.]+)?$/.exec(normalized);
+  if (!match) {
+    return null;
+  }
+  return `${match[1]}.${match[2]}.${match[3]}`;
+}
+
+function isCompatibleHappierEngineRange(range: string, currentVersion: string): boolean {
+  const normalizedRange = String(range ?? '').trim();
+  if (!normalizedRange) {
+    return false;
+  }
+
+  const normalizedCurrentVersion = parseStableSemver(currentVersion);
+  if (!normalizedCurrentVersion) {
+    return false;
+  }
+
+  if (!normalizedRange.startsWith('^')) {
+    const normalizedExactRange = parseStableSemver(normalizedRange);
+    return normalizedExactRange !== null && compareVersions(normalizedCurrentVersion, normalizedExactRange) === 0;
+  }
+
+  const baseVersion = parseStableSemver(normalizedRange.slice(1));
+  if (!baseVersion) {
+    return false;
+  }
+
+  const [majorRaw, minorRaw, patchRaw] = baseVersion.split('.');
+  const major = Number(majorRaw);
+  const minor = Number(minorRaw);
+  const patch = Number(patchRaw);
+  if (![major, minor, patch].every((value) => Number.isInteger(value))) {
+    return false;
+  }
+
+  const upperBound =
+    major > 0
+      ? `${major + 1}.0.0`
+      : minor > 0
+        ? `0.${minor + 1}.0`
+        : `0.0.${patch + 1}`;
+
+  return compareVersions(normalizedCurrentVersion, baseVersion) >= 0
+    && compareVersions(normalizedCurrentVersion, upperBound) < 0;
+}
+
+export function validatePluginManifest(input: unknown): PluginManifestValidationResult {
+  const unsupportedTargetDiagnostics = [
+    ...readUnsupportedPluginTargetDiagnostics(input),
+    ...readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input),
+    ...readUnsupportedHookTargetDiagnostics(input),
+  ];
+  if (unsupportedTargetDiagnostics.length > 0) {
+    return {
+      ok: false,
+      diagnostics: unsupportedTargetDiagnostics,
+    };
+  }
+
+  const manifest = readCanonicalPluginManifest(input);
+  if (!manifest) {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: 'plugin_manifest_invalid',
+          message: 'Plugin manifest does not match the canonical plugin manifest contract',
+        },
+      ],
+    };
+  }
+
+  const diagnostics: PluginCompatibilityDiagnostic[] = [];
+  const hasExecutableContributes =
+    manifest.contributes.backends.length > 0
+    || manifest.contributes.actions.length > 0
+    || manifest.contributes.tools.length > 0
+    || manifest.contributes.commands.length > 0
+    || manifest.contributes.hooks.length > 0
+    || manifest.contributes.lifecycleHandlers.length > 0;
+
+  if (hasExecutableContributes && !manifest.targets.daemon) {
+    diagnostics.push({
+      code: 'plugin_manifest_semantic_invalid',
+      message: 'Daemon target is required for executable plugin contributes',
+    });
+  }
+
+  if (!isCompatibleHappierEngineRange(manifest.engines.happier, configuration.currentCliVersion)) {
+    diagnostics.push({
+      code: 'plugin_manifest_semantic_invalid',
+      message: `Plugin manifest requires happier ${manifest.engines.happier} but current CLI version is ${configuration.currentCliVersion}`,
+    });
+  }
+
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.providers), 'provider');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.backends), 'backend');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.actions), 'action');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.tools), 'tool');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.commands), 'command');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.resources), 'resource');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.uiDescriptors), 'ui descriptor');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notifications ?? []), 'notification category');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notificationChannels ?? []), 'notification channel');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmHostingProviders ?? []), 'SCM hosting provider');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.hooks), 'hook');
+  pushDuplicateIdDiagnostics(
+    diagnostics,
+    manifest.contributes.lifecycleHandlers.flatMap((definition) => (
+      typeof definition.id === 'string' && definition.id.trim().length > 0 ? [definition.id.trim()] : []
+    )),
+    'lifecycle handler',
+  );
+  pushDuplicateRuntimeAdapterIdDiagnostics(diagnostics, manifest);
+  pushDuplicateRuntimeAdapterOperationDiagnostics(diagnostics, manifest);
+  pushUnsupportedRuntimeAdapterOperationIdDiagnostics(diagnostics, manifest);
+  pushUnsupportedDaemonEntryDiagnostics(diagnostics, manifest);
+
+  if (diagnostics.length > 0) {
+    return {
+      ok: false,
+      diagnostics,
+    };
+  }
+
+  return {
+    ok: true,
+    manifest,
+  };
+}

@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.sample",
+  "version": "1.0.0",
+  "displayName": "Acme Sample",
+  "description": "Sample plugin used to exercise the local-path plugin pipeline",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1,
+    "capabilities": [
+      "agents",
+      "backends",
+      "hooks"
+    ]
+  },
+  "targets": {
+    "daemon": {
+      "entry": "./daemon.mjs"
+    }
+  },
+  "capabilities": {
+    "permissions": []
+  },
+  "contributes": {
+    "agents": [
+      {
+        "kindVersion": 1,
+        "id": "acme.sample.provider",
+        "display": {
+          "name": "Acme Sample Provider",
+          "tags": [
+            "plugin"
+          ]
+        },
+        "ownedBackendIds": [
+          "acme.sample.backend"
+        ],
+        "catalogAgentId": "claude",
+        "agentCliRuntime": {
+          "kindVersion": 1,
+          "id": "acme.sample.provider",
+          "title": "Acme Sample CLI",
+          "binaryName": "acme-sample",
+          "sourcePreferenceDefault": "system-first",
+          "managedInstall": {
+            "kind": "managed_package",
+            "packageName": "@acme/sample-cli",
+            "binaryName": "acme-sample"
+          },
+          "manualInstallKind": "command",
+          "manualInstallRecipes": null,
+          "acceptsJavaScriptFileOverride": false
+        }
+      }
+    ],
+    "backends": [
+      {
+        "kindVersion": 1,
+        "id": "acme.sample.backend",
+        "engine": {
+          "kind": "custom"
+        },
+        "capabilities": {},
+        "agentId": "acme.sample.provider",
+        "runtimeCoreHooks": [
+          {
+            "id": "backend.terminalRuntime.launch",
+            "kind": "terminalRuntime",
+            "operation": "launch",
+            "handler": {
+              "target": "daemon",
+              "exportName": "launch"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.terminalRuntime.discoverIdentity",
+            "kind": "terminalRuntime",
+            "operation": "discoverIdentity",
+            "handler": {
+              "target": "daemon",
+              "exportName": "discoverIdentity"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.terminalRuntime.bindTranscript",
+            "kind": "terminalRuntime",
+            "operation": "bindTranscript",
+            "handler": {
+              "target": "daemon",
+              "exportName": "bindTranscript"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.directSessions.validateSource",
+            "kind": "directSessions",
+            "operation": "validateSource",
+            "handler": {
+              "target": "daemon",
+              "exportName": "validateSource"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.directSessions.listCandidates",
+            "kind": "directSessions",
+            "operation": "listCandidates",
+            "handler": {
+              "target": "daemon",
+              "exportName": "listCandidates"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.directSessions.getActivity",
+            "kind": "directSessions",
+            "operation": "getActivity",
+            "handler": {
+              "target": "daemon",
+              "exportName": "getActivity"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.directSessions.pageTranscript",
+            "kind": "directSessions",
+            "operation": "pageTranscript",
+            "handler": {
+              "target": "daemon",
+              "exportName": "pageTranscript"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.directSessions.readAfterTranscript",
+            "kind": "directSessions",
+            "operation": "readAfterTranscript",
+            "handler": {
+              "target": "daemon",
+              "exportName": "readAfterTranscript"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.directSessions.resolveTakeoverSpawnOptions",
+            "kind": "directSessions",
+            "operation": "resolveTakeoverSpawnOptions",
+            "handler": {
+              "target": "daemon",
+              "exportName": "resolveTakeoverSpawnOptions"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.attach.evaluateEligibility",
+            "kind": "attach",
+            "operation": "evaluateEligibility",
+            "handler": {
+              "target": "daemon",
+              "exportName": "evaluateEligibility"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.attach.probeReachability",
+            "kind": "attach",
+            "operation": "probeReachability",
+            "handler": {
+              "target": "daemon",
+              "exportName": "probeReachability"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.attach.run",
+            "kind": "attach",
+            "operation": "run",
+            "handler": {
+              "target": "daemon",
+              "exportName": "runAttach"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.sessionHandoff.exportBundle",
+            "kind": "sessionHandoff",
+            "operation": "exportBundle",
+            "handler": {
+              "target": "daemon",
+              "exportName": "exportBundle"
+            },
+            "runtimeCoreHookApiVersion": 1
+          },
+          {
+            "id": "backend.sessionHandoff.importBundle",
+            "kind": "sessionHandoff",
+            "operation": "importBundle",
+            "handler": {
+              "target": "daemon",
+              "exportName": "importBundle"
+            },
+            "runtimeCoreHookApiVersion": 1
+          }
+        ]
+      }
+    ],
+    "hooks": [
+      {
+        "hookApiVersion": 1,
+        "id": "backend.terminalRuntime.bindTranscript",
+        "category": "integration",
+        "scope": "backend",
+        "executionKind": "integrate",
+        "handler": {
+          "target": "plugin"
+        }
+      }
+    ]
+  }
+}

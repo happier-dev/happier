@@ -1,0 +1,121 @@
+import { readFileSync } from 'node:fs';
+
+import { describe, expect, it } from 'vitest';
+
+import {
+  AGENT_IDS,
+  CANONICAL_AGENT_IDS,
+  getAllBackendDefinitionContracts,
+  getAllProviderDefinitionContracts,
+} from '@happier-dev/agents';
+
+import { resolveBuiltInContributions } from './resolveBuiltInContributions';
+import * as generatedBundledPlugins from './sources/generatedBundledPlugins';
+
+function readResolverSource(): string {
+  return readFileSync(new URL('./resolveBuiltInContributions.ts', import.meta.url), 'utf8');
+}
+
+function readGeneratedArray(name: string): readonly unknown[] {
+  const value = (generatedBundledPlugins as Record<string, unknown>)[name];
+  expect(Array.isArray(value)).toBe(true);
+  return value as readonly unknown[];
+}
+
+describe('resolveBuiltInContributions', () => {
+  it('stays a thin reader without host backend or executable plugin imports', () => {
+    const resolverSource = readResolverSource();
+
+    expect(resolverSource).toMatch(/generatedBundledPlugins/);
+    expect(resolverSource).not.toMatch(/@\/backends\//);
+    expect(resolverSource).not.toMatch(/\bBUILT_IN_AGENT_CATALOG_ENTRIES\b/);
+    expect(resolverSource).not.toMatch(/\bOPENCODE_BUNDLED_ACTIVATION_TARGET\b/);
+    expect(resolverSource).not.toMatch(/from ['"][^'"]*@happier-dev\/plugins-/);
+    expect(resolverSource).not.toMatch(/require\(['"]@happier-dev\/plugins-/);
+    expect(resolverSource).not.toMatch(/@happier-dev\/extensions-/);
+  });
+
+  it('assembles built-in providers and backends into separate contribution tables', () => {
+    const contributes = resolveBuiltInContributions();
+    const backendDefinitionIds = getAllBackendDefinitionContracts().map((entry) => entry.id).slice().sort();
+    const providerDefinitionIds = getAllProviderDefinitionContracts().map((entry) => entry.id).slice().sort();
+    const generatedProviderIds = readGeneratedArray('BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS')
+      .map((entry) => (entry as { id?: unknown }).id)
+      .slice()
+      .sort();
+    const generatedBackendIds = readGeneratedArray('BUNDLED_FIRST_PARTY_BACKEND_CONTRIBUTIONS')
+      .map((entry) => (entry as { id?: unknown }).id)
+      .slice()
+      .sort();
+
+    expect(contributes.providers.map((entry) => entry.id).slice().sort()).toEqual(providerDefinitionIds);
+    expect(contributes.backends.map((entry) => entry.id).slice().sort()).toEqual(backendDefinitionIds);
+    expect(contributes.providers.map((entry) => entry.id).slice().sort()).toEqual(generatedProviderIds);
+    expect(contributes.backends.map((entry) => entry.id).slice().sort()).toEqual(generatedBackendIds);
+    expect((contributes.catalogEntries ?? []).map((entry) => entry.id)).toEqual([]);
+    expect(contributes.providers.map((entry) => entry.id).slice().sort()).toEqual([...CANONICAL_AGENT_IDS].slice().sort());
+    expect(contributes.providers.map((entry) => entry.id).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
+
+    for (const provider of contributes.providers) {
+      expect(provider.definition).toEqual(
+        expect.objectContaining({
+          kindVersion: 1,
+          id: provider.id,
+        }),
+      );
+      expect(provider.catalogEntry?.id).toBe(provider.id);
+      expect(provider.catalogEntry?.cliSubcommand).toBe(provider.id);
+      expect(provider.catalogEntry).not.toHaveProperty('getRuntimeCore');
+    }
+
+    for (const backend of contributes.backends) {
+      expect(backend.definition).toEqual(
+        expect.objectContaining({
+          kindVersion: 1,
+          id: backend.id,
+          providerId: backend.providerId,
+        }),
+      );
+      expect(backend).not.toHaveProperty('getRuntimeCore');
+    }
+
+    expect(contributes.activationTargets).toEqual(readGeneratedArray('BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS'));
+    const activationTargets = contributes.activationTargets;
+    expect(activationTargets).toBeDefined();
+    if (!activationTargets) {
+      throw new Error('Expected built-in activation target contributions');
+    }
+    expect(activationTargets.map((target) => [target.pluginId, target.daemonEntryPath]).sort()).toEqual([
+      ['claude', '@happier-dev/plugins-claude'],
+      ['codex', '@happier-dev/plugins-codex'],
+      ['opencode', '@happier-dev/plugins-opencode'],
+    ]);
+  });
+
+  it('publishes a runtime kind for every built-in backend contribution', () => {
+    const contributes = resolveBuiltInContributions();
+
+    expect(contributes.backends.map((backend) => [backend.id, backend.runtimeKind]).sort()).toEqual([
+      ['auggie', 'native'],
+      ['claude', 'native'],
+      ['codex', 'appServer'],
+      ['copilot', 'native'],
+      ['gemini', 'native'],
+      ['kilo', 'native'],
+      ['kimi', 'native'],
+      ['kiro', 'native'],
+      ['ohMyPi', 'native'],
+      ['opencode', 'server'],
+      ['pi', 'native'],
+      ['qwen', 'native'],
+    ]);
+  });
+
+  it('does not project host-local runtimeCore hooks from static built-in backend contributions', () => {
+    const contributes = resolveBuiltInContributions();
+
+    for (const backend of contributes.backends) {
+      expect(backend).not.toHaveProperty('getRuntimeCore');
+    }
+  });
+});

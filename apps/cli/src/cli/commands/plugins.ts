@@ -2,10 +2,10 @@ import { cmd, createOutputBuilder, dim, errorFrame, fail, neutral, ok, renderHel
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry, installPluginFromLocator, type PluginCatalogEntry } from '@/extensions/catalog/installed';
-import { installMarketplacePlugin, readRemoteMarketplaceCatalog, readRemoteMarketplaceCatalogEntry, type MarketplaceCatalogEntry } from '@/extensions/marketplace/catalog';
-import { createMarketplaceSourceRegistryStore } from '@/extensions/marketplace/sources/store';
-import { pluginReloadController } from '@/extensions/reload/singleton';
+import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry, installPluginFromLocator, type PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
+import { installMarketplacePlugin, readRemoteMarketplaceCatalog, readRemoteMarketplaceCatalogEntry, type MarketplaceCatalogEntry } from '@/plugins/store/marketplace/catalog';
+import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplace/sources/store';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { MarketplaceSourceRegistryV1, MarketplaceSourceV1 } from '@happier-dev/protocol';
 
 function usage(): string {
@@ -27,7 +27,7 @@ function usage(): string {
       { label: 'happier plugins marketplace install [<sourceRef>] <pluginId> [--dry-run] [--force] [--json]', description: 'Install a marketplace plugin' },
     ],
     notes: [
-      'Plugins are machine-local, descriptor-backed extensions.',
+      'Plugins are machine-local, descriptor-backed plugins.',
       'Current Wave 1 install support covers local directories, local archives, remote archive URLs, and marketplace entries that resolve to archives.',
       'Live authoring is local-path based: edit files in place, then run happier plugins reload.',
       'Package/npm/git install sources are not implemented yet.',

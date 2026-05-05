@@ -23,11 +23,11 @@ async function writeEnabledLocalExtensionPackageState(params: Readonly<{
   pluginRoot: string;
   pluginId: string;
 }>): Promise<void> {
-  const stateDir = join(params.happyHomeDir, 'extensions', 'plugins', 'state');
-  const installedDir = join(params.happyHomeDir, 'extensions', 'plugins', 'installed');
-  const cacheDir = join(params.happyHomeDir, 'extensions', 'plugins', 'cache');
-  const logsDir = join(params.happyHomeDir, 'extensions', 'plugins', 'logs');
-  const locksDir = join(params.happyHomeDir, 'extensions', 'plugins', 'locks');
+  const stateDir = join(params.happyHomeDir, 'plugins', 'plugins', 'state');
+  const installedDir = join(params.happyHomeDir, 'plugins', 'plugins', 'installed');
+  const cacheDir = join(params.happyHomeDir, 'plugins', 'plugins', 'cache');
+  const logsDir = join(params.happyHomeDir, 'plugins', 'plugins', 'logs');
+  const locksDir = join(params.happyHomeDir, 'plugins', 'plugins', 'locks');
 
   await Promise.all([
     mkdir(stateDir, { recursive: true }),

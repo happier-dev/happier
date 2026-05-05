@@ -8,12 +8,12 @@ import * as tar from 'tar';
 import { describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/extensions/testkit/marketplaceCatalog';
+import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/plugins/testkit/marketplaceCatalog';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
-import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/extensions/testkit/samplePackage';
-import { createPluginStateStore } from '@/extensions/store/state';
+import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
+import { createPluginStateStore } from '@/plugins/store/state';
 
 import { handlePluginsCommand } from './plugins';
 
@@ -247,7 +247,7 @@ describe('handlePluginsCommand', () => {
         disableOutput.restore();
       }
 
-      const disabledRegistry = JSON.parse(await readFile(join(home, 'extensions', 'plugins', 'state', 'marketplace-source-registry.v1.json'), 'utf8')) as {
+      const disabledRegistry = JSON.parse(await readFile(join(home, 'plugins', 'plugins', 'state', 'marketplace-source-registry.v1.json'), 'utf8')) as {
         sources: Array<{ enabled: boolean }>;
       };
       expect(disabledRegistry.sources[0]?.enabled).toBe(false);
@@ -299,7 +299,7 @@ describe('handlePluginsCommand', () => {
         addOutput.restore();
       }
 
-      const registryPath = join(home, 'extensions', 'plugins', 'state', 'marketplace-source-registry.v1.json');
+      const registryPath = join(home, 'plugins', 'plugins', 'state', 'marketplace-source-registry.v1.json');
       const registry = JSON.parse(await readFile(registryPath, 'utf8')) as { sources: ReadonlyArray<{ sourceUrl: string; title: string; enabled: boolean }> };
       expect(registry.sources).toHaveLength(1);
       expect(registry.sources[0]).toMatchObject({

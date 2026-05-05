@@ -1,0 +1,64 @@
+import type {
+  BackendDefinitionV1,
+  BackendRuntimeAdapterV1,
+  PluginActionContributionV2,
+  PluginCommandContributionV2,
+  PluginHookContributionV2,
+  PluginLifecycleHandlerContributionV2,
+  PluginManifestMarketplaceMetadataV1,
+  PluginNotificationCategoryContributionV2,
+  PluginNotificationChannelContributionV2,
+  PluginPermissionDeclarationV1,
+  PluginRuntimeApiV1,
+  ScmHostingProviderContribution,
+  PluginSourceSpecV1,
+  PluginToolContributionV2,
+  PluginUiDescriptorContributionV2,
+  PluginResourceContributionV2,
+  ProviderDefinitionV1,
+} from '@happier-dev/protocol';
+
+type LegacyRuntimeHookFieldName = `${'runtime'}Adapters`;
+
+export type CanonicalPluginBackendDefinition = Omit<BackendDefinitionV1, LegacyRuntimeHookFieldName> & Readonly<{
+  runtimeCoreHooks: readonly BackendRuntimeAdapterV1[];
+}>;
+
+export type CanonicalPluginManifestContributes = Readonly<{
+  providers: readonly ProviderDefinitionV1[];
+  backends: readonly CanonicalPluginBackendDefinition[];
+  actions: readonly PluginActionContributionV2[];
+  tools: readonly PluginToolContributionV2[];
+  commands: readonly PluginCommandContributionV2[];
+  resources: readonly PluginResourceContributionV2[];
+  uiDescriptors: readonly PluginUiDescriptorContributionV2[];
+  notifications?: readonly PluginNotificationCategoryContributionV2[];
+  notificationChannels?: readonly PluginNotificationChannelContributionV2[];
+  scmHostingProviders?: readonly ScmHostingProviderContribution[];
+  hooks: readonly PluginHookContributionV2[];
+  lifecycleHandlers: readonly PluginLifecycleHandlerContributionV2[];
+}>;
+
+export type CanonicalPluginManifest = Readonly<{
+  schemaVersion: 2;
+  id: string;
+  version: string;
+  displayName: string;
+  description?: string;
+  engines: Readonly<{
+    happier: string;
+  }>;
+  runtime: Readonly<{
+    apiVersion: PluginRuntimeApiV1['apiVersion'];
+    capabilities: readonly PluginRuntimeApiV1['capabilities'][number][];
+  }>;
+  targets: Readonly<{
+    daemon?: Readonly<{
+      entry: string;
+    }>;
+  }>;
+  permissions: readonly PluginPermissionDeclarationV1[];
+  source?: PluginSourceSpecV1;
+  marketplace?: PluginManifestMarketplaceMetadataV1;
+  contributes: CanonicalPluginManifestContributes;
+}>;

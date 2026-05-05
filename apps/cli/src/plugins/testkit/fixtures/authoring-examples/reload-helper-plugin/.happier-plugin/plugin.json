@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "id": "examples.reload-helper-plugin",
+  "version": "0.1.0",
+  "displayName": "Reload Helper Example",
+  "description": "Activation-time example that is intended to be edited and reloaded locally.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1,
+    "capabilities": [
+      "actions"
+    ]
+  },
+  "targets": {
+    "daemon": {
+      "entry": "./agent/daemon.mjs"
+    }
+  },
+  "capabilities": {
+    "permissions": [
+      {
+        "capability": "actions.register",
+        "reason": "Register the reload-report action during local plugin authoring flows."
+      }
+    ]
+  },
+  "contributes": {}
+}
