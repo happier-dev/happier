@@ -146,3 +146,116 @@ export function countDirectDetachedSpawnCalls(filePath: string, content: string)
   visit(sourceFile);
   return count;
 }
+
+function isReactHookExpression(expression: ts.LeftHandSideExpression, hookName: string): boolean {
+  if (ts.isIdentifier(expression)) {
+    return expression.text === hookName;
+  }
+
+  return ts.isPropertyAccessExpression(expression)
+    && expression.name.text === hookName
+    && ts.isIdentifier(expression.expression)
+    && expression.expression.text === 'React';
+}
+
+function isEmptyArrayLiteral(node: ts.Node | undefined): node is ts.ArrayLiteralExpression {
+  return Boolean(node && ts.isArrayLiteralExpression(node) && node.elements.length === 0);
+}
+
+function containsActiveServerSnapshotRead(node: ts.Node): boolean {
+  let found = false;
+  const visit = (child: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isCallExpression(child)
+      && ts.isIdentifier(child.expression)
+      && child.expression.text === 'getActiveServerSnapshot'
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(child, visit);
+  };
+
+  visit(node);
+  return found;
+}
+
+export function countActiveServerSnapshotEmptyMemoReads(filePath: string, content: string): number {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    resolveScriptKind(filePath),
+  );
+
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node)
+      && isReactHookExpression(node.expression, 'useMemo')
+      && isEmptyArrayLiteral(node.arguments[1])
+      && node.arguments[0]
+      && containsActiveServerSnapshotRead(node.arguments[0])
+    ) {
+      count += 1;
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return count;
+}
+
+export function countActiveServerSnapshotStateInitializerReads(filePath: string, content: string): number {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    resolveScriptKind(filePath),
+  );
+
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node)
+      && isReactHookExpression(node.expression, 'useState')
+      && node.arguments[0]
+      && containsActiveServerSnapshotRead(node.arguments[0])
+    ) {
+      count += 1;
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return count;
+}
+
+export function countActiveServerSnapshotRefInitializerReads(filePath: string, content: string): number {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    resolveScriptKind(filePath),
+  );
+
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node)
+      && isReactHookExpression(node.expression, 'useRef')
+      && node.arguments[0]
+      && containsActiveServerSnapshotRead(node.arguments[0])
+    ) {
+      count += 1;
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return count;
+}

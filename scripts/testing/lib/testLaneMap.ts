@@ -99,6 +99,8 @@ const SERVER_INTEGRATION_RE = /\.(?:integration\.(?:test|spec)|real\.integration
 const UNIT_TEST_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 const ROOT_UNIT_PACKAGE_PREFIXES = [
+  'packages/peer-mediation/',
+  'packages/plugin-sdk/',
   'packages/protocol/',
   'packages/transfers/',
   'packages/agents/',

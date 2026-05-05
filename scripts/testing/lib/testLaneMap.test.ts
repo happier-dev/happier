@@ -12,6 +12,10 @@ test('classifies representative lane paths', () => {
   assert.equal(classifyTestFile('apps/website/tests/index.release.test.js'), 'website:test');
   assert.equal(classifyTestFile('apps/server/sources/app/db.dbcontract.spec.ts'), 'test:db-contract:docker');
   assert.equal(classifyTestFile('packages/protocol/src/example.test.ts'), 'test');
+  assert.equal(classifyTestFile('packages/peer-mediation/src/route/decision.test.ts'), 'test');
+  assert.equal(classifyTestFile('packages/peer-mediation/test/packageContents.test.mjs'), 'test');
+  assert.equal(classifyTestFile('packages/plugin-sdk/src/acp/__tests__/defineAcpBackend.test.ts'), 'test');
+  assert.equal(classifyTestFile('packages/plugin-sdk/src/engine.test.ts'), 'test');
   assert.equal(classifyTestFile('packages/support/src/example.test.ts'), 'test');
   assert.equal(classifyTestFile('packages/release-runtime/tests/http.test.mjs'), 'release-runtime:test');
   assert.equal(classifyTestFile('packages/tests/suites/core-e2e/login.test.ts'), 'test:e2e:core:fast');

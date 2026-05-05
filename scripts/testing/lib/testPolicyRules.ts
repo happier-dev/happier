@@ -1,6 +1,9 @@
 import { findDeprecatedImportMatches } from '../migrations/lib/deprecatedImportRules.ts';
 import { type EnforcementMode, type InventoryFile } from '../migrations/lib/migrationTypes.ts';
 import {
+  countActiveServerSnapshotEmptyMemoReads,
+  countActiveServerSnapshotRefInitializerReads,
+  countActiveServerSnapshotStateInitializerReads,
   countDirectDetachedSpawnCalls,
   isCanonicalTestSpawnHelperPath,
   isTestPolicyFile,
@@ -125,6 +128,42 @@ export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFi
         mode: 'enforce',
         filePath: file.filePath,
         message: 'Non-test source must not import @happier-dev/tests internals.',
+      });
+    }
+
+    if (
+      file.filePath.startsWith('apps/ui/sources/')
+      && countActiveServerSnapshotEmptyMemoReads(file.filePath, file.content) > 0
+    ) {
+      findings.push({
+        ruleId: 'no-active-server-snapshot-empty-memo',
+        mode: 'enforce',
+        filePath: file.filePath,
+        message: 'Active server snapshots must not be captured in empty React useMemo dependencies; use useActiveServerSnapshot or include a reactive dependency.',
+      });
+    }
+
+    if (
+      file.filePath.startsWith('apps/ui/sources/')
+      && countActiveServerSnapshotStateInitializerReads(file.filePath, file.content) > 0
+    ) {
+      findings.push({
+        ruleId: 'no-active-server-snapshot-state-capture',
+        mode: 'enforce',
+        filePath: file.filePath,
+        message: 'Active server snapshots must not be captured in React state initializers; use useActiveServerSnapshot or useSyncExternalStore.',
+      });
+    }
+
+    if (
+      file.filePath.startsWith('apps/ui/sources/')
+      && countActiveServerSnapshotRefInitializerReads(file.filePath, file.content) > 0
+    ) {
+      findings.push({
+        ruleId: 'no-active-server-snapshot-ref-capture',
+        mode: 'enforce',
+        filePath: file.filePath,
+        message: 'Active server snapshots must not be captured in React ref initializers; use useActiveServerSnapshot or capture inside the event that needs the current value.',
       });
     }
 

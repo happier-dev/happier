@@ -13,7 +13,7 @@ function createPackageJsonText(): string {
     {
       scripts: {
         test: 'yarn -s test:unit',
-        'test:unit': 'yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/support test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
+        'test:unit': 'yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/peer-mediation test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/support test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/plugin-sdk test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
         'test:integration': 'yarn workspace @happier-dev/app test:integration && yarn workspace @happier-dev/cli test:integration && yarn --cwd apps/server test:integration && yarn --cwd apps/stack test:integration',
         'test:e2e:core:fast': 'yarn workspace @happier-dev/tests test:core:fast',
         'test:e2e:core:slow': 'yarn workspace @happier-dev/tests test:core:slow',
@@ -46,12 +46,14 @@ jobs:
   testing:
     steps:
       - run: yarn workspace @happier-dev/protocol test
+      - run: yarn workspace @happier-dev/peer-mediation test
       - run: yarn workspace @happier-dev/transfers test
       - run: yarn workspace @happier-dev/agents test
       - run: yarn workspace @happier-dev/cli-common test
       - run: yarn workspace @happier-dev/support test
       - run: yarn workspace @happier-dev/connection-supervisor test
       - run: yarn workspace @happier-dev/bootstrap test
+      - run: yarn workspace @happier-dev/plugin-sdk test
       - run: yarn workspace @happier-dev/app test:unit
       - run: yarn workspace @happier-dev/app test:integration
       - run: yarn workspace @happier-dev/cli test:unit
@@ -160,6 +162,18 @@ test('flags missing migration governance parity in docs and workflow', () => {
   assert.match(messages, /Workflow coverage is missing for test:migration:governance/);
 });
 
+test('flags shared package unit workflow drift when peer mediation coverage falls out of the root lane', () => {
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText: createPackageJsonText(),
+    workflowText: createWorkflowText().replace('      - run: yarn workspace @happier-dev/peer-mediation test\n', ''),
+    docsText: createDocsText(),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.match(messages, /Workflow coverage is missing for test/);
+});
+
 test('flags governed root script body drift when migration governance no longer runs the owned validator chain', () => {
   const packageJson = JSON.parse(createPackageJsonText());
   packageJson.scripts['test:migration:governance'] = 'yarn -s test:migration:wire-compat';
@@ -234,13 +248,17 @@ test('requires the native desktop e2e root script and docs even though workflow 
   assert.doesNotMatch(messages, /Workflow coverage is missing for test:e2e:desktop:native/);
 });
 
-test('wires packages/support into the default root validation lanes', () => {
+test('wires shared SDK packages into the default root validation lanes', () => {
   const packageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as {
     scripts?: Record<string, string | undefined>;
   };
   const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
 
   assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/support test/);
+  assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/peer-mediation test/);
+  assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/plugin-sdk test/);
   assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/support typecheck/);
   assert.match(workflowText, /yarn workspace @happier-dev\/support test/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/peer-mediation test/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/plugin-sdk test/);
 });

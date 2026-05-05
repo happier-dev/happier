@@ -35,7 +35,7 @@ function extensionPackageRootFor(filePath: string): string | null {
   if (parts.length < 3) {
     return null;
   }
-  if (parts[0] !== 'packages' || parts[1] !== 'extensions') {
+  if (parts[0] !== 'packages' || parts[1] !== 'plugins') {
     return null;
   }
   const extensionId = parts[2];

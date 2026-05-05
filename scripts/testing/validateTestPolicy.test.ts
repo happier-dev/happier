@@ -51,9 +51,9 @@ test('resolvePolicyExitCode still ignores report-only UI inline mock findings', 
 
 test('test:policy fails when an extension violates import boundaries', async () => {
   const rootDir = mkdtempSync(join(tmpdir(), 'happier-test-policy-extension-import-boundary-'));
-  mkdirSync(join(rootDir, 'packages/extensions/acme/src'), { recursive: true });
+  mkdirSync(join(rootDir, 'packages/plugins/acme/src'), { recursive: true });
   writeFileSync(
-    join(rootDir, 'packages/extensions/acme/src/index.ts'),
+    join(rootDir, 'packages/plugins/acme/src/index.ts'),
     "import { something } from '@/api/types';\nexport const ok = true;\n",
     'utf8',
   );
