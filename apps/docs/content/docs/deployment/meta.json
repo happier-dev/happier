@@ -5,6 +5,7 @@
     "repo-local",
     "self-host-runtime",
     "docker",
+    "live-activity-remote-updates",
     "proxmox",
     "observability",
     "env"

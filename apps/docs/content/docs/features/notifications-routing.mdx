@@ -40,7 +40,8 @@ On the mobile app, current interactive notification actions are:
 
 Their behavior is intentionally different:
 
-- `Allow` and `Deny` open the app, send the permission response when it is safe to do so, and then open the session
+- `Allow` and `Deny` execute the permission response directly when Happier can verify the target server/session and direct actions are allowed for that surface
+- if direct execution is not safe, `Allow` and `Deny` fall back to opening the session for review
 - `Answer` opens the app directly on the session so you can answer in context
 
 User-action requests include cases such as:
@@ -54,14 +55,14 @@ Happier does **not** currently try to send freeform or multiple-choice answers d
 
 ### 1) Server is already active
 
-If the notification targets the server that is already active:
+If the notification targets the server that is already active and the action target can be verified:
 
 - Happier performs the action immediately (for example `Allow` / `Deny`)
 - then opens the session
 
 ### 2) Server is saved, but not active
 
-If the notification targets a saved server profile that is not currently active:
+If the notification targets a saved server profile that is not currently active and can be switched to safely:
 
 - Happier switches to that saved server
 - performs the action if applicable

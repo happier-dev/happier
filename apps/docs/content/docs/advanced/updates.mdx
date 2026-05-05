@@ -113,6 +113,17 @@ happier self check
 happier self update
 ```
 
+Inspect or change the default release channel followed by the `happier` shim:
+
+```bash
+happier self release-channel status
+happier self release-channel use stable
+happier self release-channel use preview
+happier self release-channel use dev
+```
+
+If this computer has a default-following automatic startup entry, the release-channel switch also runs or prompts for the background-service follow-up so automatic startup uses the selected lane.
+
 Preview channel:
 
 ```bash
@@ -167,6 +178,8 @@ What is *manual*:
 
 ### CLI installer (`install`)
 
+The installer installs or refreshes the CLI payload and shims for the selected lane. It does not always install or enable this computer's background service; use `happier setup` for first-time computer setup and `happier doctor repair` to fix drift or broken state later.
+
 The installer supports a few “actions” that are useful for scripting:
 
 ```bash
@@ -188,6 +201,14 @@ Install or update your managed Relay runtime by running:
 
 ```bash
 happier relay host install --mode system
+```
+
+Local bind options:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
 ```
 
 Remote host (over SSH):

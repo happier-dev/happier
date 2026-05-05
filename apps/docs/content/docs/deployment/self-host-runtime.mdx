@@ -27,6 +27,16 @@ Install locally:
 happier relay host install --mode system
 ```
 
+Local bind options:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
+Use `--lan` to bind to a private LAN address, `--expose` to bind to all interfaces, or `--host <ip>` to bind to one local address. These flags are local-install-only; they do not apply to SSH installs.
+
 Install remotely over SSH:
 
 ```bash
@@ -43,6 +53,18 @@ happier relay host restart
 ```
 
 To update, rerun `happier relay host install` (it installs or updates to the latest version in that channel).
+
+After installing a local Relay, you can save or activate the matching local Relay profile with:
+
+```bash
+happier relay add --local
+happier relay use --local
+happier relay set --local --use
+```
+
+Local Relay aliases default to the current CLI release channel. Pass `--local-channel stable|preview|dev` when you need a different installed lane.
+
+This managed Relay runtime is separate from this computer's Happier background service. Installing the CLI or hosting a Relay does not automatically configure the background service for sessions; use `happier setup` for first-time computer setup and `happier doctor repair` to fix drift or broken state later.
 
 ## Option B: Runner (`@happier-dev/relay-server`) (recommended for Docker / “just run it”)
 

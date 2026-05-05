@@ -24,6 +24,8 @@ Public installer lanes:
 - `preview`: `curl -fsSL https://happier.dev/install-preview | bash` -> `hprev`
 - `dev`: `curl -fsSL https://happier.dev/install-dev | bash` -> `hdev`
 
+The installer installs or refreshes the CLI payload and shims for that lane. It does not always install automatic startup or a background service; use `happier setup` when you want to configure this computer.
+
 Windows (PowerShell):
 
 ```powershell
@@ -55,6 +57,18 @@ How you update depends on how you installed the CLI:
 - Stable is `~/.happier/cli/current`; preview/dev use `~/.happier/cli-preview/current` and `~/.happier/cli-dev/current`.
 - **npm install**: `npm install -g @happier-dev/cli@latest` (or `@next` for preview). npm does not currently expose a separate public `dev` dist-tag.
 
+For installer-managed installs, the default `happier` shim can follow a selected release channel:
+
+```bash
+happier self release-channel status
+happier self release-channel list
+happier self release-channel use stable
+happier self release-channel use preview
+happier self release-channel use dev
+```
+
+If this computer has a default-following automatic startup entry, changing the release channel also handles the background-service follow-up so automatic startup keeps using the selected lane.
+
 The CLI can also show periodic update notices in TTY sessions; disable with:
 
 ```bash
@@ -82,7 +96,7 @@ Recommended first-run flow:
 Notes:
 - The CLI never needs your secret key directly. For device-key accounts, restore happens in the app (mobile/web UI).
 - On enterprise/keyless deployments (mTLS or keyless OAuth), the same `happier auth login` flow works; the browser/app will use whatever the server advertises via `GET /v1/features`.
-- **Terminal connect is separate from account restore.** In the app, use **Scan QR to connect terminal** only for terminal/daemon approval. To sign a phone into the same account, use **Add your phone** on an already-signed-in desktop/web app and **Restore account** on the phone.
+- **Terminal connect is separate from account restore.** In the app, use **Scan QR to connect terminal** only for terminal/background-service approval. To sign a phone into the same account, use **Add your phone** on an already-signed-in desktop/web app and **Restore account** on the phone.
 - If the mobile QR/deep link does not include a server URL, your current server is probably loopback-only (`localhost` / `127.0.0.1`). Configure the phone to a reachable server URL first, then retry.
 
 Advanced:
@@ -92,7 +106,7 @@ User guide: [Features → Device linking & restore](/docs/features/device-linkin
 
 ## Bootstrap & setup (one-command)
 
-`happier setup` is the guided setup executor from the terminal. It runs the same setup orchestration the app uses for Relay selection, sign-in if needed, daemon service install, and optional provider setup.
+`happier setup` is the guided setup executor from the terminal. It configures this computer using the same setup orchestration the app uses for Relay selection, sign-in if needed, background-service install/start, and optional provider setup.
 
 Use it when you want Happier to do the work instead of only previewing a plan:
 
@@ -102,7 +116,7 @@ happier setup --relay-url https://YOUR_RELAY_URL
 
 Useful flags:
 
-- `--skip-daemon` (don’t install/enable the background service)
+- `--skip-daemon` (historical flag name; skips background-service install/enable)
 - `--skip-providers` (don’t run provider setup)
 - `--provider <id>` (preselect providers to set up)
 - `--yes` (auto-accept prompts for non-interactive runs)
@@ -116,6 +130,18 @@ happier setup plan --relay-url https://YOUR_RELAY_URL
 `happier setup plan` is a preview. `happier setup` is the executor.
 Note: `--json` output is currently supported for `happier setup plan` only.
 
+### Repair an existing setup
+
+Use setup for first-time configuration of this computer. Use doctor repair when an existing install has drifted or broken state: wrong automatic startup lane, stopped background service, stale service definition, missing auth, or mismatched Relay state.
+
+```bash
+happier doctor repair
+happier doctor repair --report-only
+happier doctor repair --json
+```
+
+`happier doctor repair` is the supported repair entrypoint. It shares the same repair model used by installer preflight and service diagnostics; `--report-only` prints guidance without applying changes.
+
 Provider-only setup:
 
 ```bash
@@ -124,7 +150,7 @@ happier providers setup
 
 ## Remote machine setup (SSH)
 
-If you want to set up a remote machine to run the daemon/providers (VPS, home server, dev box):
+If you want to set up a remote machine to run the background service and providers (VPS, home server, dev box):
 
 ```bash
 happier machine setup --ssh user@host
@@ -134,7 +160,7 @@ Common flags:
 
 - `--ssh-user <user>` / `--ssh-host <host>` / `--ssh-port <port>` (split SSH form)
 - `--install-relay-runtime` (also install the managed Relay runtime on that host)
-- `--service-mode user|none` (daemon service mode)
+- `--service-mode user|none` (background-service mode)
 - `--relay-runtime-mode user|system` (relay runtime install mode)
 - `--ssh-auth agent|keyfile|password` (select auth mode)
 - `--identity-file <path>` (for `keyfile` mode)
@@ -178,6 +204,32 @@ happier relay host install --ssh user@host
 happier relay host uninstall --ssh user@host
 ```
 
+Local bind flags:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
+- `--lan` binds the local Relay to a private LAN address.
+- `--expose` binds the local Relay to all interfaces.
+- `--host <ip>` binds the local Relay to a specific local address.
+
+These flags apply only to local `install`; they are intentionally separate from `happier relay access ...`, which configures the share/public URL strategy.
+
+Local Relay profile aliases:
+
+```bash
+happier relay use --local
+happier relay add --local
+happier relay set --local --use
+happier relay start-daemon
+happier relay auth
+```
+
+By default, local Relay aliases target the local Relay installed for the current CLI release channel. Pass `--local-channel stable|preview|dev` to target another installed lane explicitly.
+
 Service lifecycle helpers:
 
 ```bash
@@ -187,7 +239,7 @@ happier relay host restart
 happier relay host uninstall
 ```
 
-Daemon background service reference: [Daemon](./daemon).
+Background service reference: [Background service](./daemon).
 
 ## Relay access (share/public URL strategy)
 
@@ -258,7 +310,7 @@ Use per-invocation targeting when you do not want to switch the default:
 
 ```bash
 happier --server company auth login
-happier --server personal daemon status
+happier --server personal service status
 ```
 
 You can also use URL flags:
@@ -268,9 +320,9 @@ happier --server-url https://api.company.example --webapp-url https://app.compan
 happier --server-url https://api.company.example --webapp-url https://app.company.example auth pair-remote --ssh user@host --json
 ```
 
-## Daemon (background mode)
+## Background service
 
-For always-on background sessions, remote control, and headless servers, see [Daemon](./daemon).
+For automatic startup, remote control, and headless servers, see [Background service](./daemon).
 
 ## Attach to an existing session
 
@@ -536,4 +588,4 @@ For the broader product model, see [Happier tools & actions](/docs/features/happ
 
 ## Multi-server reference
 
-For full multi-server and multi-daemon guidance, see [Features → Multi-server](/docs/features/multi-server).
+For full multi-Relay and background-service guidance, see [Features → Multi-server](/docs/features/multi-server).

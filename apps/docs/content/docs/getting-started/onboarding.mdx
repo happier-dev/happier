@@ -25,7 +25,7 @@ You use Happier Cloud as your Relay.
 3. Sign in.
 4. Open the **Setup wizard** and choose **Set up this computer**.
    - This configures the local background service against the Relay you just selected.
-   - If the app detects Relay drift later, it shows a repair action instead of silently leaving the daemon on another Relay.
+   - If the app detects Relay drift later, it shows a repair action instead of silently leaving the background service on another Relay.
    - If you are restoring an already-signed-in device, use **Login with secret key instead** on the mobile login screen.
 
 Optional CLI path:
@@ -48,7 +48,7 @@ You run your own Relay (remote machine, LAN box, or even your own computer), but
 
 1. Install your Relay (examples):
    - Proxmox: see [Proxmox deployment](../deployment/proxmox).
-   - Any machine (managed service): install the CLI, then run `happier relay host install` (or remote: `happier relay host install --ssh user@host`). To install as a system-wide service, use `--mode system` (requires root/sudo).
+   - Any machine (managed service): install the CLI, then run `happier relay host install` (or remote: `happier relay host install --ssh user@host`). To install as a system-wide service, use `--mode system` (requires root/sudo). For a local Relay, use `--lan`, `--expose`, or `--host <ip>` when it should listen beyond loopback.
    - Docker: see [Deployment → Docker](../deployment/docker).
 
 2. Open the desktop app (recommended) or web UI (status/management only) and choose that Relay.
@@ -61,13 +61,14 @@ You run your own Relay (remote machine, LAN box, or even your own computer), but
    - **This computer**: use the **Setup wizard** → **Set up this computer**.
    - **Another machine**: use **Add machine over SSH** from the Machines settings screen or save a reusable Remote host first.
 
-If you need a CLI fallback for the daemon host:
+If you need a CLI fallback for the background-service host:
 
 ```bash
 happier setup --relay-url https://YOUR_SERVER_URL --skip-providers
 ```
 
 This is the same guided executor path as the app wizard, but from the terminal.
+If the machine was already set up and later drifted, run `happier doctor repair` instead of repeating first-time setup.
 
 If you want to bootstrap a *remote machine* over SSH instead, use:
 
@@ -76,7 +77,7 @@ happier machine setup --ssh user@host
 ```
 If you want to save a reusable Relay profile for future CLI commands, see [CLI → Server profiles](/docs/clients/cli#server-profiles).
 
-### Option C — Devbox (server + daemon on the same machine)
+### Option C — Devbox (Relay + background service on the same machine)
 You install both the Relay and the background service on one box.
 
 1. Install the stack (for example via `hstack setup-from-source --profile=selfhost` or the Proxmox “devbox” option).
@@ -88,7 +89,7 @@ You install both the Relay and the background service on one box.
 Recommended for first setup:
 
 - Use the same Relay on every device before linking more machines.
-- Use the desktop app as the main control panel for daemon setup, Relay runtime control, and repair actions.
+- Use the desktop app as the main control panel for background-service setup, Relay runtime control, and repair actions.
 
 ## Multiple Relays (personal + company)
 
@@ -101,22 +102,22 @@ Recommended for first setup:
 
 ```bash
 happier --server company auth login
-happier --server company daemon start
+happier --server company service start
 ```
 
-### CLI: run multiple daemons on one machine (one per Relay)
+### CLI: run multiple background services on one machine (one per Relay)
 
 ```bash
-happier --server personal daemon service install
-happier --server company daemon service install
+happier --server personal service install
+happier --server company service install
 ```
 
 Then verify (cross-platform):
 
 ```bash
-happier daemon status --all
-happier --server personal daemon service status
-happier --server company daemon service status
+happier service list
+happier --server personal service status
+happier --server company service status
 ```
 
 For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/docs/features/multi-server).

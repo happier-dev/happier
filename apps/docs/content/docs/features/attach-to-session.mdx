@@ -24,7 +24,7 @@ Common examples:
 
 - start a **Codex** or **Claude** session from the app, then attach later from your terminal,
 - start an **OpenCode** session from the app, then reopen it locally without creating a second Happier session,
-- begin a task from the UI, then switch to local mode when you want to use the provider’s native TUI directly,
+- begin a task from the UI, then run `happier attach <session-id>` when you want to use the provider’s native TUI directly,
 - leave a session running in the background and reconnect later without starting a new one.
 
 ## How attach works
@@ -133,7 +133,9 @@ The most common flow looks like this:
 5. Continue working in the terminal
 6. Switch back to **remote** mode later to continue from the app
 
-If you send a message from the app while the session is in local mode, Happier may queue it first and deliver it once the session is ready to resume remote processing.
+Starting local control is terminal-driven. To take local control, attach from the terminal on the owning machine with `happier attach <session-id>`.
+
+If you send a message from the app while a Claude or Codex session is in local mode, Happier queues it first instead of typing it into your terminal. If the local turn is still running, Happier waits for that turn to finish, abort, or otherwise reach a safe boundary before switching the session back to remote processing and delivering the queued message.
 
 ## Remote control vs local control
 
@@ -144,12 +146,15 @@ The same session can move between two control styles:
 
 This is a control switch inside the same session, not a new session. The transcript, session id, and session settings stay the same.
 
+Remote-to-local control starts from the terminal with `happier attach`. Local-to-remote control can be requested from the app when the session is currently locally controlled. Happier may wait until the current local turn is done before it takes remote control, because forcing a prompt into a busy terminal TUI could interrupt or abort the provider’s current work.
+
 ## Supported providers
 
 ### Claude
 
 - Claude supports local and remote control in Happier.
 - In local mode, you use the normal Claude terminal UI directly.
+- App messages sent while Claude is locally controlled are queued and delivered after the current local turn reaches a safe stopping point.
 - On machines with `tmux`, this usually uses tmux-backed attach.
 - On Windows, use Happier’s Windows remote session modes instead of expecting tmux.
 - If **local permission bridge** is enabled, some permission prompts can still appear in Happier while the session is locally attached.
@@ -160,6 +165,7 @@ See also: [Claude](../providers/claude)
 
 - Codex supports app-started sessions plus later terminal attachment.
 - After attaching, you can switch into local control and continue from the Codex TUI directly.
+- App messages sent while Codex is locally controlled are queued and delivered after Codex finishes, aborts, or exits the current local turn.
 - On machines with `tmux`, this usually uses tmux-backed attach.
 - On Windows, use Happier’s Windows remote session modes instead of expecting tmux.
 - Switching back to remote lets Happier take over again without losing the session.
@@ -170,7 +176,8 @@ See also: [Codex](../providers/codex)
 
 - OpenCode supports app-started sessions plus later terminal attachment.
 - For supported sessions, Happier can use OpenCode’s native attach flow instead of tmux.
-- The session remains the same Happier session while you move between remote and local control.
+- OpenCode uses shared local control, so the app can remain writable while the OpenCode TUI is attached.
+- The session remains the same Happier session while you move between remote and local/shared control.
 
 See also: [OpenCode](../providers/opencode)
 
@@ -184,6 +191,8 @@ Happier keeps one canonical session state. During switching:
 - app-sent messages may wait in the pending queue if the session is not ready to process them immediately.
 
 This is expected. It prevents messages from being lost during mode switches or reconnects.
+
+For Claude and Codex local control, the pending queue also protects the current terminal turn. Happier does not send a queued app message into the provider TUI while that TUI is busy. It waits for the local turn to complete or stop, then resumes remote control and processes the queued message from the same session.
 
 ## Troubleshooting
 

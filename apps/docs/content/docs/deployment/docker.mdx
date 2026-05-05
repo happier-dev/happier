@@ -257,7 +257,7 @@ Practical guidance:
 - Treat **sticky sessions** as mandatory when you run more than one API replica and keep Socket.IO polling enabled.
 - Keep the Socket.IO Redis Streams adapter enabled for multi-replica API topologies:
 
-```env
+```bash
 REDIS_URL=redis://redis:6379
 HAPPIER_SOCKET_ADAPTER=redis-streams
 ```

@@ -1,13 +1,13 @@
 ---
-title: Daemon
-description: Run Happier in the background (sessions, remote control, headless servers).
+title: Background service
+description: Run Happier in the background for sessions, remote control, and headless servers.
 ---
 
-## What is the daemon?
+## What is the background service?
 
-The Happier **daemon** is a small background process that keeps Happier “available” on your machine.
+The Happier **background service** keeps Happier available on your machine.
 
-In practice, it’s what enables Happier to **start and manage sessions even when you don’t have a terminal open**. This is especially important for features like **remote start** (e.g. from the app/web UI): the daemon is the thing on your computer that can receive that request and launch the session locally.
+In practice, it starts and manages sessions even when you do not have a terminal open. This is especially important for features like **remote start** from the app or web UI: the local runtime on your computer receives that request and launches the session locally.
 
 It also helps the CLI:
 
@@ -17,7 +17,7 @@ It also helps the CLI:
 
 ## Embedded terminal support
 
-The in-app embedded terminal also depends on the daemon.
+The in-app embedded terminal also depends on the background service.
 
 That is what allows Happier to:
 
@@ -26,13 +26,13 @@ That is what allows Happier to:
 - stream output back into the app UI,
 - resize and restart the terminal from the app.
 
-If the daemon is not running or the machine is unreachable, the embedded terminal cannot work.
+If the background service is not running or the machine is unreachable, the embedded terminal cannot work.
 
 Full guide: [Embedded terminal](/docs/features/embedded-terminal).
 
 ## Provider authentication support
 
-Provider login flows in provider settings also depend on the daemon because Happier runs the real provider CLI on the target machine.
+Provider login flows in provider settings also depend on the background service because Happier runs the real provider CLI on the target machine.
 
 That is what allows Happier to:
 
@@ -45,7 +45,7 @@ Full guide: [Provider authentication](/docs/features/provider-authentication).
 
 ## Local memory search support
 
-Local memory search also depends on the daemon.
+Local memory search also depends on the background service.
 
 That is what allows Happier to:
 
@@ -54,7 +54,7 @@ That is what allows Happier to:
 - run optional local embeddings models on the machine
 - query the local index from the app/web UI
 
-Because the index is daemon-local, memory search is scoped to the specific machine where the daemon runs.
+Because the index is machine-local, memory search is scoped to the specific machine where the background service runs.
 
 Full guide: [Local memory search](/docs/features/local-memory-search).
 
@@ -63,41 +63,46 @@ Full guide: [Local memory search](/docs/features/local-memory-search).
 You can run it in two ways:
 
 - **On-demand**: start it when you need it (some CLI commands may start it automatically).
-- **Always-on (recommended)**: install it as a **user service** so it starts automatically after login and keeps running in the background.
+- **Automatic startup (recommended)**: install it as a **user service** so it starts after login and keeps running in the background.
 
-Why always-on is recommended:
+Why automatic startup is recommended:
 
 - It makes your machine **ready to start sessions remotely** at any time.
-- It avoids “why can’t I start a session?” situations where the daemon simply isn’t running yet.
+- It avoids “why can’t I start a session?” situations where the background service simply is not running yet.
 - It’s the smoothest experience on headless servers (or laptops you want to control remotely).
 
 ## Common commands
 
 ```bash
-happier daemon status
-happier daemon start
-happier daemon stop
-happier daemon list
-happier daemon logs
+happier service status
+happier service start
+happier service stop
+happier service list
+happier service logs
 ```
+
+`happier daemon ...` remains available as a legacy alias for background-service commands.
 
 ## Release lanes
 
-The daemon follows the CLI/runtime lane you installed on that machine:
+The background service follows the CLI/runtime lane you installed on that machine:
 
-- `stable` CLI install -> stable daemon/runtime
-- `preview` CLI install -> preview daemon/runtime
-- `dev` CLI install -> dev daemon/runtime
+- `stable` CLI install -> stable background-service runtime
+- `preview` CLI install -> preview background-service runtime
+- `dev` CLI install -> dev background-service runtime
 
-That means the public lane commands are:
+Default-following automatic startup tracks the selected managed release channel. To inspect or change that default:
 
 ```bash
-happier daemon install
-hprev daemon install
-hdev daemon install
+happier self release-channel status
+happier self release-channel use stable
+happier self release-channel use preview
+happier self release-channel use dev
 ```
 
-Likewise, updater commands stay lane-specific:
+When you change the default release channel, Happier syncs the shims and runs or prompts for the background-service restart follow-up when a default-following automatic startup entry is installed.
+
+Updater commands stay lane-specific:
 
 ```bash
 happier self update
@@ -105,37 +110,37 @@ hprev self update
 hdev self update
 ```
 
-There is no separate public daemon installer endpoint today; the daemon rides with the matching CLI lane on that machine.
+There is no separate public background-service installer endpoint today. Install the CLI first, then use setup or service commands on the machine you want to configure.
 
 ### Side-by-side installs (stable vs preview vs dev)
 
 You can install all three public lanes side-by-side (`happier`, `hprev`, `hdev`) without them overwriting each other.
 
-Daemon runtime state is lane-scoped, and daemon services (LaunchAgent/systemd/Scheduled Task) use lane-scoped service identifiers.
+Runtime state is lane-scoped, and automatic startup entries (LaunchAgent/systemd/Scheduled Task) use lane-scoped service identifiers.
 To inspect the exact service name/label/unit on your platform, run:
 
 ```bash
-happier daemon service paths
-hprev daemon service paths
-hdev daemon service paths
+happier service paths
+hprev service paths
+hdev service paths
 ```
 
-Recommendation: keep only one lane’s daemon service enabled for a given server profile unless you have a specific reason to run multiple daemons concurrently.
+Recommendation: keep only one lane’s automatic startup entry enabled for a given Relay profile unless you have a specific reason to run multiple local runtimes concurrently.
 
 ## Always-on: install as a user service
 
 Install for your current default server profile:
 
 ```bash
-happier daemon install
+happier service install
 ```
 
 Advanced lifecycle control (and dry-run planning):
 
 ```bash
-happier daemon service status
-happier daemon service install --dry-run
-happier daemon service restart
+happier service status
+happier service install --dry-run
+happier service restart
 ```
 
 Platform notes:
@@ -147,10 +152,10 @@ Platform notes:
 To remove it:
 
 ```bash
-happier daemon uninstall
+happier service uninstall
 ```
 
-On Windows, `happier daemon service paths` prints the Scheduled Task name and wrapper path.
+On Windows, `happier service paths` prints the Scheduled Task name and wrapper path.
 
 ## Headless authentication (no TTY)
 
@@ -174,6 +179,7 @@ This is especially useful for provisioning headless servers because you can appr
 
 ## Troubleshooting
 
-- **Check status**: `happier daemon status`
-- **Find logs**: `happier daemon logs`
-- **Service paths**: `happier daemon service paths`
+- **Check status**: `happier service status`
+- **Find logs**: `happier service logs`
+- **Service paths**: `happier service paths`
+- **Repair drift or broken state**: `happier doctor repair`

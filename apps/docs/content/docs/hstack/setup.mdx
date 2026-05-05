@@ -32,6 +32,14 @@ Self-host profile (stable / production-ish):
 happier relay host install --mode system
 ```
 
+For a local Relay that should listen beyond loopback, use the Happier CLI bind flags:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
 Legacy wrapper (still supported):
 
 ```bash

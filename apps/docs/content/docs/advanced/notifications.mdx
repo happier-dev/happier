@@ -13,6 +13,8 @@ This page is about **push notifications**.
 
 Happier also has separate **in-app attention surfaces** such as the Inbox dot, the Sessions-tab dot, and unread/shared-session organization in the session list. Those are part of the normal in-app UI, not the push-notification system. See [Inbox and approvals](/docs/features/inbox-and-approvals) and [Session sharing](/docs/features/session-sharing).
 
+For the full cross-surface model, including the desktop overlay, Live Activities, widgets, badges, quiet hours, privacy modes, and sounds, see [Attention surfaces](/docs/features/attention-surfaces).
+
 ## What notifications can do
 
 Happier can notify you when a session needs attention, including:
@@ -29,8 +31,8 @@ On the mobile app, permission and action-request notifications can also expose *
 Current behavior is intentionally conservative:
 
 - tapping the notification opens the targeted session
-- pressing a notification action button also opens the app
-- Happier only auto-sends a permission response when the notification’s server is already active or already saved on the device
+- pressing a notification action button can execute the direct action when the runtime can verify the target server/session and the surface policy allows direct actions
+- when direct execution is not safe, Happier opens the targeted session instead
 - if the server is not saved yet, Happier routes you into the safest add/switch flow instead of silently approving on the wrong server
 
 For the exact routing behavior, see [Notification routing](/docs/features/notifications-routing).
@@ -66,6 +68,8 @@ Current settings include:
 - **Push notifications** on/off for the account
 - per-type toggles for **Ready**, **Permission requests**, and **User-action requests**
 - **In-app notifications** behavior while the app is open: `Full`, `Silent`, or `Off`
+- bundled **Soft** and **Urgent** notification sounds, native system sounds, or silent mode
+- Live Activity remote update preferences when the selected server advertises support
 
 When you are already looking at a given session, Happier suppresses notifications for that same session to avoid duplicate noise while you are actively reading it.
 

@@ -81,7 +81,17 @@ That gives you:
 - detected URL copy/open actions,
 - mobile quick keys where supported.
 
-On smaller phone layouts, the terminal behaves more like a focused terminal screen than a multi-pane desktop layout.
+On phone layouts using the default **Cockpit** session layout, Terminal appears as a bottom session tab when all of these are true:
+
+- the Embedded terminal feature is enabled,
+- the selected terminal location supports a session tab,
+- the current session resolves to a reachable machine target.
+
+If the terminal tab is not available, Happier hides it instead of showing a broken empty tab. In that case, use the session header terminal action or change the embedded-terminal location setting.
+
+In Cockpit, the terminal keeps the normal session header and safe-area spacing, and switching between Terminal, Files, Git, Tabs, and the agent chat does not add every tab switch to the back stack.
+
+In the **Classic** mobile layout, the terminal still behaves more like a focused terminal screen than a multi-pane desktop layout.
 
 ## Requirements
 

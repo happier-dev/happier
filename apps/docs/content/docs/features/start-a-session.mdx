@@ -19,6 +19,8 @@ The important product rule is simple:
 - smaller chip controls stay close to the composer on desktop and expand into wider touch-friendly pickers on phones and mobile web
 - opening those controls does **not** mean your new session was canceled
 
+The new-session composer follows the same input rules as the normal session composer. If **Enter to Send** is enabled in [Session settings](./session-settings), Enter can start the session from a typed first message. Shift+Enter still inserts a new line on web and on iOS/iPadOS with a physical keyboard. Use the visible send button for attachment-only drafts.
+
 ## What the new-session flow controls
 
 Think of session start as three layers:
@@ -175,6 +177,22 @@ Other chips such as model/engine, profile, and permission-related controls follo
 - they reflect the current backend and machine context
 - they act as session-start choices, not global settings edits
 
+The model/engine picker can also show live provider model lists, static provider catalogs, model-specific controls, and favorite model shortcuts.
+
+For the full guide, see [Model and engine selection](./model-and-engine-selection).
+
+### Composer action chips
+
+The composer also includes action chips for context that can become part of the first turn:
+
+- **Attachments** bring local files from your device into the new session
+- **Link file** lets you pick files from the selected machine + path and inserts workspace-relative links where possible
+- **Review comments** appears when the selected machine + path has saved review-comment drafts
+
+On wider screens, these actions can stay visible as chips near the composer. On narrower screens, chip rows can scroll horizontally or collapse into the action menu while keeping the text box available.
+
+Review comments are included by default when matching drafts exist. Turning the **Review comments** chip off detaches them from this new session without deleting the saved drafts.
+
 ## Desktop vs mobile behavior
 
 Happier keeps the same overall workflow across desktop, web, and mobile, but the presentation adapts to the screen.
@@ -243,6 +261,7 @@ Your saved MCP defaults stay unchanged.
 - [Projects & worktrees](./projects-and-worktrees)
 - [Attachments & image previews](./attachments)
 - [Resume a provider session (Resume ID)](./resume-provider-sessions)
+- [Model and engine selection](./model-and-engine-selection)
 - [MCP servers](./mcp-servers)
 - [Profiles](./profiles)
 - [Permissions](./permissions)

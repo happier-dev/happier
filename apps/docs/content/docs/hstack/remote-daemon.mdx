@@ -1,13 +1,13 @@
 ---
-title: Remote daemon setup (SSH)
-description: Install Happier on a remote host, pair credentials, and optionally install the daemon service.
+title: Remote background service setup (SSH)
+description: Install Happier on a remote host, pair credentials, and optionally install the background service.
 ---
 
 This page documents `hstack remote daemon setup`, a workflow to provision a **remote machine** (VPS, home server, dev box) over SSH:
 
 - installs the Happier CLI on the remote host
 - pairs/authenticates the remote host against your account
-- optionally installs + starts the daemon as a **user service**
+- optionally installs + starts the background service in **user** mode
 
 ## Quickstart
 
@@ -20,7 +20,7 @@ hstack remote daemon setup --ssh user@host
 Default behavior:
 
 - uses the **stable** channel (set `--channel preview` or `--channel dev` when you want newer public binaries)
-- installs/starts the daemon service in **user** mode
+- installs/starts the background service in **user** mode
 
 ## Release channel
 
@@ -57,9 +57,9 @@ Notes:
 - `--webapp-url` is the web UI origin used for login/approval UX.
 - `--public-server-url` is the server URL that other devices can reach (often the same as `--server-url`).
 
-## Skip daemon service install
+## Skip background-service install
 
-If you only want the CLI installed + authenticated (no always-on daemon):
+If you only want the CLI installed + authenticated (no automatic startup/background service):
 
 ```bash
 hstack remote daemon setup --ssh user@host --service none

@@ -204,6 +204,8 @@ yarn test:policy:self
 yarn test:policy
 yarn test:inventory
 yarn test:migration:inventory
+yarn test:migration:v2-zero:enforce
+yarn test:migration:governance
 ```
 
 Notes:
@@ -245,6 +247,8 @@ This runs:
 - `scripts/release/*.test.mjs`
 - including installer sync/security/publication invariants
 - and workflow policy guards like the production Tauri signing/notarization fail gate
+
+When documentation or copy touches installer/setup/repair behavior, also verify the public command names against current CLI help/source before handoff. In particular, check release-channel switching (`happier self release-channel use stable|preview|dev`), Relay host bind flags (`happier relay host install --lan|--expose|--host <ip>`), local Relay aliases, and `happier doctor repair` wording. These docs are content-only, so do not add content-policing tests for wording changes; use `yarn docs:types` plus targeted `rg` checks unless executable code changed.
 
 ### 10) Extended DB matrix (Postgres/MySQL)
 

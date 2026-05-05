@@ -190,7 +190,7 @@ See also: `/docs/providers`.
 
 ## Remote
 
-Provision a remote machine over SSH (install Happier, pair credentials, optionally install/start the daemon service):
+Provision a remote machine over SSH (install Happier, pair credentials, optionally install/start the background service):
 
 - `hstack remote daemon setup --ssh user@host [--channel stable|preview|dev] [--service user|none]`
 
@@ -224,6 +224,15 @@ Config inspection / tweaks:
 - View: `hstack self-host config view`
 - Set (and apply scheduler changes): `hstack self-host config set ...`
 - Set (write only): `hstack self-host config set ... --no-apply`
+
+Related Happier CLI surfaces used by setup/repair workflows:
+
+- Default release channel: `happier self release-channel use stable|preview|dev`
+- Managed Relay runtime bind flags: `happier relay host install --lan|--expose|--host <ip>`
+- Local Relay aliases: `happier relay use --local`, `happier relay add --local`, `happier relay set --local --use`
+- Repair existing drift/broken state: `happier doctor repair`
+
+`happier setup` configures this computer for a Relay, auth, background service, and providers. `happier doctor repair` is the supported repair path once setup already exists and state has drifted.
 
 ## Contributor workflows (`contrib`)
 

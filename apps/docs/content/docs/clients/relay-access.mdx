@@ -42,6 +42,18 @@ Happier supports multiple relay-access providers (availability depends on your s
 
 ## CLI usage
 
+### Relay host bind flags vs Relay access
+
+`happier relay host install --lan|--expose|--host <ip>` controls which network interface the local Relay runtime listens on:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
+`happier relay access ...` is a separate share/public URL strategy. Installing with `--lan` can make a LAN URL possible, but it does not configure Tailscale, Cloudflare, or any other access provider.
+
 Inspect current relay access status:
 
 ```bash

@@ -15,7 +15,7 @@ It helps you:
 
 - pick the active Relay (Happier Cloud or self-hosted)
 - sign in / create an account on that Relay
-- set up a machine (daemon/background service)
+- set up a machine (background service)
 - host a local Relay (optional)
 - enable private access (optional, for example Tailscale)
 - set up providers (optional)
@@ -39,7 +39,7 @@ When the wizard shows relay rows, the current Relay stays selected even if it is
 
 ### Set up this computer (local machine)
 
-Use this when the daemon should run on the same computer as the desktop app.
+Use this when the background service should run on the same computer as the desktop app.
 
 The wizard will guide you through one-command setup:
 
@@ -55,6 +55,12 @@ What it does (high level):
 - optionally guides provider setup
 
 `happier setup plan` only previews the steps. `happier setup` is the executor.
+
+Setup configures this computer. If the computer was already configured and later drifted or broke, use the supported repair path instead:
+
+```bash
+happier doctor repair
+```
 
 If you log in from the mobile app with **Login with secret key instead**, the wizard continues the same onboarding flow after sign-in instead of sending you to a separate settings page.
 
@@ -75,9 +81,31 @@ sudo happier relay host install --mode system
 
 After installing a local Relay, you may still need to configure **private access** (see below) so phones and other devices can reach it.
 
+Local bind options:
+
+```bash
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
+`--lan`, `--expose`, and `--host <ip>` choose where the local Relay listens. They do not configure a share/public URL strategy by themselves; use **Private access** for that.
+
+Local Relay profile aliases:
+
+```bash
+happier relay use --local
+happier relay add --local
+happier relay set --local --use
+happier relay auth
+happier relay start-daemon
+```
+
+Pass `--local-channel stable|preview|dev` when the local Relay you want belongs to a different installed release channel.
+
 ### Set up a remote machine over SSH
 
-Use this when you want the daemon/providers to run on another machine (VPS, home server, dev box), but you want to control setup from your desktop.
+Use this when you want the background service and providers to run on another machine (VPS, home server, dev box), but you want to control setup from your desktop.
 
 The wizard will either:
 
