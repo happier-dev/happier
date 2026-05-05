@@ -8,6 +8,13 @@ import { repoRootDir } from '../../src/testkit/paths';
 const PRODUCTION_FILE_SUFFIXES = ['.ts', '.tsx'] as const;
 const UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT = '/sync/domains/transfers/runtime/bulkTransferPipeline/' as const;
 const UI_TRANSFER_RUNTIME_DIR_FRAGMENT = '/sync/domains/transfers/runtime/transferRuntime/' as const;
+// The server-scoped RPC policy is allowed to name canonical transfer RPC methods so it can
+// force them through the machines.transfer feature gate; it must not own transfer plumbing.
+const UI_SERVER_SCOPED_RPC_TRANSFER_POLICY_FILE_FRAGMENT =
+  '/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpcPolicy.ts' as const;
+// Daemon voice inference owns its STT/TTS transfer-frame orchestration inside the voice runtime.
+const UI_DAEMON_VOICE_INFERENCE_CLIENT_FILE_FRAGMENT =
+  '/voice/runtime/daemonInference/DaemonVoiceInferenceClient.ts' as const;
 const BANNED_HANDOFF_BASE64_TOKENS = [
   "contentBase64",
 ] as const;
@@ -129,7 +136,11 @@ describe('workspace replication architecture closures', () => {
     const sources = await readProductionSources('apps/ui/sources');
 
     for (const { path, content } of sources) {
-      if (path.includes(UI_TRANSFER_RUNTIME_DIR_FRAGMENT)) {
+      if (
+        path.includes(UI_TRANSFER_RUNTIME_DIR_FRAGMENT)
+        || path.includes(UI_SERVER_SCOPED_RPC_TRANSFER_POLICY_FILE_FRAGMENT)
+        || path.includes(UI_DAEMON_VOICE_INFERENCE_CLIENT_FILE_FRAGMENT)
+      ) {
         continue;
       }
 

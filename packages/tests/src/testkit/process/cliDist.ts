@@ -29,6 +29,7 @@ import {
 const ensureDistPromisesByRepoRoot = new Map<string, Promise<string>>();
 const ensureSharedPromisesByRepoRoot = new Map<string, Promise<void>>();
 const DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS = 600_000;
+const CLI_DIST_SNAPSHOT_MTIME_TOLERANCE_MS = 5;
 
 function shouldSkipCliSharedDepsBuildForE2e(env: NodeJS.ProcessEnv): boolean {
   const raw = (
@@ -424,8 +425,24 @@ function hasCliDistSnapshotNodeModulesHealth(rootDir: string, snapshotDir: strin
     const expectedOutputPaths = resolveWorkspacePackageExpectedOutputPaths(rootDir, packageName, packageDir);
     if (!expectedOutputPaths.every((candidatePath) => existsSync(candidatePath))) return false;
     if (!hasWorkspacePackageDistParity(rootDir, packageName, packageDir)) return false;
+    if (packageName === 'protocol' && !hasValidProtocolDistIndexExportsAtPath(resolve(packageDir, 'dist', 'index.js'))) {
+      return false;
+    }
 
     return isBundledWorkspaceRuntimeDependencyTreeHealthy(resolve(packageDir, 'package.json'));
+  });
+}
+
+function hasCliDistSnapshotProtocolExportsHealth(snapshotDir: string): boolean {
+  return hasValidProtocolDistIndexExportsAtPath(
+    resolve(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
+  );
+}
+
+function hasCliDistSnapshotProtocolRootImportCompatibility(snapshotDir: string): boolean {
+  return hasCliDistProtocolRootImportCompatibility({
+    distDir: resolve(snapshotDir, 'dist'),
+    protocolDistIndexPath: resolve(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
   });
 }
 
@@ -747,7 +764,11 @@ function areBuildOutputsStale(params: { sourcePaths: readonly string[]; outputPa
   return newestSourceMtimeMs > oldestOutputMtimeMs;
 }
 
-function isBuildDirectoryStale(params: { sourcePaths: readonly string[]; outputDir: string }): boolean {
+function isBuildDirectoryStale(params: {
+  sourcePaths: readonly string[];
+  outputDir: string;
+  mtimeToleranceMs?: number;
+}): boolean {
   const newestOutputMtimeMs = readNewestPathMtimeMs(params.outputDir);
   if (newestOutputMtimeMs <= 0) return true;
 
@@ -756,7 +777,7 @@ function isBuildDirectoryStale(params: { sourcePaths: readonly string[]; outputD
   });
   if (newestSourceMtimeMs <= 0) return false;
 
-  return newestSourceMtimeMs > newestOutputMtimeMs;
+  return newestSourceMtimeMs - newestOutputMtimeMs > (params.mtimeToleranceMs ?? 0);
 }
 
 function listExplicitNamedExportsFromModuleSource(sourceText: string): string[] {
@@ -790,6 +811,59 @@ function listExplicitNamedExportsFromModuleSource(sourceText: string): string[] 
   return namedExports;
 }
 
+function listImportedNamesFromProtocolSpecifierBlock(specifierBlock: string): string[] {
+  const importedNames: string[] = [];
+  for (const rawSpecifier of specifierBlock.split(',')) {
+    const normalizedSpecifier = rawSpecifier
+      .replace(/\/\*[\s\S]*?\*\//gu, '')
+      .trim()
+      .replace(/^type\s+/u, '')
+      .trim();
+    if (!normalizedSpecifier) continue;
+    const importedName = normalizedSpecifier.split(/\s+as\s+/u)[0]?.split(':')[0]?.trim();
+    if (importedName && /^[A-Za-z_$][\w$]*$/u.test(importedName)) {
+      importedNames.push(importedName);
+    }
+  }
+  return importedNames;
+}
+
+function listCliDistProtocolRootReferences(sourceText: string): string[] {
+  const references: string[] = [];
+  const namedImportPattern = /\bimport\s*\{([^}]*)\}\s*from\s*['"]@happier-dev\/protocol['"]/gu;
+  for (const match of sourceText.matchAll(namedImportPattern)) {
+    references.push(...listImportedNamesFromProtocolSpecifierBlock(match[1] ?? ''));
+  }
+
+  const destructuredRequirePattern =
+    /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(['"]@happier-dev\/protocol['"]\)/gu;
+  for (const match of sourceText.matchAll(destructuredRequirePattern)) {
+    references.push(...listImportedNamesFromProtocolSpecifierBlock(match[1] ?? ''));
+  }
+
+  const namespaceNames = new Set<string>();
+  const namespaceImportPattern = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]@happier-dev\/protocol['"]/gu;
+  for (const match of sourceText.matchAll(namespaceImportPattern)) {
+    if (match[1]) namespaceNames.add(match[1]);
+  }
+
+  const namespaceRequirePattern =
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\()?require\(['"]@happier-dev\/protocol['"]\)\)?/gu;
+  for (const match of sourceText.matchAll(namespaceRequirePattern)) {
+    if (match[1]) namespaceNames.add(match[1]);
+  }
+
+  for (const namespaceName of namespaceNames) {
+    const propertyPattern = new RegExp(`\\b${namespaceName}\\.([A-Za-z_$][\\w$]*)`, 'gu');
+    for (const match of sourceText.matchAll(propertyPattern)) {
+      const propertyName = match[1];
+      if (propertyName && propertyName !== 'default') references.push(propertyName);
+    }
+  }
+
+  return references;
+}
+
 function hasDuplicateExplicitNamedExports(sourceText: string): boolean {
   const seenExports = new Set<string>();
   for (const exportName of listExplicitNamedExportsFromModuleSource(sourceText)) {
@@ -807,6 +881,64 @@ function hasValidProtocolDistIndexExportsAtPath(protocolDistIndexPath: string): 
   } catch {
     return false;
   }
+}
+
+function readModuleExportNames(modulePath: string, visited = new Set<string>()): Set<string> | null {
+  if (visited.has(modulePath)) return new Set();
+  visited.add(modulePath);
+
+  try {
+    const sourceText = readFileSync(modulePath, 'utf8');
+    if (!sourceText.trim()) return null;
+    const exportNames = new Set(listExplicitNamedExportsFromModuleSource(sourceText));
+    const exportStarPattern = /\bexport\s+\*\s+from\s+['"]\.\/([^'"]+)['"]\s*;/gu;
+    for (const match of sourceText.matchAll(exportStarPattern)) {
+      const relModulePath = match[1];
+      if (!relModulePath) continue;
+      const nestedExportNames = readModuleExportNames(resolve(dirname(modulePath), relModulePath), visited);
+      if (!nestedExportNames) return null;
+      for (const exportName of nestedExportNames) {
+        exportNames.add(exportName);
+      }
+    }
+    return exportNames;
+  } catch {
+    return null;
+  }
+}
+
+function readProtocolDistIndexExportNames(protocolDistIndexPath: string): Set<string> | null {
+  return readModuleExportNames(protocolDistIndexPath);
+}
+
+function hasCliDistProtocolRootImportCompatibility(params: {
+  distDir: string;
+  protocolDistIndexPath: string;
+}): boolean {
+  const protocolExportNames = readProtocolDistIndexExportNames(params.protocolDistIndexPath);
+  if (!protocolExportNames) return true;
+  if (protocolExportNames.size === 0) return true;
+
+  let distFiles: string[] = [];
+  try {
+    distFiles = readdirSync(params.distDir).filter((fileName) => fileName.endsWith('.mjs') || fileName.endsWith('.cjs'));
+  } catch {
+    return false;
+  }
+
+  for (const fileName of distFiles) {
+    let sourceText = '';
+    try {
+      sourceText = readFileSync(resolve(params.distDir, fileName), 'utf8');
+    } catch {
+      return false;
+    }
+    for (const referenceName of listCliDistProtocolRootReferences(sourceText)) {
+      if (!protocolExportNames.has(referenceName)) return false;
+    }
+  }
+
+  return true;
 }
 
 function hasValidCliSharedDepsProtocolExports(rootDir: string): boolean {
@@ -1173,6 +1305,7 @@ function isCliDistSnapshotStale(params: {
   if (isBuildDirectoryStale({
     sourcePaths: [canonicalDistDir],
     outputDir: params.snapshotDistDir,
+    mtimeToleranceMs: CLI_DIST_SNAPSHOT_MTIME_TOLERANCE_MS,
   })) {
     return true;
   }
@@ -1186,6 +1319,7 @@ function isCliDistSnapshotStale(params: {
     return isBuildDirectoryStale({
       sourcePaths: [bundledPackageDir],
       outputDir: snapshotPackageDir,
+      mtimeToleranceMs: CLI_DIST_SNAPSHOT_MTIME_TOLERANCE_MS,
     });
   });
 }
@@ -1249,9 +1383,13 @@ export async function ensureCliDistSnapshotEntrypoint(
   const snapshotDistDir = resolve(options.snapshotDir, 'dist');
   const snapshotEntrypoint = resolve(snapshotDistDir, 'index.mjs');
   const maxAttempts = 3;
+  const snapshotReadyMarkerExists = (dir: string): boolean => {
+    return existsSync(resolve(dir, '.cli-dist-snapshot.ready.json'));
+  };
   const snapshotHasReadyMarker = (dir: string): boolean => {
-    return existsSync(resolve(dir, '.cli-dist-snapshot.ready.json'))
-      && hasCliDistSnapshotNodeModulesHealth(rootDir, dir);
+    return snapshotReadyMarkerExists(dir)
+      && hasCliDistSnapshotNodeModulesHealth(rootDir, dir)
+      && hasCliDistSnapshotProtocolRootImportCompatibility(dir);
   };
   const isReadyReusableSnapshot = (dir: string): boolean => {
     const distDir = resolve(dir, 'dist');
@@ -1340,9 +1478,13 @@ export async function ensureCliDistSnapshotEntrypoint(
           const snapshotIsReadyButStale = (dir: string): boolean => {
             const distDir = resolve(dir, 'dist');
             return existsSync(dir)
-              && snapshotHasReadyMarker(dir)
+              && snapshotReadyMarkerExists(dir)
               && isHealthyCliDist(distDir)
-              && isSnapshotStale(distDir);
+              && (
+                !hasCliDistSnapshotProtocolExportsHealth(dir)
+                || !hasCliDistSnapshotProtocolRootImportCompatibility(dir)
+                || isSnapshotStale(distDir)
+              );
           };
 
           const resolveReplacementSnapshotDir = (): string => {
@@ -1430,6 +1572,9 @@ export async function ensureCliDistSnapshotEntrypoint(
                   ? `CLI dist snapshot missing chunk imports: ${missing.join(', ')}`
                   : `CLI dist snapshot missing entrypoint: ${targetSnapshotEntrypoint}`,
               );
+            }
+            if (!hasCliDistSnapshotProtocolRootImportCompatibility(targetSnapshotDir)) {
+              throw new Error('CLI dist snapshot imports protocol root exports that are not available in the snapshot');
             }
 
             markSnapshotReady(targetSnapshotDir);

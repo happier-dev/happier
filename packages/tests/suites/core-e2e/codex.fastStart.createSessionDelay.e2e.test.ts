@@ -128,7 +128,7 @@ setInterval(() => {}, 1000);
         '--started-by',
         'terminal',
         '--happy-starting-mode',
-        'local',
+        'terminal',
       ],
       cwd: workspaceDir,
       env: cliEnv,

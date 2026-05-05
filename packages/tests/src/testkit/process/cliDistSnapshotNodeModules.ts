@@ -128,6 +128,53 @@ function readPackageNameFromPackageJson(packageJsonPath: string): string | null 
   }
 }
 
+type WorkspacePackageDescriptor = Readonly<{
+  packageJsonPath: string;
+  packageName: string;
+  workspaceDir: string;
+}>;
+
+function appendWorkspacePackageDescriptorsFromDir(
+  out: WorkspacePackageDescriptor[],
+  dir: string,
+  opts?: { skipPrivateTemplateDirs?: boolean },
+): void {
+  let entries: Dirent[] = [];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (opts?.skipPrivateTemplateDirs === true && entry.name.startsWith('_')) continue;
+
+    const workspaceDir = resolve(dir, entry.name);
+    const packageJsonPath = resolve(workspaceDir, 'package.json');
+    const packageName = readPackageNameFromPackageJson(packageJsonPath);
+    if (!packageName?.startsWith('@happier-dev/')) continue;
+
+    out.push({
+      packageJsonPath,
+      packageName,
+      workspaceDir,
+    });
+  }
+}
+
+function collectWorkspacePackageDescriptors(rootDir: string): WorkspacePackageDescriptor[] {
+  const descriptors: WorkspacePackageDescriptor[] = [];
+  appendWorkspacePackageDescriptorsFromDir(descriptors, resolve(rootDir, 'packages'));
+  appendWorkspacePackageDescriptorsFromDir(descriptors, resolve(rootDir, 'packages', 'plugins'), {
+    skipPrivateTemplateDirs: true,
+  });
+  appendWorkspacePackageDescriptorsFromDir(descriptors, resolve(rootDir, 'packages', 'extensions'), {
+    skipPrivateTemplateDirs: true,
+  });
+  return descriptors;
+}
+
 function ensureWorkspacePackageRuntimeDependencyFallbacks(
   snapshotPackageNodeModulesDir: string,
   rootDir: string,
@@ -199,65 +246,21 @@ function ensureRootNodeModulesFallback(snapshotDistDir: string, rootDir: string)
 }
 
 function ensureWorkspacePackageManifests(snapshotNodeModulesDir: string, rootDir: string): void {
-  const packagesDir = resolve(rootDir, 'packages');
-  let entries: Dirent[] = [];
-  try {
-    entries = readdirSync(packagesDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-
-    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
-    let packageName = '';
-    try {
-      const raw = readFileSync(packageJsonPath, 'utf8');
-      const parsed = JSON.parse(raw) as { name?: unknown };
-      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    } catch {
-      continue;
-    }
-
-    if (!packageName.startsWith('@happier-dev/')) continue;
-
-    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
+  for (const descriptor of collectWorkspacePackageDescriptors(rootDir)) {
+    const scopePackageName = descriptor.packageName.slice('@happier-dev/'.length).trim();
     if (!scopePackageName) continue;
 
     const snapshotPackageJsonPath = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'package.json');
-    ensureCopiedTextFile(snapshotPackageJsonPath, packageJsonPath);
+    ensureCopiedTextFile(snapshotPackageJsonPath, descriptor.packageJsonPath);
   }
 }
 
 function ensureWorkspacePackageDistTrees(snapshotNodeModulesDir: string, rootDir: string): void {
-  const packagesDir = resolve(rootDir, 'packages');
-  let entries: Dirent[] = [];
-  try {
-    entries = readdirSync(packagesDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-
-    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
-    let packageName = '';
-    try {
-      const raw = readFileSync(packageJsonPath, 'utf8');
-      const parsed = JSON.parse(raw) as { name?: unknown };
-      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    } catch {
-      continue;
-    }
-
-    if (!packageName.startsWith('@happier-dev/')) continue;
-
-    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
+  for (const descriptor of collectWorkspacePackageDescriptors(rootDir)) {
+    const scopePackageName = descriptor.packageName.slice('@happier-dev/'.length).trim();
     if (!scopePackageName) continue;
 
-    const sourceDistDir = resolve(packagesDir, entry.name, 'dist');
+    const sourceDistDir = resolve(descriptor.workspaceDir, 'dist');
     const snapshotPackageDir = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName);
     const snapshotDistDir = resolve(snapshotPackageDir, 'dist');
     if (!existsSync(sourceDistDir)) continue;
@@ -277,30 +280,8 @@ function ensureWorkspacePackageDistTrees(snapshotNodeModulesDir: string, rootDir
 }
 
 function ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir: string, rootDir: string): void {
-  const packagesDir = resolve(rootDir, 'packages');
-  let entries: Dirent[] = [];
-  try {
-    entries = readdirSync(packagesDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-
-    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
-    let packageName = '';
-    try {
-      const raw = readFileSync(packageJsonPath, 'utf8');
-      const parsed = JSON.parse(raw) as { name?: unknown };
-      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    } catch {
-      continue;
-    }
-
-    if (!packageName.startsWith('@happier-dev/')) continue;
-
-    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
+  for (const descriptor of collectWorkspacePackageDescriptors(rootDir)) {
+    const scopePackageName = descriptor.packageName.slice('@happier-dev/'.length).trim();
     if (!scopePackageName) continue;
 
     const sourceNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', scopePackageName, 'node_modules');
@@ -308,7 +289,7 @@ function ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir: st
     if (existsSync(sourceNodeModulesDir)) {
       ensureCopiedDirectory(snapshotPackageNodeModulesDir, sourceNodeModulesDir);
     }
-    ensureWorkspacePackageRuntimeDependencyFallbacks(snapshotPackageNodeModulesDir, rootDir, packageJsonPath);
+    ensureWorkspacePackageRuntimeDependencyFallbacks(snapshotPackageNodeModulesDir, rootDir, descriptor.packageJsonPath);
   }
 }
 

@@ -37,6 +37,9 @@ const sessionId =
   `fake-claude-session-${randomUUID()}`;
 const processNonce = randomUUID();
 const logPath = process.env.HAPPIER_E2E_FAKE_CLAUDE_LOG || process.env.HAPPY_E2E_FAKE_CLAUDE_LOG || '';
+const shouldLogFullStdin = /^(1|true|yes|on)$/i.test(
+  String(process.env.HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN || process.env.HAPPY_E2E_FAKE_CLAUDE_LOG_FULL_STDIN || '').trim(),
+);
 
 const mcpConfigs = parseMcpConfigs(argv);
 const mergedMcpServers = mergeMcpServers(mcpConfigs);
@@ -340,6 +343,7 @@ async function runSdkStreamUntilEof() {
       hasUserText: Boolean(promptText),
       userTextLength: typeof promptText === 'string' ? promptText.length : null,
       userTextPreview: typeof promptText === 'string' ? promptText.slice(0, 800) : null,
+      ...(shouldLogFullStdin && typeof promptText === 'string' ? { userText: promptText } : {}),
     });
     if (!promptText) continue;
 

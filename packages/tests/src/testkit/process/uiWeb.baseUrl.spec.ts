@@ -36,7 +36,8 @@ vi.mock('./spawnProcess', () => {
         env: params.env && typeof params.env === 'object' ? (params.env as NodeJS.ProcessEnv) : undefined,
       });
 
-      const queuedBehavior = runLoggedFailureQueue.shift();
+      const isExportRun = isUiWebExportRunLoggedCall({ args, cwd: params.cwd });
+      const queuedBehavior = isExportRun ? runLoggedFailureQueue.shift() : undefined;
       if (queuedBehavior?.type === 'throw') {
         throw new Error(queuedBehavior.message);
       }
@@ -96,6 +97,14 @@ vi.mock('./spawnProcess', () => {
     },
   };
 });
+
+function isUiWebExportRunLoggedCall(call: Readonly<{ args: readonly string[]; cwd: string }>): boolean {
+  return call.args.includes('export') && call.args.includes('--output-dir');
+}
+
+function readUiWebExportRunLoggedCalls(): Array<{ args: string[]; cwd: string; env?: NodeJS.ProcessEnv }> {
+  return runLoggedCalls.filter(isUiWebExportRunLoggedCall);
+}
 
 function resolveUrlString(input: unknown): string {
   if (typeof input === 'string') return input;
@@ -219,8 +228,9 @@ describe('startUiWeb baseUrl resolution', () => {
     });
 
     try {
-      expect(runLoggedCalls).toHaveLength(1);
-      const outputDirs = runLoggedCalls
+      const exportCalls = readUiWebExportRunLoggedCalls();
+      expect(exportCalls).toHaveLength(1);
+      const outputDirs = exportCalls
         .map((call) => {
           const outputFlagIndex = call.args.findIndex((value) => value === '--output-dir');
           return outputFlagIndex >= 0 ? call.args[outputFlagIndex + 1] : null;
@@ -297,8 +307,9 @@ describe('startUiWeb baseUrl resolution', () => {
     });
 
     try {
-      expect(runLoggedCalls.length).toBeGreaterThanOrEqual(1);
-      for (const call of runLoggedCalls) {
+      const exportCalls = readUiWebExportRunLoggedCalls();
+      expect(exportCalls.length).toBeGreaterThanOrEqual(1);
+      for (const call of exportCalls) {
         expect(call.env?.EXPO_PUBLIC_POSTHOG_KEY).toBe('phc-clear-export');
       }
     } finally {
@@ -423,7 +434,7 @@ describe('startUiWeb baseUrl resolution', () => {
     const started = await startUiWeb({ testDir, env });
 
     try {
-      expect(runLoggedCalls).toHaveLength(1);
+      expect(readUiWebExportRunLoggedCalls()).toHaveLength(1);
       expect(spawnCallCount).toBe(0);
       const html = await fetch(started.baseUrl).then((response) => response.text());
       expect(html).toContain('__HAPPIER_WEB_RUNTIME_CONFIG__');
@@ -543,7 +554,7 @@ describe('startUiWeb baseUrl resolution', () => {
     });
 
     try {
-      expect(runLoggedCalls).toHaveLength(1);
+      expect(readUiWebExportRunLoggedCalls()).toHaveLength(1);
       expect(existsSync(lockPath)).toBe(false);
     } finally {
       await started.stop();
@@ -772,8 +783,9 @@ describe('startUiWeb baseUrl resolution', () => {
     ]);
 
     try {
-      expect(runLoggedCalls).toHaveLength(1);
-      expect(runLoggedCalls[0]?.args ?? []).toContain('--clear');
+      const exportCalls = readUiWebExportRunLoggedCalls();
+      expect(exportCalls).toHaveLength(1);
+      expect(exportCalls[0]?.args ?? []).toContain('--clear');
       await started.stop();
     } finally {
       // no-op
@@ -1659,7 +1671,7 @@ describe('startUiWeb baseUrl resolution', () => {
         }),
       ]);
 
-      expect(runLoggedCalls).toHaveLength(1);
+      expect(readUiWebExportRunLoggedCalls()).toHaveLength(1);
       expect(spawnCallCount).toBe(1);
       expect(lastSpawnArgs).toEqual(expect.arrayContaining(['start', '--web']));
       await started.stop();

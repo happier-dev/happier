@@ -4,6 +4,8 @@ export const CLI_SHARED_DEP_PACKAGE_NAMES = [
     'agents',
     'cli-common',
     'connection-supervisor',
+    'plugin-sdk',
+    'peer-mediation',
     'protocol',
     'transfers',
     'release-runtime',

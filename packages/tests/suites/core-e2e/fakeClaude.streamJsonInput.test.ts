@@ -90,6 +90,44 @@ describe('fake Claude CLI fixture', () => {
     }
   });
 
+  it('can opt into logging full user stdin text for targeted assertions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-full-stdin-'));
+    try {
+      const logPath = join(dir, 'fake-claude.jsonl');
+      const fixturePath = resolve(process.cwd(), 'src/fixtures/fake-claude-code-cli.cjs');
+      const marker = 'FULL_STDIN_MARKER_AFTER_PREVIEW';
+      const longText = `${'x'.repeat(900)}${marker}`;
+
+      const input = JSON.stringify({
+        type: 'message',
+        message: { role: 'user', content: [{ type: 'text', text: longText }] },
+      });
+
+      const res = spawnSync(process.execPath, [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
+          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: 'inv-1',
+          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: 'session-1',
+        },
+        input: `${input}\n`,
+        encoding: 'utf8',
+      });
+
+      expect(res.status).toBe(0);
+
+      const logRaw = await readFile(logPath, 'utf8');
+      const stdinRow = parseJsonLines(logRaw).find((row) => row?.type === 'sdk_stdin' && row?.hasUserText === true);
+      expect(stdinRow?.userTextPreview).not.toContain(marker);
+      expect(typeof stdinRow?.userText).toBe('string');
+      expect(String(stdinRow?.userText ?? '')).toContain(marker);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('publishes execution-run runtime metadata for the permission prompt scenario', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-runtime-'));
     try {

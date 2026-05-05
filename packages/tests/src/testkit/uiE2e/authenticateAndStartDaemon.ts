@@ -3,7 +3,10 @@ import { expect, type Page } from '@playwright/test';
 import { startTestDaemon, type StartedDaemon } from '../daemon/daemon';
 import { startCliAuthLoginForTerminalConnect } from './cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from './acknowledgeTerminalConnectSuccessIfPresent';
-import { gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { approveTerminalConnect } from './approveTerminalConnect';
+import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { resolveTerminalConnectUrlForBrowser } from './resolveTerminalConnectUrlForBrowser';
+import { ensurePendingTerminalConnectReadyForApproval } from './terminalConnectApprovalFlow';
 
 export async function authenticateAndStartDaemon(params: Readonly<{
   page: Page;
@@ -38,11 +41,24 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   });
 
   try {
-    await params.page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-    const approveCount = await params.page.getByTestId('terminal-connect-approve').count();
-    if (approveCount > 0) {
-      await params.page.getByTestId('terminal-connect-approve').click();
-    }
+    const connectUrlForBrowser = resolveTerminalConnectUrlForBrowser({
+      connectUrl: cliLogin.connectUrl,
+      uiBaseUrl: params.uiBaseUrl,
+      serverUrl: params.serverUrl,
+    });
+    await gotoDomContentLoadedWithRetries(params.page, connectUrlForBrowser, 180_000);
+    await ensurePendingTerminalConnectReadyForApproval({
+      page: params.page,
+      connectUrlForBrowser,
+      gotoConnectUrl: async (url) => {
+        await gotoDomContentLoadedWithRetries(params.page, url, 180_000);
+      },
+      restoreAccount: async () => {
+        await createAccountAndReachConnectMachineState({ page: params.page });
+      },
+      timeoutMs: 180_000,
+    });
+    await approveTerminalConnect({ page: params.page });
     await cliLogin.waitForSuccess();
     await acknowledgeTerminalConnectSuccessIfPresent(params.page);
   } finally {

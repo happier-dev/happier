@@ -220,7 +220,7 @@ describe('resolveCliTestLaunchSpec', () => {
     }
   });
 
-  it('repairs missing bundled workspace dist files inside an existing copied source snapshot before launch', async () => {
+  it('refreshes bundled workspace dist files inside an existing copied source snapshot before launch', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-repair-source-snapshot-'));
     const snapshotDir = resolve(repoRoot, 'snapshot');
 
@@ -230,8 +230,11 @@ describe('resolveCliTestLaunchSpec', () => {
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'tools'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'bin'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-opencode', 'dist'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'packages', 'agents', 'dist', 'providers', 'codex'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'packages', 'plugins', 'opencode', 'dist', 'mcp'), { recursive: true });
       mkdirSync(resolve(snapshotDir, 'node_modules', '@happier-dev', 'agents', 'dist', 'providers', 'codex'), { recursive: true });
+      mkdirSync(resolve(snapshotDir, 'node_modules', '@happier-dev', 'plugins-opencode', 'dist'), { recursive: true });
 
       writeFileSync(resolve(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }), 'utf8');
       writeFileSync(resolve(repoRoot, 'apps', 'cli', 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }), 'utf8');
@@ -272,11 +275,52 @@ describe('resolveCliTestLaunchSpec', () => {
         }, null, 2),
         'utf8',
       );
+      writeFileSync(
+        resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-opencode', 'package.json'),
+        JSON.stringify({
+          name: '@happier-dev/plugins-opencode',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          exports: {
+            '.': { default: './dist/index.js' },
+          },
+        }, null, 2),
+        'utf8',
+      );
+      writeFileSync(
+        resolve(repoRoot, 'packages', 'plugins', 'opencode', 'package.json'),
+        JSON.stringify({
+          name: '@happier-dev/plugins-opencode',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          exports: {
+            '.': { default: './dist/index.js' },
+          },
+        }, null, 2),
+        'utf8',
+      );
       writeFileSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js'), 'export {};\n', 'utf8');
+      writeFileSync(
+        resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-opencode', 'dist', 'index.js'),
+        'export const stalePlugin = true;\n',
+        'utf8',
+      );
       writeFileSync(resolve(repoRoot, 'packages', 'agents', 'dist', 'index.js'), 'export {};\n', 'utf8');
       writeFileSync(
         resolve(repoRoot, 'packages', 'agents', 'dist', 'providers', 'codex', 'sessionControlAdapter.js'),
         'export const adapter = "workspace";\n',
+        'utf8',
+      );
+      writeFileSync(
+        resolve(repoRoot, 'packages', 'plugins', 'opencode', 'dist', 'index.js'),
+        'export * from "./mcp/detectOpenCodeMcpServers.js";\n',
+        'utf8',
+      );
+      writeFileSync(
+        resolve(repoRoot, 'packages', 'plugins', 'opencode', 'dist', 'mcp', 'detectOpenCodeMcpServers.js'),
+        'export const detectOpenCodeMcpServers = "workspace";\n',
         'utf8',
       );
       writeFileSync(
@@ -296,6 +340,24 @@ describe('resolveCliTestLaunchSpec', () => {
         'utf8',
       );
       writeFileSync(resolve(snapshotDir, 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js'), 'export {};\n', 'utf8');
+      writeFileSync(
+        resolve(snapshotDir, 'node_modules', '@happier-dev', 'plugins-opencode', 'package.json'),
+        JSON.stringify({
+          name: '@happier-dev/plugins-opencode',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          exports: {
+            '.': { default: './dist/index.js' },
+          },
+        }, null, 2),
+        'utf8',
+      );
+      writeFileSync(
+        resolve(snapshotDir, 'node_modules', '@happier-dev', 'plugins-opencode', 'dist', 'index.js'),
+        'export const staleSnapshotPlugin = true;\n',
+        'utf8',
+      );
 
       const spec = await resolveCliTestLaunchSpec(
         {
@@ -324,6 +386,12 @@ describe('resolveCliTestLaunchSpec', () => {
           'utf8',
         ),
       ).toContain('workspace');
+      expect(
+        readFileSync(
+          resolve(snapshotDir, 'node_modules', '@happier-dev', 'plugins-opencode', 'dist', 'index.js'),
+          'utf8',
+        ),
+      ).toContain('detectOpenCodeMcpServers');
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

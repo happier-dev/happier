@@ -7,6 +7,7 @@ import {
   ExecutionRunActionResponseSchema,
   ExecutionRunGetResponseSchema,
   ExecutionRunStartResponseSchema,
+  SessionUserMessageSendResponseSchema,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -21,7 +22,6 @@ import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 import { fakeClaudeLogContainsUserText } from '../../src/testkit/sessionHandoffUiMessages';
 
@@ -66,6 +66,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         HAPPIER_WEBAPP_URL: serverBaseUrl,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
+        HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
         HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'review-json',
       },
     });
@@ -77,6 +78,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       controlToken,
         body: {
           directory: workspaceDir,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
           terminal: { mode: 'plain' },
           environmentVariables: {
             HAPPIER_HOME_DIR: daemonHomeDir,
@@ -86,12 +88,13 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
             HAPPIER_DISABLE_CAFFEINATE: '1',
             HAPPIER_CLAUDE_PATH: fakeClaudePath,
             HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
+            HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
             HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'review-json',
           },
       },
     });
 
-    expect(spawnRes.status).toBe(200);
+    expect(spawnRes.status, JSON.stringify(spawnRes.data, null, 2)).toBe(200);
     expect(spawnRes.data.success).toBe(true);
     const sessionId = spawnRes.data.sessionId;
     expect(typeof sessionId).toBe('string');
@@ -185,7 +188,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     expect(updatedPayload?.triage?.findings?.[0]?.id).toBe(findingId);
     expect(updatedPayload?.triage?.findings?.[0]?.status).toBe('accept');
 
-    // Simulate the UI "apply accepted findings" message (parent-agent consumption path).
+    // Simulate the UI "apply accepted findings" message through the live parent-agent queue.
     const applyPayload = {
       runId,
       callId: String((updated.structuredMeta?.payload as any)?.runRef?.callId ?? ''),
@@ -198,13 +201,21 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         },
       ],
     };
-    await postEncryptedUiTextMessage({
-      baseUrl: serverBaseUrl,
-      token: auth.token,
+    const applyText = `@happier/review.apply_accepted_findings\n${JSON.stringify(applyPayload)}`;
+    const applySend = await callSessionRpc({
+      ui,
       sessionId,
+      method: SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+      req: {
+        text: applyText,
+        localId: `review-apply-${randomUUID()}`,
+        meta: { source: 'ui', sentFrom: 'e2e' },
+      },
       secret,
-      text: `@happier/review.apply_accepted_findings\n${JSON.stringify(applyPayload)}`,
+      schema: SessionUserMessageSendResponseSchema,
+      timeoutMs: 40_000,
     });
+    expect(applySend.ok).toBe(true);
 
     await waitFor(async () => {
       const rows = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);

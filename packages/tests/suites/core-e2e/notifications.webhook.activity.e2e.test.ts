@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { once } from 'node:events';
 
 import {
-  ActivityWebhookPayloadV1Schema,
   BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
   accountSettingsParse,
+  resolveAttentionDeliveryPolicyDecision,
   resolveNotificationChannelsV1FromAccountSettings,
 } from '@happier-dev/protocol';
 import { sendWebhookActivityNotificationAsync } from '../../../../apps/cli/src/notifications/activity/sendWebhookActivityNotification';
@@ -14,161 +12,15 @@ import { sendWebhookActivityNotificationAsync } from '../../../../apps/cli/src/n
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
+import { startActivityWebhookCaptureServer } from '../../src/testkit/activityWebhookCapture';
+import { readAccountSettingsV1, writeAccountSettingsV1 } from '../../src/testkit/accountSettingsHttp';
+import { buildCanonicalWebhookAccountSettings } from '../../src/testkit/activityWebhookSettings';
 
 const run = createRunDirs({ runLabel: 'core' });
 
-type UnknownRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): UnknownRecord | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as UnknownRecord;
-}
-
-function getString(record: UnknownRecord, key: string): string {
-  const value = record[key];
-  if (typeof value !== 'string') {
-    throw new Error(`Expected string ${key}`);
-  }
-  return value;
-}
-
-function getNumber(record: UnknownRecord, key: string): number {
-  const value = record[key];
-  if (typeof value !== 'number') {
-    throw new Error(`Expected number ${key}`);
-  }
-  return value;
-}
-
-async function writeAccountSettings(params: {
-  baseUrl: string;
-  token: string;
-  settings: unknown;
-}): Promise<void> {
-  const getRes = await fetch(`${params.baseUrl}/v1/account/settings`, {
-    headers: { Authorization: `Bearer ${params.token}` },
-  });
-  expect(getRes.ok).toBe(true);
-  const getJson: unknown = await getRes.json().catch(() => null);
-  const getRow = asRecord(getJson);
-  if (!getRow) throw new Error('Expected account settings response object');
-  const settingsVersion = getNumber(getRow, 'settingsVersion');
-
-  const postRes = await fetch(`${params.baseUrl}/v1/account/settings`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      settings: JSON.stringify(params.settings),
-      expectedVersion: settingsVersion,
-    }),
-  });
-  expect(postRes.ok).toBe(true);
-}
-
-async function readAccountSettings(params: {
-  baseUrl: string;
-  token: string;
-}) {
-  const getRes = await fetch(`${params.baseUrl}/v1/account/settings`, {
-    headers: { Authorization: `Bearer ${params.token}` },
-  });
-  expect(getRes.ok).toBe(true);
-  const getJson: unknown = await getRes.json().catch(() => null);
-  const getRow = asRecord(getJson);
-  if (!getRow) throw new Error('Expected account settings response object');
-  return accountSettingsParse(JSON.parse(getString(getRow, 'settings')));
-}
-
-type CapturedWebhookPayload = ReturnType<typeof ActivityWebhookPayloadV1Schema.parse>;
-
-async function startWebhookCaptureServer(): Promise<{
-  url: string;
-  stop: () => Promise<void>;
-  nextPayload: (timeoutMs?: number) => Promise<Readonly<{
-    headers: Record<string, string | undefined>;
-    payload: CapturedWebhookPayload;
-  }>>;
-}> {
-  type CapturedWebhookRequest = Readonly<{
-    headers: Record<string, string | undefined>;
-    payload: CapturedWebhookPayload;
-  }>;
-
-  const payloadQueue: CapturedWebhookRequest[] = [];
-  const payloadWaiters: Array<(payload: CapturedWebhookRequest) => void> = [];
-
-  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const parsed = ActivityWebhookPayloadV1Schema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    const request = {
-      headers: {
-        'x-happier-signature-256': typeof req.headers['x-happier-signature-256'] === 'string'
-          ? req.headers['x-happier-signature-256']
-          : undefined,
-      },
-      payload: parsed,
-    } satisfies CapturedWebhookRequest;
-
-    const waiter = payloadWaiters.shift();
-    if (waiter) {
-      waiter(request);
-    } else {
-      payloadQueue.push(request);
-    }
-
-    res.statusCode = 202;
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ ok: true }));
-  });
-
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Expected TCP webhook server address');
-  }
-
-  return {
-    url: `http://127.0.0.1:${address.port}/webhook`,
-    stop: async () => {
-      server.close();
-      await once(server, 'close');
-    },
-    nextPayload: async (timeoutMs = 30_000) => {
-      if (payloadQueue.length > 0) {
-        return payloadQueue.shift()!;
-      }
-
-      return await new Promise<CapturedWebhookRequest>((resolvePayload, rejectPayload) => {
-        const timeout = setTimeout(() => {
-          const index = payloadWaiters.indexOf(resolvePayload);
-          if (index >= 0) {
-            payloadWaiters.splice(index, 1);
-          }
-          rejectPayload(new Error('Timed out waiting for webhook payload'));
-        }, timeoutMs);
-
-        payloadWaiters.push((payload) => {
-          clearTimeout(timeout);
-          resolvePayload(payload);
-        });
-      });
-    },
-  };
-}
-
 async function dispatchWebhookActivity(params: {
-  settingsJson: string;
-  eventJson: string;
-}): Promise<{ attemptedChannels: number; deliveredChannels: number }> {
-  const settings = accountSettingsParse(JSON.parse(params.settingsJson));
-  const event = JSON.parse(params.eventJson) as
+  settings: ReturnType<typeof accountSettingsParse>;
+  event:
     | Readonly<{
         topic: 'ready';
         sessionId: string;
@@ -185,19 +37,31 @@ async function dispatchWebhookActivity(params: {
         toolInput?: unknown;
         toolDetails?: string | null;
       }>;
+  nowIso?: string;
+}): Promise<{ attemptedChannels: number; deliveredChannels: number }> {
+  const now = new Date(params.nowIso ?? '2026-05-03T12:00:00.000Z');
   let attemptedChannels = 0;
   let deliveredChannels = 0;
 
-  for (const channel of resolveNotificationChannelsV1FromAccountSettings(settings)) {
+  for (const channel of resolveNotificationChannelsV1FromAccountSettings(params.settings)) {
     if (channel.kind !== 'webhook' || channel.enabled !== true) continue;
-    if (event.topic === 'ready' && channel.topics.ready !== true) continue;
-    if (event.topic === 'permission_request' && channel.topics.permissionRequest !== true) continue;
-    if (event.topic === 'user_action_request' && channel.topics.userActionRequest !== true) continue;
+    if (params.event.topic === 'ready' && channel.topics.ready !== true) continue;
+    if (params.event.topic === 'permission_request' && channel.topics.permissionRequest !== true) continue;
+    if (params.event.topic === 'user_action_request' && channel.topics.userActionRequest !== true) continue;
+
+    const decision = resolveAttentionDeliveryPolicyDecision({
+      policy: params.settings.attentionDeliveryPolicyV1,
+      event: params.event.topic,
+      channel: 'webhook',
+      now,
+    });
+    if (decision.delivery === 'suppress') continue;
 
     attemptedChannels += 1;
     await sendWebhookActivityNotificationAsync({
       channel,
-      event,
+      event: params.event,
+      nowMs: () => now.getTime(),
     });
     deliveredChannels += 1;
   }
@@ -207,7 +71,7 @@ async function dispatchWebhookActivity(params: {
 
 describe('core e2e: webhook activity notifications', () => {
   let server: StartedServer | null = null;
-  let webhookServer: Awaited<ReturnType<typeof startWebhookCaptureServer>> | null = null;
+  let webhookServer: Awaited<ReturnType<typeof startActivityWebhookCaptureServer>> | null = null;
 
   afterEach(async () => {
     await webhookServer?.stop().catch(() => {});
@@ -219,10 +83,10 @@ describe('core e2e: webhook activity notifications', () => {
   it('delivers ready activity to a configured webhook channel using persisted account settings', async () => {
     const testDir = run.testDir(`notifications-webhook-ready-${randomUUID()}`);
     server = await startServerLight({ testDir });
-    webhookServer = await startWebhookCaptureServer();
+    webhookServer = await startActivityWebhookCaptureServer();
 
     const auth = await createTestAuth(server.baseUrl);
-    await writeAccountSettings({
+    await writeAccountSettingsV1({
       baseUrl: server.baseUrl,
       token: auth.token,
       settings: {
@@ -270,20 +134,20 @@ describe('core e2e: webhook activity notifications', () => {
       },
     });
 
-    const settings = await readAccountSettings({
+    const { settings } = await readAccountSettingsV1({
       baseUrl: server.baseUrl,
       token: auth.token,
     });
 
     const dispatchResult = await dispatchWebhookActivity({
-      settingsJson: JSON.stringify(settings),
-      eventJson: JSON.stringify({
+      settings,
+      event: {
         topic: 'ready',
         sessionId: 'session-ready-1',
         sessionTitle: 'Review branch',
         waitingForCommandLabel: 'Codex',
         assistantPreviewText: 'The branch is ready to review.',
-      }),
+      },
     });
     expect(dispatchResult).toEqual({
       attemptedChannels: 1,
@@ -309,10 +173,10 @@ describe('core e2e: webhook activity notifications', () => {
   it('sends sanitized permission-request details to the configured webhook channel', async () => {
     const testDir = run.testDir(`notifications-webhook-permission-${randomUUID()}`);
     server = await startServerLight({ testDir });
-    webhookServer = await startWebhookCaptureServer();
+    webhookServer = await startActivityWebhookCaptureServer();
 
     const auth = await createTestAuth(server.baseUrl);
-    await writeAccountSettings({
+    await writeAccountSettingsV1({
       baseUrl: server.baseUrl,
       token: auth.token,
       settings: {
@@ -348,14 +212,14 @@ describe('core e2e: webhook activity notifications', () => {
       },
     });
 
-    const settings = await readAccountSettings({
+    const { settings } = await readAccountSettingsV1({
       baseUrl: server.baseUrl,
       token: auth.token,
     });
 
     const dispatchResult = await dispatchWebhookActivity({
-      settingsJson: JSON.stringify(settings),
-      eventJson: JSON.stringify({
+      settings,
+      event: {
         topic: 'permission_request',
         sessionId: 'session-perm-1',
         sessionTitle: 'Fix prod issue',
@@ -364,7 +228,7 @@ describe('core e2e: webhook activity notifications', () => {
         toolInput: {
           command: 'git status --short && echo secret-token',
         },
-      }),
+      },
     });
     expect(dispatchResult).toEqual({
       attemptedChannels: 1,
@@ -390,5 +254,110 @@ describe('core e2e: webhook activity notifications', () => {
       toolDetails: 'Command: git',
     });
     expect(JSON.stringify(payload)).not.toContain('secret-token');
+  }, 240_000);
+
+  it('suppresses webhooks when canonical event policy disables an enabled legacy topic', async () => {
+    const testDir = run.testDir(`notifications-webhook-canonical-toggle-${randomUUID()}`);
+    server = await startServerLight({ testDir });
+    webhookServer = await startActivityWebhookCaptureServer();
+
+    const auth = await createTestAuth(server.baseUrl);
+    await writeAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      settings: buildCanonicalWebhookAccountSettings({
+        webhookUrl: webhookServer.url,
+        readyEventEnabled: false,
+      }),
+    });
+
+    const { settings } = await readAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+    });
+
+    const dispatchResult = await dispatchWebhookActivity({
+      settings,
+      nowIso: '2026-05-03T12:00:00.000Z',
+      event: {
+        topic: 'ready',
+        sessionId: 'session-ready-disabled',
+        sessionTitle: 'Review branch',
+        waitingForCommandLabel: 'Codex',
+      },
+    });
+    expect(dispatchResult).toEqual({
+      attemptedChannels: 0,
+      deliveredChannels: 0,
+    });
+    await expect(webhookServer.nextPayload(250)).rejects.toThrow('Timed out waiting for webhook payload');
+  }, 240_000);
+
+  it('keeps webhooks delivering during quiet hours unless the webhook policy opts into suppression', async () => {
+    const testDir = run.testDir(`notifications-webhook-quiet-hours-${randomUUID()}`);
+    server = await startServerLight({ testDir });
+    webhookServer = await startActivityWebhookCaptureServer();
+
+    const auth = await createTestAuth(server.baseUrl);
+    await writeAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      settings: buildCanonicalWebhookAccountSettings({
+        webhookUrl: webhookServer.url,
+      }),
+    });
+
+    const { settings: settingsDuringQuietHours } = await readAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+    });
+
+    const deliveredDuringQuietHours = await dispatchWebhookActivity({
+      settings: settingsDuringQuietHours,
+      nowIso: '2026-05-03T23:30:00.000Z',
+      event: {
+        topic: 'ready',
+        sessionId: 'session-quiet-deliver',
+        sessionTitle: 'Night build',
+        waitingForCommandLabel: 'Codex',
+      },
+    });
+    expect(deliveredDuringQuietHours).toEqual({
+      attemptedChannels: 1,
+      deliveredChannels: 1,
+    });
+    const deliveredPayload = await webhookServer.nextPayload();
+    expect(deliveredPayload.payload.topic).toBe('ready');
+    expect(deliveredPayload.payload.navigation).toEqual({ sessionId: 'session-quiet-deliver' });
+
+    await writeAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      settings: buildCanonicalWebhookAccountSettings({
+        webhookUrl: webhookServer.url,
+        webhookQuietHoursBehavior: 'suppress',
+      }),
+    });
+
+    const { settings: suppressingSettings } = await readAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+    });
+
+    const suppressedDuringQuietHours = await dispatchWebhookActivity({
+      settings: suppressingSettings,
+      nowIso: '2026-05-03T23:30:00.000Z',
+      event: {
+        topic: 'ready',
+        sessionId: 'session-quiet-suppress',
+        sessionTitle: 'Night build',
+        waitingForCommandLabel: 'Codex',
+      },
+    });
+    expect(suppressedDuringQuietHours).toEqual({
+      attemptedChannels: 0,
+      deliveredChannels: 0,
+    });
+    await expect(webhookServer.nextPayload(250)).rejects.toThrow('Timed out waiting for webhook payload');
   }, 240_000);
 });

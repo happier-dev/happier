@@ -7,6 +7,8 @@ import {
   scrapeClusterServiceMetricSelectors,
   scrapeServiceMetricCounters,
   scrapeServiceMetricSelectors,
+  startClusterServiceMetricPeakSampler,
+  startContainerMemoryPeakSampler,
   summarizeGatewayLogs,
   summarizeGatewayLogsFromComposeLogs,
 } from './fullComposeScenarioSupport';
@@ -387,6 +389,208 @@ describe('fullComposeScenarioSupport', () => {
         upstreamPrematurelyClosed: 1,
         noLiveUpstreams: 1,
       },
+    });
+  });
+
+  it('collects per-replica peak samples and delivers threshold diagnostic signals when stop is called before the next interval fires', async () => {
+    const metricPayloads = [
+      JSON.stringify([
+        'runtime_heap_space_used_old_space_bytes 128',
+        'runtime_heap_space_used_old_space_bytes 448',
+      ]),
+      JSON.stringify([
+        'runtime_heap_space_used_old_space_bytes 96',
+        'runtime_heap_space_used_old_space_bytes 512',
+      ]),
+    ];
+    const execInService = vi.fn(async () => metricPayloads.shift() ?? JSON.stringify([]));
+    const execInContainer = vi.fn(async () => '');
+    const target = {
+      mode: 'full-compose',
+      baseUrl: 'http://127.0.0.1:43080',
+      topology: {
+        kind: 'full-compose',
+        services: ['api'],
+        expectedApiReplicas: 1,
+        expectedWorkerReplicas: 0,
+        resolvedApiReplicas: 1,
+        resolvedWorkerReplicas: 0,
+        baseUrl: 'http://127.0.0.1:43080',
+        ports: {},
+      },
+      admin: {
+        listServiceContainers: vi.fn(async () => [
+          {
+            id: 'api-1',
+            name: 'api-1',
+            service: 'api',
+            state: 'running',
+            health: 'healthy',
+            ipv4Addresses: ['10.20.0.11'],
+          },
+          {
+            id: 'api-2',
+            name: 'api-2',
+            service: 'api',
+            state: 'running',
+            health: 'healthy',
+            ipv4Addresses: ['10.20.0.12'],
+          },
+        ]),
+        writeGatewayConfig: vi.fn(async () => ''),
+        activateGatewayConfig: vi.fn(async () => {}),
+        startService: vi.fn(async () => {}),
+        stopService: vi.fn(async () => {}),
+        stopContainer: vi.fn(async () => {}),
+        killContainer: vi.fn(async () => {}),
+        execInService,
+        execInContainer,
+      },
+      preserveForInspection: vi.fn(),
+      stop: vi.fn(async () => {}),
+      collectDiagnostics: vi.fn(async () => {}),
+    } satisfies StartedStressTarget;
+
+    const sampler = startClusterServiceMetricPeakSampler({
+      target,
+      service: 'api',
+      metricNames: ['runtime_heap_space_used_old_space_bytes'],
+      thresholdSignals: [{
+        valueKey: 'runtime_heap_space_used_old_space_bytes',
+        threshold: 500,
+        signal: 'SIGUSR2',
+      }],
+      intervalMs: 60_000,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(sampler.stop()).resolves.toEqual({
+      replicas: [
+        {
+          target: '10.20.0.11:9090',
+          containerId: 'api-1',
+          containerName: 'api-1',
+          values: {
+            runtime_heap_space_used_old_space_bytes: 128,
+          },
+        },
+        {
+          target: '10.20.0.12:9090',
+          containerId: 'api-2',
+          containerName: 'api-2',
+          values: {
+            runtime_heap_space_used_old_space_bytes: 512,
+          },
+        },
+      ],
+      signalEvents: [{
+        target: '10.20.0.12:9090',
+        containerId: 'api-2',
+        containerName: 'api-2',
+        valueKey: 'runtime_heap_space_used_old_space_bytes',
+        threshold: 500,
+        observedValue: 512,
+        signal: 'SIGUSR2',
+      }],
+      signalErrors: [],
+    });
+
+    expect(execInContainer).toHaveBeenCalledWith(
+      'api-2',
+      [
+        'node',
+        '-e',
+        'process.kill(1, process.argv[1] ?? "SIGUSR2");',
+        'SIGUSR2',
+      ],
+    );
+  });
+
+  it('samples container memory peaks from real full-compose container execs', async () => {
+    const metricsByContainer = new Map<string, string[]>([
+      ['api-1', ['2048\n8192\n24\n', '3072\n8192\n40\n']],
+      ['worker-1', ['1024\nmax\n8\n', '1024\nmax\n8\n']],
+    ]);
+    const target = {
+      mode: 'full-compose',
+      baseUrl: 'http://127.0.0.1:43080',
+      topology: {
+        kind: 'full-compose',
+        services: ['api', 'worker'],
+        expectedApiReplicas: 1,
+        expectedWorkerReplicas: 1,
+        resolvedApiReplicas: 1,
+        resolvedWorkerReplicas: 1,
+        baseUrl: 'http://127.0.0.1:43080',
+        ports: {},
+      },
+      admin: {
+        listServiceContainers: vi.fn(async (service: string) => {
+          if (service === 'api') {
+            return [{
+              id: 'api-1',
+              name: 'api-1',
+              service: 'api',
+              state: 'running',
+              health: 'healthy',
+              ipv4Addresses: ['10.20.0.11'],
+            }];
+          }
+          if (service === 'worker') {
+            return [{
+              id: 'worker-1',
+              name: 'worker-1',
+              service: 'worker',
+              state: 'running',
+              health: 'healthy',
+              ipv4Addresses: ['10.20.0.21'],
+            }];
+          }
+          return [];
+        }),
+        writeGatewayConfig: vi.fn(async () => ''),
+        activateGatewayConfig: vi.fn(async () => {}),
+        startService: vi.fn(async () => {}),
+        stopService: vi.fn(async () => {}),
+        stopContainer: vi.fn(async () => {}),
+        killContainer: vi.fn(async () => {}),
+        execInService: vi.fn(async () => ''),
+        execInContainer: vi.fn(async (containerId: string) => metricsByContainer.get(containerId)?.shift() ?? '0\n0\n0\n'),
+      },
+      preserveForInspection: vi.fn(),
+      stop: vi.fn(async () => {}),
+      collectDiagnostics: vi.fn(async () => {}),
+    } satisfies StartedStressTarget;
+
+    const sampler = startContainerMemoryPeakSampler({
+      target,
+      services: ['api', 'worker'],
+      intervalMs: 60_000,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(sampler.stop()).resolves.toEqual({
+      containers: [
+        {
+          service: 'api',
+          containerId: 'api-1',
+          containerName: 'api-1',
+          peakMemoryUsageBytes: 3072,
+          memoryLimitBytes: 8192,
+          peakMemoryPercent: 37.5,
+          peakPids: 40,
+        },
+        {
+          service: 'worker',
+          containerId: 'worker-1',
+          containerName: 'worker-1',
+          peakMemoryUsageBytes: 1024,
+          peakPids: 8,
+        },
+      ],
+      error: undefined,
     });
   });
 });

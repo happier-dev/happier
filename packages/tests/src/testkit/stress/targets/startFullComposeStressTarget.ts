@@ -557,6 +557,9 @@ export async function startFullComposeStressTarget(
         execInService: async (service, command) => {
           return await runtime.execCapture(service, command);
         },
+        execInContainer: runtime.execInContainer
+          ? async (containerId, command) => await runtime.execInContainer!(containerId, command)
+          : undefined,
       },
       preserveForInspection: () => {
         preserveTopologyOnStop = true;

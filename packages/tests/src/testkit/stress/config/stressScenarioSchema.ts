@@ -4,6 +4,7 @@ export type StressFilesBackend = 's3' | 'local';
 export type StressKillTarget = 'api' | 'worker' | 'none';
 export type StressComposeImageBuildStrategy = 'always' | 'if-missing' | 'never';
 export type StressComposeFrontDoorMode = 'gateway' | 'api-direct';
+export type StressComposeLoadGenerationMode = 'host' | 'compose-network';
 export type StressMixedSessionMode = 'representative' | 'presence-fan-in';
 export type StressMixedConnectPattern = 'burst' | 'ramped';
 
@@ -25,13 +26,18 @@ export type StressLoadConfig = Readonly<{
   mixedConnectPattern?: StressMixedConnectPattern;
   mixedConnectRampStepMs?: number;
   mixedSocketConnectTimeoutMs?: number;
+  mixedConnectConvergenceTimeoutMs?: number;
   mixedSetupRequestTimeoutMs?: number;
+  mixedSocketAutoReconnect?: boolean;
+  mixedCaptureSocketEvents?: boolean;
   mixedRpcRegistrationConcurrency?: number;
   mixedRpcBatchConcurrency?: number;
   mixedPresencePulseConcurrency?: number;
   mixedMessageBatchConcurrency?: number;
   mixedMessageEmitterCount?: number;
   mixedRunnerShards?: number;
+  mixedActiveSessionPercent?: number;
+  mixedStreamingSegmentsPerSecond?: number;
   rpcCallsPerSecond: number;
   messagesPerSecond: number;
   reconnectRate: number;
@@ -51,8 +57,11 @@ export type StressComposeConfig = Readonly<{
   imageBuildStrategy: StressComposeImageBuildStrategy;
   reuseRunningTopology: boolean;
   frontDoorMode?: StressComposeFrontDoorMode;
+  loadGenerationMode?: StressComposeLoadGenerationMode;
   dbConnectionLimit?: number;
   authLoginEligibilityAccountSnapshotCacheTtlMs?: number;
+  apiHeapDiagnosticSignal?: NodeJS.Signals;
+  apiHeapDiagnosticOldSpaceThresholdBytes?: number;
   gatewayWorkerConnections?: number;
   gatewayWorkerRlimitNoFile?: number;
   gatewayPort?: number;

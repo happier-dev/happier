@@ -150,6 +150,24 @@ describe('buildMixedRealisticWorkload', () => {
     });
   });
 
+  it('allows zero active sessions when the mixed-active percent is explicitly disabled', () => {
+    expect(
+      buildMixedRealisticWorkload({
+        ...baseConfig,
+        load: {
+          ...baseConfig.load,
+          users: 4,
+          mixedActiveSessionPercent: 0,
+        },
+      }),
+    ).toMatchObject({
+      sessionCount: 4,
+      activeSessionCount: 0,
+      rpcListenerCount: 2,
+      rpcReadinessProbeCount: 2,
+    });
+  });
+
   it('assigns representative mixed sessions to distinct auth users', () => {
     expect(
       buildMixedRealisticWorkload({

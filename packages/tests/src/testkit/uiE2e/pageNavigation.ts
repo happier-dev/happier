@@ -11,15 +11,17 @@ export {
   dismissSetupWizardIfVisible,
 } from './createAccountAndReachConnectMachineState';
 
-export async function gotoDomContentLoadedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
+type GotoPage = Pick<Page, 'goto' | 'url' | 'waitForTimeout'>;
+
+export async function gotoDomContentLoadedWithRetries(page: GotoPage, url: string, timeoutMs = 90_000): Promise<void> {
   await gotoWithRetries(page, url, timeoutMs, 'domcontentloaded');
 }
 
-export async function gotoCommittedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
+export async function gotoCommittedWithRetries(page: GotoPage, url: string, timeoutMs = 90_000): Promise<void> {
   await gotoWithRetries(page, url, timeoutMs, 'commit');
 }
 
-async function gotoWithRetries(page: Page, url: string, timeoutMs: number, waitUntil: 'commit' | 'domcontentloaded'): Promise<void> {
+async function gotoWithRetries(page: GotoPage, url: string, timeoutMs: number, waitUntil: 'commit' | 'domcontentloaded'): Promise<void> {
   const normalizeUrl = (value: string): string => value.replace(/\/+$/, '');
   const normalizeLoopbackUrl = (value: string): string => normalizeUrl(normalizeLoopbackBaseUrl(value));
   const isChromeWebDataErrorNavigation = (error: unknown): boolean => {
@@ -108,7 +110,7 @@ function normalizePathname(value: string): string {
   return pathname || '/';
 }
 
-export function isGotoTimeoutOnExpectedPath(page: Page, expectedPathname: string, error: unknown): boolean {
+export function isGotoTimeoutOnExpectedPath(page: Pick<Page, 'url'>, expectedPathname: string, error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (!message.toLowerCase().includes('timeout')) return false;
   return hasPathname(page.url(), expectedPathname);
@@ -123,7 +125,7 @@ export function hasPathname(url: string, expectedPathname: string): boolean {
 }
 
 export async function gotoDomContentLoadedWithPathFallback(
-  page: Page,
+  page: GotoPage,
   url: string,
   expectedPathname: string,
   timeoutMs = 90_000,
@@ -167,7 +169,7 @@ export async function waitForSessionActionsHomeUi(params: Readonly<{
 }
 
 export async function waitForAuthenticatedRouteUi(params: Readonly<{
-  page: Pick<Page, 'getByTestId' | 'reload' | 'url' | 'waitForTimeout'>;
+  page: Pick<Page, 'getByTestId' | 'goto' | 'reload' | 'url' | 'waitForTimeout'>;
   expectedPathname: string;
   requiredTestIds: readonly string[];
   blockedTestIds?: readonly string[] | undefined;
@@ -179,6 +181,7 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
     ? params.timeoutMs
     : 120_000;
   const reloadOnFailure = params.reloadOnFailure !== false;
+  const expectedPathname = normalizePathname(params.expectedPathname);
   const requiredTestIds = params.requiredTestIds.filter((value) => typeof value === 'string' && value.trim().length > 0);
   const blockedTestIds = (params.blockedTestIds ?? ['welcome-create-account'])
     .filter((value) => typeof value === 'string' && value.trim().length > 0);
@@ -186,6 +189,8 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
   if (requiredTestIds.length === 0) {
     throw new Error('waitForAuthenticatedRouteUi requires at least one required test id.');
   }
+
+  const initialTargetUrl = params.page.url();
 
   const waitForRouteUiOnce = async (): Promise<void> => {
     const startedAt = Date.now();
@@ -197,7 +202,7 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
         pathname = '';
       }
 
-      if (pathname !== normalizePathname(params.expectedPathname)) {
+      if (pathname !== expectedPathname) {
         await params.page.waitForTimeout(250);
         continue;
       }
@@ -216,7 +221,7 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
 
     const diagnostics = params.browserDiagnostics ? `\n\n${params.browserDiagnostics()}` : '';
     throw new Error(
-      `App did not reach the authenticated route UI for ${normalizePathname(params.expectedPathname)} within ${timeoutMs}ms.${diagnostics}`,
+      `App did not reach the authenticated route UI for ${expectedPathname} within ${timeoutMs}ms.${diagnostics}`,
     );
   };
 
@@ -224,7 +229,11 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
     await waitForRouteUiOnce();
   } catch (error) {
     if (!reloadOnFailure) throw error;
-    await params.page.reload({ waitUntil: 'domcontentloaded' });
+    if (hasPathname(initialTargetUrl, expectedPathname) && !hasPathname(params.page.url(), expectedPathname)) {
+      await gotoDomContentLoadedWithPathFallback(params.page, initialTargetUrl, expectedPathname, timeoutMs);
+    } else {
+      await params.page.reload({ waitUntil: 'domcontentloaded' });
+    }
     await waitForRouteUiOnce();
   }
 }
@@ -265,12 +274,18 @@ async function waitForHomeUi(params: Readonly<{
       const setupWizardVisible = await params.page.getByTestId('setupWizard.surface').count();
       const authenticatedHomeVisible = params.requireSessionActions
         ? createSessionVisible > 0 || selectSessionVisible > 0
-        : connectMachineVisible > 0 || createSessionVisible > 0 || selectSessionVisible > 0 || startNewSessionVisible > 0;
+        : connectMachineVisible > 0
+          || createSessionVisible > 0
+          || selectSessionVisible > 0
+          || startNewSessionVisible > 0;
+
+      if (welcomeVisible === 0 && setupWizardVisible > 0) {
+        await dismissSetupWizardIfVisible({ page: params.page });
+        await params.page.waitForTimeout(250);
+        continue;
+      }
 
       if (welcomeVisible === 0 && authenticatedHomeVisible) {
-        if (setupWizardVisible > 0) {
-          await dismissSetupWizardIfVisible({ page: params.page });
-        }
         return;
       }
 

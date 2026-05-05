@@ -300,19 +300,20 @@ describe('createAccountAndReachConnectMachineState', () => {
     await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
   });
 
-  it('accepts the start-daemon surface before persisted auth credentials become readable', async () => {
+  it('waits for persisted auth credentials before accepting the start-daemon surface', async () => {
     const page = createFakePage({
       testIdCounts: {
-        'welcome-create-account': [1, 0, 0, 0],
-        'session-getting-started-kind-connect_machine': [0, 0, 0, 0],
-        'session-getting-started-kind-start_daemon': [0, 1, 1, 1],
-        'setupWizard.surface': [0, 0, 0, 0],
-        'tabbar-tab-sessions': [1, 1, 1],
+        'welcome-create-account': [1, 0, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 0, 0, 0, 0],
+        'session-getting-started-kind-start_daemon': [0, 1, 1, 1, 1],
+        'setupWizard.surface': [0, 0, 0, 0, 0],
+        'tabbar-tab-sessions': [1, 1, 1, 1],
       },
-      evaluateResults: Array.from({ length: 64 }, () => false),
+      evaluateResults: [false, false, true],
     });
 
     await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    expect(page.evaluate).toHaveBeenCalledTimes(3);
   });
 
   it('dismisses setup wizard only when visible', async () => {

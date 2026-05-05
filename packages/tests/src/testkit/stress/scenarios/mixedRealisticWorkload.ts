@@ -8,13 +8,16 @@ import {
 
 export type MixedRealisticWorkload = Readonly<{
   sessionCount: number;
+  activeSessionCount: number;
   sessionPlans: ReadonlyArray<{
     authIndex: number;
     sessionSlot: number;
   }>;
+  sessionPlanCount: number;
   rpcListenerCount: number;
   rpcReadinessProbeCount: number;
   messageCount: number;
+  streamSegmentCount: number;
   reconnectCycles: number;
   verificationSessionCount: number;
   presencePulseCollectorCount: number;
@@ -35,6 +38,36 @@ function buildMixedSessionPlans(config: StressConfig): MixedRealisticWorkload['s
   ).flat();
 }
 
+function resolveDurationSeconds(config: StressConfig): number {
+  return Math.max(1, Math.ceil(config.duration.durationMs / 1000));
+}
+
+function resolveActiveSessionCount(sessionCount: number, config: StressConfig): number {
+  const activePercent = clamp(config.load.mixedActiveSessionPercent ?? 100, 0, 100);
+  if (activePercent === 0) {
+    return 0;
+  }
+
+  const scaledCount = Math.floor((sessionCount * activePercent) / 100);
+  return clamp(Math.max(1, scaledCount), 1, sessionCount);
+}
+
+function resolveStreamSegmentCount(config: StressConfig): number {
+  const perSecond = Math.max(0, config.load.mixedStreamingSegmentsPerSecond ?? 0);
+  return perSecond * resolveDurationSeconds(config);
+}
+
+export function resolveMixedSessionPlan(
+  workload: MixedRealisticWorkload,
+  sessionPlanIndex: number,
+): MixedRealisticWorkload['sessionPlans'][number] {
+  const sessionPlan = workload.sessionPlans[sessionPlanIndex];
+  if (!sessionPlan) {
+    throw new Error(`Missing mixed session plan at index ${sessionPlanIndex}`);
+  }
+  return sessionPlan;
+}
+
 export function buildMixedRealisticWorkload(config: StressConfig): MixedRealisticWorkload {
   const fanInMultiplier = Math.max(1, config.load.machinesPerUser * config.load.sessionsPerUser);
   const presenceFanInMode = config.targetMode === 'full-compose' && config.load.mixedSessionMode === 'presence-fan-in';
@@ -46,6 +79,7 @@ export function buildMixedRealisticWorkload(config: StressConfig): MixedRealisti
         : Math.max(1, config.load.users)
     )
     : resolvePresenceSessionCount(config);
+  const activeSessionCount = resolveActiveSessionCount(sessionCount, config);
   const rpcListenerBudget = Math.max(1, Math.ceil(sessionCount / 2));
   const scaledRpcListeners = presenceFanInMode
     ? resolveRpcListenerCount(config) * fanInMultiplier
@@ -63,10 +97,13 @@ export function buildMixedRealisticWorkload(config: StressConfig): MixedRealisti
 
   return {
     sessionCount,
+    activeSessionCount,
     sessionPlans,
+    sessionPlanCount: sessionPlans.length,
     rpcListenerCount,
     rpcReadinessProbeCount,
     messageCount,
+    streamSegmentCount: resolveStreamSegmentCount(config),
     reconnectCycles,
     verificationSessionCount,
     presencePulseCollectorCount: presenceFanInMode ? sessionCount : 0,

@@ -4,15 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-
-const CLI_SHARED_DEP_PACKAGE_NAMES = [
-  'agents',
-  'cli-common',
-  'connection-supervisor',
-  'protocol',
-  'transfers',
-  'release-runtime',
-] as const;
+import { CLI_SHARED_DEP_PACKAGE_NAMES } from '../../src/testkit/process/workspacePackageResolution';
 
 type RunLoggedCommand = (params: {
   command: string;
@@ -119,6 +111,8 @@ describe('core e2e: cli dist build', () => {
 
     expect(entrypoint).toBe(resolve(cliDistDir, 'index.mjs'));
     expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(await exists(resolve(repoRoot, 'packages', 'peer-mediation', 'dist', 'index.js'))).toBe(true);
+    expect(await exists(resolve(repoRoot, 'packages', 'plugin-sdk', 'dist', 'index.js'))).toBe(true);
     expect(await exists(resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js'))).toBe(true);
     expect(await exists(resolve(repoRoot, 'packages', 'release-runtime', 'dist', 'index.js'))).toBe(true);
   });

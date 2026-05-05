@@ -5,11 +5,8 @@ import {
   resolveSignalExitCode,
 } from './runPlaywrightWithHeartbeat.shared.mjs';
 
-const DEFAULT_PLAYWRIGHT_WRAPPER_TIMEOUT_MS = 15 * 60 * 1000;
-
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
+import { resolvePlaywrightWrapperTimeoutFallbackMs } from './playwrightWrapperTimeout.mjs';
 
 const { config, passThrough } = parseHeartbeatArgs(process.argv);
 if (!config) {
@@ -19,14 +16,20 @@ if (!config) {
 }
 
 const childArgs = ['-s', 'playwright', 'test', '-c', config, ...passThrough];
+const invocation = resolveYarnCommandInvocation(childArgs, { npmExecPath: '' });
 
 await runHeartbeatWrappedCommand({
   toolName: 'playwright',
   config,
-  command: yarnCommand(),
-  args: childArgs,
-  spawnOptions: createPlaywrightSpawnOptions(process.env),
-  defaultTimeoutMs: DEFAULT_PLAYWRIGHT_WRAPPER_TIMEOUT_MS,
+  command: invocation.command,
+  args: invocation.args,
+  spawnOptions: {
+    ...createPlaywrightSpawnOptions(process.env),
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
+  },
+  defaultTimeoutMs: resolvePlaywrightWrapperTimeoutFallbackMs(process.env),
   resolveExitCode(result) {
     return typeof result.code === 'number' ? result.code : resolveSignalExitCode(result.signal);
   },

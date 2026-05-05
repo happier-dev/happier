@@ -97,7 +97,7 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
     });
 
     const scoped = (key: string): string => scopedStorageId(key, params.storageScope);
-    const scopedServerStateKey = scoped('server-profiles:server-state-v1');
+    const scopedServerStateKey = `${scoped('server-profiles')}:server-state-v1`;
     const scopedAuthKey = scoped('auth_credentials');
     const scopedServerAuthKey = scoped(`auth_credentials__srv_${serverId}`);
 

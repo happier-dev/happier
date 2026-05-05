@@ -9,6 +9,7 @@ import * as pageNavigation from './pageNavigation';
 
 type WaitForAuthenticatedHomeUiPage = Readonly<{
   getByTestId(testId: string): { count: () => Promise<number> };
+  goto?: (_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>;
   reload: () => Promise<void>;
   url: () => string;
   waitForTimeout: (delayMs: number) => Promise<void>;
@@ -493,6 +494,80 @@ describe('waitForAuthenticatedHomeUi', () => {
     expect(page.reload).not.toHaveBeenCalled();
     expect(counts.get('main-header-start-new-session')).toBeGreaterThanOrEqual(1);
   });
+
+  it('dismisses an auto-open setup wizard before authenticated home markers render', async () => {
+    let nowMs = 0;
+    let setupWizardDismissed = false;
+    let skipClickCount = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => {
+          if (testId === 'welcome-create-account') return 0;
+          if (testId === 'setupWizard.surface') return setupWizardDismissed ? 0 : 1;
+          if (testId === 'setupWizard.surface-skip') return setupWizardDismissed ? 0 : 1;
+          if (testId === 'main-header-start-new-session') return setupWizardDismissed ? 1 : 0;
+          return 0;
+        },
+        click: async () => {
+          if (testId === 'setupWizard.surface-skip') {
+            skipClickCount += 1;
+            setupWizardDismissed = true;
+          }
+        },
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => 'http://127.0.0.1:3000/',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).resolves.toBeUndefined();
+
+    expect(skipClickCount).toBe(1);
+    expect(page.reload).not.toHaveBeenCalled();
+  });
+
+  it('does not accept desktop shell chrome alone as authenticated home readiness', async () => {
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => {
+          if (testId === 'welcome-create-account') return 0;
+          if (testId === 'desktop-sidebar-chrome') return 1;
+          return 0;
+        },
+        click: async () => {},
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => 'http://127.0.0.1:3000/',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).rejects.toThrow(/authenticated home ui/i);
+
+    expect(page.reload).not.toHaveBeenCalled();
+  });
 });
 
 describe('waitForAuthenticatedRouteUi', () => {
@@ -552,6 +627,60 @@ describe('waitForAuthenticatedRouteUi', () => {
     expect(counts.get('welcome-create-account')).toBeGreaterThanOrEqual(2);
     expect(counts.get('settings-provider-field-codexBackendMode')).toBeGreaterThanOrEqual(2);
     expect(nowMs).toBeGreaterThanOrEqual(750);
+  });
+
+  it('revisits the original route when authenticated bootstrap falls back to home before the route becomes ready', async () => {
+    let nowMs = 0;
+    let restoredRoute = false;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => {
+          if (testId === 'welcome-create-account') return 0;
+          if (testId === 'settings.plugins.marketplace.catalogUrl') return restoredRoute ? 1 : 0;
+          return 0;
+        },
+      }),
+      goto: vi.fn(async () => {
+        restoredRoute = true;
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => (
+        restoredRoute || nowMs < 250
+          ? 'http://127.0.0.1:3000/settings/plugins'
+          : 'http://127.0.0.1:3000/'
+      ),
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedRouteUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{
+          page: WaitForAuthenticatedHomeUiPage;
+          expectedPathname: string;
+          requiredTestIds: readonly string[];
+          timeoutMs?: number;
+          reloadOnFailure?: boolean;
+        }>,
+      ) => Promise<void>)({
+        page,
+        expectedPathname: '/settings/plugins',
+        requiredTestIds: ['settings.plugins.marketplace.catalogUrl'],
+        timeoutMs: 500,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(page.goto).toHaveBeenCalledWith(
+      'http://127.0.0.1:3000/settings/plugins',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(page.reload).not.toHaveBeenCalled();
   });
 });
 

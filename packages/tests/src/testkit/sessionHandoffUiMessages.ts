@@ -44,7 +44,9 @@ export async function fakeClaudeLogContainsUserText(logPath: string, text: strin
         .filter((line) => line.length > 0)
         .some((line) => {
             try {
-                const parsed = JSON.parse(line) as { type?: unknown; userTextPreview?: unknown };
+                const parsed = JSON.parse(line) as { type?: unknown; userText?: unknown; userTextPreview?: unknown };
+                const userText = typeof parsed.userText === 'string' ? parsed.userText : null;
+                if (parsed.type === 'sdk_stdin' && userText?.includes(text)) return true;
                 return parsed.type === 'sdk_stdin'
                     && typeof parsed.userTextPreview === 'string'
                     && parsed.userTextPreview.includes(text);

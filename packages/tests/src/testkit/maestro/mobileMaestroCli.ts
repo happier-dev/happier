@@ -4,7 +4,7 @@ import { startServerLight } from '../process/serverLight';
 import { startUiDevClientMetro } from '../process/uiDevClientMetro';
 import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
 
-import { runMobileMaestro } from './mobileMaestroRunner';
+import { redactSensitiveMaestroCommandArgsForLog, runMobileMaestro } from './mobileMaestroRunner';
 
 function elapsedSeconds(startedAtMs: number): number {
   return Math.floor((Date.now() - startedAtMs) / 1000);
@@ -27,6 +27,7 @@ async function main() {
         return {
           baseUrl: started.baseUrl,
           port: started.port,
+          stdoutPath: started.stdoutPath,
           stop: started.stop,
         };
       },
@@ -58,8 +59,9 @@ async function main() {
       },
       runMaestro: async ({ cwd, env, maestroBin, args }) => {
         const startedAt = Date.now();
+        const logArgs = redactSensitiveMaestroCommandArgsForLog(args, env);
         // eslint-disable-next-line no-console
-        console.log(`[tests] starting: ${maestroBin} ${args.join(' ')}`);
+        console.log(`[tests] starting: ${maestroBin} ${logArgs.join(' ')}`);
 
         const heartbeatMs = Number.parseInt(process.env.HAPPIER_TEST_HEARTBEAT_MS ?? '30000', 10);
         const safeHeartbeatMs = Number.isFinite(heartbeatMs) && heartbeatMs >= 1000 ? heartbeatMs : 30000;

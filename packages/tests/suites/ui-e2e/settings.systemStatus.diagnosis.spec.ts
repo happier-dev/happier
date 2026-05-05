@@ -114,7 +114,7 @@ test.describe('ui e2e: System Status + Diagnosis screens', () => {
 
     await createAccountAndReachConnectMachineState({ page });
 
-    await page.goto(`${uiBaseUrl}/settings/system-status`, { waitUntil: 'domcontentloaded' });
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/system-status`);
     await expect(page.getByTestId('system-status-screen')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('system-status-run-diagnosis').click();
 
@@ -185,15 +185,17 @@ test.describe('ui e2e: System Status + Diagnosis screens', () => {
         { timeout: 180_000 },
       ).toBe(true);
 
-      await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`);
       await waitForAuthenticatedHomeUi({ page, timeoutMs: 180_000 });
 
-      await page.goto(`${uiBaseUrl}/settings/system-status`, { waitUntil: 'domcontentloaded' });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/system-status`);
       await expect(page.getByTestId('system-status-screen')).toHaveCount(1, { timeout: 60_000 });
       await expect(page.getByTestId('machine-runtime-inventory-summary')).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId('machine-runtime-inventory-repair-summary')).toHaveCount(1, { timeout: 120_000 });
 
-      await page.goto(`${uiBaseUrl}/machine/${encodeURIComponent(machineId)}`, { waitUntil: 'domcontentloaded' });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/machine/${encodeURIComponent(machineId)}`);
       await expect(page.getByTestId('machine-runtime-inventory-summary')).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId('machine-runtime-inventory-repair-summary')).toHaveCount(1, { timeout: 120_000 });
       await expect(page.getByTestId('machine-runtime-inventory-cli')).toHaveCount(1, { timeout: 120_000 });
       await expect(page.getByTestId('machine-runtime-inventory-daemon')).toHaveCount(1, { timeout: 120_000 });
     } finally {

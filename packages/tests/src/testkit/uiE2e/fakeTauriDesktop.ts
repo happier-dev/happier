@@ -32,6 +32,7 @@ export type FakeTauriDesktopState = Readonly<{
     autostartEnabled: boolean;
     controls: FakeTauriDesktopControlsState;
     currentWindowLabel: string;
+    desktopActivityOverlayState: unknown | null;
     invokeLog: readonly FakeTauriDesktopInvokeLogEntry[];
     isMaximized: boolean;
     platform: FakeTauriDesktopPlatform;
@@ -73,6 +74,27 @@ type MutableFakeTauriDesktopWindow = Window & {
         unregisterCallback?: (id: number) => void;
     };
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readDesktopActivityOverlaySyncPayload(args?: Record<string, unknown>): unknown | null {
+    return args && 'payload' in args ? args.payload ?? null : null;
+}
+
+function resolveDesktopActivityOverlayExpandedState(
+    current: unknown | null,
+    expanded: unknown,
+): unknown | null {
+    if (!isRecord(current) || typeof expanded !== 'boolean') {
+        return current;
+    }
+    return {
+        ...current,
+        expanded,
+    };
+}
 
 function resolveDefaultStrategy(platform: FakeTauriDesktopPlatform): FakeTauriDesktopStrategy {
     return platform === 'macos' ? 'native-macos-traffic-lights' : 'custom-controls';
@@ -228,6 +250,7 @@ export function createFakeTauriDesktopState(
             ...(overrides.controls ?? {}),
         },
         currentWindowLabel: overrides.currentWindowLabel ?? MAIN_WINDOW_LABEL,
+        desktopActivityOverlayState: overrides.desktopActivityOverlayState ?? null,
         invokeLog: overrides.invokeLog ?? [],
         isMaximized: false,
         platform,
@@ -245,6 +268,40 @@ export async function applyFakeTauriDesktopCommand(
     const nextStateBase = createNextStateBase(state, command, args);
 
     switch (command) {
+        case 'desktop_activity_overlay_sync':
+            return {
+                result: null,
+                state: {
+                    ...nextStateBase,
+                    desktopActivityOverlayState: readDesktopActivityOverlaySyncPayload(args),
+                },
+            };
+        case 'desktop_activity_overlay_get_window_state':
+            return {
+                result: nextStateBase.desktopActivityOverlayState,
+                state: nextStateBase,
+            };
+        case 'desktop_activity_overlay_set_expanded':
+            return {
+                result: null,
+                state: {
+                    ...nextStateBase,
+                    desktopActivityOverlayState: resolveDesktopActivityOverlayExpandedState(
+                        nextStateBase.desktopActivityOverlayState,
+                        args?.expanded,
+                    ),
+                },
+            };
+        case 'desktop_activity_overlay_set_input_locked':
+        case 'desktop_activity_overlay_apply_drag_delta':
+        case 'desktop_activity_overlay_reset_position':
+        case 'desktop_activity_overlay_emit_interaction':
+        case 'desktop_activity_overlay_emit_interaction_result':
+        case 'desktop_show_main_window':
+            return {
+                result: null,
+                state: nextStateBase,
+            };
         case 'desktop_get_window_chrome_policy':
             return {
                 result: {
@@ -519,6 +576,56 @@ export async function installFakeTauriDesktopBridge(
             const nextStateBase = createNextStateBase(currentState, command, args);
 
             switch (command) {
+                case 'desktop_activity_overlay_sync': {
+                    const payload = readDesktopActivityOverlaySyncPayload(args);
+                    return {
+                        emittedEvents: [
+                            {
+                                event: 'activityOverlay://state',
+                                payload,
+                            },
+                        ],
+                        result: null,
+                        state: {
+                            ...nextStateBase,
+                            desktopActivityOverlayState: payload,
+                        },
+                    };
+                }
+                case 'desktop_activity_overlay_get_window_state':
+                    return {
+                        result: nextStateBase.desktopActivityOverlayState,
+                        state: nextStateBase,
+                    };
+                case 'desktop_activity_overlay_set_expanded': {
+                    const payload = resolveDesktopActivityOverlayExpandedState(
+                        nextStateBase.desktopActivityOverlayState,
+                        args?.expanded,
+                    );
+                    return {
+                        emittedEvents: [
+                            {
+                                event: 'activityOverlay://state',
+                                payload,
+                            },
+                        ],
+                        result: null,
+                        state: {
+                            ...nextStateBase,
+                            desktopActivityOverlayState: payload,
+                        },
+                    };
+                }
+                case 'desktop_activity_overlay_set_input_locked':
+                case 'desktop_activity_overlay_apply_drag_delta':
+                case 'desktop_activity_overlay_reset_position':
+                case 'desktop_activity_overlay_emit_interaction':
+                case 'desktop_activity_overlay_emit_interaction_result':
+                case 'desktop_show_main_window':
+                    return {
+                        result: null,
+                        state: nextStateBase,
+                    };
                 case 'plugin:event|listen': {
                     const event = String(args?.event ?? '').trim();
                     const handler = Number(args?.handler);

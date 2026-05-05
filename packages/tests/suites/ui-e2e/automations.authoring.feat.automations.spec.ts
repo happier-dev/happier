@@ -17,6 +17,10 @@ function getVisibleSessionComposer(page: Page) {
     return page.locator('[data-testid="session-composer-input"]:visible');
 }
 
+function getAutomationEnabledSwitch(page: Page) {
+    return page.getByTestId('session-authoring-automation-toggle-label').getByRole('switch');
+}
+
 async function ensureSwitchEnabled(toggle: Locator) {
     await expect(toggle).toHaveCount(1, { timeout: 60_000 });
     if ((await toggle.getAttribute('aria-checked')) !== 'true') {
@@ -50,28 +54,46 @@ async function selectMachineForNewSession(params: Readonly<{
     await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 }
 
-async function readAuthTokenFromBrowserStorage(page: Page): Promise<string> {
-    const token = await page.evaluate(() => {
-        for (let index = 0; index < localStorage.length; index += 1) {
-            const key = localStorage.key(index);
-            if (!key?.startsWith('auth_credentials')) continue;
-            const raw = localStorage.getItem(key);
-            if (!raw) continue;
-            try {
-                const parsed = JSON.parse(raw) as { token?: unknown };
-                if (typeof parsed.token === 'string' && parsed.token.trim()) {
-                    return parsed.token.trim();
-                }
-            } catch {
-                // ignore malformed storage entries and keep scanning
-            }
-        }
-        return null;
-    });
-
-    if (typeof token === 'string' && token.trim()) {
-        return token.trim();
+async function closeBackendPickerIfVisible(page: Page): Promise<void> {
+    const claudeBackendOption = page.getByTestId('new-session-agent:claude').first();
+    if ((await claudeBackendOption.count()) === 0 || !(await claudeBackendOption.isVisible().catch(() => false))) {
+        return;
     }
+
+    await claudeBackendOption.click();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+}
+
+async function readAuthTokenFromBrowserStorage(page: Page, timeoutMs = 120_000): Promise<string> {
+    const startedAtMs = Date.now();
+
+    while (Date.now() - startedAtMs < timeoutMs) {
+        const token = await page.evaluate(() => {
+            for (let index = 0; index < localStorage.length; index += 1) {
+                const key = localStorage.key(index);
+                if (!key?.startsWith('auth_credentials')) continue;
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                try {
+                    const parsed = JSON.parse(raw) as { token?: unknown };
+                    if (typeof parsed.token === 'string' && parsed.token.trim()) {
+                        return parsed.token.trim();
+                    }
+                } catch {
+                    // ignore malformed storage entries and keep scanning
+                }
+            }
+            return null;
+        });
+
+        if (typeof token === 'string' && token.trim()) {
+            return token.trim();
+        }
+
+        await page.waitForTimeout(250);
+    }
+
     throw new Error('Failed to read auth token from browser storage');
 }
 
@@ -188,7 +210,7 @@ test.describe('ui e2e: automations authoring', () => {
                 HOME: cliHomeDir,
             },
         });
-        await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
+        await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 180_000);
         const authToken = await readAuthTokenFromBrowserStorage(page);
         const machineId = await readMachineIdFromCliAuthLoginStdout(resolve(join(testDir, 'cli.auth.login.stdout.log')));
 
@@ -197,10 +219,11 @@ test.describe('ui e2e: automations authoring', () => {
         const inlineAutomationName = `Inline automation ${run.runId}`;
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?automation=1&happier_hmr=0`, 180_000);
         await selectMachineForNewSession({ page, uiBaseUrl, machineId });
+        await closeBackendPickerIfVisible(page);
         await expect(page.getByTestId('new-session-automation-chip')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('new-session-automation-chip').click();
-        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toHaveCount(1, { timeout: 60_000 });
-        await expect(page.getByRole('switch')).toBeChecked({ timeout: 60_000 });
+        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toBeVisible({ timeout: 60_000 });
+        await expect(getAutomationEnabledSwitch(page)).toBeChecked({ timeout: 60_000 });
         await page.locator('input[autocapitalize="words"]:visible').first().fill(inlineAutomationName);
         await page.getByTestId('new-session-composer-input').fill(`inline automation prompt ${run.runId}`);
 
@@ -211,10 +234,11 @@ test.describe('ui e2e: automations authoring', () => {
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?automation=1&happier_hmr=0`, 180_000);
         await selectMachineForNewSession({ page, uiBaseUrl, machineId });
+        await closeBackendPickerIfVisible(page);
         await expect(page.getByTestId('new-session-automation-chip')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('new-session-automation-chip').click();
-        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toHaveCount(1, { timeout: 60_000 });
-        await expect(page.getByRole('switch')).toBeChecked({ timeout: 60_000 });
+        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toBeVisible({ timeout: 60_000 });
+        await expect(getAutomationEnabledSwitch(page)).toBeChecked({ timeout: 60_000 });
         await page.locator('input[autocapitalize="words"]:visible').first().fill(inlineAutomationName);
         await page.getByTestId('new-session-composer-input').fill(`inline automation prompt ${run.runId}`);
         await postJson<{ id: string }>({

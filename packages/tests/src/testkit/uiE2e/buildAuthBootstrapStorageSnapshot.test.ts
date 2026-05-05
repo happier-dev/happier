@@ -11,26 +11,24 @@ describe('buildAuthBootstrapStorageSnapshot', () => {
         });
 
         expect(snapshot.sessionStorage).toEqual({
-            activeServerId: 'happier-provider-backend-unification-qa-20260412a.localhost-24530',
+            activeServerId: 'localhost-24530',
         });
 
         expect(snapshot.localStorage['server-profiles:server-state-v1']).toContain(
-            '"activeServerId":"happier-provider-backend-unification-qa-20260412a.localhost-24530"',
+            '"activeServerId":"localhost-24530"',
         );
         expect(snapshot.localStorage['server-profiles:server-state-v1']).toContain(
-            '"name":"happier-provider-backend-unification-qa-20260412a.localhost:24530"',
+            '"name":"localhost:24530"',
         );
-        expect(snapshot.localStorage['server-profiles:server-state-v1__e2e-qa-browser-auth']).toBe(
+        expect(snapshot.localStorage['server-profiles__e2e-qa-browser-auth:server-state-v1']).toBe(
             snapshot.localStorage['server-profiles:server-state-v1'],
         );
         expect(snapshot.localStorage.auth_credentials).toBe(JSON.stringify({ token: 'stack-token', secret: 'stack-token' }));
-        expect(snapshot.localStorage['auth_credentials__srv_happier-provider-backend-unification-qa-20260412a.localhost-24530']).toBe(
+        expect(snapshot.localStorage['auth_credentials__srv_localhost-24530']).toBe(
             JSON.stringify({ token: 'stack-token', secret: 'stack-token' }),
         );
         expect(
-            snapshot.localStorage[
-                'auth_credentials__srv_happier-provider-backend-unification-qa-20260412a.localhost-24530__e2e-qa-browser-auth'
-            ],
+            snapshot.localStorage['auth_credentials__srv_localhost-24530__e2e-qa-browser-auth'],
         ).toBe(JSON.stringify({ token: 'stack-token', secret: 'stack-token' }));
     });
 
@@ -56,7 +54,7 @@ describe('buildAuthBootstrapStorageSnapshot', () => {
                 },
             }),
         );
-        expect(snapshot.localStorage['auth_credentials__srv_happier-provider-backend-unification-qa-20260412a.localhost-24530']).toBe(
+        expect(snapshot.localStorage['auth_credentials__srv_localhost-24530']).toBe(
             JSON.stringify({
                 token: 'stack-token',
                 encryption: {

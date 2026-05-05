@@ -12,6 +12,8 @@ describe('workspacePackageResolution', () => {
             'agents',
             'cli-common',
             'connection-supervisor',
+            'plugin-sdk',
+            'peer-mediation',
             'protocol',
             'transfers',
             'release-runtime',

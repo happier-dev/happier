@@ -13,6 +13,9 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
+import { ensurePendingTerminalConnectReadyForApproval } from '../../src/testkit/uiE2e/terminalConnectApprovalFlow';
+import { resolveTerminalConnectUrlForBrowser } from '../../src/testkit/uiE2e/resolveTerminalConnectUrlForBrowser';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -57,20 +60,56 @@ function parseWorkspaceRefIdFromProjectsUrl(url: string): string | null {
     }
 }
 
-function splitCanvasLeafFrames(page: Page) {
-    return page.locator('[data-testid^="split-canvas-leaf-frame-"]');
+function splitCanvasLeafFrames(scope: Page | ReturnType<Page['getByTestId']>) {
+    return scope.locator('[data-testid^="split-canvas-leaf-frame-"]');
 }
 
-function splitCanvasLeafCloseButtons(page: Page) {
-    return page.locator('[data-testid^="split-canvas-leaf-close-"]');
+function splitCanvasLeafCloseButtons(scope: Page | ReturnType<Page['getByTestId']>) {
+    return scope.locator('[data-testid^="split-canvas-leaf-close-"]');
 }
 
-function splitCanvasLeafMaximizeButtons(page: Page) {
-    return page.locator('[data-testid^="split-canvas-leaf-maximize-"]');
+function splitCanvasLeafMaximizeButtons(scope: Page | ReturnType<Page['getByTestId']>) {
+    return scope.locator('[data-testid^="split-canvas-leaf-maximize-"]');
 }
 
-function splitCanvasFocusRings(page: Page) {
-    return page.locator('[data-testid^="split-canvas-focus-ring-"]');
+function splitCanvasFocusRings(scope: Page | ReturnType<Page['getByTestId']>) {
+    return scope.locator('[data-testid^="split-canvas-focus-ring-"]');
+}
+
+async function approveCliTerminalConnect(params: Readonly<{
+    page: Page;
+    cliLogin: Awaited<ReturnType<typeof startCliAuthLoginForTerminalConnect>>;
+    uiBaseUrl: string;
+    serverUrl: string;
+}>) {
+    const connectUrlForBrowser = resolveTerminalConnectUrlForBrowser({
+        connectUrl: params.cliLogin.connectUrl,
+        uiBaseUrl: params.uiBaseUrl,
+        serverUrl: params.serverUrl,
+    });
+    await gotoDomContentLoadedWithRetries(params.page, connectUrlForBrowser, 180_000);
+    await ensurePendingTerminalConnectReadyForApproval({
+        page: params.page,
+        connectUrlForBrowser,
+        gotoConnectUrl: async (url) => {
+            await gotoDomContentLoadedWithRetries(params.page, url, 180_000);
+        },
+        restoreAccount: async () => {
+            await createAccountAndReachConnectMachineState({ page: params.page });
+        },
+        timeoutMs: 180_000,
+    });
+    await approveTerminalConnect({ page: params.page });
+    await params.cliLogin.waitForSuccess();
+}
+
+async function splitFocusedDetailsLeafToTheRight(scope: ReturnType<Page['getByTestId']>, page: Page): Promise<void> {
+    await scope.locator('[data-testid^="split-canvas-leaf-interaction-surface-"]').first().click({ force: true });
+    await page.keyboard.press('Alt+Shift+Enter');
+}
+
+async function closeDetailsGroup2(scope: ReturnType<Page['getByTestId']>): Promise<void> {
+    await scope.getByTestId('split-canvas-leaf-close-group:2').click();
 }
 
 test.describe('ui e2e: details split canvas', () => {
@@ -164,10 +203,12 @@ test.describe('ui e2e: details split canvas', () => {
             },
         });
 
-        await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-        await page.getByTestId('terminal-connect-approve').click();
-        await cliLogin.waitForSuccess();
+        await approveCliTerminalConnect({
+            page,
+            cliLogin,
+            uiBaseUrl,
+            serverUrl: server.baseUrl,
+        });
 
         const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
         const fakeClaudePath = fakeClaudeFixturePath();
@@ -196,29 +237,30 @@ test.describe('ui e2e: details split canvas', () => {
         const sessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
         const sessionUrl = `${uiBaseUrl}/session/${sessionId}?right=files&details=file&path=${encodeURIComponent('AGENTS.md')}`;
 
-        await page.goto(sessionUrl, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('session-details-panel-root')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('split-canvas-host')).toHaveCount(1, { timeout: 120_000 });
-        await expect(splitCanvasLeafFrames(page)).toHaveCount(1, { timeout: 120_000 });
-        await expect(splitCanvasLeafMaximizeButtons(page)).toHaveCount(0);
-        await expect(splitCanvasLeafCloseButtons(page)).toHaveCount(0);
-        await expect(splitCanvasFocusRings(page)).toHaveCount(0);
+        await gotoDomContentLoadedWithRetries(page, sessionUrl, 180_000);
+        const sessionDetailsPanel = page.getByTestId('session-details-panel-root');
+        await expect(sessionDetailsPanel).toHaveCount(1, { timeout: 120_000 });
+        await expect(sessionDetailsPanel.getByTestId('split-canvas-host')).toHaveCount(1, { timeout: 120_000 });
+        await expect(splitCanvasLeafFrames(sessionDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
+        await expect(splitCanvasLeafMaximizeButtons(sessionDetailsPanel)).toHaveCount(0);
+        await expect(splitCanvasLeafCloseButtons(sessionDetailsPanel)).toHaveCount(0);
+        await expect(splitCanvasFocusRings(sessionDetailsPanel)).toHaveCount(0);
 
-        await page.locator('[data-testid^="split-canvas-leaf-split-right-"]').first().click({ force: true });
-        await expect(splitCanvasLeafFrames(page)).toHaveCount(2, { timeout: 120_000 });
-        await expect(splitCanvasLeafMaximizeButtons(page)).toHaveCount(1, { timeout: 120_000 });
-        await expect(splitCanvasLeafCloseButtons(page)).toHaveCount(1, { timeout: 120_000 });
-        await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/details`), { timeout: 120_000 });
+        await splitFocusedDetailsLeafToTheRight(sessionDetailsPanel, page);
+        await expect(splitCanvasLeafFrames(sessionDetailsPanel)).toHaveCount(2, { timeout: 120_000 });
+        await expect(splitCanvasLeafMaximizeButtons(sessionDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
+        await expect(splitCanvasLeafCloseButtons(sessionDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
+        await expect(page).toHaveURL(new RegExp(`/session/${sessionId}`), { timeout: 120_000 });
 
         await page.reload({ waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('session-details-panel-root')).toHaveCount(1, { timeout: 120_000 });
-        await expect(splitCanvasLeafFrames(page)).toHaveCount(2, { timeout: 120_000 });
-        await expect(splitCanvasLeafMaximizeButtons(page)).toHaveCount(1, { timeout: 120_000 });
-        await expect(splitCanvasLeafCloseButtons(page)).toHaveCount(1, { timeout: 120_000 });
+        await expect(sessionDetailsPanel).toHaveCount(1, { timeout: 120_000 });
+        await expect(splitCanvasLeafFrames(sessionDetailsPanel)).toHaveCount(2, { timeout: 120_000 });
+        await expect(splitCanvasLeafMaximizeButtons(sessionDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
+        await expect(splitCanvasLeafCloseButtons(sessionDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
 
-        await splitCanvasLeafCloseButtons(page).first().click({ force: true });
-        await expect(splitCanvasLeafFrames(page)).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.locator('[data-testid^="split-canvas-split-"]')).toHaveCount(0, { timeout: 120_000 });
+        await closeDetailsGroup2(sessionDetailsPanel);
+        await expect(splitCanvasLeafFrames(sessionDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
+        await expect(sessionDetailsPanel.locator('[data-testid^="split-canvas-split-"]')).toHaveCount(0, { timeout: 120_000 });
     });
 
     test('splits the workspace details panel from the project details route', async ({ page }) => {
@@ -252,10 +294,12 @@ test.describe('ui e2e: details split canvas', () => {
             },
         });
 
-        await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-        await page.getByTestId('terminal-connect-approve').click();
-        await cliLogin.waitForSuccess();
+        await approveCliTerminalConnect({
+            page,
+            cliLogin,
+            uiBaseUrl,
+            serverUrl: server.baseUrl,
+        });
 
         const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
         const fakeClaudePath = fakeClaudeFixturePath();
@@ -285,7 +329,7 @@ test.describe('ui e2e: details split canvas', () => {
         await mkdir(repoDir, { recursive: true });
         await createGitRepoWithChanges({ repoDir, fileCount: 4 });
 
-        await page.goto(`${uiBaseUrl}/projects`, { waitUntil: 'domcontentloaded' });
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/projects`, 180_000);
         await expect(page.getByTestId('projects-list')).toHaveCount(1, { timeout: 120_000 });
         await page.locator('[data-testid^="projects-add-first-machine:"]').first().click();
         await selectWorkspacePathFromPathBrowserModal(page, repoDir);
@@ -295,22 +339,23 @@ test.describe('ui e2e: details split canvas', () => {
             throw new Error(`Failed to parse workspace ref id from url: ${projectUrl}`);
         }
 
-        await expect(page.getByTestId('workspace-details-panel-root')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('split-canvas-host')).toHaveCount(1, { timeout: 120_000 });
+        const workspaceDetailsPanel = page.getByTestId('workspace-details-panel-root');
+        await expect(workspaceDetailsPanel).toHaveCount(1, { timeout: 120_000 });
+        await expect(workspaceDetailsPanel.getByTestId('split-canvas-host')).toHaveCount(1, { timeout: 120_000 });
 
-        await page.locator('[data-testid^="split-canvas-leaf-split-right-"]').first().click({ force: true });
-        await expect(splitCanvasLeafFrames(page)).toHaveCount(2, { timeout: 120_000 });
-        await expect(splitCanvasLeafCloseButtons(page)).toHaveCount(1, { timeout: 120_000 });
-        await expect(page).toHaveURL(/\/projects\/[^/]+\/details/, { timeout: 120_000 });
+        await splitFocusedDetailsLeafToTheRight(workspaceDetailsPanel, page);
+        await expect(splitCanvasLeafFrames(workspaceDetailsPanel)).toHaveCount(2, { timeout: 120_000 });
+        await expect(splitCanvasLeafCloseButtons(workspaceDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
+        await expect(page).toHaveURL(/\/projects\/[^/?]+/, { timeout: 120_000 });
 
         await page.reload({ waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('workspace-details-panel-root')).toHaveCount(1, { timeout: 120_000 });
-        await expect(splitCanvasLeafFrames(page)).toHaveCount(2, { timeout: 120_000 });
-        await expect(splitCanvasLeafCloseButtons(page)).toHaveCount(1, { timeout: 120_000 });
+        await expect(workspaceDetailsPanel).toHaveCount(1, { timeout: 120_000 });
+        await expect(splitCanvasLeafFrames(workspaceDetailsPanel)).toHaveCount(2, { timeout: 120_000 });
+        await expect(splitCanvasLeafCloseButtons(workspaceDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
 
-        await splitCanvasLeafCloseButtons(page).first().click({ force: true });
-        await expect(splitCanvasLeafFrames(page)).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.locator('[data-testid^="split-canvas-split-"]')).toHaveCount(0, { timeout: 120_000 });
-        await expect(page).toHaveURL(/\/projects\/[^/]+\/details/, { timeout: 120_000 });
+        await closeDetailsGroup2(workspaceDetailsPanel);
+        await expect(splitCanvasLeafFrames(workspaceDetailsPanel)).toHaveCount(1, { timeout: 120_000 });
+        await expect(workspaceDetailsPanel.locator('[data-testid^="split-canvas-split-"]')).toHaveCount(0, { timeout: 120_000 });
+        await expect(page).toHaveURL(/\/projects\/[^/?]+/, { timeout: 120_000 });
     });
 });

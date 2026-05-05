@@ -42,6 +42,7 @@ export type StartedStressTarget = Readonly<{
     stopContainer: (containerId: string) => Promise<void>;
     killContainer: (containerId: string) => Promise<void>;
     execInService: (service: string, command: readonly string[]) => Promise<string>;
+    execInContainer?: (containerId: string, command: readonly string[]) => Promise<string>;
   };
   preserveForInspection: () => void;
   stop: () => Promise<void>;

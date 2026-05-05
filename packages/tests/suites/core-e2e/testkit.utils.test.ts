@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { parsePositiveInt } from '../../src/testkit/numbers';
+import * as processCommands from '../../src/testkit/process/commands';
 import { yarnCommand, which } from '../../src/testkit/process/commands';
 import { hasStringSubstring } from '../../src/testkit/providers/assertions';
 import { countNewMessageUpdatesWithLocalId, hasNewMessageUpdateWithLocalId } from '../../src/testkit/updates';
+
+type YarnInvocationResolver = (
+  args: readonly string[],
+  options?: Readonly<{ platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }>,
+) => Readonly<{ command: string; args: string[]; windowsVerbatimArguments?: boolean }>;
 
 describe('testkit utilities', () => {
   it('parsePositiveInt returns fallback for undefined/invalid/non-positive values', () => {
@@ -20,6 +26,26 @@ describe('testkit utilities', () => {
 
   it('yarnCommand returns a yarn executable name', () => {
     expect(yarnCommand()).toContain('yarn');
+  });
+
+  it('wraps the Windows Yarn shim through cmd.exe', () => {
+    const resolveYarnCommandInvocation = (processCommands as {
+      resolveYarnCommandInvocation?: YarnInvocationResolver;
+    }).resolveYarnCommandInvocation;
+
+    expect(resolveYarnCommandInvocation).toBeTypeOf('function');
+    if (!resolveYarnCommandInvocation) throw new Error('missing testkit Yarn invocation resolver');
+
+    const invocation = resolveYarnCommandInvocation(['-s', 'workspace', '@happier-dev/cli', 'build'], {
+      platform: 'win32',
+      npmExecPath: 'C:\\npm\\node_modules\\npm\\bin\\npm-cli.js',
+      comspec: 'C:\\Windows\\System32\\cmd.exe',
+    });
+
+    expect(invocation.command).toBe('C:\\Windows\\System32\\cmd.exe');
+    expect(invocation.windowsVerbatimArguments).toBe(true);
+    expect(invocation.args.join(' ')).toContain('yarn.cmd');
+    expect(invocation.args.join(' ')).not.toContain('npm-cli.js');
   });
 
   it('which returns a path for an existing binary and null for missing binaries', () => {
@@ -46,4 +72,3 @@ describe('testkit utilities', () => {
     expect(countNewMessageUpdatesWithLocalId(events as any, 'b')).toBe(0);
   });
 });
-

@@ -15,9 +15,20 @@ let fetchResponder: ((input: unknown, init?: RequestInit) => Promise<unknown>) |
 let spawnStdoutTextSequence: string[] | null = null;
 let spawnExitSignalSequence: Array<NodeJS.Signals | null> | null = null;
 let spawnInvocationIndex = 0;
+let runLoggedCommandCalls: RunLoggedCommandMockParams[] = [];
+let startOrder: string[] = [];
+
+type RunLoggedCommandMockParams = {
+    stdoutPath: string;
+    stderrPath?: string;
+    args?: string[];
+    env?: NodeJS.ProcessEnv;
+    timeoutMs?: number;
+};
 
 vi.mock('./spawnProcess', () => ({
     spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string; env?: NodeJS.ProcessEnv }) => {
+        startOrder.push('spawn');
         const currentStdout = spawnStdoutTextSequence?.[spawnInvocationIndex] ?? spawnStdoutText;
         writeFileSync(params.stdoutPath, currentStdout, 'utf8');
         writeFileSync(params.stderrPath, '', 'utf8');
@@ -48,6 +59,10 @@ vi.mock('./spawnProcess', () => ({
                 child.emit('exit', 0, null);
             },
         };
+    },
+    runLoggedCommand: async (params: RunLoggedCommandMockParams) => {
+        startOrder.push('workspace-prebuild');
+        runLoggedCommandCalls.push(params);
     },
 }));
 
@@ -109,7 +124,13 @@ beforeEach(() => {
     spawnStdoutTextSequence = null;
     spawnExitSignalSequence = null;
     spawnInvocationIndex = 0;
+    runLoggedCommandCalls = [];
+    startOrder = [];
 });
+
+function isWorkspacePrebuildInvocation(params: RunLoggedCommandMockParams | undefined): boolean {
+    return Array.isArray(params?.args) && params.args.includes('--input-type=module');
+}
 
 function readProcessStartTime(pid: number): string {
     const res = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid), '-ww'], { encoding: 'utf8' });
@@ -120,6 +141,31 @@ function readProcessStartTime(pid: number): string {
 }
 
 describe('startUiWebMetro', () => {
+    it('builds apps/ui workspace packages before launching Expo web', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-prebuild-'));
+
+        try {
+            await mkdir(testDir, { recursive: true });
+
+            const started = await startUiWebMetro({
+                testDir,
+                env: {
+                    HAPPIER_E2E_UI_WEB_METRO_WORKSPACE_PREBUILD_TIMEOUT_MS: '1234',
+                },
+                port: 19077,
+            });
+
+            expect(runLoggedCommandCalls).toHaveLength(1);
+            expect(isWorkspacePrebuildInvocation(runLoggedCommandCalls[0])).toBe(true);
+            expect(runLoggedCommandCalls[0]?.timeoutMs).toBe(1234);
+            expect(startOrder).toEqual(['workspace-prebuild', 'spawn']);
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
     it('retries once when the expo web dev server exits before ready', async () => {
         const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-retry-'));
 

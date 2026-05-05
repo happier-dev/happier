@@ -5,17 +5,10 @@ import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 
 import { ensureCliDistBuilt, ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt, withCliDistBuildLock } from './cliDist';
+import { CLI_SHARED_DEP_PACKAGE_NAMES } from './workspacePackageResolution';
 import { sleep } from '../timing';
 
 const createdDirs: string[] = [];
-const CLI_SHARED_DEP_PACKAGE_NAMES = [
-  'agents',
-  'cli-common',
-  'connection-supervisor',
-  'protocol',
-  'transfers',
-  'release-runtime',
-] as const;
 
 async function createRepoRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'happier-cli-dist-test-'));
@@ -74,6 +67,17 @@ function resolveCliSharedDepBundleIndexPaths(repoRoot: string): string[] {
   return CLI_SHARED_DEP_PACKAGE_NAMES.map((pkgName) =>
     join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkgName, 'dist', 'index.js'),
   );
+}
+
+function touchTree(path: string, time: Date): void {
+  try {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      touchTree(join(path, entry.name), time);
+    }
+  } catch {
+    // File path; touch below.
+  }
+  utimesSync(path, time, time);
 }
 
 describe('ensureCliDistBuilt', () => {
@@ -307,6 +311,116 @@ describe('ensureCliDistBuilt', () => {
     expect(
       readFileSync(join(entrypoint, '..', '..', 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'), 'utf8'),
     ).not.toContain('protocolSnapshot = "stale"');
+  });
+
+  it('creates a replacement snapshot when ready snapshot protocol exports are invalid', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const snapshotBundledProtocolIndexPath = join(
+      snapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+      'dist',
+      'index.js',
+    );
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "ready";\n', 'utf8');
+    await writeFile(canonicalEntrypoint, 'export const canonical = "ready";\n', 'utf8');
+    await cp(join(repoRoot, 'apps', 'cli', 'node_modules'), join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(
+      snapshotBundledProtocolIndexPath,
+      [
+        'export const ProviderCliRuntimeV1Schema = {};',
+        'export { ProviderCliRuntimeV1Schema };',
+        'export { ProviderCliRuntimeV1Schema };',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    const canonicalTime = new Date('2030-03-09T01:15:00.000Z');
+    const freshSnapshotTime = new Date('2031-03-09T01:15:00.000Z');
+    utimesSync(snapshotDistDir, freshSnapshotTime, freshSnapshotTime);
+    utimesSync(snapshotEntrypoint, freshSnapshotTime, freshSnapshotTime);
+    utimesSync(canonicalEntrypoint, canonicalTime, canonicalTime);
+    touchTree(join(snapshotDir, 'node_modules'), freshSnapshotTime);
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          throw new Error('invalid ready snapshot repair should not need a live CLI rebuild');
+        },
+      },
+    );
+
+    expect(entrypoint).not.toBe(snapshotEntrypoint);
+    expect(entrypoint).toContain('cli-dist-snapshot-');
+    expect(readFileSync(snapshotBundledProtocolIndexPath, 'utf8')).toContain('ProviderCliRuntimeV1Schema');
+    expect(
+      readFileSync(join(entrypoint, '..', '..', 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'), 'utf8'),
+    ).not.toContain('ProviderCliRuntimeV1Schema');
+  });
+
+  it('creates a replacement snapshot when ready snapshot CLI chunks import removed protocol root exports', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const snapshotBundledProtocolIndexPath = join(
+      snapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+      'dist',
+      'index.js',
+    );
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await writeFile(
+      snapshotEntrypoint,
+      [
+        "import { AgentRuntimeDescriptorV1Schema } from '@happier-dev/protocol';",
+        'export const snapshot = AgentRuntimeDescriptorV1Schema;',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(canonicalEntrypoint, 'export const canonical = "ready";\n', 'utf8');
+    await cp(join(repoRoot, 'apps', 'cli', 'node_modules'), join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(snapshotBundledProtocolIndexPath, 'export const RuntimeDescriptorV1Schema = {};\n', 'utf8');
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    const canonicalTime = new Date('2030-03-09T01:15:00.000Z');
+    const freshSnapshotTime = new Date('2031-03-09T01:15:00.000Z');
+    utimesSync(snapshotDistDir, freshSnapshotTime, freshSnapshotTime);
+    utimesSync(snapshotEntrypoint, freshSnapshotTime, freshSnapshotTime);
+    utimesSync(canonicalEntrypoint, canonicalTime, canonicalTime);
+    touchTree(join(snapshotDir, 'node_modules'), freshSnapshotTime);
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          throw new Error('protocol import compatibility repair should not need a live CLI rebuild');
+        },
+      },
+    );
+
+    expect(entrypoint).not.toBe(snapshotEntrypoint);
+    expect(entrypoint).toContain('cli-dist-snapshot-');
+    expect(readFileSync(entrypoint, 'utf8')).toContain('canonical = "ready"');
   });
 
   it('prefers the newest ready replacement snapshot over the canonical shared snapshot when freshness checks are skipped', async () => {

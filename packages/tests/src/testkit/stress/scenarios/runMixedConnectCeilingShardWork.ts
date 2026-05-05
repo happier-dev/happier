@@ -16,9 +16,41 @@ import {
   type MixedScenarioAuth,
   type MixedSessionTarget,
   type MixedUserDevices,
-} from './runMixedRealisticScenario';
+} from './mixedScenarioShared';
 import { runStressTasksWithConcurrencyLimit } from './runStressTasksWithConcurrencyLimit';
 import type { MixedConnectCeilingShardResult } from './runMixedConnectCeilingScenario';
+
+export type MixedConnectCeilingShardProgressSnapshot = Readonly<
+  MixedConnectCeilingShardResult & {
+    phase: string;
+  }
+>;
+
+function buildProgressSnapshot(params: {
+  phase: string;
+  shardIndex: number;
+  authIndexStart: number;
+  authCount: number;
+  connectivitySnapshot: MixedConnectivitySnapshot;
+  stageDurationsMs: {
+    authMs: number;
+    provisionMs: number;
+    connectMs: number;
+  };
+}): MixedConnectCeilingShardProgressSnapshot {
+  return {
+    phase: params.phase,
+    shardIndex: params.shardIndex,
+    authIndexStart: params.authIndexStart,
+    authIndexEndExclusive: params.authIndexStart + params.authCount,
+    userDevicesTotal: params.connectivitySnapshot.userDevices.total,
+    connectedUserDevices: params.connectivitySnapshot.userDevices.connected,
+    machineCollectorsTotal: params.connectivitySnapshot.machineCollectors.total,
+    connectedMachineCollectors: params.connectivitySnapshot.machineCollectors.connected,
+    connectivitySnapshot: params.connectivitySnapshot,
+    stageDurationsMs: params.stageDurationsMs,
+  };
+}
 
 function closeTrackedSockets(params: {
   userDevices: readonly MixedUserDevices[];
@@ -30,9 +62,11 @@ function closeTrackedSockets(params: {
 
 export async function runMixedConnectCeilingShardWork(params: {
   baseUrl: string;
+  controlPlaneBaseUrl?: string;
   config: StressConfig;
   authIndexStart: number;
   shardIndex: number;
+  onProgress?: (snapshot: MixedConnectCeilingShardProgressSnapshot) => Promise<void> | void;
 }): Promise<MixedConnectCeilingShardResult> {
   const authCreationStartedAt = Date.now();
   const authSlots = Array.from({ length: Math.max(1, params.config.load.users) }, (_, index) => index);
@@ -53,23 +87,28 @@ export async function runMixedConnectCeilingShardWork(params: {
   const mixedSetupRequestTimeoutMs = params.config.load.mixedSetupRequestTimeoutMs ?? 15_000;
   const mixedMessageEmitterCount = Math.max(1, params.config.load.mixedMessageEmitterCount ?? 1);
 
+  const mixedSocketAutoReconnect = params.config.load.mixedSocketAutoReconnect ?? true;
+  const mixedCaptureSocketEvents = params.config.load.mixedCaptureSocketEvents ?? true;
   const userDevices = resolveMixedUserDevices({
     auths,
     baseUrl: params.baseUrl,
     transports,
     mixedMessageEmitterCount,
     mixedSocketConnectTimeoutMs,
+    mixedSocketAutoReconnect,
+    mixedCaptureSocketEvents,
   }).map((userDevice) => ({
     ...userDevice,
     authIndex: params.authIndexStart + userDevice.authIndex,
   })) satisfies MixedUserDevices[];
 
-  const sessionIds: string[] = [];
   const sessions: MixedSessionTarget[] = [];
   const machineCollectors: MixedCollector[] = [];
   const verificationSessionIds: string[] = [];
   const expectedLocalIdsBySession = new Map<string, string[]>();
   let connectivitySnapshot: MixedConnectivitySnapshot | undefined;
+  let provisionMs = 0;
+  let connectMs = 0;
 
   try {
     const provisionStartedAt = Date.now();
@@ -98,7 +137,6 @@ export async function runMixedConnectCeilingShardWork(params: {
             authIndex: params.authIndexStart + sessionPlan.authIndex,
             socket: collector.socket,
           },
-          sessionIds,
           sessions,
           machineCollectors,
           verificationSessionIds,
@@ -107,7 +145,23 @@ export async function runMixedConnectCeilingShardWork(params: {
         });
       },
     );
-    const provisionMs = Date.now() - provisionStartedAt;
+    provisionMs = Date.now() - provisionStartedAt;
+    connectivitySnapshot = captureMixedConnectivitySnapshot({
+      userDevices,
+      machineCollectors,
+    });
+    await params.onProgress?.(buildProgressSnapshot({
+      phase: 'provision',
+      shardIndex: params.shardIndex,
+      authIndexStart: params.authIndexStart,
+      authCount: auths.length,
+      connectivitySnapshot,
+      stageDurationsMs: {
+        authMs,
+        provisionMs,
+        connectMs,
+      },
+    }));
 
     const connectStartedAt = Date.now();
     await runMixedSocketConnectTasks({
@@ -138,38 +192,51 @@ export async function runMixedConnectCeilingShardWork(params: {
       { timeoutMs: 60_000 },
     );
 
-    const connectMs = Date.now() - connectStartedAt;
+    connectMs = Date.now() - connectStartedAt;
     connectivitySnapshot = captureMixedConnectivitySnapshot({
       userDevices,
       machineCollectors,
     });
-
-    return {
+    const result = buildProgressSnapshot({
+      phase: 'complete',
       shardIndex: params.shardIndex,
       authIndexStart: params.authIndexStart,
-      authIndexEndExclusive: params.authIndexStart + auths.length,
-      userDevicesTotal: connectivitySnapshot.userDevices.total,
-      connectedUserDevices: connectivitySnapshot.userDevices.connected,
-      machineCollectorsTotal: connectivitySnapshot.machineCollectors.total,
-      connectedMachineCollectors: connectivitySnapshot.machineCollectors.connected,
+      authCount: auths.length,
       connectivitySnapshot,
       stageDurationsMs: {
         authMs,
         provisionMs,
         connectMs,
       },
-    };
+    });
+    await params.onProgress?.(result);
+    return result;
   } catch (error) {
     connectivitySnapshot = captureMixedConnectivitySnapshot({
       userDevices,
       machineCollectors,
     });
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(
+    const failure = new Error(
       `Mixed connect ceiling shard failed for authIndexStart=${params.authIndexStart}: ${errorMessage}; `
       + `connectedUserDevices=${connectivitySnapshot.userDevices.connected}/${connectivitySnapshot.userDevices.total}; `
       + `connectedCollectors=${connectivitySnapshot.machineCollectors.connected}/${connectivitySnapshot.machineCollectors.total}`,
     );
+    Object.assign(failure, {
+      partialResult: buildProgressSnapshot({
+        phase: 'failed',
+        shardIndex: params.shardIndex,
+        authIndexStart: params.authIndexStart,
+        authCount: auths.length,
+        connectivitySnapshot,
+        stageDurationsMs: {
+          authMs,
+          provisionMs,
+          connectMs,
+        },
+      }),
+    });
+    throw failure;
   } finally {
     closeTrackedSockets({
       userDevices,

@@ -118,4 +118,38 @@ describe('fakeTauriDesktop', () => {
             version: '1.2.3',
         });
     });
+
+    it('stores and returns desktop activity overlay window state', async () => {
+        const initial = createFakeTauriDesktopState({
+            currentWindowLabel: 'activity_overlay',
+            desktopActivityOverlayState: null,
+        });
+        const payload = {
+            visible: true,
+            expanded: false,
+            model: {
+                companion: {
+                    enabled: true,
+                    state: 'idle',
+                },
+            },
+        };
+
+        const synced = await applyFakeTauriDesktopCommand(
+            initial,
+            'desktop_activity_overlay_sync',
+            { payload },
+        );
+        const state = await applyFakeTauriDesktopCommand(
+            synced.state,
+            'desktop_activity_overlay_get_window_state',
+        );
+
+        expect(synced.result).toBeNull();
+        expect(state.result).toEqual(payload);
+        expect(state.state.invokeLog.map((entry) => entry.command)).toEqual([
+            'desktop_activity_overlay_sync',
+            'desktop_activity_overlay_get_window_state',
+        ]);
+    });
 });

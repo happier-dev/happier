@@ -4,7 +4,6 @@ import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } fro
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { basename, extname, dirname, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { repoRootDir } from '../paths';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { runLoggedCommand } from './spawnProcess';
@@ -18,6 +17,11 @@ import {
   isUiWebExportMetroCacheCorruptionError,
 	  stderrHasUiWebExportMetroCacheCorruption,
 	} from './createUiWebExportStartupStallGuard';
+import {
+  ensureUiWebWorkspacePrebuild,
+  isUiWebWorkspacePrebuildSharedCliDistBuildLockActiveError,
+  isUiWebWorkspacePrebuildTimeoutError,
+} from './uiWebWorkspacePrebuild';
 
 function resolveExpoCliEntrypoint(workspaceRootDir: string): string {
   return resolvePath(workspaceRootDir, 'node_modules', 'expo', 'bin', 'cli');
@@ -429,91 +433,6 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
-async function ensureUiWebWorkspacePrebuild(params: {
-  testDir: string;
-  env: NodeJS.ProcessEnv;
-  workspaceRootDir: string;
-}): Promise<void> {
-  const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
-  const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
-  const prebuildStdoutPath = resolvePath(params.testDir, 'ui.web.prebuild.stdout.log');
-  const prebuildStderrPath = resolvePath(params.testDir, 'ui.web.prebuild.stderr.log');
-  const timeoutMs = resolveUiWebExportWorkspacePrebuildTimeoutMs(params.env);
-
-  await mkdir(params.testDir, { recursive: true });
-  await Promise.all([
-    writeFile(stdoutPath, '', 'utf8').catch(() => {}),
-    writeFile(stderrPath, '', 'utf8').catch(() => {}),
-    writeFile(prebuildStdoutPath, '', 'utf8').catch(() => {}),
-    writeFile(prebuildStderrPath, '', 'utf8').catch(() => {}),
-  ]);
-  await appendFile(
-    stderrPath,
-    `[ui-web-export] workspace build preflight started: ${params.workspaceRootDir}\n`,
-  ).catch(() => {});
-
-  const timeoutError = new Error(
-    `workspace build preflight timed out after ${timeoutMs}ms while ensuring ${params.workspaceRootDir} workspace packages were built`,
-  );
-
-  try {
-    const stacksPmModuleUrl = pathToFileURL(resolvePath(repoRootDir(), 'apps', 'stack', 'scripts', 'utils', 'proc', 'pm.mjs')).href;
-    const launchEnv: NodeJS.ProcessEnv = {
-      ...params.env,
-      CI: '1',
-      // Make lock waits show up promptly in prebuild logs (helps distinguish "hung" vs "waiting").
-      HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: String(params.env.HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS ?? 1_000),
-      HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS: String(params.env.HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS ?? 10_000),
-    };
-
-    // Run workspace prebuild in a subprocess so timeouts can kill the build process tree rather
-    // than leaving an in-process promise running and holding locks.
-    await runLoggedCommand({
-      command: process.execPath,
-      args: [
-        '--input-type=module',
-        '--eval',
-        [
-          "import { resolve } from 'node:path';",
-          `const stacksUrl = ${JSON.stringify(stacksPmModuleUrl)};`,
-          'const { ensureWorkspacePackagesBuiltForComponent } = await import(stacksUrl);',
-          'const workspaceRootDir = process.argv[1];',
-          "if (!workspaceRootDir) throw new Error('missing workspaceRootDir');",
-          'const res = await ensureWorkspacePackagesBuiltForComponent(resolve(workspaceRootDir), { quiet: false, env: process.env });',
-          'process.stdout.write(`${JSON.stringify(res)}\\n`);',
-        ].join('\n'),
-        params.workspaceRootDir,
-      ],
-      cwd: repoRootDir(),
-      env: launchEnv,
-      stdoutPath: prebuildStdoutPath,
-      stderrPath: prebuildStderrPath,
-      timeoutMs,
-    });
-    await appendFile(
-      stderrPath,
-      `[ui-web-export] workspace build preflight completed: ${params.workspaceRootDir}\n`,
-    ).catch(() => {});
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const normalizedError = message.includes('timed out after') ? timeoutError : (error instanceof Error ? error : new Error(message));
-    await appendFile(
-      stderrPath,
-      `[ui-web-export] workspace build preflight failed: ${normalizedError.message}\n` +
-        `[ui-web-export] workspace build preflight logs: ${prebuildStdoutPath} ${prebuildStderrPath}\n`,
-    ).catch(() => {});
-    throw normalizedError;
-  }
-}
-
-function isUiWebWorkspacePrebuildTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('workspace build preflight timed out after ');
-}
-
-function isUiWebWorkspacePrebuildSharedCliDistBuildLockActiveError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('shared CLI dist build lock is active: ');
-}
-
 function parseEnvBool(raw: unknown): boolean {
   const value = String(raw ?? '').trim().toLowerCase();
   return value === '1' || value === 'true' || value === 'yes' || value === 'y' || value === 'on';
@@ -848,6 +767,10 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
       testDir: params.testDir,
       env: params.env,
       workspaceRootDir,
+      logPrefix: 'ui-web-export',
+      timeoutMs: resolveUiWebExportWorkspacePrebuildTimeoutMs(params.env),
+      stdoutPath: resolvePath(params.testDir, 'ui.web.export.stdout.log'),
+      stderrPath: resolvePath(params.testDir, 'ui.web.export.stderr.log'),
     });
   } catch (error) {
     const stdoutTail = await readFile(resolvePath(params.testDir, 'ui.web.export.stdout.log'), 'utf8').catch(() => '');

@@ -22,7 +22,7 @@ function responseItemLine(params: { timestamp: string; payload: Record<string, u
 }
 
 async function enableEnhancedSessionWizardInSettings(page: Page, baseUrl: string) {
-  await page.goto(`${baseUrl}/settings/features`, { waitUntil: 'domcontentloaded' });
+  await gotoDomContentLoadedWithRetries(page, `${baseUrl}/settings/features`, 180_000);
   const enhancedWizardToggle = page.getByTestId('settings-feature-toggle-useEnhancedSessionWizard');
   await expect(enhancedWizardToggle).toHaveCount(1, { timeout: 60_000 });
   await enhancedWizardToggle.click();
@@ -115,7 +115,7 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     await mkdir(testDir, { recursive: true });
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
+    await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 180_000);
     await createAccountAndReachConnectMachineState({ page });
 
     const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({

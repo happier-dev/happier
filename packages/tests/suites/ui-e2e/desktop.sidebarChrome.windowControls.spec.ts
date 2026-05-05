@@ -60,6 +60,17 @@ async function collapseDesktopSidebar(page: Page): Promise<void> {
     await page.mouse.up();
 }
 
+async function dragFromMainContentTitlebar(page: Page): Promise<void> {
+    const sidebarBox = await page.getByTestId('desktop-sidebar-chrome').boundingBox();
+    if (!sidebarBox) {
+        throw new Error('missing desktop sidebar chrome bounds');
+    }
+
+    await page.mouse.move(sidebarBox.x + sidebarBox.width + 96, 40);
+    await page.mouse.down();
+    await page.mouse.up();
+}
+
 test.describe('ui e2e: desktop sidebar chrome', () => {
     test.describe.configure({ mode: 'serial' });
 
@@ -122,11 +133,20 @@ test.describe('ui e2e: desktop sidebar chrome', () => {
         await expect(page.getByTestId('sidebar-view').locator('[data-testid="desktop-sidebar-chrome"]')).toHaveCount(1);
         await expect(page.locator('[data-testid="desktop-window-controls-host"]')).toHaveCount(1);
         await expect(page.getByTestId('sidebar-view').locator('[data-testid="desktop-window-controls-host"]')).toHaveCount(1);
-        await expect(page.locator('[data-testid="desktop-update-indicator-host"]')).toHaveCount(1);
-        await expect(page.getByTestId('main-header-start-new-session')).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId('desktop-sidebar-chrome-actions-row')).toHaveCount(1);
+        await expect(page.getByTestId('nav-new-session')).toBeVisible({ timeout: 60_000 });
         await expect(page.getByTestId('desktop-window-controls-minimize')).toBeVisible({ timeout: 60_000 });
         await expect(page.getByTestId('desktop-window-controls-toggle-maximize')).toBeVisible({ timeout: 60_000 });
         await expect(page.getByTestId('desktop-window-controls-close')).toBeVisible({ timeout: 60_000 });
+
+        await dragFromMainContentTitlebar(page);
+        await expect
+            .poll(async () => readFakeTauriDesktopState(page), { timeout: 60_000 })
+            .toMatchObject({
+                controls: {
+                    dragCount: 1,
+                },
+            });
 
         await page.getByTestId('desktop-window-controls-minimize').click();
         await page.getByTestId('desktop-window-controls-toggle-maximize').click();
@@ -186,6 +206,6 @@ test.describe('ui e2e: desktop sidebar chrome', () => {
         await expect(page.locator('[data-testid="desktop-window-controls-host"]')).toHaveCount(1);
         await expect(page.locator('[data-testid="desktop-update-indicator-host"]')).toHaveCount(1);
         await expect(page.getByTestId('desktop-sidebar-chrome')).toHaveCount(0);
-        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1);
+        await expect(page.getByTestId('onboarding-wizard')).toHaveCount(1);
     });
 });

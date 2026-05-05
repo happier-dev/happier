@@ -10,12 +10,10 @@ function resolveRepoRoot() {
   return resolve(here, '..', '..', '..');
 }
 
-function resolveTsxBin(repoRoot) {
+function resolveTsxImportHook(repoRoot) {
   const candidates = [
-    resolve(repoRoot, 'node_modules', '.bin', 'tsx'),
-    resolve(repoRoot, 'node_modules', '.bin', 'tsx.cmd'),
-    resolve(repoRoot, 'packages', 'tests', 'node_modules', '.bin', 'tsx'),
-    resolve(repoRoot, 'packages', 'tests', 'node_modules', '.bin', 'tsx.cmd'),
+    resolve(repoRoot, 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs'),
+    resolve(repoRoot, 'packages', 'tests', 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs'),
   ];
 
   for (const candidate of candidates) {
@@ -26,8 +24,8 @@ function resolveTsxBin(repoRoot) {
 }
 
 const repoRoot = resolveRepoRoot();
-const tsxBin = resolveTsxBin(repoRoot);
-if (!tsxBin) {
+const tsxImportHook = resolveTsxImportHook(repoRoot);
+if (!tsxImportHook) {
   // eslint-disable-next-line no-console
   console.error('[tests] Missing `tsx` dependency. Run `yarn install` and retry.');
   process.exit(1);
@@ -36,8 +34,8 @@ if (!tsxBin) {
 const cliPath = resolve(repoRoot, 'packages', 'tests', 'src', 'testkit', 'maestro', 'mobileMaestroCli.ts');
 
 const result = await runManagedChildCommand({
-  command: tsxBin,
-  args: [cliPath, ...process.argv.slice(2)],
+  command: process.execPath,
+  args: ['--import', tsxImportHook, cliPath, ...process.argv.slice(2)],
   spawnOptions: {
     stdio: 'inherit',
     env: process.env,

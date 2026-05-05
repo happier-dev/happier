@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 
 import { describe, expect, it } from 'vitest';
 
+import * as runProvidersParallelScript from '../../scripts/run-providers-parallel.mjs';
 import {
   parseArgs,
   resolveRetryScenarioIds,
@@ -12,6 +13,11 @@ import {
   buildProviderChildEnv,
   mergeTokenLedgersFromPaths,
 } from '../../scripts/run-providers-parallel.mjs';
+
+type YarnInvocationResolver = (
+  args: readonly string[],
+  options?: Readonly<{ platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }>,
+) => Readonly<{ command: string; args: string[]; windowsVerbatimArguments?: boolean }>;
 
 describe('providers parallel run script args', () => {
   it('defaults flake retry to enabled', () => {
@@ -79,6 +85,26 @@ describe('providers parallel run script args', () => {
         '--no-flake-retry',
       ]),
     ).toThrow(/Conflicting flags/);
+  });
+
+  it('wraps the Windows Yarn shim through cmd.exe', () => {
+    const resolveProviderRunYarnInvocation = (runProvidersParallelScript as {
+      resolveProviderRunYarnInvocation?: YarnInvocationResolver;
+    }).resolveProviderRunYarnInvocation;
+
+    expect(resolveProviderRunYarnInvocation).toBeTypeOf('function');
+    if (!resolveProviderRunYarnInvocation) throw new Error('missing provider run Yarn invocation resolver');
+
+    const invocation = resolveProviderRunYarnInvocation(['-s', 'workspace', '@happier-dev/server', 'generate:providers'], {
+      platform: 'win32',
+      npmExecPath: 'C:\\npm\\node_modules\\npm\\bin\\npm-cli.js',
+      comspec: 'C:\\Windows\\System32\\cmd.exe',
+    });
+
+    expect(invocation.command).toBe('C:\\Windows\\System32\\cmd.exe');
+    expect(invocation.windowsVerbatimArguments).toBe(true);
+    expect(invocation.args.join(' ')).toContain('yarn.cmd');
+    expect(invocation.args.join(' ')).not.toContain('npm-cli.js');
   });
 });
 

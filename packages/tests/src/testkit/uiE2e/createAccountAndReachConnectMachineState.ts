@@ -140,9 +140,6 @@ async function isAuthenticatedSessionHomeVisible(page: CreateAccountAndReachConn
 async function hasDurableAuthenticatedSessionHomeVisible(
   page: CreateAccountAndReachConnectMachineStatePage,
 ): Promise<boolean> {
-  const startDaemon = page.getByTestId('session-getting-started-kind-start_daemon');
-  if (await isVisible(startDaemon)) return true;
-
   const createSession = page.getByTestId('session-getting-started-kind-create_session');
   if (await isVisible(createSession)) return true;
 

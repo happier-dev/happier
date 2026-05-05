@@ -21,6 +21,10 @@ const populatedRelayPerformanceSmokeUrl = new URL(
   '../../../suites/mobile-e2e/flows/F12.populatedRelaySessionPerformanceSmoke.yaml',
   import.meta.url,
 );
+const populatedRelayRestoreAndOpenUrl = new URL(
+  '../../../suites/mobile-e2e/flows/F13.populatedRelayRestoreAndOpenSessionPerformance.yaml',
+  import.meta.url,
+);
 
 function listYamlFiles(dir: string): string[] {
   return readdirSync(dir)
@@ -50,6 +54,51 @@ describe('mobile Dev Client flow contracts', () => {
     }
   });
 
+  it('handles Android chooser prompts after Dev Client launcher deep links', () => {
+    const flow = readFileSync(new URL('../../../suites/mobile-e2e/flows/_shared/connectUsingLaunchUrl.yaml', import.meta.url), 'utf8');
+    const openLinkIndex = flow.indexOf('openLink: ${HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL}');
+    const firstChooserTextIndex = flow.indexOf('Open with .*', openLinkIndex);
+    const firstChooserFlowIndex = flow.indexOf('file: acceptAndroidOpenWithPromptMaybe.yaml', openLinkIndex);
+    const secondChooserTextIndex = flow.indexOf('Open with .*', firstChooserFlowIndex + 1);
+    const secondChooserFlowIndex = flow.indexOf('file: acceptAndroidOpenWithPromptMaybe.yaml', firstChooserFlowIndex + 1);
+
+    expect(openLinkIndex).toBeGreaterThanOrEqual(0);
+    expect(firstChooserTextIndex).toBeGreaterThan(openLinkIndex);
+    expect(firstChooserFlowIndex).toBeGreaterThan(firstChooserTextIndex);
+    expect(secondChooserTextIndex).toBeGreaterThan(firstChooserFlowIndex);
+    expect(secondChooserFlowIndex).toBeGreaterThan(secondChooserTextIndex);
+  });
+
+  it('accepts Android chooser prompts after server configuration deep links', () => {
+    const flow = readFileSync(new URL('../../../suites/mobile-e2e/flows/_shared/configureServerIfNeeded.yaml', import.meta.url), 'utf8');
+    const openLinkIndex = flow.indexOf('openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}');
+    const chooserFlowIndex = flow.indexOf('file: acceptAndroidOpenWithPromptMaybe.yaml', openLinkIndex);
+    const overlayDismissIndex = flow.indexOf('file: dismissAndroidSystemNotRespondingDialogMaybe.yaml', openLinkIndex);
+
+    expect(openLinkIndex).toBeGreaterThanOrEqual(0);
+    expect(chooserFlowIndex).toBeGreaterThan(openLinkIndex);
+    expect(chooserFlowIndex).toBeLessThan(overlayDismissIndex);
+  });
+
+  it('configures the per-run server even when welcome auth actions are already visible', () => {
+    const flow = readFileSync(new URL('../../../suites/mobile-e2e/flows/_shared/configureServerIfNeeded.yaml', import.meta.url), 'utf8');
+    const openLinkIndex = flow.indexOf('openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}');
+    const welcomeCreateAccountGuardIndex = flow.indexOf('notVisible:\n        id: welcome-create-account');
+
+    expect(openLinkIndex).toBeGreaterThanOrEqual(0);
+    expect(welcomeCreateAccountGuardIndex).toBe(-1);
+  });
+
+  it('recognizes developer-menu onboarding in the first Dev Client bootstrap waits', () => {
+    const flow = readFileSync(new URL('../../../suites/mobile-e2e/flows/_shared/connectDevClientIfNeeded.yaml', import.meta.url), 'utf8');
+    const waitLines = [...flow.matchAll(/visible: "([^"]+)"/g)].map((match) => match[1] ?? '');
+
+    expect(waitLines[0]).toContain('This is the developer menu.*');
+    expect(waitLines[0]).toContain('Continue');
+    expect(waitLines[1]).toContain('This is the developer menu.*');
+    expect(waitLines[1]).toContain('Continue');
+  });
+
   it('fails the bootstrap flow before app-specific waits when native DevLauncher load fails', () => {
     const flow = readFileSync(sharedFlowUrls[0], 'utf8');
     expect(flow).toContain('assertNotVisible: "There was a problem loading the project"');
@@ -68,6 +117,7 @@ describe('mobile Dev Client flow contracts', () => {
 
     expect(flow).toContain('visible: "Enter URL manually"');
     expect(flow).toContain('tapOn: "Enter URL manually"');
+    expect(flow).toContain('tapOn: "(http://localhost:8081|exp://)"');
 
     for (const sharedFlowUrl of sharedFlowUrls) {
       expect(readFileSync(sharedFlowUrl, 'utf8')).toContain('Enter URL manually');
@@ -79,6 +129,15 @@ describe('mobile Dev Client flow contracts', () => {
 
     expect(flow).toContain('visible: "Close"');
     expect(flow).toContain('tapOn: "Close"');
+    expect(flow).toContain('notVisible: "Close"');
+    expect(flow).toContain('visible: "Tap something to inspect it"');
+    expect((flow.match(/- back/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('passes Metro stdout path through the Maestro CLI adapter', () => {
+    const source = readFileSync(new URL('./mobileMaestroCli.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain('stdoutPath: started.stdoutPath');
   });
 
   it('keeps runFlow file references resolvable relative to their owner flow', () => {
@@ -118,5 +177,59 @@ describe('mobile Dev Client flow contracts', () => {
     expect(flow.indexOf('file: _shared/connectUsingLaunchUrl.yaml')).toBeLessThan(
       flow.indexOf('file: _shared/connectDevClientIfNeeded.yaml'),
     );
+  });
+
+  it('restores populated relay accounts from an environment-provided secret before measuring', () => {
+    const flow = readFileSync(populatedRelayRestoreAndOpenUrl, 'utf8');
+
+    const firstChunkIndex = flow.indexOf('inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_01}');
+    const lastChunkIndex = flow.indexOf('inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_08}');
+
+    expect(firstChunkIndex).toBeGreaterThan(flow.indexOf('id: restore-manual-secret-input'));
+    expect(lastChunkIndex).toBeGreaterThan(firstChunkIndex);
+    expect(flow).not.toContain('setClipboard: ${HAPPIER_E2E_RESTORE_KEY}');
+    expect(flow).not.toContain('pasteText');
+    expect(flow).toContain('id: restore-manual-submit');
+    expect(lastChunkIndex).toBeLessThan(flow.indexOf('id: "session-list-item-.*"'));
+  });
+
+  it('waits for the populated relay server URL before restoring', () => {
+    const flow = readFileSync(populatedRelayRestoreAndOpenUrl, 'utf8');
+    const serverSelectionIndex = flow.indexOf(':///settings/server?auto=1');
+    const serverUrlWaitIndex = flow.indexOf('visible: ".*${HAPPIER_E2E_SERVER_VISIBLE_HOST_PATTERN}.*"', serverSelectionIndex);
+    const restoreIndex = flow.indexOf(':///restore/manual');
+
+    expect(serverSelectionIndex).toBeGreaterThanOrEqual(0);
+    expect(serverUrlWaitIndex).toBeGreaterThan(serverSelectionIndex);
+    expect(serverUrlWaitIndex).toBeLessThan(restoreIndex);
+  });
+
+  it('accepts the Android app chooser after populated relay app-scheme deep links', () => {
+    const flow = readFileSync(populatedRelayRestoreAndOpenUrl, 'utf8');
+    const androidChooserFlow = 'file: _shared/acceptAndroidOpenWithPromptMaybe.yaml';
+
+    const serverSelectionIndex = flow.indexOf(':///settings/server?auto=1');
+    const serverChooserIndex = flow.indexOf(androidChooserFlow, serverSelectionIndex);
+    const serverUrlWaitIndex = flow.indexOf(
+      'visible: ".*${HAPPIER_E2E_SERVER_VISIBLE_HOST_PATTERN}.*"',
+      serverSelectionIndex,
+    );
+
+    const restoreIndex = flow.indexOf(':///restore/manual');
+    const restoreChooserIndex = flow.indexOf(androidChooserFlow, restoreIndex);
+    const restoreInputWaitIndex = flow.indexOf('id: restore-manual-secret-input', restoreIndex);
+
+    expect(serverSelectionIndex).toBeGreaterThanOrEqual(0);
+    expect(serverChooserIndex).toBeGreaterThan(serverSelectionIndex);
+    expect(serverChooserIndex).toBeLessThan(serverUrlWaitIndex);
+    expect(restoreIndex).toBeGreaterThanOrEqual(0);
+    expect(restoreChooserIndex).toBeGreaterThan(restoreIndex);
+    expect(restoreChooserIndex).toBeLessThan(restoreInputWaitIndex);
+  });
+
+  it('accepts the current session cockpit surface after populated relay session open', () => {
+    const flow = readFileSync(populatedRelayRestoreAndOpenUrl, 'utf8');
+
+    expect(flow).toContain('id: "session-cockpit-tabbar-.*"');
   });
 });

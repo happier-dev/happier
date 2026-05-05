@@ -15,26 +15,141 @@
         "slash_command",
         "voice_panel"
       ],
-      "slash": { "tokens": ["/review", "/h.review"] },
-      "bindings": { "voiceClientToolName": "startReview", "mcpToolName": "review_start" },
+      "slash": {
+        "tokens": [
+          "/review",
+          "/h.review"
+        ]
+      },
+      "bindings": {
+        "voiceClientToolName": "startReview",
+        "mcpToolName": "review_start"
+      },
       "examples": {
         "voice": {
-          "argsExample": "{\"sessionId\":\"{{sessionId}}\",\"engineIds\":[\"codex\"],\"instructions\":\"Review this.\",\"changeType\":\"committed\",\"base\":{\"kind\":\"none\"}}"
+          "argsExample": "{\"sessionId\":\"{{sessionId}}\",\"engineIds\":[\"codex\"],\"instructions\":\"Review this.\",\"changeType\":\"uncommitted\",\"base\":{\"kind\":\"none\"}}"
         }
       },
       "surfaces": {
-        "ui_button": true,
-        "ui_slash_command": true,
-        "voice_tool": true,
-        "voice_action_block": true,
+        "ui": true,
+        "voice": true,
         "session_agent": true,
-        "mcp": false,
-        "cli": true
+        "mcp": true,
+        "cli": true,
+        "rpc": false,
+        "sdk": false
       },
       "inputHints": {
         "title": "Start a code review",
         "description": "Start one or more parallel review runs against the current worktree.",
-        "fields": []
+        "fields": [
+          {
+            "path": "engineIds",
+            "title": "Review engines",
+            "description": "Select one or more engines. Each engine runs as its own execution run.",
+            "widget": "multiselect",
+            "required": true,
+            "requireExplicitSelection": true,
+            "optionsSourceId": "review.engines.available"
+          },
+          {
+            "path": "instructions",
+            "title": "Instructions",
+            "description": "What you want the reviewers to focus on.",
+            "widget": "textarea",
+            "required": true
+          },
+          {
+            "path": "changeType",
+            "title": "Change type",
+            "description": "Which changes to review.",
+            "widget": "select",
+            "required": true,
+            "options": [
+              {
+                "value": "committed",
+                "label": "Committed"
+              },
+              {
+                "value": "uncommitted",
+                "label": "Uncommitted"
+              },
+              {
+                "value": "all",
+                "label": "All"
+              }
+            ]
+          },
+          {
+            "path": "base.kind",
+            "title": "Base selection",
+            "description": "How to define the review base for tools that need it (e.g. CodeRabbit).",
+            "widget": "select",
+            "required": true,
+            "options": [
+              {
+                "value": "none",
+                "label": "None"
+              },
+              {
+                "value": "branch",
+                "label": "Base branch"
+              },
+              {
+                "value": "commit",
+                "label": "Base commit"
+              }
+            ]
+          },
+          {
+            "path": "base.baseBranch",
+            "title": "Base branch",
+            "description": "Branch name to diff against (when base.kind=branch).",
+            "widget": "text",
+            "visibleWhen": {
+              "op": "eq",
+              "path": "base.kind",
+              "value": "branch"
+            },
+            "requiredWhen": {
+              "op": "eq",
+              "path": "base.kind",
+              "value": "branch"
+            }
+          },
+          {
+            "path": "base.baseCommit",
+            "title": "Base commit",
+            "description": "Commit SHA to diff against (when base.kind=commit).",
+            "widget": "text",
+            "visibleWhen": {
+              "op": "eq",
+              "path": "base.kind",
+              "value": "commit"
+            },
+            "requiredWhen": {
+              "op": "eq",
+              "path": "base.kind",
+              "value": "commit"
+            }
+          },
+          {
+            "path": "engines.coderabbit.configFiles",
+            "title": "CodeRabbit config files",
+            "description": "Optional extra config file(s) to pass to CodeRabbit via --config.",
+            "widget": "text_list",
+            "listSeparator": "comma",
+            "visibleWhen": {
+              "op": "includes",
+              "path": "engineIds",
+              "value": "coderabbit"
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
       }
     }
   }

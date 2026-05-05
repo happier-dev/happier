@@ -29,6 +29,45 @@ async function confirmPrompt(page: Page, value: string): Promise<void> {
     await dialog.getByTestId('web-prompt-confirm').click();
 }
 
+async function clickRowByTestId(page: Page, testID: string): Promise<void> {
+    const row = page.getByTestId(testID);
+    await expect(row).toHaveCount(1, { timeout: 60_000 });
+    await row.scrollIntoViewIfNeeded();
+    await row.click();
+}
+
+async function gotoNotifications(page: Page, uiBaseUrl: string): Promise<void> {
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/notifications?happier_hmr=0`, 180_000);
+    await expect(page.getByTestId('settings-notifications-screen')).toHaveCount(1, { timeout: 60_000 });
+}
+
+async function expectRowSelected(page: Page, testID: string, selected: boolean): Promise<void> {
+    const row = page.getByTestId(testID);
+    await expect(row).toHaveCount(1, { timeout: 60_000 });
+    await expect(row).toHaveAttribute('aria-selected', selected ? 'true' : 'false', { timeout: 60_000 });
+}
+
+async function expectRowSwitchChecked(page: Page, testID: string, checked: boolean): Promise<void> {
+    const row = page.getByTestId(testID);
+    await expect(row).toHaveCount(1, { timeout: 60_000 });
+    const switchControl = row.locator('[role="switch"], input[type="checkbox"]').first();
+    await expect(switchControl).toHaveCount(1, { timeout: 60_000 });
+    if (checked) {
+        await expect(switchControl).toBeChecked({ timeout: 60_000 });
+        return;
+    }
+    await expect(switchControl).not.toBeChecked({ timeout: 60_000 });
+}
+
+async function clickRowSwitchByTestId(page: Page, testID: string): Promise<void> {
+    const row = page.getByTestId(testID);
+    await expect(row).toHaveCount(1, { timeout: 60_000 });
+    await row.scrollIntoViewIfNeeded();
+    const switchControl = row.locator('[role="switch"], input[type="checkbox"]').first();
+    await expect(switchControl).toHaveCount(1, { timeout: 60_000 });
+    await switchControl.click({ force: true });
+}
+
 test.describe('ui e2e: settings notifications', () => {
     test.describe.configure({ mode: 'serial' });
 
@@ -85,9 +124,7 @@ test.describe('ui e2e: settings notifications', () => {
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings?happier_hmr=0`, 180_000);
         await expect(page.getByTestId('settings-desktop-entry')).toHaveCount(0);
 
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/notifications?happier_hmr=0`, 180_000);
-
-        await expect(page.getByTestId('settings-notifications-screen')).toHaveCount(1, { timeout: 60_000 });
+        await gotoNotifications(page, uiBaseUrl);
         await expect(page.getByTestId('settings-notifications-activity-surfaces-enabled')).toHaveCount(0);
         await expect(page.getByTestId('settings-notifications-live-activities-enabled')).toHaveCount(0);
         await expect(page.getByTestId('settings-notifications-home-screen-widgets-enabled')).toHaveCount(0);
@@ -95,11 +132,46 @@ test.describe('ui e2e: settings notifications', () => {
         await expect(page.getByTestId('settings-notifications-local-enabled')).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('settings-notifications-push-enabled')).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('settings-notifications-add-webhook')).toHaveCount(1, { timeout: 60_000 });
+        await expectRowSelected(page, 'settings-notifications-sounds-account-happier', true);
+        await expectRowSelected(page, 'settings-notifications-sounds-account-system', false);
+        await expectRowSelected(page, 'settings-notifications-sounds-account-silent', false);
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-account-off', true);
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-account-nightly', false);
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-device-account', true);
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-device-disabled', false);
+        await expectRowSwitchChecked(page, 'settings-notifications-sounds-device-enabled', true);
+        await expectRowSwitchChecked(page, 'settings-notifications-local-enabled', true);
+        await expectRowSwitchChecked(page, 'settings-notifications-push-enabled', true);
+
+        await clickRowByTestId(page, 'settings-notifications-sounds-account-silent');
+        await expectRowSelected(page, 'settings-notifications-sounds-account-happier', false);
+        await expectRowSelected(page, 'settings-notifications-sounds-account-silent', true);
+
+        await clickRowByTestId(page, 'settings-notifications-sounds-account-system');
+        await expectRowSelected(page, 'settings-notifications-sounds-account-silent', false);
+        await expectRowSelected(page, 'settings-notifications-sounds-account-system', true);
+
+        await clickRowSwitchByTestId(page, 'settings-notifications-sounds-device-enabled');
+        await expectRowSwitchChecked(page, 'settings-notifications-sounds-device-enabled', false);
+
+        await clickRowByTestId(page, 'settings-notifications-quiet-hours-account-nightly');
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-account-off', false);
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-account-nightly', true);
+
+        await clickRowByTestId(page, 'settings-notifications-quiet-hours-device-disabled');
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-device-account', false);
+        await expectRowSelected(page, 'settings-notifications-quiet-hours-device-disabled', true);
+
+        await clickRowSwitchByTestId(page, 'settings-notifications-local-enabled');
+        await expectRowSwitchChecked(page, 'settings-notifications-local-enabled', false);
+
+        await clickRowSwitchByTestId(page, 'settings-notifications-push-enabled');
+        await expectRowSwitchChecked(page, 'settings-notifications-push-enabled', false);
 
         const webhookRows = page.locator('[data-testid^="settings-notifications-webhook-"]');
         await expect(webhookRows).toHaveCount(0, { timeout: 60_000 });
 
-        await page.getByTestId('settings-notifications-add-webhook').click();
+        await clickRowByTestId(page, 'settings-notifications-add-webhook');
         await confirmPrompt(page, 'https://hooks.example.test/notify');
 
         await expect(webhookRows).toHaveCount(1, { timeout: 60_000 });

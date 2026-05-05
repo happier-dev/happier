@@ -6,6 +6,12 @@ import type { StartedStressTarget } from '../targets/stressTargetTypes';
 
 type FullComposeAdmin = NonNullable<StartedStressTarget['admin']>;
 
+type ServiceReplicaTarget = Readonly<{
+  target: string;
+  containerId: string;
+  containerName: string;
+}>;
+
 export function requireFullComposeAdmin(target: StartedStressTarget): FullComposeAdmin | null {
   if (target.mode !== 'full-compose' || !target.admin) {
     return null;
@@ -18,13 +24,29 @@ export async function resolveServiceUpstreamTargets(
   service: string,
   port: number,
 ): Promise<string[]> {
+  return (await resolveServiceReplicaTargets(target, service, port)).map((replica) => replica.target);
+}
+
+async function resolveServiceReplicaTargets(
+  target: StartedStressTarget,
+  service: string,
+  port: number,
+): Promise<readonly ServiceReplicaTarget[]> {
   const admin = requireFullComposeAdmin(target);
   if (!admin) return [];
 
   const containers = await admin.listServiceContainers(service);
-  return containers.flatMap((container) =>
-    container.ipv4Addresses.map((ipAddress) => `${ipAddress}:${port}`),
-  );
+  return containers.flatMap((container) => {
+    const ipAddress = container.ipv4Addresses[0];
+    if (!ipAddress) {
+      return [];
+    }
+    return [{
+      target: `${ipAddress}:${port}`,
+      containerId: container.id,
+      containerName: container.name,
+    }];
+  });
 }
 
 export function readScalarMetricValue(metricsText: string, metricName: string): number {
@@ -96,14 +118,28 @@ export async function readClusterServiceMetricsViaNodeFetch(
   target: StartedStressTarget,
   service: string,
 ): Promise<string> {
+  return (await readClusterServiceMetricsByReplicaViaNodeFetch(target, service))
+    .map((replica) => replica.metricsText)
+    .join('\n');
+}
+
+async function readClusterServiceMetricsByReplicaViaNodeFetch(
+  target: StartedStressTarget,
+  service: string,
+): Promise<ReadonlyArray<ServiceReplicaTarget & { metricsText: string }>> {
   const admin = requireFullComposeAdmin(target);
   if (!admin) {
     throw new Error(`Cluster service metrics fetch requires a full-compose target (service=${service})`);
   }
 
-  const upstreamTargets = await resolveServiceUpstreamTargets(target, service, 9090);
-  if (upstreamTargets.length === 0) {
-    return await readServiceMetricsViaNodeFetch(target, service);
+  const replicas = await resolveServiceReplicaTargets(target, service, 9090);
+  if (replicas.length === 0) {
+    return [{
+      target: service,
+      containerId: service,
+      containerName: service,
+      metricsText: await readServiceMetricsViaNodeFetch(target, service),
+    }];
   }
 
   const output = await admin.execInService(
@@ -112,7 +148,7 @@ export async function readClusterServiceMetricsViaNodeFetch(
       'node',
       '-e',
       "const targets = JSON.parse(process.argv[1] ?? '[]'); Promise.all(targets.map(async (target) => { const response = await fetch(`http://${target}/metrics`); if (!response.ok) throw new Error(`${target}:${response.status}`); return await response.text(); })).then((values) => { process.stdout.write(JSON.stringify(values)); }).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });",
-      JSON.stringify(upstreamTargets),
+      JSON.stringify(replicas.map((replica) => replica.target)),
     ],
   );
 
@@ -120,9 +156,19 @@ export async function readClusterServiceMetricsViaNodeFetch(
   if (!Array.isArray(parsed)) {
     throw new Error(`Expected JSON array of metrics texts from ${service} cluster scrape`);
   }
-  return parsed
-    .filter((value): value is string => typeof value === 'string' && value.length > 0)
-    .join('\n');
+  if (parsed.length !== replicas.length) {
+    throw new Error(`Expected ${replicas.length} replica metrics payloads from ${service} cluster scrape`);
+  }
+  return replicas.map((replica, index) => {
+    const metricsText = parsed[index];
+    if (typeof metricsText !== 'string') {
+      throw new Error(`Expected metrics payload ${index} from ${service} cluster scrape to be a string`);
+    }
+    return {
+      ...replica,
+      metricsText,
+    };
+  });
 }
 
 export async function scrapeServiceMetricCounters(params: {
@@ -410,4 +456,361 @@ export async function scrapeMetricCounter(params: {
     metricNames: [params.metricName],
   });
   return scraped.counters[params.metricName] ?? 0;
+}
+
+export type ClusterServiceMetricPeakReplica = Readonly<{
+  target: string;
+  containerId: string;
+  containerName: string;
+  values: Record<string, number>;
+}>;
+
+export type ClusterServiceMetricThresholdSignal = Readonly<{
+  valueKey: string;
+  threshold: number;
+  signal: NodeJS.Signals;
+}>;
+
+export type ClusterServiceMetricThresholdSignalEvent = Readonly<{
+  target: string;
+  containerId: string;
+  containerName: string;
+  valueKey: string;
+  threshold: number;
+  observedValue: number;
+  signal: NodeJS.Signals;
+}>;
+
+type ContainerMemoryPeakSnapshot = Readonly<{
+  service: string;
+  containerId: string;
+  containerName: string;
+  peakMemoryUsageBytes: number;
+  memoryLimitBytes?: number;
+  peakMemoryPercent?: number;
+  peakPids?: number;
+}>;
+
+function parseContainerCgroupStats(output: string): {
+  usageBytes: number;
+  limitBytes?: number;
+  pids?: number;
+} {
+  const [usageLine, limitLine, pidsLine] = output.split('\n').map((line) => line.trim());
+  const usageBytes = Number.parseInt(usageLine ?? '0', 10);
+  const parsedLimit = (limitLine ?? '').toLowerCase() === 'max'
+    ? undefined
+    : Number.parseInt(limitLine ?? '', 10);
+  const pids = Number.parseInt(pidsLine ?? '', 10);
+
+  return {
+    usageBytes: Number.isFinite(usageBytes) ? usageBytes : 0,
+    ...(typeof parsedLimit === 'number' && Number.isFinite(parsedLimit) ? { limitBytes: parsedLimit } : {}),
+    ...(Number.isFinite(pids) ? { pids } : {}),
+  };
+}
+
+async function readContainerCgroupStats(params: {
+  target: StartedStressTarget;
+  service: string;
+  containerId: string;
+}): Promise<ContainerMemoryPeakSnapshot> {
+  const admin = requireFullComposeAdmin(params.target);
+  if (!admin) {
+    throw new Error('Container memory sampling requires a full-compose target');
+  }
+
+  const command = [
+    'sh',
+    '-lc',
+    [
+      'usage_file=/sys/fs/cgroup/memory.current',
+      'limit_file=/sys/fs/cgroup/memory.max',
+      'pids_file=/sys/fs/cgroup/pids.current',
+      'if [ ! -f "$usage_file" ]; then usage_file=/sys/fs/cgroup/memory/memory.usage_in_bytes; fi',
+      'if [ ! -f "$limit_file" ]; then limit_file=/sys/fs/cgroup/memory/memory.limit_in_bytes; fi',
+      'if [ ! -f "$pids_file" ]; then pids_file=/sys/fs/cgroup/pids/pids.current; fi',
+      'printf "%s\\n%s\\n%s\\n" "$(cat "$usage_file")" "$(cat "$limit_file" 2>/dev/null || printf max)" "$(cat "$pids_file" 2>/dev/null || printf 0)"',
+    ].join('; '),
+  ] as const;
+  const output = admin.execInContainer
+    ? await admin.execInContainer(params.containerId, command)
+    : await admin.execInService(params.service, command);
+  const parsed = parseContainerCgroupStats(output);
+
+  return {
+    service: params.service,
+    containerId: params.containerId,
+    containerName: params.containerId,
+    peakMemoryUsageBytes: parsed.usageBytes,
+    ...(parsed.limitBytes !== undefined ? { memoryLimitBytes: parsed.limitBytes } : {}),
+    ...(parsed.limitBytes !== undefined && parsed.limitBytes > 0
+      ? { peakMemoryPercent: (parsed.usageBytes / parsed.limitBytes) * 100 }
+      : {}),
+    ...(parsed.pids !== undefined ? { peakPids: parsed.pids } : {}),
+  };
+}
+
+function readReplicaMetricValues(params: {
+  metricsText: string;
+  metricNames: readonly string[];
+  selectors?: ReadonlyArray<{
+    alias: string;
+    metricName: string;
+    labels: Readonly<Record<string, string>>;
+  }>;
+}): Record<string, number> {
+  return {
+    ...Object.fromEntries(
+      params.metricNames.map((metricName) => [metricName, readScalarMetricValue(params.metricsText, metricName)]),
+    ),
+    ...Object.fromEntries(
+      (params.selectors ?? []).map((selector) => [
+        selector.alias,
+        readLabeledMetricValue({
+          metricsText: params.metricsText,
+          metricName: selector.metricName,
+          labels: selector.labels,
+        }),
+      ]),
+    ),
+  };
+}
+
+function mergePeakReplicaValues(
+  existingValues: Readonly<Record<string, number>> | undefined,
+  nextValues: Readonly<Record<string, number>>,
+): Record<string, number> {
+  if (!existingValues) {
+    return { ...nextValues };
+  }
+
+  return Object.fromEntries(
+    Object.entries(nextValues).map(([key, value]) => [key, Math.max(existingValues[key] ?? 0, value)]),
+  );
+}
+
+async function sendSignalToReplicaContainer(params: {
+  target: StartedStressTarget;
+  containerId: string;
+  signal: NodeJS.Signals;
+}): Promise<void> {
+  const admin = requireFullComposeAdmin(params.target);
+  if (!admin) {
+    throw new Error(`Container signal delivery requires a full-compose target (${params.containerId})`);
+  }
+  if (!admin.execInContainer) {
+    throw new Error(`Full-compose target cannot exec in container ${params.containerId} to send ${params.signal}`);
+  }
+
+  await admin.execInContainer(params.containerId, [
+    'node',
+    '-e',
+    'process.kill(1, process.argv[1] ?? "SIGUSR2");',
+    params.signal,
+  ]);
+}
+
+export function startClusterServiceMetricPeakSampler(params: {
+  target: StartedStressTarget;
+  service: string;
+  metricNames: readonly string[];
+  selectors?: ReadonlyArray<{
+    alias: string;
+    metricName: string;
+    labels: Readonly<Record<string, string>>;
+  }>;
+  thresholdSignals?: readonly ClusterServiceMetricThresholdSignal[];
+  intervalMs?: number;
+}) {
+  let stopped = false;
+  let lastError: string | undefined;
+  let replicas: ClusterServiceMetricPeakReplica[] = [];
+  const signalEvents: ClusterServiceMetricThresholdSignalEvent[] = [];
+  const signalErrors: string[] = [];
+  const signaledKeys = new Set<string>();
+
+  const poll = async (): Promise<void> => {
+    if (stopped) {
+      return;
+    }
+
+    try {
+      const replicaMetrics = await readClusterServiceMetricsByReplicaViaNodeFetch(params.target, params.service);
+      const existingReplicasByContainerId = new Map(replicas.map((replica) => [replica.containerId, replica] as const));
+      const sampledReplicas = replicaMetrics.map((replica) => ({
+        replica,
+        observedValues: readReplicaMetricValues({
+          metricsText: replica.metricsText,
+          metricNames: params.metricNames,
+          selectors: params.selectors,
+        }),
+      }));
+      replicas = sampledReplicas.map(({ replica, observedValues }) => {
+        const existingReplica = existingReplicasByContainerId.get(replica.containerId);
+        return {
+          target: replica.target,
+          containerId: replica.containerId,
+          containerName: replica.containerName,
+          values: mergePeakReplicaValues(existingReplica?.values, observedValues),
+        };
+      });
+      lastError = undefined;
+
+      for (const { replica, observedValues } of sampledReplicas) {
+        for (const thresholdSignal of params.thresholdSignals ?? []) {
+          const observedValue = observedValues[thresholdSignal.valueKey];
+          if (typeof observedValue !== 'number' || observedValue < thresholdSignal.threshold) {
+            continue;
+          }
+          const signalKey = `${replica.containerId}:${thresholdSignal.valueKey}:${thresholdSignal.threshold}:${thresholdSignal.signal}`;
+          if (signaledKeys.has(signalKey)) {
+            continue;
+          }
+          signaledKeys.add(signalKey);
+
+          try {
+            await sendSignalToReplicaContainer({
+              target: params.target,
+              containerId: replica.containerId,
+              signal: thresholdSignal.signal,
+            });
+            signalEvents.push({
+              target: replica.target,
+              containerId: replica.containerId,
+              containerName: replica.containerName,
+              valueKey: thresholdSignal.valueKey,
+              threshold: thresholdSignal.threshold,
+              observedValue,
+              signal: thresholdSignal.signal,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            signalErrors.push(
+              `Failed to send ${thresholdSignal.signal} to ${replica.containerName} (${replica.containerId}) at ${replica.target}: ${message}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  };
+
+  void poll();
+  const interval = setInterval(() => {
+    void poll();
+  }, params.intervalMs ?? 5_000);
+  interval.unref?.();
+
+  return {
+    stop: async () => {
+      clearInterval(interval);
+      await poll();
+      stopped = true;
+      return {
+        replicas,
+        ...(lastError ? { error: lastError } : {}),
+        ...(signalEvents.length > 0 ? { signalEvents } : {}),
+        signalErrors,
+      };
+    },
+  };
+}
+
+export function startContainerMemoryPeakSampler(params: {
+  target: StartedStressTarget;
+  services: readonly string[];
+  intervalMs?: number;
+}) {
+  let stopped = false;
+  let lastError: string | undefined;
+  const containers = new Map<string, ContainerMemoryPeakSnapshot>();
+
+  const poll = async (): Promise<void> => {
+    if (stopped) {
+      return;
+    }
+
+    try {
+      for (const service of params.services) {
+        const replicas = await params.target.admin?.listServiceContainers(service) ?? [];
+        for (const replica of replicas) {
+          const snapshot = await readContainerCgroupStats({
+            target: params.target,
+            service,
+            containerId: replica.id,
+          });
+          const existing = containers.get(replica.id);
+          const peakMemoryUsageBytes = Math.max(
+            existing?.peakMemoryUsageBytes ?? 0,
+            snapshot.peakMemoryUsageBytes,
+          );
+          const peakPids = Math.max(existing?.peakPids ?? 0, snapshot.peakPids ?? 0);
+          containers.set(replica.id, {
+            ...snapshot,
+            containerName: replica.name,
+            peakMemoryUsageBytes,
+            ...(snapshot.memoryLimitBytes !== undefined ? { memoryLimitBytes: snapshot.memoryLimitBytes } : {}),
+            ...(snapshot.memoryLimitBytes !== undefined && snapshot.memoryLimitBytes > 0
+              ? { peakMemoryPercent: (peakMemoryUsageBytes / snapshot.memoryLimitBytes) * 100 }
+              : {}),
+            ...(peakPids > 0 ? { peakPids } : {}),
+          });
+        }
+      }
+      lastError = undefined;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  };
+
+  void poll();
+  const interval = setInterval(() => {
+    void poll();
+  }, params.intervalMs ?? 5_000);
+  interval.unref?.();
+
+  return {
+    stop: async () => {
+      clearInterval(interval);
+      await poll();
+      stopped = true;
+      return {
+        containers: Array.from(containers.values()),
+        error: lastError,
+      };
+    },
+  };
+}
+
+export async function resolveComposeNetworkControlPlaneBaseUrls(
+  target: StartedStressTarget,
+  _config: { compose: { apiReplicas: number } },
+): Promise<readonly string[]> {
+  const upstreamTargets = await resolveServiceUpstreamTargets(target, 'api', 53288);
+  return upstreamTargets.map((targetEntry) => `http://${targetEntry}`);
+}
+
+export async function recoverFullComposeFailureDiagnosticsMetrics(params: {
+  target: StartedStressTarget;
+  metrics: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const nextMetrics: Record<string, unknown> = {
+    ...params.metrics,
+  };
+
+  try {
+    nextMetrics.gatewayStatusText = await fetchGatewayStubStatus(params.target);
+  } catch (error) {
+    nextMetrics.gatewayStatusError = error instanceof Error ? error.message : String(error);
+  }
+
+  try {
+    nextMetrics.gatewayLogSummary = await summarizeGatewayLogs(params.target);
+  } catch (error) {
+    nextMetrics.gatewayLogSummaryError = error instanceof Error ? error.message : String(error);
+  }
+
+  return nextMetrics;
 }

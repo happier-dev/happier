@@ -3,14 +3,15 @@ import { randomUUID } from 'node:crypto';
 
 import {
   BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-  accountSettingsParse,
   getNotificationsSettingsV1FromAccountSettings,
+  resolveAttentionDeliveryPolicyDecision,
   resolveNotificationChannelsV1FromAccountSettings,
 } from '@happier-dev/protocol';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
+import { readAccountSettingsV1, writeAccountSettingsV1 } from '../../src/testkit/accountSettingsHttp';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -21,22 +22,6 @@ function asRecord(value: unknown): UnknownRecord | null {
   return value as UnknownRecord;
 }
 
-function getString(record: UnknownRecord, key: string): string {
-  const value = record[key];
-  if (typeof value !== 'string') {
-    throw new Error(`Expected string ${key}`);
-  }
-  return value;
-}
-
-function getNumber(record: UnknownRecord, key: string): number {
-  const value = record[key];
-  if (typeof value !== 'number') {
-    throw new Error(`Expected number ${key}`);
-  }
-  return value;
-}
-
 describe('core e2e: account settings notifications roundtrip', () => {
   let server: StartedServer | null = null;
 
@@ -45,19 +30,15 @@ describe('core e2e: account settings notifications roundtrip', () => {
     server = null;
   }, 60_000);
 
-  it('roundtrips notificationsSettingsV1 and parses via protocol defaults', async () => {
+  it('roundtrips attentionDeliveryPolicyV1 with legacy notification settings compatibility', async () => {
     const testDir = run.testDir(`account-settings-notifications-roundtrip-${randomUUID()}`);
     server = await startServerLight({ testDir });
 
     const auth = await createTestAuth(server.baseUrl);
-    const getRes = await fetch(`${server.baseUrl}/v1/account/settings`, {
-      headers: { Authorization: `Bearer ${auth.token}` },
+    const { settingsVersion } = await readAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
     });
-    expect(getRes.ok).toBe(true);
-    const getJson: unknown = await getRes.json().catch(() => null);
-    const getRow = asRecord(getJson);
-    if (!getRow) throw new Error('Expected account settings response object');
-    const settingsVersion = getNumber(getRow, 'settingsVersion');
 
     const nextSettings = {
       schemaVersion: 2,
@@ -76,39 +57,87 @@ describe('core e2e: account settings notifications roundtrip', () => {
           readyIncludeMessageText: false,
         },
       ],
+      attentionDeliveryPolicyV1: {
+        v: 1,
+        events: {
+          ready: { enabled: true },
+          permission_request: { enabled: false },
+          user_action_request: { enabled: true, soundId: 'default' },
+        },
+        channels: {
+          expo_push: {
+            enabled: true,
+            quietHoursBehavior: 'suppress',
+            previewBehavior: 'status_only',
+            events: {
+              ready: { enabled: true },
+              permission_request: { enabled: false },
+              user_action_request: { enabled: true },
+            },
+          },
+          webhook: {
+            enabled: true,
+            quietHoursBehavior: 'deliver',
+            previewBehavior: 'include_preview',
+            events: {
+              ready: { enabled: true },
+              permission_request: { enabled: false },
+              user_action_request: { enabled: true },
+            },
+          },
+          live_activity: {
+            enabled: true,
+            quietHoursBehavior: 'silent',
+          },
+        },
+        quietHours: {
+          enabled: true,
+          timezone: 'UTC',
+          windows: [
+            {
+              startLocalTime: '22:00',
+              endLocalTime: '07:00',
+            },
+          ],
+        },
+        foregroundBehavior: 'silent',
+        privacy: {
+          defaultPreviewBehavior: 'title_only',
+          surfaces: {
+            live_activity: 'status_only',
+          },
+        },
+        sounds: {
+          defaultSoundId: 'none',
+          eventSoundIds: {
+            user_action_request: 'default',
+          },
+          volume: 0.5,
+        },
+        liveActivityRemoteUpdates: {
+          enabled: true,
+          preferredMode: 'local_only',
+          allowBackgroundWakeFallback: true,
+          defaultStaleAfterSeconds: 900,
+          quietHoursBehavior: 'silent',
+        },
+        unknownPolicyKey: { keep: true },
+      },
       unknownFutureKey: { nested: true },
     };
 
-    const postRes = await fetch(`${server.baseUrl}/v1/account/settings`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        settings: JSON.stringify(nextSettings),
-        expectedVersion: settingsVersion,
-      }),
-    });
-    expect(postRes.ok).toBe(true);
-    const postJson: unknown = await postRes.json().catch(() => null);
-    const postRow = asRecord(postJson);
-    if (!postRow) throw new Error('Expected account settings write response object');
-    expect(postRow.success).toBe(true);
-    expect(getNumber(postRow, 'version')).toBe(settingsVersion + 1);
+    await expect(writeAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      settings: nextSettings,
+      expectedVersion: settingsVersion,
+    })).resolves.toBe(settingsVersion + 1);
 
-    const getRes2 = await fetch(`${server.baseUrl}/v1/account/settings`, {
-      headers: { Authorization: `Bearer ${auth.token}` },
+    const { settings: parsed, settingsVersion: nextSettingsVersion } = await readAccountSettingsV1({
+      baseUrl: server.baseUrl,
+      token: auth.token,
     });
-    expect(getRes2.ok).toBe(true);
-    const getJson2: unknown = await getRes2.json().catch(() => null);
-    const getRow2 = asRecord(getJson2);
-    if (!getRow2) throw new Error('Expected account settings response object');
-    expect(getNumber(getRow2, 'settingsVersion')).toBe(settingsVersion + 1);
-
-    const settingsBlob = getString(getRow2, 'settings');
-    const raw = JSON.parse(settingsBlob) as unknown;
-    const parsed = accountSettingsParse(raw);
+    expect(nextSettingsVersion).toBe(settingsVersion + 1);
 
     const notifications = getNotificationsSettingsV1FromAccountSettings(parsed);
     expect(notifications.pushEnabled).toBe(true);
@@ -129,7 +158,75 @@ describe('core e2e: account settings notifications roundtrip', () => {
       },
     ]);
 
+    expect(parsed.attentionDeliveryPolicyV1.events.permission_request.enabled).toBe(false);
+    expect(parsed.attentionDeliveryPolicyV1.channels.expo_push.previewBehavior).toBe('status_only');
+    expect(parsed.attentionDeliveryPolicyV1.channels.webhook.quietHoursBehavior).toBe('deliver');
+    expect(parsed.attentionDeliveryPolicyV1.quietHours).toMatchObject({
+      enabled: true,
+      timezone: 'UTC',
+      windows: [
+        {
+          startLocalTime: '22:00',
+          endLocalTime: '07:00',
+        },
+      ],
+    });
+    expect(parsed.attentionDeliveryPolicyV1.sounds).toMatchObject({
+      defaultSoundId: 'none',
+      eventSoundIds: {
+        user_action_request: 'default',
+      },
+      volume: 0.5,
+    });
+    expect(parsed.attentionDeliveryPolicyV1.liveActivityRemoteUpdates).toMatchObject({
+      preferredMode: 'local_only',
+      allowBackgroundWakeFallback: true,
+      defaultStaleAfterSeconds: 900,
+    });
+    expect(resolveAttentionDeliveryPolicyDecision({
+      policy: parsed.attentionDeliveryPolicyV1,
+      event: 'ready',
+      channel: 'expo_push',
+      now: '2026-05-03T23:30:00.000Z',
+    })).toMatchObject({
+      delivery: 'suppress',
+      reason: 'quiet_hours',
+    });
+    expect(resolveAttentionDeliveryPolicyDecision({
+      policy: parsed.attentionDeliveryPolicyV1,
+      event: 'ready',
+      channel: 'webhook',
+      now: '2026-05-03T23:30:00.000Z',
+    })).toMatchObject({
+      delivery: 'deliver',
+      reason: 'deliver',
+      previewBehavior: 'include_preview',
+    });
+    expect(resolveAttentionDeliveryPolicyDecision({
+      policy: parsed.attentionDeliveryPolicyV1,
+      event: 'permission_request',
+      channel: 'expo_push',
+      now: '2026-05-03T12:00:00.000Z',
+    })).toMatchObject({
+      delivery: 'suppress',
+      reason: 'event_disabled',
+    });
+    expect(resolveAttentionDeliveryPolicyDecision({
+      policy: parsed.attentionDeliveryPolicyV1,
+      event: 'user_action_request',
+      channel: 'expo_push',
+      now: '2026-05-03T12:00:00.000Z',
+    })).toMatchObject({
+      delivery: 'deliver',
+      sound: {
+        kind: 'system_default',
+        id: 'default',
+        volume: 0.5,
+      },
+    });
+
     // Ensure forward-compat: unknown keys survive roundtrip + parse.
-    expect((parsed as any).unknownFutureKey).toEqual({ nested: true });
+    expect(asRecord(parsed)?.unknownFutureKey).toEqual({ nested: true });
+    expect(parsed.attentionDeliveryPolicyV1.unknownPolicyKey).toEqual({ keep: true });
   }, 240_000);
 });

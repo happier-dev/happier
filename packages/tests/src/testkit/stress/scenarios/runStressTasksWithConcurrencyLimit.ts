@@ -26,3 +26,16 @@ export async function runStressTasksWithConcurrencyLimit<T, R>(
 
   return results;
 }
+
+export async function runStressTaskCountWithConcurrencyLimit<R>(
+  count: number,
+  concurrency: number,
+  worker: (index: number) => Promise<R>,
+): Promise<R[]> {
+  const itemCount = Math.max(0, Math.trunc(count));
+  return await runStressTasksWithConcurrencyLimit(
+    Array.from({ length: itemCount }, (_, index) => index),
+    concurrency,
+    async (index) => await worker(index),
+  );
+}

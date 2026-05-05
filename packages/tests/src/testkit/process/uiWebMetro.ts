@@ -17,6 +17,7 @@ import { readPositiveEnvInt, resolveUiWebEntryProbeTimeoutMs } from './uiWebEnv'
 import { resolveScriptUrlsFromHtml, selectPrimaryAppScriptUrl } from './uiWebHtml';
 import { resolveUiWebSourceFingerprint } from './uiWebSourceFingerprint';
 import { spawnLoggedProcess } from './spawnProcess';
+import { ensureUiWebWorkspacePrebuild } from './uiWebWorkspacePrebuild';
 import type { StartedUiWeb } from './uiWebTypes';
 
 function stripAnsi(text: string): string {
@@ -122,11 +123,16 @@ export function resolveUiWebScriptFetchTotalTimeoutMs(env: NodeJS.ProcessEnv): n
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS, 420_000);
 }
 
+export function resolveUiWebMetroWorkspacePrebuildTimeoutMs(env: NodeJS.ProcessEnv): number {
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_WORKSPACE_PREBUILD_TIMEOUT_MS, 480_000);
+}
+
 export function resolveUiWebMetroBeforeAllTimeoutMs(env: NodeJS.ProcessEnv): number {
   const minTimeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS, 900_000);
   const headroomMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_HEADROOM_MS, 60_000);
   const requiredBudgetMs =
-    resolveUiWebBaseUrlTimeoutMs(env)
+    resolveUiWebMetroWorkspacePrebuildTimeoutMs(env)
+    + resolveUiWebBaseUrlTimeoutMs(env)
     + resolveUiWebMetroStatusTimeoutMs(env)
     + resolveUiWebScriptFetchTotalTimeoutMs(env)
     + headroomMs;
@@ -718,6 +724,16 @@ async function startUiWebMetroSingleAttempt(params: {
   const noDev = noDevRaw === '1' || noDevRaw === 'true' || noDevRaw === 'yes' || noDevRaw === 'y';
 
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
+  await ensureUiWebWorkspacePrebuild({
+    testDir: params.testDir,
+    env: params.env,
+    workspaceRootDir: uiWorkspaceDir,
+    logPrefix: 'ui-web-metro',
+    timeoutMs: resolveUiWebMetroWorkspacePrebuildTimeoutMs(params.env),
+    stdoutPath,
+    stderrPath,
+  });
+
   const expoCliPath = resolveExpoCliPath({ rootDir: repoRootDir(), uiWorkspaceDir });
   const tmpDir = resolvePath(params.testDir, 'ui.web.tmp');
   await mkdir(tmpDir, { recursive: true });

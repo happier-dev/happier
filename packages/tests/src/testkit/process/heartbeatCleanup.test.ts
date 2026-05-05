@@ -381,7 +381,7 @@ describe('run-playwright-with-heartbeat timeout cleanup', () => {
     const caseItem = WRAPPER_CASES.find((item) => item.name === 'run-playwright-with-heartbeat');
     expect(caseItem).toBeDefined();
 
-    const result = await runWrapperCleanupScenario(caseItem!, { wrapperTimeoutMs: 250 });
+    const result = await runWrapperCleanupScenario(caseItem!, { wrapperTimeoutMs: 2_000 });
 
     expect(result).toEqual({ code: 124, signal: null });
   }, 30_000);

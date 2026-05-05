@@ -101,6 +101,8 @@ async function writeServiceFixtures(params: Readonly<{
         programArgs: ['/usr/bin/env', join(params.happierHomeDir, 'cli-preview', 'current', 'happier'), 'daemon', 'start-sync'],
         env: {
           HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+          HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+          HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: params.happierHomeDir,
           HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
         },
       }),
@@ -130,6 +132,8 @@ async function writeServiceFixtures(params: Readonly<{
         programArgs: [join(params.happierHomeDir, 'cli-preview', 'current', 'happier.exe'), 'daemon', 'start-sync'],
         env: {
           HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+          HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+          HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: params.happierHomeDir,
           HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
         },
         stdoutPath: join(params.happierHomeDir, 'logs', 'daemon.out.log'),
@@ -162,6 +166,8 @@ async function writeServiceFixtures(params: Readonly<{
       execStart: [join(params.happierHomeDir, 'cli-preview', 'current', 'happier'), 'daemon', 'start-sync'],
       env: {
         HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: params.happierHomeDir,
         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
       },
     }),
@@ -237,6 +243,11 @@ describe('core e2e: happier doctor runtime inventory', () => {
     const snapshot = JSON.parse(stdoutText) as {
       installations?: { happier?: { installations?: Array<{ ring?: string | null; shimName?: string | null }> } };
       services?: { happier?: { services?: Array<{ serviceType?: string; label?: string }> } };
+      repairSummary?: { findingCounts?: { total?: number } };
+      localRelays?: { relays?: Array<{ id?: string; installed?: boolean; releaseChannel?: string }> };
+      automaticStartup?: { entries?: Array<{ targetMode?: string }> };
+      activeStack?: { activeServerId?: string; relayUrl?: string };
+      serviceHealth?: { backgroundService?: { installed?: boolean; running?: boolean } };
       warnings?: Array<{ code?: string }>;
     };
 
@@ -247,10 +258,22 @@ describe('core e2e: happier doctor runtime inventory', () => {
     ]));
     expect(snapshot.services?.happier?.services).toEqual(expect.arrayContaining([
       expect.objectContaining({ serviceType: 'daemon' }),
-      expect.objectContaining({ serviceType: 'stack-service' }),
     ]));
+    expect(snapshot.repairSummary?.findingCounts?.total).toBeGreaterThanOrEqual(1);
+    expect(snapshot.localRelays?.relays).toEqual([]);
+    expect(snapshot.automaticStartup?.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ releaseChannel: 'preview' }),
+    ]));
+    expect(snapshot.activeStack).toEqual(expect.objectContaining({
+      activeServerId: expect.any(String),
+      relayUrl: expect.any(String),
+    }));
+    expect(snapshot.serviceHealth?.backgroundService).toEqual(expect.objectContaining({
+      installed: expect.any(Boolean),
+      running: expect.any(Boolean),
+    }));
     expect(snapshot.warnings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH' }),
+      expect.objectContaining({ code: 'backgroundServiceRepairRecommended' }),
     ]));
   }, 240_000);
 });

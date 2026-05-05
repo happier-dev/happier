@@ -13,6 +13,7 @@ import type { StressConfig } from '../config/stressScenarioSchema';
 import { finalizeStressScenario } from '../reporting/finalizeStressScenario';
 import type { StartedStressTarget } from '../targets/stressTargetTypes';
 import {
+  type ClusterServiceMetricThresholdSignalEvent,
   fetchGatewayStubStatus,
   scrapeClusterServiceMetricCounters,
   scrapeClusterServiceMetricSelectors,
@@ -212,8 +213,69 @@ function parseGatewayStubStatus(statusText: string): {
   };
 }
 
+export const MIXED_REALISTIC_API_PEAK_METRIC_NAMES = [
+  'runtime_rss_bytes',
+  'runtime_heap_used_bytes',
+  'runtime_total_physical_size_bytes',
+  'runtime_global_handles_size_bytes',
+  'websocket_connections_active',
+  'auth_token_cache_entries',
+  'engineio_connections_active',
+] as const;
+
+export const MIXED_REALISTIC_API_PROVISIONING_HTTP_SELECTORS = [
+  { alias: 'provision_auth_create_requests_total', metricName: 'http_server_requests_total', labels: { route: '/v1/auth', method: 'POST' } },
+  { alias: 'provision_auth_create_inflight', metricName: 'http_server_requests_inflight', labels: { route: '/v1/auth', method: 'POST' } },
+] as const;
+
+export const MIXED_REALISTIC_API_CACHE_ENTRY_SELECTORS = [
+  { alias: 'auth_token_cache_entries_positive', metricName: 'auth_token_cache_entries', labels: { bucket: 'positive_result' } },
+  { alias: 'auth_token_cache_entries_account_snapshot', metricName: 'auth_token_cache_entries', labels: { bucket: 'account_snapshot' } },
+  { alias: 'auth_token_cache_entries_inflight', metricName: 'auth_token_cache_entries', labels: { bucket: 'inflight' } },
+] as const;
+
+export const MIXED_REALISTIC_API_HEAP_SPACE_PEAK_SELECTORS = [
+  { alias: 'runtime_heap_space_used_old_space_bytes', metricName: 'runtime_heap_space_used_size_bytes', labels: { space: 'old_space' } },
+  { alias: 'runtime_heap_space_size_old_space_bytes', metricName: 'runtime_heap_space_size_bytes', labels: { space: 'old_space' } },
+  { alias: 'runtime_heap_space_available_old_space_bytes', metricName: 'runtime_heap_space_available_size_bytes', labels: { space: 'old_space' } },
+  { alias: 'runtime_heap_space_size_new_space_bytes', metricName: 'runtime_heap_space_size_bytes', labels: { space: 'new_space' } },
+  { alias: 'runtime_heap_space_available_new_space_bytes', metricName: 'runtime_heap_space_available_size_bytes', labels: { space: 'new_space' } },
+  { alias: 'runtime_heap_space_size_large_object_space_bytes', metricName: 'runtime_heap_space_size_bytes', labels: { space: 'large_object_space' } },
+  { alias: 'runtime_heap_space_available_large_object_space_bytes', metricName: 'runtime_heap_space_available_size_bytes', labels: { space: 'large_object_space' } },
+] as const;
+
+export type MixedRealisticApiDiagnosticSignalSummary = Readonly<{
+  triggered: readonly ClusterServiceMetricThresholdSignalEvent[];
+  errors?: readonly string[];
+}>;
+
+export function resolveMixedRealisticApiThresholdSignals(
+  config: Pick<StressConfig, 'compose'>,
+): ReadonlyArray<{
+  valueKey: string;
+  threshold: number;
+  signal: NodeJS.Signals;
+}> {
+  const signal = config.compose.apiHeapDiagnosticSignal;
+  const threshold = config.compose.apiHeapDiagnosticOldSpaceThresholdBytes;
+  if (!signal || typeof threshold !== 'number' || threshold <= 0) {
+    return [];
+  }
+
+  return [{
+    valueKey: 'runtime_heap_space_used_old_space_bytes',
+    threshold,
+    signal,
+  }];
+}
+
 export async function scrapeMixedRealisticFullComposeMetrics(params: {
   target: StartedStressTarget;
+  apiReplicaPeakMetrics?: readonly unknown[];
+  apiReplicaPeakMetricsError?: string;
+  apiReplicaDiagnosticSignals?: MixedRealisticApiDiagnosticSignalSummary;
+  containerMemoryPeakMetrics?: readonly unknown[];
+  containerMemoryPeakMetricsError?: string;
 }): Promise<Record<string, unknown>> {
     const [apiCountersResult, workerCountersResult, apiStageMetricsResult, gatewayStatusResult, gatewayLogSummaryResult] = await Promise.allSettled([
     scrapeClusterServiceMetricCounters({
@@ -422,6 +484,11 @@ export async function scrapeMixedRealisticFullComposeMetrics(params: {
     ...(gatewayStatusError ? { gatewayStatusError } : {}),
     ...(gatewayLogSummary ? { gatewayLogSummary } : {}),
     ...(gatewayLogSummaryError ? { gatewayLogSummaryError } : {}),
+    ...(params.apiReplicaPeakMetrics ? { apiReplicaPeakMetrics: params.apiReplicaPeakMetrics } : {}),
+    ...(params.apiReplicaPeakMetricsError ? { apiReplicaPeakMetricsError: params.apiReplicaPeakMetricsError } : {}),
+    ...(params.apiReplicaDiagnosticSignals ? { apiReplicaDiagnosticSignals: params.apiReplicaDiagnosticSignals } : {}),
+    ...(params.containerMemoryPeakMetrics ? { containerMemoryPeakMetrics: params.containerMemoryPeakMetrics } : {}),
+    ...(params.containerMemoryPeakMetricsError ? { containerMemoryPeakMetricsError: params.containerMemoryPeakMetricsError } : {}),
     ...(partialErrors.length > 0 ? { failureMetricsError: partialErrors.join('; ') } : {}),
   };
 }

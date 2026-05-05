@@ -24,7 +24,7 @@ describe('localPathPluginFixture', () => {
                     '',
                 ].join('\n'),
                 manifest: {
-                    schemaVersion: 1,
+                    schemaVersion: 2,
                     id: 'acme.local-path.fixture',
                     version: '1.0.0',
                     displayName: 'Local Path Fixture',
@@ -32,43 +32,48 @@ describe('localPathPluginFixture', () => {
                     engines: {
                         happier: '^0.2.0',
                     },
+                    runtime: {
+                        apiVersion: 1,
+                        capabilities: ['providers', 'backends', 'hooks'],
+                    },
                     targets: {
                         daemon: {
                             entry: './daemon.mjs',
                         },
                     },
-                    contributions: {
-                        providers: [
-                            {
-                                kindVersion: 1,
-                                id: 'acme.local-path.fixture.provider',
-                                display: {
-                                    name: 'Fixture Provider',
-                                },
+                    permissions: [],
+                    contributions: [
+                        {
+                            kind: 'provider',
+                            kindVersion: 1,
+                            id: 'acme.local-path.fixture.provider',
+                            display: {
+                                name: 'Fixture Provider',
                             },
-                        ],
-                        backends: [
-                            {
-                                kindVersion: 1,
-                                id: 'acme.local-path.fixture.backend',
-                                providerId: 'acme.local-path.fixture.provider',
-                                runtimeKind: 'acp',
+                            ownedBackendIds: ['acme.local-path.fixture.backend'],
+                        },
+                        {
+                            kind: 'backend',
+                            kindVersion: 1,
+                            id: 'acme.local-path.fixture.backend',
+                            providerId: 'acme.local-path.fixture.provider',
+                            engine: {
+                                kind: 'custom',
                             },
-                        ],
-                        hooks: [
-                            {
-                                hookApiVersion: 1,
-                                id: 'session.spawn_new',
-                                category: 'lifecycle',
-                                scope: 'session',
-                                executionKind: 'observe',
-                                handler: {
-                                    target: 'plugin',
-                                    exportName: 'recordHookInvocation',
-                                },
+                        },
+                        {
+                            kind: 'hook',
+                            hookApiVersion: 1,
+                            id: 'session.spawn_new',
+                            category: 'lifecycle',
+                            scope: 'session',
+                            executionKind: 'observe',
+                            handler: {
+                                target: 'plugin',
+                                exportName: 'recordHookInvocation',
                             },
-                        ],
-                    },
+                        },
+                    ],
                 },
             });
 

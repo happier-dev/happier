@@ -33,6 +33,7 @@ export type ComposeRuntime = Readonly<{
   serviceContainerIds: (service: string) => Promise<string[]>;
   inspectContainers: (containerIds: readonly string[]) => Promise<unknown[]>;
   execCapture: (service: string, command: readonly string[]) => Promise<string>;
+  execInContainer?: (containerId: string, command: readonly string[]) => Promise<string>;
 }>;
 
 function appendWithLimit(target: string, chunk: Buffer | string, limit: number): string {
@@ -299,6 +300,9 @@ export function createComposeRuntime(params: {
     },
     execCapture: async (service, command) => {
       return await runDocker(composeArgs('exec', '-T', service, ...command), params.cwd);
+    },
+    execInContainer: async (containerId, command) => {
+      return await runDocker(['exec', '-i', containerId, ...command], params.cwd);
     },
   };
 }

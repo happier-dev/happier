@@ -9,10 +9,7 @@ import { tmpdir } from 'node:os';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
-
-function yarnCommand(): string {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 
 function tmuxAvailable(): boolean {
   if (process.platform === 'win32') return false;
@@ -86,8 +83,17 @@ describe('core e2e: tmux attach selects the correct window (isolated tmux server
         throw new Error(`Expected isolated tmux socket to exist at ${socketPath}`);
       }
 
+      const cliLaunchSpec = await resolveCliTestLaunchSpec(
+        { testDir, env: process.env },
+        {
+          snapshotDir: resolve(join(testDir, 'cli-dist')),
+          preferSourceEntrypoint: true,
+          skipSourceFreshnessCheck: true,
+        },
+      );
       const envForAttach: NodeJS.ProcessEnv = {
         ...process.env,
+        ...(cliLaunchSpec.env ?? {}),
         CI: '1',
         HAPPIER_VARIANT: 'dev',
         HAPPIER_HOME_DIR: happyHomeDir,
@@ -97,12 +103,12 @@ describe('core e2e: tmux attach selects the correct window (isolated tmux server
         TMUX_PANE: '%0',
       };
 
-      const attachRes = spawnSync(
-        yarnCommand(),
-        ['-s', 'workspace', '@happier-dev/cli', 'dev', 'attach', sessionId],
-        { cwd: repoRootDir(), env: envForAttach, encoding: 'utf8' },
-      );
-      expect(attachRes.status).toBe(0);
+      const attachRes = spawnSync(cliLaunchSpec.command, [...cliLaunchSpec.args, 'attach', sessionId], {
+        cwd: cliLaunchSpec.cwd ?? repoRootDir(),
+        env: envForAttach,
+        encoding: 'utf8',
+      });
+      expect(attachRes.status, attachRes.stderr || attachRes.stdout).toBe(0);
 
       const windows = runTmux(['list-windows', '-t', tmuxSessionName, '-F', '#{window_active} #{window_name}'], {
         ...tmuxEnv,

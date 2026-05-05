@@ -10,13 +10,62 @@ type RpcRegisterEventPayload = { method?: unknown; error?: unknown };
 type RpcResponseEnvelope = { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown };
 type SocketTransport = 'websocket' | 'polling';
 
+export type SocketConnectivityState = Readonly<{
+  lastConnectError?: {
+    at: number;
+    message: string;
+  };
+  lastDisconnect?: {
+    at: number;
+    reason?: string;
+  };
+}>;
+
+type SocketCollectorRuntimeOptions = Readonly<{
+  captureEvents?: boolean;
+}>;
+
 export class SocketCollector {
   private readonly socket: Socket;
   private readonly eventCollector: SocketEventCollector;
+  private readonly captureEvents: boolean;
+  private readonly connectivityState: {
+    lastConnectError?: {
+      at: number;
+      message: string;
+    };
+    lastDisconnect?: {
+      at: number;
+      reason?: string;
+    };
+  };
 
-  constructor(socket: Socket) {
+  constructor(socket: Socket, options: SocketCollectorRuntimeOptions = {}) {
     this.socket = socket;
-    this.eventCollector = attachSocketEventCollector(socket);
+    this.captureEvents = options.captureEvents ?? true;
+    this.eventCollector = this.captureEvents
+      ? attachSocketEventCollector(socket)
+      : new SocketEventCollector();
+    this.connectivityState = {};
+    socket.on('connect', () => {
+      this.connectivityState.lastConnectError = undefined;
+      this.connectivityState.lastDisconnect = undefined;
+    });
+    socket.on('disconnect', (reason?: string) => {
+      this.connectivityState.lastDisconnect = {
+        at: Date.now(),
+        ...(typeof reason === 'string' ? { reason } : {}),
+      };
+    });
+    socket.on('connect_error', (error: unknown) => {
+      const message = error && typeof error === 'object' && 'message' in error
+        ? String((error as { message?: unknown }).message ?? error)
+        : String(error);
+      this.connectivityState.lastConnectError = {
+        at: Date.now(),
+        message,
+      };
+    });
   }
 
   connect(): void {
@@ -37,6 +86,13 @@ export class SocketCollector {
 
   getEvents(): CapturedEvent[] {
     return this.eventCollector.getEvents();
+  }
+
+  getConnectivityState(): SocketConnectivityState {
+    return {
+      ...(this.connectivityState.lastConnectError ? { lastConnectError: { ...this.connectivityState.lastConnectError } } : {}),
+      ...(this.connectivityState.lastDisconnect ? { lastDisconnect: { ...this.connectivityState.lastDisconnect } } : {}),
+    };
   }
 
   async emitWithAck<T = unknown>(event: string, data: unknown, timeoutMs = 10_000): Promise<T> {
@@ -104,6 +160,8 @@ export class SocketCollector {
 type SocketCollectorOptions = Readonly<{
   transports?: readonly SocketTransport[];
   connectTimeoutMs?: number;
+  autoReconnect?: boolean;
+  captureEvents?: boolean;
 }>;
 
 export function createUserScopedSocketCollector(baseUrl: string, token: string, options?: SocketCollectorOptions): SocketCollector {
@@ -112,13 +170,13 @@ export function createUserScopedSocketCollector(baseUrl: string, token: string, 
     auth: { token, clientType: 'user-scoped' as const },
     transports: [...(options?.transports ?? ['websocket'])],
     timeout: options?.connectTimeoutMs,
-    reconnection: true,
-    reconnectionAttempts: Infinity,
+    reconnection: options?.autoReconnect ?? true,
+    reconnectionAttempts: options?.autoReconnect === false ? 0 : Infinity,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     autoConnect: false,
   });
-  return new SocketCollector(socket);
+  return new SocketCollector(socket, { captureEvents: options?.captureEvents });
 }
 
 export function createSessionScopedSocketCollector(
@@ -138,11 +196,11 @@ export function createSessionScopedSocketCollector(
     },
     transports: [...(options?.transports ?? ['websocket'])],
     timeout: options?.connectTimeoutMs,
-    reconnection: true,
-    reconnectionAttempts: Infinity,
+    reconnection: options?.autoReconnect ?? true,
+    reconnectionAttempts: options?.autoReconnect === false ? 0 : Infinity,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     autoConnect: false,
   });
-  return new SocketCollector(socket);
+  return new SocketCollector(socket, { captureEvents: options?.captureEvents });
 }

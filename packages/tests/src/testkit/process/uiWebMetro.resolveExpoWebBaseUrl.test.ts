@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
+import { normalizeLoopbackBaseUrl } from '../network/loopbackBaseUrl';
 import { __testables } from './uiWebMetro';
 
 type FakeFetchResponse = Readonly<{
@@ -82,7 +83,7 @@ describe('uiWebMetro resolveExpoWebBaseUrl', () => {
       env: { NODE_ENV: 'test' },
     });
 
-    expect(resolved.baseUrl).toBe(baseUrl);
+    expect(resolved.baseUrl).toBe(normalizeLoopbackBaseUrl(baseUrl));
     expect(resolved.hasScriptTags).toBe(true);
 
     await new Promise<void>((resolve) => {
@@ -214,7 +215,7 @@ describe('uiWebMetro resolveExpoWebBaseUrl', () => {
       });
 
       expect(new URL(resolved.baseUrl).port).toBe(String(expectedPort));
-      expect(resolved.baseUrl).toBe(expectedBaseUrl);
+      expect(resolved.baseUrl).toBe(normalizeLoopbackBaseUrl(expectedBaseUrl));
       expect(resolved.hasScriptTags).toBe(true);
     } finally {
       await startExpectedServer.catch(() => {});
@@ -356,7 +357,7 @@ describe('uiWebMetro resolveExpoWebBaseUrl', () => {
         },
       });
 
-      expect(resolved.baseUrl).toBe(baseUrl);
+      expect(resolved.baseUrl).toBe(normalizeLoopbackBaseUrl(baseUrl));
       expect(resolved.hasScriptTags).toBe(false);
       expect(resolved.stdoutAdvertisesExpectedPort).toBe(true);
     } finally {
@@ -406,7 +407,7 @@ describe('uiWebMetro resolveExpoWebBaseUrl', () => {
         },
       });
 
-      expect(resolved.baseUrl).toBe(baseUrl);
+      expect(resolved.baseUrl).toBe(normalizeLoopbackBaseUrl(baseUrl));
       expect(resolved.hasScriptTags).toBe(true);
     } finally {
       await new Promise<void>((resolve) => {

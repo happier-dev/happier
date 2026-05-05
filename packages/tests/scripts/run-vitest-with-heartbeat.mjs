@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { parseHeartbeatArgs, resolveSignalExitCode, runHeartbeatWrappedCommand } from './runPlaywrightWithHeartbeat.shared.mjs';
 
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
+
 const testsPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function isPathInside(parentDir, childPath) {
@@ -61,10 +63,6 @@ function normalizeVitestPassThroughArgs(args) {
   return normalized;
 }
 
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
-
 const { config, passThrough } = parseHeartbeatArgs(process.argv);
 if (!config) {
   // eslint-disable-next-line no-console
@@ -82,16 +80,20 @@ const childArgs = [
   normalizedConfig,
   ...normalizeVitestPassThroughArgs(passThrough),
 ];
+const invocation = resolveYarnCommandInvocation(childArgs, { npmExecPath: '' });
 
 await runHeartbeatWrappedCommand({
   toolName: 'vitest',
   config: normalizedConfig,
-  command: yarnCommand(),
-  args: childArgs,
+  command: invocation.command,
+  args: invocation.args,
   spawnOptions: {
     stdio: 'inherit',
     env: process.env,
     cwd: testsPackageRoot,
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
   },
   resolveExitCode(result) {
     return typeof result.code === 'number' ? result.code : resolveSignalExitCode(result.signal);

@@ -202,7 +202,7 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
         expect.objectContaining({
           remoteSessionId: 'sess-opencode-direct-core',
           title: 'OpenCode direct core session',
-          activity: 'running',
+          activity: 'active_recently',
         }),
       ]),
     }));

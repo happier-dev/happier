@@ -1,7 +1,22 @@
 import { spawnSync } from 'node:child_process';
 
+import { resolveYarnCommandInvocation as resolveWorkspaceYarnCommandInvocation } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
+
+export type CommandInvocation = Readonly<{
+  command: string;
+  args: string[];
+  windowsVerbatimArguments?: boolean;
+}>;
+
 export function yarnCommand(): string {
   return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+}
+
+export function resolveYarnCommandInvocation(
+  args: readonly string[] = [],
+  options: Readonly<{ platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }> = {},
+): CommandInvocation {
+  return resolveWorkspaceYarnCommandInvocation(args, options);
 }
 
 export function which(bin: string): string | null {

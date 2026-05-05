@@ -16,7 +16,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # screen before showing either the connect UI or the app UI. Wait until at
 # least one known bootstrap surface is visible.
 - extendedWaitUntil:
-    visible: "(Open in .*|DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(Open in .*|DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 60000
 
 # The Expo Dev Client can show a blocking onboarding sheet/overlay at any time.
@@ -33,7 +33,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     timeout: 5000
 
 - extendedWaitUntil:
-    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 60000
 
 # The Dev Client can show a non-blocking "Error loading app" toast from a
@@ -51,7 +51,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Dev Client stays on its bootstrap surface.
 - runFlow:
     when:
-      visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server)"
+      visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server|Enter URL manually)"
     commands:
       - runFlow:
           file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
@@ -63,7 +63,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Maestro. The follow-up flows dismiss overlays again and then wait on `id`
 # selectors inside the real Happier UI.
 - extendedWaitUntil:
-    visible: "(Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 480000
 
 # Dismiss dev-only overlays (not our UI).
@@ -75,7 +75,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 - runFlow:
     when:
-      visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server)"
+      visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server|Enter URL manually)"
     commands:
       - runFlow:
           file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
@@ -91,12 +91,18 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 - runFlow:
     when:
-      visible: "Error loading app"
+      visible: "(Error loading app|There was a problem loading the project|Go To Home)"
     commands:
-      # The Dev Client occasionally times out loading the app. Dismiss the
-      # toast and retry once.
-      - tapOn:
-          point: 95%,40%
+      # The Dev Client occasionally times out loading the app after Metro has
+      # already bundled successfully. Retry the native error screen directly
+      # when its reload affordance is available; otherwise dismiss the toast.
+      - runFlow:
+          when:
+            visible: "Reload"
+          commands:
+            - tapOn: "Reload"
+            - waitForAnimationToEnd:
+                timeout: 5000
       # Retry the connect UX (best-effort) if the app surface is still missing.
       - runFlow:
           when:
@@ -104,12 +110,12 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
           commands:
             - runFlow:
                 when:
-                  visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server)"
+                  visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server|Enter URL manually)"
                 commands:
                   - runFlow:
                       file: connectUsingLaunchUrl.yaml
             - extendedWaitUntil:
-                visible: "(Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+                visible: "(Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
                 timeout: 240000
             - runFlow:
                 file: dismissDeveloperMenuMaybe.yaml
@@ -118,3 +124,6 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
             - extendedWaitUntil:
                 visible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
                 timeout: 240000
+
+- assertNotVisible: "There was a problem loading the project"
+- assertNotVisible: "Go To Home"

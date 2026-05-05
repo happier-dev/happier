@@ -6,10 +6,11 @@ import { describe, expect, it } from 'vitest';
 
 import { ensureCliDistBuilt, ensureCliSharedDepsBuilt, resolveCliDistBuildInvocation, withCliDistBuildLock } from '../../src/testkit/process/cliDist';
 import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
+import { CLI_SHARED_DEP_PACKAGE_NAMES, type CliSharedDepPackageName } from '../../src/testkit/process/workspacePackageResolution';
 import { sleep } from '../../src/testkit/timing';
 import { yarnCommand } from '../../src/testkit/process/commands';
 
-function writeSharedDepWorkspacePackageManifest(repoRoot: string, packageName: 'agents' | 'cli-common' | 'protocol' | 'release-runtime') {
+function writeSharedDepWorkspacePackageManifest(repoRoot: string, packageName: CliSharedDepPackageName) {
   const packageDir = resolve(repoRoot, 'packages', packageName);
   mkdirSync(packageDir, { recursive: true });
   writeFileSync(
@@ -33,14 +34,11 @@ function writeSharedDepWorkspacePackageManifest(repoRoot: string, packageName: '
 }
 
 function writeSharedDepsOutputs(repoRoot: string) {
-  const outputs = [
-    resolve(repoRoot, 'packages', 'agents', 'dist', 'index.js'),
-    resolve(repoRoot, 'packages', 'cli-common', 'dist', 'index.js'),
-    resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js'),
-    resolve(repoRoot, 'packages', 'release-runtime', 'dist', 'index.js'),
-  ];
+  const outputs = CLI_SHARED_DEP_PACKAGE_NAMES.map((packageName) =>
+    resolve(repoRoot, 'packages', packageName, 'dist', 'index.js'),
+  );
 
-  for (const packageName of ['agents', 'cli-common', 'protocol', 'release-runtime'] as const) {
+  for (const packageName of CLI_SHARED_DEP_PACKAGE_NAMES) {
     writeSharedDepWorkspacePackageManifest(repoRoot, packageName);
   }
 
@@ -49,31 +47,12 @@ function writeSharedDepsOutputs(repoRoot: string) {
     writeFileSync(output, 'export {};\n', 'utf8');
   }
 
-  for (const packageName of ['agents', 'cli-common', 'protocol', 'release-runtime'] as const) {
-    const workspacePackageDir = resolve(repoRoot, 'packages', packageName);
-    mkdirSync(workspacePackageDir, { recursive: true });
-    writeFileSync(
-      resolve(workspacePackageDir, 'package.json'),
-      JSON.stringify(
-        {
-          name: `@happier-dev/${packageName}`,
-          type: 'module',
-          exports: {
-            '.': {
-              default: './dist/index.js',
-            },
-          },
-        },
-        null,
-        2,
-      ),
-      'utf8',
-    );
+  for (const packageName of CLI_SHARED_DEP_PACKAGE_NAMES) {
     writeCliBundledWorkspacePackage(repoRoot, packageName);
   }
 }
 
-function writeCliBundledWorkspacePackage(repoRoot: string, packageName: 'agents' | 'cli-common' | 'protocol' | 'release-runtime') {
+function writeCliBundledWorkspacePackage(repoRoot: string, packageName: CliSharedDepPackageName) {
   const packageDir = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', packageName);
   mkdirSync(packageDir, { recursive: true });
   writeFileSync(
@@ -96,7 +75,7 @@ function writeCliBundledWorkspacePackage(repoRoot: string, packageName: 'agents'
 }
 
 function writeSharedDepsSources(repoRoot: string) {
-  for (const packageName of ['agents', 'cli-common', 'protocol', 'release-runtime'] as const) {
+  for (const packageName of CLI_SHARED_DEP_PACKAGE_NAMES) {
     writeSharedDepWorkspacePackageManifest(repoRoot, packageName);
     const sourcePath = resolve(repoRoot, 'packages', packageName, 'src', 'index.ts');
     mkdirSync(dirname(sourcePath), { recursive: true });
@@ -345,6 +324,20 @@ describe('providers: shared deps build lock', () => {
     ]);
 
     expect(buildCalls).toBe(1);
+    expect(resolve(repoRoot, 'packages', 'peer-mediation', 'dist', 'index.js')).toSatisfy((p) => {
+      try {
+        return lstatSync(p).isFile();
+      } catch {
+        return false;
+      }
+    });
+    expect(resolve(repoRoot, 'packages', 'plugin-sdk', 'dist', 'index.js')).toSatisfy((p) => {
+      try {
+        return lstatSync(p).isFile();
+      } catch {
+        return false;
+      }
+    });
   });
 
   it('rebuilds shared deps when sources are newer than existing outputs', async () => {
@@ -443,6 +436,20 @@ describe('providers: shared deps build lock', () => {
       }
     });
     expect(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'dist')).toSatisfy((p) => {
+      try {
+        return lstatSync(p).isSymbolicLink();
+      } catch {
+        return false;
+      }
+    });
+    expect(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'peer-mediation', 'dist')).toSatisfy((p) => {
+      try {
+        return lstatSync(p).isSymbolicLink();
+      } catch {
+        return false;
+      }
+    });
+    expect(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugin-sdk', 'dist')).toSatisfy((p) => {
       try {
         return lstatSync(p).isSymbolicLink();
       } catch {

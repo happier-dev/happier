@@ -3,6 +3,7 @@ import { parsePositiveInt } from '../../numbers';
 import type {
   StressComposeFrontDoorMode,
   StressComposeImageBuildStrategy,
+  StressComposeLoadGenerationMode,
   StressConfig,
   StressFilesBackend,
   StressKillTarget,
@@ -75,6 +76,11 @@ function readFrontDoorMode(fallback: StressComposeFrontDoorMode): StressComposeF
   return raw === 'api-direct' ? 'api-direct' : 'gateway';
 }
 
+function readLoadGenerationMode(fallback: StressComposeLoadGenerationMode): StressComposeLoadGenerationMode {
+  const raw = (readString(['HAPPIER_STRESS_COMPOSE_LOAD_GENERATION_MODE']) ?? fallback).toLowerCase();
+  return raw === 'compose-network' ? 'compose-network' : 'host';
+}
+
 function readKillTarget(fallback: StressKillTarget): StressKillTarget {
   const raw = (readString(['HAPPIER_STRESS_KILL_TARGET']) ?? fallback).toLowerCase();
   if (raw === 'api' || raw === 'worker' || raw === 'none') {
@@ -133,9 +139,16 @@ export function readStressConfig(): StressConfig {
       mixedSocketConnectTimeoutMs:
         readOptionalInt(['HAPPIER_STRESS_MIXED_SOCKET_CONNECT_TIMEOUT_MS'])
         ?? profileConfig.load.mixedSocketConnectTimeoutMs,
+      mixedConnectConvergenceTimeoutMs:
+        readOptionalInt(['HAPPIER_STRESS_MIXED_CONNECT_CONVERGENCE_TIMEOUT_MS'])
+        ?? profileConfig.load.mixedConnectConvergenceTimeoutMs,
       mixedSetupRequestTimeoutMs:
         readOptionalInt(['HAPPIER_STRESS_MIXED_SETUP_REQUEST_TIMEOUT_MS'])
         ?? profileConfig.load.mixedSetupRequestTimeoutMs,
+      mixedSocketAutoReconnect:
+        envFlag(['HAPPIER_STRESS_MIXED_SOCKET_AUTO_RECONNECT'], profileConfig.load.mixedSocketAutoReconnect ?? true),
+      mixedCaptureSocketEvents:
+        envFlag(['HAPPIER_STRESS_MIXED_CAPTURE_SOCKET_EVENTS'], profileConfig.load.mixedCaptureSocketEvents ?? true),
       mixedRpcRegistrationConcurrency:
         readOptionalInt(['HAPPIER_STRESS_MIXED_RPC_REGISTRATION_CONCURRENCY'])
         ?? profileConfig.load.mixedRpcRegistrationConcurrency,
@@ -154,6 +167,12 @@ export function readStressConfig(): StressConfig {
       mixedRunnerShards:
         readOptionalInt(['HAPPIER_STRESS_MIXED_RUNNER_SHARDS'])
         ?? profileConfig.load.mixedRunnerShards,
+      mixedActiveSessionPercent:
+        readOptionalInt(['HAPPIER_STRESS_MIXED_ACTIVE_SESSION_PERCENT'])
+        ?? profileConfig.load.mixedActiveSessionPercent,
+      mixedStreamingSegmentsPerSecond:
+        readOptionalInt(['HAPPIER_STRESS_MIXED_STREAMING_SEGMENTS_PER_SECOND'])
+        ?? profileConfig.load.mixedStreamingSegmentsPerSecond,
       rpcCallsPerSecond: readPositiveInt(['HAPPIER_STRESS_RPC_CALLS_PER_SECOND'], profileConfig.load.rpcCallsPerSecond),
       messagesPerSecond: readPositiveInt(['HAPPIER_STRESS_MESSAGES_PER_SECOND'], profileConfig.load.messagesPerSecond),
       reconnectRate: readNonNegativeInt(['HAPPIER_STRESS_RECONNECT_RATE'], profileConfig.load.reconnectRate),
@@ -174,10 +193,17 @@ export function readStressConfig(): StressConfig {
         profileConfig.compose.reuseRunningTopology,
       ),
       frontDoorMode: readFrontDoorMode(profileConfig.compose.frontDoorMode ?? 'gateway'),
+      loadGenerationMode: readLoadGenerationMode(profileConfig.compose.loadGenerationMode ?? 'host'),
       dbConnectionLimit: readOptionalInt(['HAPPIER_STRESS_COMPOSE_DB_CONNECTION_LIMIT']) ?? profileConfig.compose.dbConnectionLimit,
       authLoginEligibilityAccountSnapshotCacheTtlMs:
         readOptionalInt(['HAPPIER_STRESS_COMPOSE_AUTH_LOGIN_ELIGIBILITY_ACCOUNT_SNAPSHOT_CACHE_TTL_MS'])
         ?? profileConfig.compose.authLoginEligibilityAccountSnapshotCacheTtlMs,
+      apiHeapDiagnosticSignal:
+        (readString(['HAPPIER_STRESS_COMPOSE_API_HEAP_DIAGNOSTIC_SIGNAL']) as NodeJS.Signals | undefined)
+        ?? profileConfig.compose.apiHeapDiagnosticSignal,
+      apiHeapDiagnosticOldSpaceThresholdBytes:
+        readOptionalInt(['HAPPIER_STRESS_COMPOSE_API_HEAP_DIAGNOSTIC_OLD_SPACE_THRESHOLD_BYTES'])
+        ?? profileConfig.compose.apiHeapDiagnosticOldSpaceThresholdBytes,
       gatewayWorkerConnections: readPositiveInt(
         ['HAPPIER_STRESS_COMPOSE_GATEWAY_WORKER_CONNECTIONS'],
         profileConfig.compose.gatewayWorkerConnections ?? 16_384,

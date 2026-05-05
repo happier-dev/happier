@@ -91,6 +91,7 @@ describe('core e2e: ephemeral task scm.commit_message', () => {
       controlToken,
       body: {
         directory: workspaceDir,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         terminal: { mode: 'plain' },
         environmentVariables: {
           HAPPIER_HOME_DIR: daemonHomeDir,
@@ -105,7 +106,7 @@ describe('core e2e: ephemeral task scm.commit_message', () => {
         },
       },
     });
-    expect(spawnRes.status).toBe(200);
+    expect(spawnRes.status, JSON.stringify(spawnRes.data, null, 2)).toBe(200);
     expect(spawnRes.data.success).toBe(true);
     const sessionId = spawnRes.data.sessionId;
     expect(typeof sessionId).toBe('string');
