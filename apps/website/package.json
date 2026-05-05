@@ -1,17 +1,35 @@
 {
   "name": "@happier-dev/website",
-  "version": "0.2.0",
+  "description": "Marketing site for Happier. Fast, SEO-friendly. Cinematic hero plays real screenshots and recordings of the live app.",
   "private": true,
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "node scripts/checkSourceHygiene.mjs && tsc --noEmit && node scripts/checkSourceHygiene.mjs && vite build",
+    "preview": "vite preview",
+    "check:source-hygiene": "node scripts/checkSourceHygiene.mjs",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.11.17",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
-    "vite": "^6.0.7"
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^3.2.4"
   }
 }

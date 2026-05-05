@@ -12,7 +12,8 @@ if [[ -n "${HAPPIER_WITH_DAEMON+x}" ]]; then
 fi
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart|rollback
+INSTALL_VERSION="${HAPPIER_INSTALL_VERSION:-}"
 RUN_ACTION="${HAPPIER_INSTALLER_RUN_ACTION:-}"
 SETUP_RELAY_SHORTCUT="0"
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
@@ -245,18 +246,90 @@ detect_arch() {
   esac
 }
 
+release_asset_version_from_name() {
+  local name="$1"
+  local version=""
+  if [[ "${name}" =~ ^checksums-.+-v(.+)[.]txt[.]minisig$ ]]; then
+    version="${BASH_REMATCH[1]}"
+  elif [[ "${name}" =~ ^checksums-.+-v(.+)[.]txt$ ]]; then
+    version="${BASH_REMATCH[1]}"
+  elif [[ "${name}" =~ ^.+-v(.+)-(linux|darwin|win32)-[^-]+[.]tar[.]gz$ ]]; then
+    version="${BASH_REMATCH[1]}"
+  fi
+  printf '%s' "${version}"
+}
+
+release_asset_version_sort_key() {
+  local name="$1"
+  local version
+  version="$(release_asset_version_from_name "${name}")"
+
+  local version_without_build
+  version_without_build="${version%%+*}"
+
+  local core
+  local prerelease=""
+  core="${version_without_build%%-*}"
+  if [[ "${version_without_build}" == *-* ]]; then
+    prerelease="${version_without_build#*-}"
+  fi
+
+  local major=0
+  local minor=0
+  local patch=0
+  IFS='.' read -r major minor patch _ <<< "${core}"
+  major="${major:-0}"
+  minor="${minor:-0}"
+  patch="${patch:-0}"
+  [[ "${major}" =~ ^[0-9]+$ ]] || major=0
+  [[ "${minor}" =~ ^[0-9]+$ ]] || minor=0
+  [[ "${patch}" =~ ^[0-9]+$ ]] || patch=0
+
+  local sort_key
+  sort_key="$(printf '%09d|%09d|%09d|' "${major}" "${minor}" "${patch}")"
+
+  local prerelease_rank="1|stable|"
+  if [[ -n "${prerelease}" ]]; then
+    prerelease_rank="0|"
+    local part
+    local prerelease_parts=()
+    IFS='.' read -r -a prerelease_parts <<< "${prerelease}"
+    for part in "${prerelease_parts[@]}"; do
+      if [[ "${part}" =~ ^[0-9]+$ ]]; then
+        prerelease_rank+="$(printf '1|0|%09d|' "${part}")"
+      else
+        prerelease_rank+="1|1|${part}|"
+      fi
+    done
+    prerelease_rank+="0|"
+  fi
+
+  printf '%s' "${sort_key}${prerelease_rank}${name}"
+}
+
 json_lookup_asset_url() {
   local json="$1"
   local name_regex="$2"
+  local matched=""
+  local matched_sort_key=""
   # GitHub API JSON is typically pretty-printed (newlines + spaces). Avoid "minifying" into one
   # giant line (which can overflow awk line-length limits on some platforms) and instead parse
-  # line-by-line within the assets array. We intentionally return the *last* match to support
-  # rolling tags that may contain multiple versions: newest assets are appended later in the JSON.
-  printf '%s' "$json" | tr '{},' '\n\n\n' | awk -v re="$name_regex" '
+  # line-by-line within the assets array. Select by semantic version instead of provider order so
+  # rolling tags remain deterministic even when GitHub returns older assets last.
+  while IFS=$'\t' read -r name url; do
+    if [[ -z "${name}" || -z "${url}" ]]; then
+      continue
+    fi
+    local sort_key
+    sort_key="$(release_asset_version_sort_key "${name}")"
+    if [[ -z "${matched}" || "${sort_key}" > "${matched_sort_key}" ]]; then
+      matched="${url}"
+      matched_sort_key="${sort_key}"
+    fi
+  done < <(printf '%s' "$json" | tr '{},' '\n\n\n' | awk -v re="$name_regex" '
     BEGIN {
       in_assets = 0
       name = ""
-      last = ""
     }
     {
       raw = $0
@@ -291,16 +364,14 @@ json_lookup_asset_url() {
           url = substr(v, 1, q - 1)
         }
         if (name ~ re && url != "") {
-          last = url
+          printf "%s\t%s\n", name, url
         }
       }
     }
-    END {
-      if (last != "") {
-        print last
-      }
-    }
-  '
+  ')
+  if [[ -n "${matched}" ]]; then
+    printf '%s' "${matched}"
+  fi
 }
 
 find_local_release_asset_path() {
@@ -314,11 +385,17 @@ find_local_release_asset_path() {
   fi
 
   local matched=""
+  local matched_sort_key=""
   while IFS= read -r -d '' path; do
     local name
     name="$(basename "${path}")"
     if [[ "${name}" =~ ${name_regex} ]]; then
-      matched="${path}"
+      local sort_key
+      sort_key="$(release_asset_version_sort_key "${name}")"
+      if [[ -z "${matched}" || "${sort_key}" > "${matched_sort_key}" ]]; then
+        matched="${path}"
+        matched_sort_key="${sort_key}"
+      fi
     fi
   done < <(find "${RELEASE_ASSETS_DIR}" -maxdepth 1 -type f -print0 2>/dev/null)
 
@@ -336,6 +413,23 @@ resolve_release_asset_source() {
     return
   fi
   json_lookup_asset_url "${release_json}" "${name_regex}"
+}
+
+escape_regex_literal() {
+  printf '%s' "$1" | sed 's/[][\\.^$*+?{}()|]/\\&/g'
+}
+
+validate_requested_install_version() {
+  local version="$1"
+  if [[ -z "${version}" ]]; then
+    echo "Missing value for --version" >&2
+    return 1
+  fi
+  if [[ ! "${version}" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+    echo "Invalid install version '${version}'. Expected a release version such as 0.2.1." >&2
+    return 1
+  fi
+  return 0
 }
 
 download_release_asset_with_retry() {
@@ -571,6 +665,100 @@ action_uninstall() {
   return 0
 }
 
+read_installer_marker_file() {
+  local path="$1"
+  if [[ ! -f "${path}" ]]; then
+    return 1
+  fi
+  local value=""
+  IFS= read -r value < "${path}" || true
+  printf '%s' "${value}"
+}
+
+cli_default_channel_matches_selected_channel() {
+  local state_path="${INSTALL_DIR}/default-cli-release-channel.json"
+  if [[ -f "${state_path}" ]]; then
+    grep -Eq "\"releaseChannel\"[[:space:]]*:[[:space:]]*\"${CHANNEL}\"" "${state_path}"
+    return $?
+  fi
+  [[ "${CHANNEL}" == "stable" ]]
+}
+
+sync_cli_rollback_shim() {
+  local shim_name="$1"
+  local managed_root="$2"
+  local install_shim_path="${INSTALL_DIR}/bin/${shim_name}"
+  local path_shim_path="${BIN_DIR}/${shim_name}"
+
+  mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
+  rm -f "${install_shim_path}" || true
+  ln -sfn "${INSTALL_DIR}/${managed_root}/current/happier" "${install_shim_path}"
+  rm -f "${path_shim_path}" || true
+  ln -sfn "${install_shim_path}" "${path_shim_path}"
+}
+
+action_rollback() {
+  if [[ "${PRODUCT}" != "cli" ]]; then
+    echo "Rollback is only supported for the CLI installer." >&2
+    return 1
+  fi
+
+  local managed_root=""
+  managed_root="$(cli_managed_install_root "${CHANNEL}")" || {
+    echo "Unsupported CLI channel: ${CHANNEL}" >&2
+    return 1
+  }
+  local shim_name=""
+  shim_name="$(cli_shim_name "${CHANNEL}")" || {
+    echo "Unsupported CLI shim channel: ${CHANNEL}" >&2
+    return 1
+  }
+
+  local install_root="${INSTALL_DIR}/${managed_root}"
+  local previous_version=""
+  previous_version="$(read_installer_marker_file "${install_root}/previous.version" 2>/dev/null || true)"
+  if [[ -z "${previous_version}" ]]; then
+    echo "No previous ${shim_name} version is available for rollback." >&2
+    return 1
+  fi
+
+  local previous_dir="${install_root}/versions/${previous_version}"
+  if [[ ! -x "${previous_dir}/happier" ]]; then
+    echo "Rollback target is missing or incomplete: ${previous_dir}" >&2
+    return 1
+  fi
+
+  local current_version=""
+  current_version="$(read_installer_marker_file "${install_root}/current.version" 2>/dev/null || true)"
+  local current_dir=""
+  if [[ -n "${current_version}" ]]; then
+    current_dir="${install_root}/versions/${current_version}"
+  fi
+
+  rm -rf "${install_root}/current"
+  ln -sfn "versions/${previous_version}" "${install_root}/current"
+  printf '%s\n' "${previous_version}" > "${install_root}/current.version"
+
+  if [[ -n "${current_version}" && -d "${current_dir}" ]]; then
+    rm -rf "${install_root}/previous"
+    ln -sfn "versions/${current_version}" "${install_root}/previous"
+    printf '%s\n' "${current_version}" > "${install_root}/previous.version"
+  else
+    rm -rf "${install_root}/previous"
+    rm -f "${install_root}/previous.version"
+  fi
+
+  sync_cli_rollback_shim "${shim_name}" "${managed_root}"
+  if [[ "${shim_name}" != "happier" ]] && cli_default_channel_matches_selected_channel; then
+    sync_cli_rollback_shim "happier" "${managed_root}"
+  fi
+
+  success "Rolled back ${shim_name} from ${current_version:-current} to ${previous_version}."
+  say "Tip: if your shell still can't find changes, run:"
+  shell_command_cache_hint
+  return 0
+}
+
 tar_extract_gz() {
   local archive_path="$1"
   local dest_dir="$2"
@@ -601,6 +789,14 @@ rolling_suffix_for_channel() {
     preview) echo "preview" ;;
     publicdev) echo "dev" ;;
     *) return 1 ;;
+  esac
+}
+
+default_release_asset_version_regex() {
+  case "$1" in
+    preview) printf '%s' '[^-]+-preview([.][0-9A-Za-z.+-]+)?' ;;
+    publicdev) printf '%s' '[^-]+-dev([.][0-9A-Za-z.+-]+)?' ;;
+    *) printf '%s' '[^-]+' ;;
   esac
 }
 
@@ -717,6 +913,11 @@ resolve_with_daemon_choice() {
     return
   fi
 
+  if [[ "${has_existing_services}" == "1" ]] && background_service_inventory_has_matching_default_following "${services_json}"; then
+    echo "0"
+    return
+  fi
+
   prompt_for_daemon_install_choice "${default_choice}" "${has_existing_services}"
 }
 
@@ -751,20 +952,122 @@ read_installed_background_service_inventory_json() {
   invoke_installer_command_with_daemon_service_context "${cli_bin}" service list --json 2>/dev/null || true
 }
 
-read_background_service_status_json() {
-  local cli_bin="$1"
-  invoke_installer_command_with_daemon_service_context "${cli_bin}" service status --json 2>/dev/null || true
+doctor_repair_preflight_looks_like_plain_doctor_report() {
+  local output="${1:-}"
+  printf '%s' "${output}" | grep -Eq 'Happier CLI Doctor'
 }
 
 read_background_service_preflight_json() {
   local cli_bin="$1"
   local repair_json=""
-  repair_json="$(invoke_installer_command_with_daemon_service_context "${cli_bin}" service repair --json 2>/dev/null || true)"
+  local repair_error=""
+  local repair_status=0
+  local repair_error_path=""
+
+  DOCTOR_REPAIR_PREFLIGHT_SUPPORTED="0"
+  repair_error_path="$(mktemp)"
+  set +e
+  repair_json="$(invoke_installer_command_with_daemon_service_context "${cli_bin}" doctor repair --json 2>"${repair_error_path}")"
+  repair_status=$?
+  set -e
+  repair_error="$(cat "${repair_error_path}" 2>/dev/null || true)"
+  rm -f "${repair_error_path}" >/dev/null 2>&1 || true
+
+  if doctor_repair_preflight_looks_like_plain_doctor_report "${repair_json}" \
+    || doctor_repair_preflight_looks_like_plain_doctor_report "${repair_error}"; then
+    read_installed_background_service_inventory_json "${cli_bin}"
+    return
+  fi
+
+  if [[ "${repair_status}" -ne 0 ]] && installer_command_failure_looks_unsupported "${repair_error}"; then
+    read_installed_background_service_inventory_json "${cli_bin}"
+    return
+  fi
+
   if background_service_inventory_json_is_supported "${repair_json}"; then
+    DOCTOR_REPAIR_PREFLIGHT_SUPPORTED="1"
     printf '%s' "${repair_json}"
     return
   fi
+
   read_installed_background_service_inventory_json "${cli_bin}"
+}
+
+print_background_service_report_text_if_supported() {
+  local cli_bin="$1"
+
+  if [[ "${DOCTOR_REPAIR_PREFLIGHT_SUPPORTED:-0}" != "1" ]]; then
+    return
+  fi
+
+  # When the installer has a controlling tty (even if stdin is a pipe from
+  # `curl | bash`), hand off to the CLI's interactive `doctor repair` with
+  # stdin redirected from /dev/tty so it can render the report AND prompt the
+  # user for each finding. Otherwise fall back to the read-only report, which
+  # prints the CTA `To handle these interactively: happier doctor repair`
+  # footer so the user still knows the next step.
+  if installer_has_controlling_tty; then
+    invoke_installer_command_with_daemon_service_context "${cli_bin}" doctor repair </dev/tty || true
+  else
+    invoke_installer_command_with_daemon_service_context "${cli_bin}" doctor repair --report-only 2>/dev/null || true
+  fi
+}
+
+installer_command_failure_looks_unsupported() {
+  local output="${1:-}"
+  printf '%s' "${output}" | grep -Eqi "unknown (option|command|subcommand)|invalid option|usage: happier <command>|does not support"
+}
+
+background_service_install_manual_command() {
+  local cli_bin="$1"
+  printf '%s service install' "${cli_bin}"
+}
+
+run_background_service_install_compatibly() {
+  local cli_bin="$1"
+  local tmp_output=""
+  tmp_output="$(mktemp)"
+  if invoke_installer_command_with_daemon_service_context "${cli_bin}" service install --yes >"${tmp_output}" 2>&1; then
+    rm -f "${tmp_output}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  local install_output=""
+  install_output="$(cat "${tmp_output}" 2>/dev/null || true)"
+  if installer_command_failure_looks_unsupported "${install_output}"; then
+    if invoke_installer_command_with_daemon_service_context "${cli_bin}" service install >"${tmp_output}" 2>&1; then
+      rm -f "${tmp_output}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    install_output="$(cat "${tmp_output}" 2>/dev/null || true)"
+  fi
+
+  printf '%s' "${install_output}" >&2
+  rm -f "${tmp_output}" >/dev/null 2>&1 || true
+  return 1
+}
+
+run_background_service_repair_if_supported() {
+  local cli_bin="$1"
+  if [[ "${DOCTOR_REPAIR_PREFLIGHT_SUPPORTED:-0}" != "1" ]]; then
+    return 2
+  fi
+  local tmp_output=""
+  tmp_output="$(mktemp)"
+  if invoke_installer_command_with_daemon_service_context "${cli_bin}" doctor repair --yes >"${tmp_output}" 2>&1; then
+    rm -f "${tmp_output}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  local repair_output=""
+  repair_output="$(cat "${tmp_output}" 2>/dev/null || true)"
+  rm -f "${tmp_output}" >/dev/null 2>&1 || true
+  if installer_command_failure_looks_unsupported "${repair_output}"; then
+    return 2
+  fi
+
+  printf '%s' "${repair_output}" >&2
+  return 1
 }
 
 daemon_service_operations_are_explicitly_disabled() {
@@ -799,8 +1102,19 @@ background_service_inventory_json_is_supported() {
   if [[ -z "${services_json}" ]]; then
     return 1
   fi
-  printf '%s' "${services_json}" | grep -Eq '^[[:space:]]*{' || return 1
-  printf '%s' "${services_json}" | grep -Eq '"(entries|services|existingServices)"[[:space:]]*:'
+
+  # Fail closed: the preflight must be a single JSON object emitted on stdout.
+  # Older CLIs can interpret `doctor repair ...` as `doctor ...` and print a large
+  # report that includes JSON fragments; don't treat that as supported.
+  local trimmed=""
+  trimmed="$(trim_installer_text "${services_json}")"
+  if [[ -z "${trimmed}" ]]; then
+    return 1
+  fi
+  [[ "${trimmed}" == \{* ]] || return 1
+  [[ "${trimmed}" == *\} ]] || return 1
+
+  printf '%s' "${trimmed}" | grep -Eq '"(entries|services|existingServices)"[[:space:]]*:'
 }
 
 background_service_inventory_is_empty() {
@@ -810,7 +1124,12 @@ background_service_inventory_is_empty() {
 
 background_service_inventory_json_is_empty() {
   local services_json="$1"
-  [[ -z "${services_json}" ]] || printf '%s' "${services_json}" | grep -Eq '"(entries|services|existingServices)"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'
+  if [[ -z "${services_json}" ]]; then
+    return 0
+  fi
+  local trimmed=""
+  trimmed="$(trim_installer_text "${services_json}")"
+  [[ -z "${trimmed}" ]] || printf '%s' "${trimmed}" | grep -Eq '"(entries|services|existingServices)"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'
 }
 
 background_service_inventory_has_default_following() {
@@ -821,6 +1140,51 @@ background_service_inventory_has_default_following() {
 background_service_inventory_json_has_default_following() {
   local services_json="$1"
   printf '%s' "${services_json}" | grep -Eq '"targetMode"[[:space:]]*:[[:space:]]*"default-following"'
+}
+
+background_service_inventory_daemon_is_running() {
+  local services_json="$1"
+  printf '%s' "${services_json}" | grep -Eq '"daemonRunning"[[:space:]]*:[[:space:]]*true'
+}
+
+background_service_inventory_default_following_channel() {
+  local services_json="$1"
+  local compact_json=""
+  compact_json="$(printf '%s' "${services_json}" | tr '\n' ' ')"
+  local entry_jsons=""
+  entry_jsons="$(printf '%s' "${compact_json}" | grep -oE '\{[^{}]*"targetMode"[[:space:]]*:[[:space:]]*"default-following"[^{}]*\}' || true)"
+  while IFS= read -r entry_json; do
+    if [[ -z "${entry_json}" ]]; then
+      continue
+    fi
+    local service_channel=""
+    service_channel="$(json_first_string_value "${entry_json}" 'releaseChannel')"
+    if [[ -n "${service_channel}" ]]; then
+      display_channel_label "${service_channel}"
+      return
+    fi
+  done <<< "${entry_jsons}"
+}
+
+background_service_inventory_has_matching_default_following() {
+  local services_json="$1"
+
+  # Prefer the explicit boolean computed by `doctor repair --json` when available, as
+  # parsing nested JSON reliably in pure shell is brittle.
+  local repair_match=""
+  repair_match="$(json_first_boolean_value "${services_json}" 'defaultFollowingMatchesSelectedReleaseChannel')"
+  if [[ "${repair_match}" == "true" ]]; then
+    return 0
+  fi
+  if [[ "${repair_match}" == "false" ]]; then
+    return 1
+  fi
+
+  local current_channel_label=""
+  current_channel_label="$(display_channel_label "${CHANNEL}")"
+  local default_channel_label=""
+  default_channel_label="$(background_service_inventory_default_following_channel "${services_json}")"
+  [[ -n "${default_channel_label}" ]] && [[ "${default_channel_label}" == "${current_channel_label}" ]]
 }
 
 background_service_inventory_has_system_services() {
@@ -848,10 +1212,10 @@ background_service_repair_manual_command() {
   local cli_bin="$1"
   local services_json="$2"
   if background_service_repair_requires_sudo "${services_json}"; then
-    printf 'sudo %s service repair --yes' "${cli_bin}"
+    printf 'sudo %s doctor repair --yes' "${cli_bin}"
     return
   fi
-  printf '%s service repair --yes' "${cli_bin}"
+  printf '%s doctor repair --yes' "${cli_bin}"
 }
 
 json_first_string_value() {
@@ -866,119 +1230,11 @@ json_first_boolean_value() {
   printf '%s' "${json}" | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*(true|false|null).*/\\1/p" | head -n 1
 }
 
-json_first_integer_value() {
-  local json="$1"
-  local key="$2"
-  printf '%s' "${json}" | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*([0-9]+|null).*/\\1/p" | head -n 1
-}
-
-print_installed_background_service_status_summary() {
-  local status_json="$1"
-
-  if [[ -z "${status_json}" ]] || [[ "${status_json}" != *'"owner"'* ]]; then
-    return
-  fi
-
-  local daemon_running=""
-  daemon_running="$(json_first_boolean_value "${status_json}" 'running')"
-  local daemon_pid=""
-  daemon_pid="$(json_first_integer_value "${status_json}" 'pid')"
-  if [[ "${daemon_running}" == "true" && "${daemon_pid}" != "null" && -n "${daemon_pid}" ]]; then
-    installer_bullet "Running now: yes (pid ${daemon_pid})"
-  elif [[ "${daemon_running}" == "true" ]]; then
-    installer_bullet "Running now: yes"
-  else
-    installer_bullet "Running now: no"
-  fi
-
-  local owner_is_null=""
-  owner_is_null="$(json_first_boolean_value "${status_json}" 'owner')"
-  if [[ "${owner_is_null}" == "null" ]]; then
-    return
-  fi
-
-  local service_managed=""
-  service_managed="$(json_first_boolean_value "${status_json}" 'serviceManaged')"
-  if [[ "${service_managed}" == "true" ]]; then
-    installer_bullet "Current owner: background service"
-  elif [[ "${service_managed}" == "false" ]]; then
-    installer_bullet "Current owner: manual relay runtime"
-  else
-    installer_bullet "Current owner: relay owner"
-  fi
-
-  local owner_ring=""
-  owner_ring="$(json_first_string_value "${status_json}" 'startedWithPublicReleaseChannel')"
-  local owner_version=""
-  owner_version="$(json_first_string_value "${status_json}" 'startedWithCliVersion')"
-  if [[ -n "${owner_ring}" || -n "${owner_version}" ]]; then
-    installer_bullet "Owner CLI: ${owner_ring:-unknown} • ${owner_version:-unknown}"
-  fi
-
-  local invocation_matches=""
-  invocation_matches="$(json_first_boolean_value "${status_json}" 'currentInvocationMatches')"
-  if [[ "${invocation_matches}" == "false" ]]; then
-    if [[ "${service_managed}" == "true" ]]; then
-      warn "Current CLI differs from the running background service. Use \`happier service restart\` if you want automatic startup to switch to this installation."
-    elif [[ "${service_managed}" == "false" ]]; then
-      warn "Current CLI differs from the running manual relay runtime. Use \`happier daemon restart\` if you want the manual relay runtime to switch to this installation."
-    else
-      warn "Current CLI differs from the running relay owner. Restart the current relay owner before trying to switch this installation."
-    fi
-  fi
-}
-
-print_installed_background_service_entries() {
-  local services_text="$1"
-  if [[ -z "${services_text}" ]]; then
-    return
-  fi
-
-  while IFS= read -r line; do
-    if [[ -z "${line}" ]]; then
-      continue
-    fi
-    if [[ "${line}" == "  "* ]]; then
-      say "    ${line#"  "}"
-      continue
-    fi
-    installer_bullet "${line}"
-  done <<< "${services_text}"
-}
-
-print_installed_background_service_summary() {
-  local cli_bin="$1"
-  local services_json="$2"
-  local status_json="$3"
-
-  if ! background_service_inventory_is_supported "${services_json}" || background_service_inventory_is_empty "${services_json}"; then
-    return
-  fi
-
-  section "Background Service"
-  local services_text=""
-  services_text="$(invoke_installer_command_with_daemon_service_context "${cli_bin}" service list 2>/dev/null || true)"
-  print_installed_background_service_entries "${services_text}"
-  print_installed_background_service_status_summary "${status_json}"
-
-  if background_service_repair_requires_sudo "${services_json}"; then
-    echo
-    warn "${COLOR_BOLD}System background services are installed.${COLOR_RESET}"
-    installer_bullet "Repairing or switching automatic startup for these services requires sudo on Linux."
-  fi
-
-  echo
-  if background_service_inventory_has_default_following "${services_json}"; then
-    warn "${COLOR_BOLD}Automatic startup still follows the current managed default release-channel.${COLOR_RESET}"
-    installer_bullet "Switch it to this release-channel only if you want automatic startup to follow this CLI."
-    installer_bullet "Keep it unchanged if you only want to use this CLI interactively."
-    installer_bullet "Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over."
-    return
-  fi
-
-  warn "${COLOR_BOLD}Pinned background services keep their current release-channels and relay targets until you replace them.${COLOR_RESET}"
-  installer_bullet "Installing this CLI alone does not move automatic startup to this lane."
-  installer_bullet "Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over."
+trim_installer_text() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value}"
 }
 
 installer_has_controlling_tty() {
@@ -1136,15 +1392,22 @@ action_version() {
   fi
 
   local tag=""
-  local asset_regex="^happier-v.*-${os}-${arch}[.]tar[.]gz$"
+  local default_version_regex=""
+  default_version_regex="$(default_release_asset_version_regex "${CHANNEL}")"
+  local asset_regex="^happier-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
   local version_prefix="happier-v"
   if [[ "${PRODUCT}" == "server" ]]; then
-    asset_regex="^happier-server-v.*-${os}-${arch}[.]tar[.]gz$"
+    asset_regex="^happier-server-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
     version_prefix="happier-server-v"
   fi
   if [[ "${PRODUCT}" == "stack" ]]; then
-    asset_regex="^hstack-v.*-${os}-${arch}[.]tar[.]gz$"
+    asset_regex="^hstack-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
     version_prefix="hstack-v"
+  fi
+  if [[ -n "${INSTALL_VERSION}" ]]; then
+    local requested_version_regex=""
+    requested_version_regex="$(escape_regex_literal "${INSTALL_VERSION}")"
+    asset_regex="^${version_prefix}${requested_version_regex}-${os}-${arch}[.]tar[.]gz$"
   fi
   tag="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
     echo "Unsupported product/channel combination: ${PRODUCT}/${CHANNEL}" >&2
@@ -1174,7 +1437,7 @@ action_version() {
   local asset_source=""
   asset_source="$(resolve_release_asset_source "${release_json}" "${asset_regex}")"
   if [[ -z "${asset_source}" ]]; then
-    echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${tag}." >&2
+    echo "Unable to locate release assets for ${os}-${arch} on tag ${tag}." >&2
     return 1
   fi
   local asset_name=""
@@ -1224,7 +1487,8 @@ Options:
   --with-daemon
   --without-daemon
   --check
-  --version
+  --version [version]
+  --rollback
   --reinstall
   --restart
   --uninstall [--purge]
@@ -1308,7 +1572,22 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     --version)
-      ACTION="version"
+      if [[ $# -ge 2 && -n "${2:-}" && "${2}" != --* ]]; then
+        INSTALL_VERSION="${2}"
+        ACTION="install"
+        shift 2
+      else
+        ACTION="version"
+        shift 1
+      fi
+      ;;
+    --version=*)
+      INSTALL_VERSION="${1#*=}"
+      ACTION="install"
+      shift 1
+      ;;
+    --rollback)
+      ACTION="rollback"
       shift 1
       ;;
     --reinstall)
@@ -1359,6 +1638,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 CHANNEL="$(normalize_channel "${CHANNEL}")"
+
+if [[ -n "${INSTALL_VERSION}" ]]; then
+  validate_requested_install_version "${INSTALL_VERSION}" || {
+    usage >&2
+    exit 1
+  }
+fi
 
 if [[ "${RUN_ACTION}" == "setup-relay" && ${#RUN_ACTION_DEFAULT_ARGS[@]} -eq 0 ]]; then
   RUN_ACTION_DEFAULT_ARGS=(--mode user --yes --channel "$(display_channel_label "${CHANNEL}")" --preserve-active-server)
@@ -1412,6 +1698,48 @@ resolve_installed_cli_invoker_for_channel() {
   fi
 
   return 1
+}
+
+setup_relay_install_flag_supported_by_help() {
+  local help_output="$1"
+  local flag="$2"
+  printf '%s\n' "${help_output}" | grep -Fq -- "${flag}"
+}
+
+filter_supported_setup_relay_default_args() {
+  local cli_bin="$1"
+  shift
+
+  local help_output=""
+  help_output="$("${cli_bin}" relay host install --help 2>/dev/null || true)"
+  if [[ -z "${help_output}" ]]; then
+    printf '%s\n' "$@"
+    return 0
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mode|--channel)
+        local flag="$1"
+        local value="${2:-}"
+        if setup_relay_install_flag_supported_by_help "${help_output}" "${flag}"; then
+          printf '%s\n' "${flag}"
+          printf '%s\n' "${value}"
+        fi
+        shift 2
+        ;;
+      --yes|--preserve-active-server)
+        if setup_relay_install_flag_supported_by_help "${help_output}" "$1"; then
+          printf '%s\n' "$1"
+        fi
+        shift 1
+        ;;
+      *)
+        printf '%s\n' "$1"
+        shift 1
+        ;;
+    esac
+  done
 }
 
 run_post_install_action() {
@@ -1477,7 +1805,13 @@ run_post_install_action() {
 
   local -a args=()
   if [[ ${#RUN_ACTION_DEFAULT_ARGS[@]} -gt 0 ]]; then
-    args+=("${RUN_ACTION_DEFAULT_ARGS[@]}")
+    if [[ "${op}" == "setup-relay" ]]; then
+      while IFS= read -r arg; do
+        args+=("${arg}")
+      done < <(filter_supported_setup_relay_default_args "${cli_bin}" "${RUN_ACTION_DEFAULT_ARGS[@]}")
+    else
+      args+=("${RUN_ACTION_DEFAULT_ARGS[@]}")
+    fi
   fi
   if [[ ${#RUN_ACTION_ARGS[@]} -gt 0 ]]; then
     args+=("${RUN_ACTION_ARGS[@]}")
@@ -1507,6 +1841,10 @@ if [[ "${ACTION}" == "uninstall" ]]; then
   action_uninstall
   exit $?
 fi
+if [[ "${ACTION}" == "rollback" ]]; then
+  action_rollback
+  exit $?
+fi
 
 if [[ -n "${RUN_ACTION}" ]]; then
   if [[ "${PRODUCT}" != "cli" ]]; then
@@ -1514,7 +1852,7 @@ if [[ -n "${RUN_ACTION}" ]]; then
     exit 1
   fi
   if [[ "${ACTION}" != "install" ]]; then
-    echo "--run cannot be combined with installer actions like --check/--version/--uninstall." >&2
+    echo "--run cannot be combined with installer actions like --check/--version/--rollback/--uninstall." >&2
     exit 1
   fi
   INSTALLED_CLI_BIN="$(resolve_installed_cli_invoker_for_channel "${CHANNEL}" 2>/dev/null || true)"
@@ -1644,6 +1982,10 @@ append_path_hint() {
   if [[ "${NO_PATH_UPDATE}" == "1" ]]; then
     return
   fi
+  shell_single_quote_literal() {
+    local value="$1"
+    printf "'%s'" "$(printf '%s' "${value}" | sed "s/'/'\"'\"'/g")"
+  }
   upsert_shell_export_line() {
     local rc_file="$1"
     local export_key="$2"
@@ -1701,9 +2043,11 @@ append_path_hint() {
   shell_name="$(basename "${SHELL:-}")"
   local export_line="export PATH=\"${BIN_DIR}:\$PATH\""
   local home_export_line=""
+  local home_export_value=""
   local default_install_dir="${HOME}/.happier"
   if [[ "${INSTALL_DIR}" != "${default_install_dir}" ]]; then
-    home_export_line="export HAPPIER_HOME_DIR=\"${INSTALL_DIR}\""
+    home_export_value="$(shell_single_quote_literal "${INSTALL_DIR}")"
+    home_export_line="export HAPPIER_HOME_DIR=${home_export_value}"
   fi
   local rc_files=()
   case "${shell_name}" in
@@ -1754,7 +2098,7 @@ append_path_hint() {
     say "To use ${EXE_NAME} in your current shell:"
     say "  export PATH=\"${BIN_DIR}:\$PATH\""
     if [[ -n "${home_export_line}" ]]; then
-      say "  export HAPPIER_HOME_DIR=\"${INSTALL_DIR}\""
+      say "  export HAPPIER_HOME_DIR=${home_export_value}"
     fi
     if [[ "${shell_name}" == "bash" ]]; then
       say "  source \"$HOME/.bashrc\""
@@ -1792,18 +2136,19 @@ if [[ "${OS}" == "unsupported" || "${ARCH}" == "unsupported" ]]; then
 fi
 
 TAG=""
-ASSET_REGEX="^happier-v.*-${OS}-${ARCH}[.]tar[.]gz$"
-CHECKSUMS_REGEX="^checksums-happier-v.*[.]txt$"
-SIG_REGEX="^checksums-happier-v.*[.]txt[.]minisig$"
+DEFAULT_VERSION_REGEX="$(default_release_asset_version_regex "${CHANNEL}")"
+ASSET_REGEX="^happier-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+CHECKSUMS_REGEX="^checksums-happier-v${DEFAULT_VERSION_REGEX}[.]txt$"
+SIG_REGEX="^checksums-happier-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
 EXE_NAME="happier"
 INSTALL_NAME="Happier CLI"
 VERSION_PREFIX="happier-v"
 CHECKSUMS_PREFIX="checksums-happier-v"
 
 if [[ "${PRODUCT}" == "server" ]]; then
-  ASSET_REGEX="^happier-server-v.*-${OS}-${ARCH}[.]tar[.]gz$"
-  CHECKSUMS_REGEX="^checksums-happier-server-v.*[.]txt$"
-  SIG_REGEX="^checksums-happier-server-v.*[.]txt[.]minisig$"
+  ASSET_REGEX="^happier-server-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^checksums-happier-server-v${DEFAULT_VERSION_REGEX}[.]txt$"
+  SIG_REGEX="^checksums-happier-server-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
   EXE_NAME="happier-server"
   INSTALL_NAME="Happier Server"
   VERSION_PREFIX="happier-server-v"
@@ -1811,13 +2156,20 @@ if [[ "${PRODUCT}" == "server" ]]; then
 fi
 
 if [[ "${PRODUCT}" == "stack" ]]; then
-  ASSET_REGEX="^hstack-v.*-${OS}-${ARCH}[.]tar[.]gz$"
-  CHECKSUMS_REGEX="^checksums-hstack-v.*[.]txt$"
-  SIG_REGEX="^checksums-hstack-v.*[.]txt[.]minisig$"
+  ASSET_REGEX="^hstack-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^checksums-hstack-v${DEFAULT_VERSION_REGEX}[.]txt$"
+  SIG_REGEX="^checksums-hstack-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
   EXE_NAME="hstack"
   INSTALL_NAME="Happier Stack"
   VERSION_PREFIX="hstack-v"
   CHECKSUMS_PREFIX="checksums-hstack-v"
+fi
+
+if [[ -n "${INSTALL_VERSION}" ]]; then
+  REQUESTED_VERSION_REGEX="$(escape_regex_literal "${INSTALL_VERSION}")"
+  ASSET_REGEX="^${VERSION_PREFIX}${REQUESTED_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^${CHECKSUMS_PREFIX}${REQUESTED_VERSION_REGEX}[.]txt$"
+  SIG_REGEX="^${CHECKSUMS_PREFIX}${REQUESTED_VERSION_REGEX}[.]txt[.]minisig$"
 fi
 
 TAG="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
@@ -2048,12 +2400,20 @@ fi
 append_path_hint
 
 services_json=""
-status_json=""
 if should_read_background_service_preflight; then
-  services_json="$(read_background_service_preflight_json "${DISPLAY_SHIM_PATH}")"
-  status_json="$(read_background_service_status_json "${DISPLAY_SHIM_PATH}")"
+  tmp_services_json="$(mktemp)"
+  read_background_service_preflight_json "${DISPLAY_SHIM_PATH}" >"${tmp_services_json}" 2>/dev/null || true
+  services_json="$(cat "${tmp_services_json}" 2>/dev/null || true)"
+  rm -f "${tmp_services_json}" >/dev/null 2>&1 || true
+  # `doctor repair --json` preflight can include additional inventory such as daemon status.
+  if background_service_inventory_is_supported "${services_json}"; then
+    DAEMON_RUNNING_FROM_PREFLIGHT="0"
+    if background_service_inventory_daemon_is_running "${services_json}"; then
+      DAEMON_RUNNING_FROM_PREFLIGHT="1"
+    fi
+  fi
   if [[ "${NONINTERACTIVE}" != "1" ]]; then
-    print_installed_background_service_summary "${DISPLAY_SHIM_PATH}" "${services_json}" "${status_json}"
+    print_background_service_report_text_if_supported "${DISPLAY_SHIM_PATH}"
   fi
 fi
 
@@ -2065,25 +2425,34 @@ if [[ "${PRODUCT}" == "cli" && "${WITH_DAEMON}" == "1" ]]; then
     skip_background_service_install="0"
     echo
     repair_command="$(background_service_repair_manual_command "${DISPLAY_SHIM_PATH}" "${services_json}")"
+    install_command="$(background_service_install_manual_command "${DISPLAY_SHIM_PATH}")"
     case "${install_strategy}" in
       replace-all)
-        if background_service_repair_requires_sudo "${services_json}"; then
-          echo "Warning: system background services require sudo to repair or switch:" >&2
-          echo "  ${repair_command}" >&2
-          skip_background_service_install="1"
+        if run_background_service_repair_if_supported "${DISPLAY_SHIM_PATH}"; then
+          info "Updating automatic startup to this release channel..."
         else
-          info "Switching managed background-service startup to this release-channel..."
-          if ! invoke_installer_command_with_daemon_service_context "${DISPLAY_SHIM_PATH}" service repair --yes >/dev/null 2>&1; then
+          repair_status=$?
+          if [[ "${repair_status}" == "2" ]]; then
+            info "Setting up automatic startup (user-mode)..."
+            if ! run_background_service_install_compatibly "${DISPLAY_SHIM_PATH}" >/dev/null 2>&1; then
+              echo "Warning: background service install failed. You can retry manually:" >&2
+              echo "  ${install_command}" >&2
+            fi
+          elif background_service_repair_requires_sudo "${services_json}"; then
+            echo "Warning: system background services require sudo to repair or switch:" >&2
+            echo "  ${repair_command}" >&2
+            skip_background_service_install="1"
+          else
             echo "Warning: background service install failed. You can retry manually:" >&2
             echo "  ${repair_command}" >&2
           fi
         fi
         ;;
       add)
-        info "Installing an additional background service (user-mode)..."
-        if ! invoke_installer_command_with_daemon_service_context "${DISPLAY_SHIM_PATH}" service install --yes >/dev/null 2>&1; then
+        info "Setting up automatic startup (additional service, user-mode)..."
+        if ! run_background_service_install_compatibly "${DISPLAY_SHIM_PATH}" >/dev/null 2>&1; then
           echo "Warning: background service install failed. You can retry manually:" >&2
-          echo "  ${DISPLAY_SHIM_PATH} service install --yes" >&2
+          echo "  ${install_command}" >&2
         fi
         ;;
       skip)
@@ -2097,23 +2466,28 @@ if [[ "${PRODUCT}" == "cli" && "${WITH_DAEMON}" == "1" ]]; then
             echo
             skip_background_service_install="1"
           else
-            info "Reconciling existing background services (best-effort)..."
-            if ! invoke_installer_command_with_daemon_service_context "${DISPLAY_SHIM_PATH}" service repair --yes >/dev/null 2>&1; then
-              echo "Warning: background service repair failed. You can retry manually:" >&2
-              echo "  ${repair_command}" >&2
+            if run_background_service_repair_if_supported "${DISPLAY_SHIM_PATH}"; then
+              info "Repairing automatic startup (best-effort)..."
               echo
-              skip_background_service_install="1"
-            fi
-            if [[ "${skip_background_service_install}" != "1" ]]; then
-              echo
+            else
+              repair_status=$?
+              if [[ "${repair_status}" == "2" ]]; then
+                skip_background_service_install="0"
+              else
+                info "Repairing automatic startup (best-effort)..."
+                echo "Warning: background service repair failed. You can retry manually:" >&2
+                echo "  ${repair_command}" >&2
+                echo
+                skip_background_service_install="1"
+              fi
             fi
           fi
         fi
         if [[ "${skip_background_service_install}" != "1" ]]; then
-          info "Installing background service (user-mode)..."
-          if ! invoke_installer_command_with_daemon_service_context "${DISPLAY_SHIM_PATH}" service install --yes >/dev/null 2>&1; then
+          info "Setting up automatic startup (user-mode)..."
+          if ! run_background_service_install_compatibly "${DISPLAY_SHIM_PATH}" >/dev/null 2>&1; then
             echo "Warning: background service install failed. You can retry manually:" >&2
-            echo "  ${DISPLAY_SHIM_PATH} service install --yes" >&2
+            echo "  ${install_command}" >&2
           fi
         fi
         ;;

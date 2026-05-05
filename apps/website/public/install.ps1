@@ -1,6 +1,8 @@
 param(
   [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" }),
+  [string] $Version = $(if ($env:HAPPIER_INSTALL_VERSION) { $env:HAPPIER_INSTALL_VERSION } else { "" }),
   [switch] $SetupRelay,
+  [switch] $Rollback,
   [switch] $WithDaemon,
   [switch] $WithoutDaemon,
   [string] $Run = $(if ($env:HAPPIER_INSTALLER_RUN_ACTION) { $env:HAPPIER_INSTALLER_RUN_ACTION } else { "" }),
@@ -16,6 +18,20 @@ if ($WithDaemon.IsPresent -and $WithoutDaemon.IsPresent) {
 
 if ($env:HAPPIER_INSTALLER_SETUP_RELAY -and $env:HAPPIER_INSTALLER_SETUP_RELAY -ne "0") {
   $SetupRelay = $true
+}
+
+$InstallerAction = if ($env:HAPPIER_INSTALLER_ACTION) { ([string]$env:HAPPIER_INSTALLER_ACTION).Trim().ToLowerInvariant() } else { "install" }
+if ($Rollback.IsPresent) {
+  $InstallerAction = "rollback"
+}
+if ($InstallerAction -eq "reinstall") {
+  $InstallerAction = "install"
+}
+if ($InstallerAction -ne "install" -and $InstallerAction -ne "rollback") {
+  throw "Unsupported HAPPIER_INSTALLER_ACTION '$InstallerAction' for install.ps1. Expected install or rollback."
+}
+if ($Version -and $Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
+  throw "Invalid install version '$Version'. Expected a release version such as 0.2.1."
 }
 
 function Normalize-Channel {
@@ -37,16 +53,15 @@ $Channel = Normalize-Channel -Raw ([string]$Channel)
 
 $Repo = if ($env:HAPPIER_GITHUB_REPO) { $env:HAPPIER_GITHUB_REPO } else { "happier-dev/happier" }
 $Token = if ($env:HAPPIER_GITHUB_TOKEN) { $env:HAPPIER_GITHUB_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "" }
+$ReleaseAssetsDir = if ($env:HAPPIER_RELEASE_ASSETS_DIR) { $env:HAPPIER_RELEASE_ASSETS_DIR } else { "" }
 $GitHubHeaders = @{
   "X-GitHub-Api-Version" = "2022-11-28"
 }
 if ($Token) {
   $GitHubHeaders["Authorization"] = "Bearer $Token"
 }
-$InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } else { Join-Path $env:USERPROFILE ".happier" }
-$ReleaseAssetsDir = if ($env:HAPPIER_RELEASE_ASSETS_DIR) { $env:HAPPIER_RELEASE_ASSETS_DIR } else { "" }
+$InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } elseif ($env:HAPPIER_HOME_DIR) { $env:HAPPIER_HOME_DIR } else { Join-Path $env:USERPROFILE ".happier" }
 if (-not $env:HAPPIER_HOME_DIR) {
-  [Environment]::SetEnvironmentVariable("HAPPIER_HOME_DIR", $InstallDir, [EnvironmentVariableTarget]::User)
   $env:HAPPIER_HOME_DIR = $InstallDir
 }
 $DaemonServiceStateHomeDir = $env:HAPPIER_HOME_DIR
@@ -82,12 +97,16 @@ RWQ85PZ7FyiukYbL3qv/bKnwgbT68wLVzotapeMFIb8n+c7pBQ7U8W2t
 $MinisignPubKey = if ($env:HAPPIER_MINISIGN_PUBKEY) { $env:HAPPIER_MINISIGN_PUBKEY } else { $DefaultMinisignPubKey.Trim() }
 $MinisignPubKeyUrl = if ($env:HAPPIER_MINISIGN_PUBKEY_URL) { $env:HAPPIER_MINISIGN_PUBKEY_URL } else { "https://happier.dev/happier-release.pub" }
 
-$target = Join-Path $InstallDir "bin\happier.exe"
-
 function Resolve-CliShimName {
   if ($Channel -eq "preview") { return "hprev" }
   if ($Channel -eq "publicdev") { return "hdev" }
   return "happier"
+}
+
+function Resolve-CliInstallRootName {
+  if ($Channel -eq "preview") { return "cli-preview" }
+  if ($Channel -eq "publicdev") { return "cli-dev" }
+  return "cli"
 }
 
 function Resolve-InstalledCliInvoker {
@@ -114,6 +133,154 @@ function Resolve-InstalledCliInvoker {
   }
 
   return $null
+}
+
+function Read-InstallerMarkerFile {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Path
+  )
+  if (-not (Test-Path $Path -PathType Leaf)) {
+    return ""
+  }
+  $value = Get-Content -Path $Path -TotalCount 1 -ErrorAction SilentlyContinue
+  return ([string]$value).Trim()
+}
+
+function Set-InstallerDirectoryPointer {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Path,
+    [Parameter(Mandatory = $true)] [string] $Target
+  )
+  Remove-Item -Path $Path -Recurse -Force -ErrorAction SilentlyContinue
+  try {
+    New-Item -ItemType Junction -Path $Path -Target $Target -Force | Out-Null
+  }
+  catch {
+    Copy-Item -Path $Target -Destination $Path -Recurse -Force
+  }
+}
+
+function Test-InstallerDefaultChannelMatchesSelectedChannel {
+  $statePath = Join-Path $InstallDir "default-cli-release-channel.json"
+  if (Test-Path $statePath -PathType Leaf) {
+    $raw = Get-Content -Path $statePath -Raw -ErrorAction SilentlyContinue
+    return $raw -match ('"releaseChannel"\s*:\s*"' + [Regex]::Escape($Channel) + '"')
+  }
+  return $Channel -eq "stable"
+}
+
+function Sync-InstallerCliRollbackShim {
+  param (
+    [Parameter(Mandatory = $true)] [string] $ShimName,
+    [Parameter(Mandatory = $true)] [string] $BinaryPath
+  )
+  New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+  $shimPath = Join-Path $BinDir "$ShimName.exe"
+  Remove-Item -Path $shimPath -Force -ErrorAction SilentlyContinue
+  try {
+    New-Item -ItemType HardLink -Path $shimPath -Target $BinaryPath -Force | Out-Null
+  }
+  catch {
+    Copy-Item -Path $BinaryPath -Destination $shimPath -Force
+  }
+}
+
+function Invoke-InstallerCliRollback {
+  $managedRoot = Resolve-CliInstallRootName
+  $installRoot = Join-Path $InstallDir $managedRoot
+  $previousVersion = Read-InstallerMarkerFile -Path (Join-Path $installRoot "previous.version")
+  if (-not $previousVersion) {
+    throw "No previous $(Resolve-CliShimName) version is available for rollback."
+  }
+
+  $previousDir = Join-Path (Join-Path $installRoot "versions") $previousVersion
+  $previousBinary = Join-Path $previousDir "happier.exe"
+  if (-not (Test-Path $previousBinary -PathType Leaf)) {
+    throw "Rollback target is missing or incomplete: $previousDir"
+  }
+
+  $currentVersion = Read-InstallerMarkerFile -Path (Join-Path $installRoot "current.version")
+  Set-InstallerDirectoryPointer -Path (Join-Path $installRoot "current") -Target $previousDir
+  Set-Content -Path (Join-Path $installRoot "current.version") -Value "$previousVersion`n" -NoNewline
+
+  if ($currentVersion) {
+    $currentDir = Join-Path (Join-Path $installRoot "versions") $currentVersion
+    if (Test-Path $currentDir -PathType Container) {
+      Set-InstallerDirectoryPointer -Path (Join-Path $installRoot "previous") -Target $currentDir
+      Set-Content -Path (Join-Path $installRoot "previous.version") -Value "$currentVersion`n" -NoNewline
+    }
+  }
+
+  $shimName = Resolve-CliShimName
+  Sync-InstallerCliRollbackShim -ShimName $shimName -BinaryPath $previousBinary
+  if ($shimName -ne "happier" -and (Test-InstallerDefaultChannelMatchesSelectedChannel)) {
+    Sync-InstallerCliRollbackShim -ShimName "happier" -BinaryPath $previousBinary
+  }
+
+  Write-Host "Rolled back $shimName from $(if ($currentVersion) { $currentVersion } else { 'current' }) to $previousVersion."
+}
+
+function Resolve-TarExecutable {
+  foreach ($commandName in @("tar.exe", "tar")) {
+    $cmd = Get-Command $commandName -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and (Test-Path $cmd.Source)) {
+      return $cmd.Source
+    }
+  }
+
+  $pathEntries = @()
+  foreach ($rawPath in @(
+      $env:Path,
+      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User),
+      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+    )) {
+    if ($rawPath) {
+      $pathEntries += $rawPath -split ';'
+    }
+  }
+  if ($env:WINDIR) {
+    $pathEntries += Join-Path $env:WINDIR "System32"
+  }
+
+  foreach ($entry in $pathEntries) {
+    $trimmedEntry = ([string]$entry).Trim()
+    if (-not $trimmedEntry) {
+      continue
+    }
+    foreach ($commandName in @("tar.exe", "tar")) {
+      $candidate = Join-Path $trimmedEntry $commandName
+      if (Test-Path $candidate) {
+        return $candidate
+      }
+    }
+  }
+
+  throw "Failed to locate tar.exe/tar. Ensure Windows System32 is available or install tar before retrying."
+}
+
+function Resolve-TarExecutablePath {
+  return Resolve-TarExecutable
+}
+
+function Invoke-InstallerTarExtraction {
+  param (
+    [Parameter(Mandatory = $true)] [string] $ArchivePath,
+    [Parameter(Mandatory = $true)] [string] $DestinationDir
+  )
+
+  $tarPath = Resolve-TarExecutable
+  # Resolve-TarExecutable returns tar.exe/tar; keep extraction behind this
+  # wrapper so failures include actionable diagnostics instead of a raw shell
+  # error.
+  $result = Invoke-NativeCommandCapturingOutput {
+    & $tarPath -xzf $ArchivePath -C $DestinationDir
+  }
+  if ($result.ExitCode -ne 0) {
+    if ($result.Output) {
+      Write-Warning $result.Output.Trim()
+    }
+    throw "Failed to extract archive with tar.exe/tar. Ensure Windows System32 tar.exe is available and the archive is valid."
+  }
 }
 
 function Show-PathReloadGuidance {
@@ -171,6 +338,43 @@ function Test-InteractiveInstallerPromptAvailable {
   }
 }
 
+function Get-InstallerDisplayChannelLabel {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Value
+  )
+
+  if ($Value -eq "publicdev" -or $Value -eq "dev") {
+    return "dev"
+  }
+
+  return $Value
+}
+
+function Write-InstallerBullet {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Text,
+    [ConsoleColor] $Color
+  )
+
+  if ($PSBoundParameters.ContainsKey('Color')) {
+    Write-Host "  • $Text" -ForegroundColor $Color
+    return
+  }
+
+  Write-Host "  • $Text"
+}
+
+function Write-InstallerDetailBullet {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Label,
+    [Parameter(Mandatory = $true)] [string] $Value
+  )
+
+  Write-Host "    • " -NoNewline -ForegroundColor DarkGray
+  Write-Host ("{0}:" -f $Label) -NoNewline -ForegroundColor Gray
+  Write-Host " $Value"
+}
+
 function Read-BackgroundServicePromptChoice {
   param (
     [Parameter(Mandatory = $true)] [string] $DefaultChoice,
@@ -181,7 +385,7 @@ function Read-BackgroundServicePromptChoice {
     return $DefaultChoice
   }
 
-  $channelLabel = if ($Channel -eq "publicdev") { "dev" } else { $Channel }
+  $channelLabel = Get-InstallerDisplayChannelLabel -Value $Channel
   $defaultHint = "y/N"
   $recommendedNote = "recommended: no"
   if ($DefaultChoice -eq "1") {
@@ -189,9 +393,9 @@ function Read-BackgroundServicePromptChoice {
     $recommendedNote = "recommended: yes"
   }
 
-  $prompt = "Install background service for automatic startup on the $channelLabel release-channel?"
+  $prompt = "Set up automatic startup for the $channelLabel CLI?"
   if ($HasExistingServices) {
-    $prompt = "Update background service startup after installing the $channelLabel release-channel CLI?"
+    $prompt = "Update automatic startup for the $channelLabel CLI?"
   }
 
   while ($true) {
@@ -241,7 +445,8 @@ function Read-InstallerYesNoChoice {
 
 function Resolve-WithDaemonPreference {
   param (
-    [Parameter(Mandatory = $false)] [object[]] $Entries = @()
+    [Parameter(Mandatory = $false)] [object[]] $Entries = @(),
+    [Parameter()] $DefaultFollowingMatchesSelectedReleaseChannel = $null
   )
 
   if ($WithDaemonExplicit) {
@@ -256,6 +461,11 @@ function Resolve-WithDaemonPreference {
     }
     return $defaultChoice
   }
+
+  if ($hasExistingServices -and (Test-BackgroundServiceInventoryHasMatchingDefaultFollowing -Entries $Entries -DefaultFollowingMatchesSelectedReleaseChannel $DefaultFollowingMatchesSelectedReleaseChannel)) {
+    return "0"
+  }
+
   return Read-BackgroundServicePromptChoice -DefaultChoice $defaultChoice -HasExistingServices $hasExistingServices
 }
 
@@ -321,44 +531,135 @@ function Invoke-InstallerCommandWithDaemonServiceContext {
   }
 }
 
+function Test-DoctorRepairPreflightLooksLikePlainDoctorReport {
+  param (
+    [Parameter()] [string] $Output = ""
+  )
+
+  # Mirror install.sh:823-862: an older CLI that doesn't understand
+  # `doctor repair --json` may instead emit a plain-text "Happier CLI Doctor"
+  # report. We must reject that — even if portions of it accidentally parse
+  # as JSON — and fall through to the legacy `service list --json` probe.
+  return $Output -match 'Happier CLI Doctor'
+}
+
+function Test-DoctorRepairPreflightJsonIsSupported {
+  param (
+    [Parameter()] [string] $Output = ""
+  )
+
+  # Mirror install.sh's `background_service_inventory_json_is_supported`:
+  # the trimmed payload must be a single JSON object (starts with `{`, ends
+  # with `}`) AND must contain at least one of the known inventory keys
+  # (`entries`, `services`, `existingServices`).
+  $trimmed = $Output.Trim()
+  if (-not $trimmed.StartsWith('{') -or -not $trimmed.EndsWith('}')) {
+    return $false
+  }
+  return $trimmed -match '"(entries|services|existingServices)"\s*:'
+}
+
 function Get-InstalledBackgroundServiceInventory {
   param (
     [Parameter(Mandatory = $true)] [string] $CliPath
   )
 
   try {
-    $raw = Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "list", "--json") -HomeDir $DaemonServiceStateHomeDir | Out-String
-    if (-not $raw) {
+    $doctorPreflightResult = Invoke-NativeCommandCapturingOutput {
+      Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("doctor", "repair", "--json") -HomeDir $DaemonServiceStateHomeDir
+    }
+    $preflightOutput = if ($doctorPreflightResult.Output) { [string]$doctorPreflightResult.Output } else { "" }
+    $preflightLooksLikePlainReport = Test-DoctorRepairPreflightLooksLikePlainDoctorReport -Output $preflightOutput
+    $preflightJsonIsSupported = Test-DoctorRepairPreflightJsonIsSupported -Output $preflightOutput
+    if ($doctorPreflightResult.ExitCode -eq 0 -and $preflightJsonIsSupported -and -not $preflightLooksLikePlainReport) {
+      $payload = $preflightOutput | ConvertFrom-Json
+      $propertyNames = @($payload.PSObject.Properties.Name)
+      $entries = if ($propertyNames -contains 'entries') { @($payload.entries) } elseif ($propertyNames -contains 'existingServices') { @($payload.existingServices) } else { @() }
+      $services = if ($propertyNames -contains 'services') { @($payload.services) } elseif ($propertyNames -contains 'existingServices') { @($payload.existingServices) } else { @() }
+      $canonicalEntries = if ($entries.Count -gt 0) { $entries } elseif ($services.Count -gt 0) { $services } else { @() }
+      if ($entries.Count -gt 0 -or $services.Count -gt 0 -or $propertyNames -contains 'existingServices' -or $propertyNames -contains 'entries' -or $propertyNames -contains 'services') {
+        return @{
+          Supported = $true
+          RepairSupported = $true
+          Entries = $canonicalEntries
+          Services = $services
+          DaemonStatus = if ($propertyNames -contains 'daemonStatus') { $payload.daemonStatus } else { $null }
+          DaemonRunning = if ($propertyNames -contains 'daemonRunning') { $payload.daemonRunning } else { $null }
+          DefaultFollowingMatchesSelectedReleaseChannel = if ($propertyNames -contains 'defaultFollowingMatchesSelectedReleaseChannel') { $payload.defaultFollowingMatchesSelectedReleaseChannel } else { $null }
+          Relays = if ($propertyNames -contains 'relays') { @($payload.relays) } else { @() }
+          Payload = $payload
+        }
+      }
+    }
+    elseif (-not $preflightLooksLikePlainReport `
+        -and -not $preflightJsonIsSupported `
+        -and -not (Test-InstallerCommandLooksUnsupported -Output $preflightOutput)) {
+      Write-Warning "Automatic startup inspection failed; continuing without blocking install. You can retry manually: `"$CliPath doctor repair`""
+    }
+  }
+  catch {
+    Write-Warning "Automatic startup inspection failed; continuing without blocking install. You can retry manually: `"$CliPath doctor repair`""
+  }
+
+  try {
+    $serviceListResult = Invoke-NativeCommandCapturingOutput {
+      Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "list", "--json") -HomeDir $DaemonServiceStateHomeDir
+    }
+    if ($serviceListResult.ExitCode -ne 0 -or -not $serviceListResult.Output) {
       return @{
         Supported = $false
+        RepairSupported = $false
         Entries = @()
+        Services = @()
+        DaemonStatus = $null
+        DaemonRunning = $null
+        Relays = @()
+        Payload = $null
       }
     }
-    $payload = $raw | ConvertFrom-Json
+    $payload = $serviceListResult.Output | ConvertFrom-Json
     $propertyNames = @($payload.PSObject.Properties.Name)
-    if ($propertyNames -contains 'entries') {
+    $entries = if ($propertyNames -contains 'entries') { @($payload.entries) } else { @() }
+    $services = if ($propertyNames -contains 'services') { @($payload.services) } else { @() }
+    $canonicalEntries = if ($entries.Count -gt 0) { $entries } elseif ($services.Count -gt 0) { $services } else { @() }
+    if ($entries.Count -gt 0 -or $services.Count -gt 0 -or $propertyNames -contains 'entries' -or $propertyNames -contains 'services') {
       return @{
         Supported = $true
-        Entries = @($payload.entries)
-      }
-    }
-    if ($propertyNames -contains 'services') {
-      return @{
-        Supported = $true
-        Entries = @($payload.services)
+        RepairSupported = $false
+        Entries = $canonicalEntries
+        Services = $services
+        DaemonStatus = $null
+        DaemonRunning = $null
+        DefaultFollowingMatchesSelectedReleaseChannel = $null
+        Relays = @()
+        Payload = $payload
       }
     }
   }
   catch {
     return @{
       Supported = $false
+      RepairSupported = $false
       Entries = @()
+      Services = @()
+      DaemonStatus = $null
+      DaemonRunning = $null
+      DefaultFollowingMatchesSelectedReleaseChannel = $null
+      Relays = @()
+      Payload = $null
     }
   }
 
   return @{
     Supported = $false
+    RepairSupported = $false
     Entries = @()
+    Services = @()
+    DaemonStatus = $null
+    DaemonRunning = $null
+    DefaultFollowingMatchesSelectedReleaseChannel = $null
+    Relays = @()
+    Payload = $null
   }
 }
 
@@ -370,46 +671,125 @@ function Test-BackgroundServiceInventoryHasDefaultFollowing {
   return @($Entries | Where-Object { $_.targetMode -eq 'default-following' }).Count -gt 0
 }
 
-function Show-InstalledBackgroundServiceSummary {
+function Get-BackgroundServiceDefaultFollowingChannel {
   param (
-    [Parameter(Mandatory = $true)] [string] $CliPath,
     [Parameter(Mandatory = $true)] [object[]] $Entries
   )
 
-  if ($Entries.Count -eq 0) {
-    return
+  $entry = @($Entries | Where-Object { $_.targetMode -eq 'default-following' } | Select-Object -First 1)
+  if ($entry.Count -eq 0 -or -not $entry[0].releaseChannel) {
+    return ""
   }
 
-  Write-Host "Current background services:"
-  try {
-    Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "list") -HomeDir $DaemonServiceStateHomeDir
-  }
-  catch {
-    # best-effort summary only
-  }
-  try {
-    Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "status") -HomeDir $DaemonServiceStateHomeDir
-  }
-  catch {
-    # best-effort summary only
+  return Get-InstallerDisplayChannelLabel -Value ([string]$entry[0].releaseChannel)
+}
+
+function Test-BackgroundServiceInventoryHasMatchingDefaultFollowing {
+  param (
+    [Parameter(Mandatory = $true)] [object[]] $Entries,
+    [Parameter()] $DefaultFollowingMatchesSelectedReleaseChannel = $null
+  )
+
+  # Mirror install.sh:1037-1056: prefer the CLI-emitted authoritative signal
+  # `defaultFollowingMatchesSelectedReleaseChannel` when present. The CLI
+  # knows about default-shim resolution that the installer can't easily
+  # reconstruct from a label comparison alone (matters for multi-channel
+  # installs where the default shim points to a non-current channel).
+  if ($null -ne $DefaultFollowingMatchesSelectedReleaseChannel) {
+    return [bool]$DefaultFollowingMatchesSelectedReleaseChannel
   }
 
-  if (Test-BackgroundServiceInventoryHasDefaultFollowing -Entries $Entries) {
-    Write-Host "Automatic startup follows the managed default release-channel, not the newly installed CLI lane." -ForegroundColor Yellow
-    Write-Host "Switch the managed default background service to this release-channel only if you want automatic startup to follow this lane." -ForegroundColor Cyan
-    Write-Host "Keep the current default background service if you only want to use this CLI interactively. Replace it only if you also want to clean up competing services." -ForegroundColor Cyan
-    Write-Host "You can still run this CLI directly. Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over." -ForegroundColor Cyan
-    return
+  $defaultChannel = Get-BackgroundServiceDefaultFollowingChannel -Entries $Entries
+  if (-not $defaultChannel) {
+    return $false
   }
 
-  Write-Host "Pinned background services keep their current release-channels and relay targets until you replace them." -ForegroundColor Yellow
-  Write-Host "Installing this CLI alone does not move automatic startup to this lane." -ForegroundColor Cyan
-  Write-Host "You can still run this CLI directly. Interactive session commands will not replace the current relay owner unless you explicitly switch or take it over." -ForegroundColor Cyan
+  return $defaultChannel -eq (Get-InstallerDisplayChannelLabel -Value $Channel)
+}
+
+function Test-InstallerCommandLooksUnsupported {
+  param (
+    [Parameter()] [string] $Output = ""
+  )
+
+  return $Output -match '(?i)unknown (option|command|subcommand)|invalid option|usage: happier <command>|does not support'
+}
+
+function Get-BackgroundServiceInstallManualCommand {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  return "$CliPath service install"
+}
+
+function Invoke-BackgroundServiceInstallCompatibly {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  $installResult = Invoke-NativeCommandCapturingOutput {
+    Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "install", "--yes") -HomeDir $DaemonServiceStateHomeDir
+  }
+  if ($installResult.ExitCode -eq 0) {
+    return @{
+      Ok = $true
+      Output = $installResult.Output
+    }
+  }
+
+  if (Test-InstallerCommandLooksUnsupported -Output $installResult.Output) {
+    $legacyInstallResult = Invoke-NativeCommandCapturingOutput {
+      Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("service", "install") -HomeDir $DaemonServiceStateHomeDir
+    }
+    if ($legacyInstallResult.ExitCode -eq 0) {
+      return @{
+        Ok = $true
+        Output = $legacyInstallResult.Output
+      }
+    }
+    return @{
+      Ok = $false
+      Output = $legacyInstallResult.Output
+    }
+  }
+
+  return @{
+    Ok = $false
+    Output = $installResult.Output
+  }
+}
+
+function Invoke-DoctorRepairIfSupported {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  $repairResult = Invoke-NativeCommandCapturingOutput {
+    Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs @("doctor", "repair", "--yes") -HomeDir $DaemonServiceStateHomeDir
+  }
+  if ($repairResult.ExitCode -eq 0) {
+    return @{
+      Status = 'applied'
+      Output = $repairResult.Output
+    }
+  }
+  if (Test-InstallerCommandLooksUnsupported -Output $repairResult.Output) {
+    return @{
+      Status = 'unsupported'
+      Output = $repairResult.Output
+    }
+  }
+  return @{
+    Status = 'failed'
+    Output = $repairResult.Output
+  }
 }
 
 function Resolve-ExistingBackgroundServiceInstallStrategy {
   param (
-    [Parameter(Mandatory = $true)] [object[]] $Entries
+    [Parameter(Mandatory = $true)] [object[]] $Entries,
+    [Parameter()] $DefaultFollowingMatchesSelectedReleaseChannel = $null
   )
 
   if ($Noninteractive -eq "1") {
@@ -420,9 +800,13 @@ function Resolve-ExistingBackgroundServiceInstallStrategy {
     return ""
   }
 
-  $replacePrompt = "Existing background services detected. Replace them with this installation?"
+  if (Test-BackgroundServiceInventoryHasMatchingDefaultFollowing -Entries $Entries -DefaultFollowingMatchesSelectedReleaseChannel $DefaultFollowingMatchesSelectedReleaseChannel) {
+    return "skip"
+  }
+
+  $replacePrompt = "Use this installation for automatic startup?"
   if (Test-BackgroundServiceInventoryHasDefaultFollowing -Entries $Entries) {
-    $replacePrompt = "A default background service is already installed. Switch the managed default background service to this release-channel?"
+    $replacePrompt = "Use this installation for automatic startup?"
   }
 
   $replaceChoice = Read-InstallerYesNoChoice -Prompt $replacePrompt -DefaultChoice "1"
@@ -442,12 +826,54 @@ function Resolve-ExistingBackgroundServiceInstallStrategy {
   return "skip"
 }
 
+function Get-SupportedSetupRelayDefaultArgs {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  $defaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }), "--preserve-active-server")
+  # Filter these defaults against `relay host install --help` so older CLIs
+  # do not reject installer-provided flags they have not learned yet.
+  return Filter-SetupRelayDefaultArgsByHelp -CliPath $CliPath -DefaultArgs $defaultArgs
+}
+
+function Filter-SetupRelayDefaultArgsByHelp {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath,
+    [Parameter(Mandatory = $true)] [string[]] $DefaultArgs
+  )
+
+  $helpArgs = @("relay", "host", "install", "--help")
+  $helpResult = Invoke-NativeCommandCapturingOutput {
+    & $CliPath @helpArgs
+  }
+  $helpOutput = [string]$helpResult.Output
+  if ([string]::IsNullOrWhiteSpace($helpOutput)) {
+    return $DefaultArgs
+  }
+
+  $filteredArgs = @()
+  if ($DefaultArgs -contains "--mode" -and $helpOutput -match '(?m)--mode\b') {
+    $filteredArgs += @("--mode", "user")
+  }
+  if ($DefaultArgs -contains "--yes" -and $helpOutput -match '(?m)--yes\b') {
+    $filteredArgs += @("--yes")
+  }
+  if ($DefaultArgs -contains "--channel" -and $helpOutput -match '(?m)--channel\b') {
+    $filteredArgs += @("--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }))
+  }
+  if ($DefaultArgs -contains "--preserve-active-server" -and $helpOutput -match '(?m)--preserve-active-server\b') {
+    $filteredArgs += @("--preserve-active-server")
+  }
+  return $filteredArgs
+}
+
 function Invoke-PostInstallAction {
   param (
     [Parameter(Mandatory = $true)] [string] $CliPath
   )
 
-  $setupRelayDefaultArgs = @()
+  $setupRelayDefaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }), "--preserve-active-server")
   if ($SetupRelay -and -not $Run) {
     $Run = "setup-relay"
   }
@@ -458,6 +884,9 @@ function Invoke-PostInstallAction {
   $runValue = $Run.Trim().ToLowerInvariant()
   if ($runValue -eq "setup-relay" -and $setupRelayDefaultArgs.Count -eq 0) {
     $setupRelayDefaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }), "--preserve-active-server")
+  }
+  if ($runValue -eq "setup-relay") {
+    $setupRelayDefaultArgs = Filter-SetupRelayDefaultArgsByHelp -CliPath $CliPath -DefaultArgs $setupRelayDefaultArgs
   }
   $requiredSubcommand = $null
   $argsToPass = @()
@@ -500,7 +929,11 @@ function Invoke-PostInstallAction {
     if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
     $helpOutput = ""
     try {
-      $helpOutput = (& $CliPath --help 2>$null | Out-String)
+      if ($requiredSubcommand -eq "relay") {
+        $helpOutput = (& $CliPath relay --help 2>$null | Out-String)
+      } else {
+        $helpOutput = (& $CliPath --help 2>$null | Out-String)
+      }
     } catch {
       $helpOutput = ""
     }
@@ -510,6 +943,11 @@ function Invoke-PostInstallAction {
     }
   }
   Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs $argsToPass -HomeDir $DaemonServiceStateHomeDir
+}
+
+if ($InstallerAction -eq "rollback") {
+  Invoke-InstallerCliRollback
+  exit 0
 }
 
 if ($Run -and -not $SetupRelay -and ($existing = Resolve-InstalledCliInvoker)) {
@@ -522,7 +960,16 @@ function Get-AssetByPattern {
     [Parameter(Mandatory = $true)] [object] $Release,
     [Parameter(Mandatory = $true)] [string] $Pattern
   )
-  return $Release.assets | Where-Object { $_.name -match $Pattern } | Select-Object -First 1
+  $matched = $null
+  $matchedSortKey = ""
+  foreach ($asset in @($Release.assets | Where-Object { $_.name -match $Pattern })) {
+    $sortKey = Get-ReleaseAssetVersionSortKey -Name ([string]$asset.name)
+    if (-not $matched -or $sortKey -gt $matchedSortKey) {
+      $matched = $asset
+      $matchedSortKey = $sortKey
+    }
+  }
+  return $matched
 }
 
 function Get-LocalAssetByPattern {
@@ -532,10 +979,105 @@ function Get-LocalAssetByPattern {
   if (-not $ReleaseAssetsDir) {
     return $null
   }
-  if (-not (Test-Path $ReleaseAssetsDir)) {
+  if (-not (Test-Path $ReleaseAssetsDir -PathType Container)) {
     throw "HAPPIER_RELEASE_ASSETS_DIR does not exist: $ReleaseAssetsDir"
   }
-  return Get-ChildItem -Path $ReleaseAssetsDir -File | Where-Object { $_.Name -match $Pattern } | Select-Object -First 1
+  $matched = $null
+  $matchedSortKey = ""
+  foreach ($asset in @(Get-ChildItem -Path $ReleaseAssetsDir -File | Where-Object { $_.Name -match $Pattern })) {
+    $sortKey = Get-ReleaseAssetVersionSortKey -Name ([string]$asset.Name)
+    if (-not $matched -or $sortKey -gt $matchedSortKey) {
+      $matched = $asset
+      $matchedSortKey = $sortKey
+    }
+  }
+  return $matched
+}
+
+function Get-ReleaseAssetVersionFromName {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Name
+  )
+
+  if ($Name -match '^checksums-.+-v(.+)\.txt\.minisig$') {
+    return $matches[1]
+  }
+  if ($Name -match '^checksums-.+-v(.+)\.txt$') {
+    return $matches[1]
+  }
+  if ($Name -match '^.+-v(.+)-windows-[^-]+\.tar\.gz$') {
+    return $matches[1]
+  }
+  return ""
+}
+
+function Get-ReleaseAssetVersionSortKey {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Name
+  )
+
+  $version = Get-ReleaseAssetVersionFromName -Name $Name
+  $versionWithoutBuild = ($version -split '\+', 2)[0]
+  $core = $versionWithoutBuild
+  $prerelease = ""
+  if ($versionWithoutBuild -like '*-*') {
+    $parts = $versionWithoutBuild -split '-', 2
+    $core = $parts[0]
+    $prerelease = $parts[1]
+  }
+
+  $major = 0
+  $minor = 0
+  $patch = 0
+  $coreParts = @($core -split '\.')
+  if ($coreParts.Count -gt 0 -and $coreParts[0] -match '^\d+$') {
+    $major = [int]$coreParts[0]
+  }
+  if ($coreParts.Count -gt 1 -and $coreParts[1] -match '^\d+$') {
+    $minor = [int]$coreParts[1]
+  }
+  if ($coreParts.Count -gt 2 -and $coreParts[2] -match '^\d+$') {
+    $patch = [int]$coreParts[2]
+  }
+
+  $sortKey = "{0:D9}|{1:D9}|{2:D9}|" -f $major, $minor, $patch
+
+  # Keep stable builds ordered after preview/dev prereleases of the same core
+  # version, while still preserving semantic ordering within prerelease parts.
+  $prereleaseRank = "1|stable|"
+  if ($prerelease) {
+    $prereleaseRank = "0|"
+    foreach ($part in @($prerelease -split '\.')) {
+      if ($part -match '^\d+$') {
+        $prereleaseRank += ("1|0|{0:D9}|" -f ([int]$part))
+      }
+      else {
+        $prereleaseRank += "1|1|$part|"
+      }
+    }
+    $prereleaseRank += "0|"
+  }
+
+  return "$sortKey$prereleaseRank$Name"
+}
+
+function Resolve-InstallerDefaultVersionPattern {
+  switch ($Channel) {
+    "preview" { return '[^-]+-preview([.][0-9A-Za-z.+-]+)?' }
+    "publicdev" { return '[^-]+-dev([.][0-9A-Za-z.+-]+)?' }
+    default { return '[^-]+' }
+  }
+}
+
+function Resolve-InstallerRequestedVersionPattern {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Prefix,
+    [Parameter(Mandatory = $true)] [string] $Suffix
+  )
+  if ($Version) {
+    return "^$([Regex]::Escape($Prefix))$([Regex]::Escape($Version))$([Regex]::Escape($Suffix))$"
+  }
+  return "^$([Regex]::Escape($Prefix))$(Resolve-InstallerDefaultVersionPattern)$([Regex]::Escape($Suffix))$"
 }
 
 function Resolve-InstallerAsset {
@@ -570,7 +1112,115 @@ function Copy-OrDownloadInstallerAsset {
     Copy-Item -Path $Source -Destination $DestinationPath -Force
     return
   }
-  Invoke-WebRequest -Uri $Source -Headers $GitHubHeaders -OutFile $DestinationPath
+  Invoke-InstallerDownloadWithRetry -Uri $Source -DestinationPath $DestinationPath -Headers $GitHubHeaders
+}
+
+function Test-InstallerTransientWebException {
+  param (
+    [Parameter(Mandatory = $true)] [System.Management.Automation.ErrorRecord] $ErrorRecord
+  )
+
+  $retryableStatusCodes = @(502, 503, 504)
+  $exception = $ErrorRecord.Exception
+  $statusCode = $null
+  if ($exception -and $exception.Response -and $exception.Response.StatusCode) {
+    try {
+      $statusCode = [int]$exception.Response.StatusCode
+    }
+    catch {
+      $statusCode = $null
+    }
+  }
+  if ($null -ne $statusCode -and $retryableStatusCodes -contains $statusCode) {
+    return $true
+  }
+
+  $message = if ($exception) { [string]$exception.Message } else { [string]$ErrorRecord }
+  foreach ($code in $retryableStatusCodes) {
+    if ($message -match "(^|\\D)$code(\\D|$)") {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Invoke-InstallerDownloadWithRetry {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Uri,
+    [string] $DestinationPath,
+    [hashtable] $Headers
+  )
+
+  $attemptsRaw = if ($env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_ATTEMPTS) { $env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_ATTEMPTS } else { "3" }
+  $delaySecondsRaw = if ($env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_DELAY_SECONDS) { $env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_DELAY_SECONDS } else { "0.25" }
+  $attempts = 3
+  $delaySeconds = 0.25
+  try {
+    $attempts = [Math]::Max(1, [int]$attemptsRaw)
+  }
+  catch {
+    $attempts = 3
+  }
+  try {
+    $delaySeconds = [Math]::Max(0, [double]$delaySecondsRaw)
+  }
+  catch {
+    $delaySeconds = 0.25
+  }
+
+  for ($attempt = 1; $attempt -le $attempts; $attempt += 1) {
+    try {
+      $params = @{ Uri = $Uri }
+      if ($Headers) {
+        $params.Headers = $Headers
+      }
+      if ($DestinationPath) {
+        $params.OutFile = $DestinationPath
+      }
+      return Invoke-WebRequest @params
+    }
+    catch {
+      if ($attempt -ge $attempts -or -not (Test-InstallerTransientWebException -ErrorRecord $_)) {
+        throw
+      }
+      Start-Sleep -Seconds $delaySeconds
+    }
+  }
+}
+
+function Invoke-InstallerWebRequestWithRetry {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Uri,
+    [hashtable] $Headers,
+    [string] $OutFile
+  )
+
+  return Invoke-InstallerDownloadWithRetry -Uri $Uri -DestinationPath $OutFile -Headers $Headers
+}
+
+function Invoke-InstallerRestMethodWithRetry {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Uri,
+    [hashtable] $Headers
+  )
+
+  $retryDelaysMs = @(250, 1000)
+  for ($attempt = 0; $attempt -le $retryDelaysMs.Length; $attempt += 1) {
+    try {
+      $params = @{ Uri = $Uri }
+      if ($Headers) {
+        $params.Headers = $Headers
+      }
+      return Invoke-RestMethod @params
+    }
+    catch {
+      if ($attempt -ge $retryDelaysMs.Length -or -not (Test-InstallerTransientWebException -ErrorRecord $_)) {
+        throw
+      }
+      Start-Sleep -Milliseconds $retryDelaysMs[$attempt]
+    }
+  }
 }
 
 function Resolve-MinisignExecutablePath {
@@ -660,7 +1310,7 @@ function Ensure-Minisign {
   $asset = "minisign-$minisignVersion-win64.zip"
   $expectedSha = "37b600344e20c19314b2e82813db2bfdcc408b77b876f7727889dbd46d539479"
   $zipPath = Join-Path $TempRoot $asset
-  Invoke-WebRequest -Uri "https://github.com/jedisct1/minisign/releases/download/$minisignVersion/$asset" -OutFile $zipPath
+  Invoke-InstallerWebRequestWithRetry -Uri "https://github.com/jedisct1/minisign/releases/download/$minisignVersion/$asset" -OutFile $zipPath
   $actualSha = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($actualSha -ne $expectedSha) {
     throw "minisign bootstrap checksum mismatch (expected $expectedSha, got $actualSha)."
@@ -712,14 +1362,14 @@ function Resolve-MinisignPublicKey {
   if (-not $MinisignPubKeyUrl) {
     throw "HAPPIER_MINISIGN_PUBKEY_URL is empty; cannot fetch minisign public key."
   }
-  Invoke-WebRequest -Uri $MinisignPubKeyUrl -OutFile $TargetPath
+  Invoke-InstallerWebRequestWithRetry -Uri $MinisignPubKeyUrl -OutFile $TargetPath
 }
 
 $tag = if ($Channel -eq "preview") { "cli-preview" } elseif ($Channel -eq "publicdev") { "cli-dev" } else { "cli-stable" }
 if (-not $ReleaseAssetsDir) {
   Write-Host "Fetching $tag release metadata..."
   try {
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
+    $release = Invoke-InstallerRestMethodWithRetry -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
   }
   catch {
     if ($Channel -eq "stable") {
@@ -734,9 +1384,12 @@ if (-not $ReleaseAssetsDir) {
 else {
   $release = $null
 }
-$asset = Resolve-InstallerAsset -Release $release -Pattern '^happier-v.*-windows-x64\.tar\.gz$'
-$checksumsAsset = Resolve-InstallerAsset -Release $release -Pattern '^checksums-happier-v.*\.txt$'
-$signatureAsset = Resolve-InstallerAsset -Release $release -Pattern '^checksums-happier-v.*\.txt\.minisig$'
+$assetPattern = Resolve-InstallerRequestedVersionPattern -Prefix "happier-v" -Suffix "-windows-x64.tar.gz"
+$checksumsPattern = Resolve-InstallerRequestedVersionPattern -Prefix "checksums-happier-v" -Suffix ".txt"
+$signaturePattern = Resolve-InstallerRequestedVersionPattern -Prefix "checksums-happier-v" -Suffix ".txt.minisig"
+$asset = Resolve-InstallerAsset -Release $release -Pattern $assetPattern
+$checksumsAsset = Resolve-InstallerAsset -Release $release -Pattern $checksumsPattern
+$signatureAsset = Resolve-InstallerAsset -Release $release -Pattern $signaturePattern
 if (-not $asset) {
   throw "Unable to locate Windows x64 binary on release tag $tag."
 }
@@ -790,7 +1443,7 @@ try {
 
   $extractDir = Join-Path $tmpDir.FullName "extract"
   New-Item -ItemType Directory -Path $extractDir | Out-Null
-  tar -xzf $archivePath -C $extractDir
+  Invoke-InstallerTarExtraction -ArchivePath $archivePath -DestinationDir $extractDir
   $version = $assetName -replace '^happier-v', '' -replace '-windows-x64\.tar\.gz$', ''
   if (-not $version -or $version -eq $assetName) {
     throw "Failed to infer release version from asset name: $assetName"
@@ -852,7 +1505,17 @@ try {
   }
   $updatedPathEntries = @($BinDir) + $pathEntries
   [Environment]::SetEnvironmentVariable("Path", ($updatedPathEntries -join ';'), [EnvironmentVariableTarget]::User)
-  $env:Path = ($updatedPathEntries -join ';')
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+  $machinePathEntries = @()
+  if ($machinePath) {
+    $machinePathEntries = @(
+      $machinePath -split ';' |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -and $updatedPathEntries -notcontains $_ }
+    )
+  }
+  $processPathEntries = @($updatedPathEntries) + @($machinePathEntries)
+  $env:Path = ($processPathEntries -join ';')
   if ($pathEntries.Length -eq 0 -or $userPath -notmatch [Regex]::Escape($BinDir)) {
     Write-Host "Added $BinDir to user PATH."
     Show-PathReloadGuidance -ShimName (Resolve-CliShimName) -BinDir $BinDir
@@ -863,56 +1526,133 @@ try {
     $invoker = $target
   }
 
-  Write-Host "Happier CLI installed at $invoker"
+  # Mirror install.sh:2305-2331: print a labeled summary block so the user
+  # can see both the managed binary path and the shim that PATH resolves to.
+  # The shim/binary distinction matters when users embed the path in build
+  # scripts — they typically want the shim, but the binary path is the
+  # authoritative location of the installed CLI.
+  $displayShimPath = $target
+  $displayShimDir = Split-Path -Parent $displayShimPath
+  $displayShimBasename = [System.IO.Path]::GetFileNameWithoutExtension($displayShimPath)
+  $displayBinaryPath = $invoker
+  Write-Host ""
+  Write-Host "Happier CLI installed:"
+  Write-Host "  binary: $displayBinaryPath"
+  Write-Host "  shim:   $displayShimPath"
+  Write-Host ""
+
+  $shimDirOnCurrentPath = $false
+  if ($env:Path) {
+    foreach ($pathEntry in ($env:Path -split ';')) {
+      if ($pathEntry.Trim() -eq $displayShimDir) {
+        $shimDirOnCurrentPath = $true
+        break
+      }
+    }
+  }
+  if ($shimDirOnCurrentPath) {
+    Write-Host "You can run ``$displayShimBasename`` right away."
+  }
+  else {
+    Write-Host "To use ``$displayShimBasename`` from any new shell, $displayShimDir has been added to your PATH."
+    Write-Host "In THIS shell, restart PowerShell or run directly using the absolute path:"
+    Write-Host "  $displayShimPath"
+  }
+  Write-Host ""
+
   & $invoker --version
 
   $backgroundServiceInventory = @{
     Supported = $false
     Entries = @()
   }
-  $backgroundServiceInventory = Get-InstalledBackgroundServiceInventory -CliPath $invoker
-  if ($backgroundServiceInventory.Supported -and $backgroundServiceInventory.Entries.Count -gt 0 -and $Noninteractive -ne "1") {
-    Show-InstalledBackgroundServiceSummary -CliPath $invoker -Entries $backgroundServiceInventory.Entries
+  $shouldInspectBackgroundServices = $true
+  if ($WithDaemonExplicit -and (ConvertTo-InstallerBoolean -Raw ([string]$WithDaemonPreference)) -eq "0") {
+    $shouldInspectBackgroundServices = $false
+  }
+  if ($shouldInspectBackgroundServices) {
+    $backgroundServiceInventory = Get-InstalledBackgroundServiceInventory -CliPath $invoker
+  }
+  if ($shouldInspectBackgroundServices -and $Noninteractive -ne "1" -and $backgroundServiceInventory.RepairSupported) {
+    # Mirror install.sh:864-882: when the installer has a real TTY (UserInteractive
+    # AND stdin not redirected), hand off to the CLI's interactive `doctor repair`
+    # so the user can accept/reject each finding inline. Otherwise fall back to
+    # the read-only report, which prints the CTA "To handle these interactively:"
+    # footer so the user still knows the next step.
+    try {
+      if (Test-InteractiveInstallerPromptAvailable) {
+        Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("doctor", "repair") -HomeDir $DaemonServiceStateHomeDir
+      }
+      else {
+        Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("doctor", "repair", "--report-only") -HomeDir $DaemonServiceStateHomeDir
+      }
+    }
+    catch {
+      # ignore: doctor repair output is best-effort and should never block installs/updates
+    }
   }
 
-  $resolvedWithDaemon = Resolve-WithDaemonPreference -Entries $backgroundServiceInventory.Entries
+  $resolvedWithDaemon = Resolve-WithDaemonPreference -Entries $backgroundServiceInventory.Entries -DefaultFollowingMatchesSelectedReleaseChannel $backgroundServiceInventory.DefaultFollowingMatchesSelectedReleaseChannel
   if ($resolvedWithDaemon -ne "0") {
     if ($backgroundServiceInventory.Supported) {
-      $installStrategy = Resolve-ExistingBackgroundServiceInstallStrategy -Entries $backgroundServiceInventory.Entries
+      $installStrategy = Resolve-ExistingBackgroundServiceInstallStrategy -Entries $backgroundServiceInventory.Entries -DefaultFollowingMatchesSelectedReleaseChannel $backgroundServiceInventory.DefaultFollowingMatchesSelectedReleaseChannel
+      $installCommand = Get-BackgroundServiceInstallManualCommand -CliPath $invoker
       if ($installStrategy -eq "replace-all") {
-        Write-Host "Switching managed background-service startup to this release-channel..."
-        try {
-          Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "repair", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
-        } catch {
-          Write-Warning "background service install failed. You can retry manually: `"$invoker service repair --yes`""
+        $repairResult = Invoke-DoctorRepairIfSupported -CliPath $invoker
+        if ($repairResult.Status -eq 'applied') {
+          Write-Host "Updating automatic startup to this release channel..."
+        }
+        elseif ($repairResult.Status -eq 'unsupported') {
+          Write-Host "Setting up automatic startup (user-mode)..."
+          $installResult = Invoke-BackgroundServiceInstallCompatibly -CliPath $invoker
+          if (-not $installResult.Ok) {
+            Write-Warning "background service install failed. You can retry manually: `"$installCommand`""
+          }
+        }
+        else {
+          if ($backgroundServiceInventory.RepairSupported -and @($backgroundServiceInventory.Entries | Where-Object { $_.mode -eq 'system' }).Count -gt 0) {
+            Write-Warning "system background services require an elevated PowerShell to repair or switch. Retry from an elevated PowerShell: `"$invoker doctor repair --yes`""
+          }
+          else {
+            Write-Warning "background service install failed. You can retry manually: `"$invoker doctor repair --yes`""
+          }
         }
       }
       elseif ($installStrategy -eq "add") {
-        Write-Host "Installing an additional background service (user-mode)..."
-        try {
-          Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "install", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
-        } catch {
-          Write-Warning "background service install failed. You can retry manually: `"$invoker service install --yes`""
+        Write-Host "Setting up automatic startup (additional service, user-mode)..."
+        $installResult = Invoke-BackgroundServiceInstallCompatibly -CliPath $invoker
+        if (-not $installResult.Ok) {
+          Write-Warning "background service install failed. You can retry manually: `"$installCommand`""
         }
       }
       elseif ($installStrategy -eq "skip") {
         Write-Host "Keeping existing background services unchanged."
       }
       else {
+        $skipBackgroundServiceInstall = $false
         if ($Noninteractive -eq "1") {
-          Write-Host "Reconciling existing background services (best-effort)..."
-          try {
-            Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "repair", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
+          $repairResult = Invoke-DoctorRepairIfSupported -CliPath $invoker
+          if ($repairResult.Status -eq 'applied') {
+            Write-Host "Repairing automatic startup (best-effort)..."
           }
-          catch {
-            # best-effort
+          elseif ($repairResult.Status -eq 'failed') {
+            if ($backgroundServiceInventory.RepairSupported -and @($backgroundServiceInventory.Entries | Where-Object { $_.mode -eq 'system' }).Count -gt 0) {
+              Write-Warning "system background services require an elevated PowerShell to repair or switch. Retry from an elevated PowerShell: `"$invoker doctor repair --yes`""
+              $skipBackgroundServiceInstall = $true
+            }
+            else {
+              Write-Host "Repairing automatic startup (best-effort)..."
+              Write-Warning "background service repair failed. You can retry manually: `"$invoker doctor repair --yes`""
+              $skipBackgroundServiceInstall = $true
+            }
           }
         }
-        Write-Host "Installing background service (user-mode)..."
-        try {
-          Invoke-InstallerCommandWithDaemonServiceContext -CliPath $invoker -CommandArgs @("service", "install", "--yes") -HomeDir $DaemonServiceStateHomeDir *> $null
-        } catch {
-          Write-Warning "background service install failed. You can retry manually: `"$invoker service install --yes`""
+        if (-not $skipBackgroundServiceInstall) {
+          Write-Host "Setting up automatic startup (user-mode)..."
+          $installResult = Invoke-BackgroundServiceInstallCompatibly -CliPath $invoker
+          if (-not $installResult.Ok) {
+            Write-Warning "background service install failed. You can retry manually: `"$installCommand`""
+          }
         }
       }
     }
