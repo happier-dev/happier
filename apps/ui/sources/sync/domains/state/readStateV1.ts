@@ -1,3 +1,5 @@
+import { resolveManualUnreadCursorBoundary } from '@happier-dev/protocol';
+
 export type ReadStateV1 = {
     v: 1;
     sessionSeq: number;
@@ -44,3 +46,33 @@ export function computeNextReadStateV1(params: {
     };
 }
 
+export function computeManualUnreadReadStateV1(params: {
+    prev: ReadStateV1 | undefined;
+    sessionSeq: number;
+    lastViewedSessionSeq: number | null | undefined;
+    now: number;
+}): { didChange: boolean; next: ReadStateV1 | undefined } {
+    const prev = params.prev;
+    if (!prev) {
+        return { didChange: false, next: undefined };
+    }
+
+    const unreadBoundary = resolveManualUnreadCursorBoundary({
+        sessionSeq: params.sessionSeq,
+        lastViewedSessionSeq: params.lastViewedSessionSeq,
+    });
+    const nextSessionSeq = Math.min(prev.sessionSeq, unreadBoundary);
+
+    if (nextSessionSeq === prev.sessionSeq) {
+        return { didChange: false, next: prev };
+    }
+
+    return {
+        didChange: true,
+        next: {
+            ...prev,
+            sessionSeq: nextSessionSeq,
+            updatedAt: params.now,
+        },
+    };
+}

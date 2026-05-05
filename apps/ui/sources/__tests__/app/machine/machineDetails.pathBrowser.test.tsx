@@ -24,6 +24,7 @@ function createMachineRecord() {
 }
 
 const mockState = vi.hoisted(() => ({
+    activeServerIdRef: { current: 'server-a' },
     itemSpy: vi.fn(),
     machinesState: { 'machine-1': createMachineRecord() } as Record<string, unknown>,
     machineTargetSessionsState: {} as Record<string, unknown>,
@@ -31,6 +32,7 @@ const mockState = vi.hoisted(() => ({
     machineSpawnNewSessionMock: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
     openMachinePathBrowserModalMock: vi.fn<(params: unknown) => Promise<string | null>>(async () => '/Users/test/project'),
     projectForSession: {} as Record<string, { key?: { machineId?: string; rootPath?: string } } | null>,
+    routeParamsRef: { current: { id: 'machine-1' } as Record<string, string> },
     settingsState: {} as Record<string, unknown>,
     sessionsState: [] as Array<unknown>,
 }));
@@ -45,6 +47,13 @@ const {
 }));
 
 installMachineDetailsCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+            params: () => mockState.routeParamsRef.current,
+        }).module;
+    },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
@@ -123,7 +132,7 @@ vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
     useMountedShouldContinue: () => () => true,
 }));
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }) }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({ getActiveServerId: () => 'server-a' }));
+vi.mock('@/sync/domains/server/serverProfiles', () => ({ getActiveServerId: () => mockState.activeServerIdRef.current }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({ setActiveServerAndSwitch: vi.fn(async () => true) }));
 vi.mock('@/sync/sync', () => ({ sync: { refreshMachinesThrottled: vi.fn(), refreshMachines: vi.fn(), retryNow: vi.fn() } }));
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -183,10 +192,12 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 describe('MachineDetailScreen path browser', () => {
     beforeEach(() => {
         vi.resetModules();
+        mockState.activeServerIdRef.current = 'server-a';
         mockState.machineSpawnNewSessionMock.mockClear();
         mockState.openMachinePathBrowserModalMock.mockClear();
         mockState.multiTextInputSpy.mockClear();
         mockState.itemSpy.mockClear();
+        mockState.routeParamsRef.current = { id: 'machine-1' };
         mockState.sessionsState = [];
         mockState.machineTargetSessionsState = {};
         mockState.machinesState = {
@@ -402,6 +413,30 @@ describe('MachineDetailScreen path browser', () => {
         }));
         expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
             backendTarget: { kind: 'backend', backendId: 'claude' },
+        }));
+    });
+
+    it('uses the requested route server when spawning a new session', async () => {
+        mockState.routeParamsRef.current = { id: 'machine-1', serverId: 'server-b' };
+        mockState.activeServerIdRef.current = 'server-a';
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        const startButtons = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        );
+
+        expect(startButtons[0]).toBeTruthy();
+
+        await act(async () => {
+            await startButtons[0].props.onPress();
+        });
+
+        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-b',
         }));
     });
 });

@@ -1,4 +1,10 @@
-import { sanitizeBugReportUrl, sanitizeDoctorSnapshotUrls, type DoctorSnapshot } from '@happier-dev/protocol';
+import {
+  sanitizeBugReportUrl,
+  sanitizeDoctorSnapshotUrls,
+  type DoctorSnapshot,
+} from '@happier-dev/protocol';
+
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 
 export type DiagnosisFindingSeverity = 'info' | 'warning' | 'error';
 
@@ -55,6 +61,17 @@ function normalizeUrl(raw: string): string {
   return sanitized.replace(/\/+$/, '');
 }
 
+function createComparableServerUrlKey(raw: string): string {
+  const normalized = normalizeUrl(raw);
+  if (!normalized) return '';
+
+  try {
+    return createServerUrlComparableKey(normalized);
+  } catch {
+    return normalized;
+  }
+}
+
 function pushFinding(findings: DiagnosisFinding[], finding: DiagnosisFinding): void {
   const key = `${finding.code}:${(finding.machineIds ?? []).join(',')}:${JSON.stringify(finding.details ?? {})}`;
   if (findings.some((f) => `${f.code}:${(f.machineIds ?? []).join(',')}:${JSON.stringify(f.details ?? {})}` === key)) return;
@@ -64,6 +81,7 @@ function pushFinding(findings: DiagnosisFinding[], finding: DiagnosisFinding): v
 export function buildDiagnosisReport(input: DiagnosisInput): DiagnosisReport {
   const findings: DiagnosisFinding[] = [];
   const uiServerUrl = normalizeUrl(input.ui.activeServerUrl);
+  const uiServerComparableKey = createComparableServerUrlKey(input.ui.activeServerUrl);
   const uiProfileId = input.ui.profileId;
 
   const activeMachines = input.machinesByServerId[input.ui.activeServerId] ?? [];
@@ -75,8 +93,8 @@ export function buildDiagnosisReport(input: DiagnosisInput): DiagnosisReport {
     });
   }
 
-  const normalizedServerProfileUrls = new Set(input.serverProfiles.map((p) => normalizeUrl(p.serverUrl)));
-  if (uiServerUrl && !normalizedServerProfileUrls.has(uiServerUrl)) {
+  const normalizedServerProfileUrls = new Set(input.serverProfiles.map((p) => createComparableServerUrlKey(p.serverUrl)));
+  if (uiServerComparableKey && !normalizedServerProfileUrls.has(uiServerComparableKey)) {
     pushFinding(findings, {
       code: 'server.profile_missing_for_active_url',
       severity: 'warning',
@@ -89,9 +107,10 @@ export function buildDiagnosisReport(input: DiagnosisInput): DiagnosisReport {
   for (const entry of input.machineDoctorSnapshots) {
     const snapshot = sanitizeDoctorSnapshotUrls(entry.snapshot);
     const machineServerUrl = normalizeUrl(snapshot.server.serverUrl);
-    if (machineServerUrl) machineServerUrlSet.add(machineServerUrl);
+    const machineServerComparableKey = createComparableServerUrlKey(snapshot.server.serverUrl);
+    if (machineServerComparableKey) machineServerUrlSet.add(machineServerComparableKey);
 
-    if (uiServerUrl && machineServerUrl && uiServerUrl !== machineServerUrl) {
+    if (uiServerComparableKey && machineServerComparableKey && uiServerComparableKey !== machineServerComparableKey) {
       pushFinding(findings, {
         code: 'server.mismatch.ui_vs_machine',
         severity: 'error',
@@ -136,7 +155,8 @@ export function buildDiagnosisReport(input: DiagnosisInput): DiagnosisReport {
   for (const snapshot of input.pastedDoctorSnapshots) {
     const sanitized = sanitizeDoctorSnapshotUrls(snapshot);
     const pastedServerUrl = normalizeUrl(sanitized.server.serverUrl);
-    if (uiServerUrl && pastedServerUrl && uiServerUrl !== pastedServerUrl) {
+    const pastedServerComparableKey = createComparableServerUrlKey(sanitized.server.serverUrl);
+    if (uiServerComparableKey && pastedServerComparableKey && uiServerComparableKey !== pastedServerComparableKey) {
       pushFinding(findings, {
         code: 'server.mismatch.ui_vs_pasted',
         severity: 'warning',

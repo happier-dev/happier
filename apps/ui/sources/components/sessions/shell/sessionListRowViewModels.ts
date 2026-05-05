@@ -1,12 +1,14 @@
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { resolveSessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
+import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 
 import { getTagsForSession } from './sessionTagUtils';
 
 type SessionReachableDisplay = Readonly<{
     machineId: string | null;
     machineLabel: string;
-    pathSubtitle: string;
+    workspaceSubtitle: string;
+    workspaceSubtitleEllipsizeMode: WorkspaceDisplayEllipsizeMode;
 }>;
 
 export type SessionListRowViewModel = Readonly<{
@@ -16,6 +18,7 @@ export type SessionListRowViewModel = Readonly<{
     isLast: boolean;
     isSingle: boolean;
     subtitleOverride: string | null;
+    subtitleEllipsizeMode: WorkspaceDisplayEllipsizeMode;
     pinned: boolean;
     showServerBadge: boolean;
     selected: boolean;
@@ -55,11 +58,12 @@ export function buildSessionListRowViewModels(input: Readonly<{
         const sessionKey = typeof item.serverId === 'string' && sessionId ? `${item.serverId}:${sessionId}` : null;
         const pinned = item.pinned === true || (sessionKey ? input.pinnedSessionKeys.has(sessionKey) : false);
         const reachableDisplay = input.reachableSessionDisplayById.get(sessionId);
-        const pathSubtitle = reachableDisplay?.pathSubtitle ?? '';
+        const workspaceSubtitle = reachableDisplay?.workspaceSubtitle ?? '';
+        const subtitleEllipsizeMode = reachableDisplay?.workspaceSubtitleEllipsizeMode ?? 'head';
         const machineLabel = reachableDisplay?.machineLabel ?? '';
         const subtitle = input.hasMultipleMachines
-            ? (machineLabel && pathSubtitle ? `${machineLabel} · ${pathSubtitle}` : machineLabel || pathSubtitle)
-            : pathSubtitle;
+            ? (machineLabel && workspaceSubtitle ? `${machineLabel} · ${workspaceSubtitle}` : machineLabel || workspaceSubtitle)
+            : workspaceSubtitle;
 
         return {
             groupKey,
@@ -68,6 +72,7 @@ export function buildSessionListRowViewModels(input: Readonly<{
             isLast,
             isSingle: isFirst && isLast,
             subtitleOverride: item.groupKind === 'project' && item.variant === 'no-path' ? null : (subtitle || null),
+            subtitleEllipsizeMode,
             pinned,
             showServerBadge: pinned ? input.showPinnedServerBadge : input.showServerBadge,
             selected: input.selectedSessionId != null && input.selectedSessionId === sessionId,

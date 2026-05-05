@@ -12,33 +12,60 @@ import {
     resolveDesktopActivityOverlaySurfaceTestID,
     type DesktopActivityOverlayVisualMode,
 } from './DesktopActivityOverlayVisualMode';
+import { useDesktopActivityOverlayMotionProgress } from './DesktopActivityOverlayMotionFrame';
 import { DesktopActivityOverlayExpandedCards } from './cards/DesktopActivityOverlayExpandedCards';
 import type {
     DesktopActivityOverlayActionDescriptor,
     DesktopActivityOverlayUiModel,
 } from './shared/desktopActivityOverlayUiModel';
+import { DesktopActivityOverlayQuickReplyComposer } from './quickReply/DesktopActivityOverlayQuickReplyComposer';
 
 export function DesktopActivityOverlayExpanded(props: Readonly<{
     model: DesktopActivityOverlayUiModel;
     visualMode: DesktopActivityOverlayVisualMode;
-    onCollapse: () => void;
-    onOpenSession: (sessionId: string) => void;
-    onOpenInbox: () => void;
+    onHoverIn?: () => void;
+    onHoverOut?: () => void;
+    onOpenSession: (sessionId: string, serverId?: string | null) => void;
     onAction?: (action: DesktopActivityOverlayActionDescriptor) => void;
+    quickReplyDraft?: string;
+    onQuickReplyDraftChange?: (draft: string) => void;
+    onQuickReplySend?: (params: { sessionId: string; serverId?: string | null; message: string }) => boolean | Promise<boolean>;
+    onQuickReplyInputLockChange?: (locked: boolean) => void;
+    onQuickReplyCleanEscape?: () => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const openProgress = useDesktopActivityOverlayMotionProgress();
     const surfaceTestID = resolveDesktopActivityOverlaySurfaceTestID('desktop-activity-overlay-expanded', props.visualMode);
+    const quickReply = props.model.expanded.quickReply;
+    const quickReplyDraft = props.quickReplyDraft ?? '';
+    const shouldRenderQuickReply = Boolean(quickReply || quickReplyDraft.length > 0);
+    const quickReplyServerId = typeof quickReply?.serverId === 'string' ? quickReply.serverId.trim() : '';
+    const quickReplyTargetAvailable = Boolean(quickReply && quickReplyServerId.length > 0);
+    const [completionAutoDismissPaused, setCompletionAutoDismissPaused] = React.useState(false);
+    const handleHoverIn = React.useCallback(() => {
+        setCompletionAutoDismissPaused(true);
+        props.onHoverIn?.();
+    }, [props.onHoverIn]);
+    const handleHoverOut = React.useCallback(() => {
+        setCompletionAutoDismissPaused(false);
+        props.onHoverOut?.();
+    }, [props.onHoverOut]);
 
     return (
         <Pressable
             testID="desktop-activity-overlay-expanded"
-            accessibilityRole="button"
-            onPress={props.onCollapse}
+            onHoverIn={handleHoverIn}
+            onHoverOut={handleHoverOut}
+            onPress={() => {}}
             style={[
                 styles.container,
+                props.visualMode === 'notch_integrated'
+                    ? styles.containerNotchIntegrated
+                    : styles.containerFloating,
                 createDesktopActivityOverlayChromeStyle(theme, {
                     visualMode: props.visualMode,
                     tone: 'expanded',
+                    openProgress,
                 }),
             ]}
         >
@@ -53,6 +80,7 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                     visualMode={props.visualMode}
                     width={props.model.window.expanded.width}
                     height={props.model.window.expanded.height}
+                    openProgress={openProgress}
                 />
                 <DesktopActivityOverlayChromeHighlights
                     theme={theme}
@@ -70,7 +98,29 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                     visualMode={props.visualMode}
                     onOpenSession={props.onOpenSession}
                     onAction={props.onAction}
+                    completionAutoDismissPaused={completionAutoDismissPaused}
                 />
+                {shouldRenderQuickReply ? (
+                    <DesktopActivityOverlayQuickReplyComposer
+                        visualMode={props.visualMode}
+                        phrases={quickReply?.phrases ?? []}
+                        draft={quickReplyDraft}
+                        targetAvailable={quickReplyTargetAvailable}
+                        onDraftChange={props.onQuickReplyDraftChange}
+                        onSend={(message) => {
+                            if (!quickReply || quickReplyServerId.length === 0) {
+                                return false;
+                            }
+                            return props.onQuickReplySend?.({
+                                sessionId: quickReply.targetSessionId,
+                                serverId: quickReplyServerId,
+                                message,
+                            }) ?? false;
+                        }}
+                        onInputLockChange={props.onQuickReplyInputLockChange}
+                        onCleanEscape={props.onQuickReplyCleanEscape}
+                    />
+                ) : null}
             </ScrollView>
         </Pressable>
     );
@@ -82,7 +132,14 @@ const styles = StyleSheet.create({
         height: '100%',
         position: 'relative',
         overflow: 'hidden',
+    },
+    containerFloating: {
         paddingHorizontal: desktopActivityOverlayChromeMetrics.expanded.paddingHorizontal,
+        paddingTop: desktopActivityOverlayChromeMetrics.expanded.paddingTop,
+        paddingBottom: desktopActivityOverlayChromeMetrics.expanded.paddingBottom,
+    },
+    containerNotchIntegrated: {
+        paddingHorizontal: desktopActivityOverlayChromeMetrics.expanded.notchPaddingHorizontal,
         paddingTop: desktopActivityOverlayChromeMetrics.expanded.paddingTop,
         paddingBottom: desktopActivityOverlayChromeMetrics.expanded.paddingBottom,
     },

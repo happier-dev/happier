@@ -1,12 +1,16 @@
 import { invokeTauri, listenTauriEvent } from '@/utils/platform/tauri';
 
 import type { DesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
+import { DESKTOP_ACTIVITY_OVERLAY_INTERACTION_RESULT_TIMEOUT_MS } from '../desktopActivityOverlayTiming';
 import type { DesktopOverlayAnchor, DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 
 export const DESKTOP_ACTIVITY_OVERLAY_EVENTS = {
     state: 'activityOverlay://state',
     interaction: 'activityOverlay://interaction',
+    interactionResult: 'activityOverlay://interaction-result',
 } as const;
+
+let nextDesktopActivityOverlayInteractionRequestSequence = 0;
 
 export type DesktopActivityOverlayRect = Readonly<{
     x: number;
@@ -16,7 +20,7 @@ export type DesktopActivityOverlayRect = Readonly<{
 }>;
 
 export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
-    monitorSource: 'main_window' | 'overlay_window' | 'primary';
+    monitorSource: 'main_window' | 'overlay_window' | 'primary' | 'built_in' | 'focused';
     effectiveMonitor: DesktopActivityOverlayRect;
     anchor: DesktopOverlayAnchor;
     placementMode: DesktopOverlayPolicy['placementMode'];
@@ -35,6 +39,10 @@ export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
         isBuiltinDisplay: boolean;
         hasPhysicalNotch: boolean;
         safeAreaTop: number;
+        physicalNotchSize?: Readonly<{
+            width: number;
+            height: number;
+        }> | null;
         screenFrame: DesktopActivityOverlayRect;
         visibleFrame: DesktopActivityOverlayRect;
     }> | null;
@@ -66,9 +74,36 @@ export type DesktopActivityOverlaySyncPayload = Readonly<{
 }>;
 
 export type DesktopActivityOverlayInteractionPayload = Readonly<{
+    requestId?: string;
     actionIdentifier: string;
     data: Record<string, unknown>;
 }>;
+
+export type DesktopActivityOverlayInteractionResultPayload = Readonly<{
+    requestId: string;
+    ok: boolean;
+    errorCode?: string;
+    error?: string;
+}>;
+
+export type DesktopActivityOverlayPointerId = number | string;
+
+export type DesktopActivityOverlayDragVelocityPayload = Readonly<{
+    pointerId: DesktopActivityOverlayPointerId;
+    vx: number;
+    vy: number;
+    sampleWindowMs: number;
+}>;
+
+function createDesktopActivityOverlayInteractionRequestId(): string {
+    nextDesktopActivityOverlayInteractionRequestSequence =
+        (nextDesktopActivityOverlayInteractionRequestSequence + 1) % Number.MAX_SAFE_INTEGER;
+    return `desktop-overlay-interaction-${Date.now().toString(36)}-${nextDesktopActivityOverlayInteractionRequestSequence}`;
+}
+
+function readErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error || 'action_failed');
+}
 
 export async function syncDesktopActivityOverlay(payload: DesktopActivityOverlaySyncPayload): Promise<void> {
     await invokeTauri<void>('desktop_activity_overlay_sync', { payload });
@@ -82,8 +117,23 @@ export async function setDesktopActivityOverlayExpanded(expanded: boolean): Prom
     await invokeTauri<void>('desktop_activity_overlay_set_expanded', { expanded });
 }
 
+export async function setDesktopActivityOverlayInputLocked(locked: boolean): Promise<void> {
+    await invokeTauri<void>('desktop_activity_overlay_set_input_locked', { locked });
+}
+
 export async function applyDesktopActivityOverlayDragDelta(deltaX: number, deltaY: number): Promise<void> {
     await invokeTauri<void>('desktop_activity_overlay_apply_drag_delta', { deltaX, deltaY });
+}
+
+export async function releaseDesktopActivityOverlayDragVelocity(
+    payload: DesktopActivityOverlayDragVelocityPayload,
+): Promise<void> {
+    await invokeTauri<void>('desktop_activity_overlay_release_drag_velocity', {
+        payload: {
+            ...payload,
+            pointerId: String(payload.pointerId),
+        },
+    });
 }
 
 export async function resetDesktopActivityOverlayPosition(): Promise<void> {
@@ -98,6 +148,72 @@ export async function emitDesktopActivityOverlayInteraction(payload: DesktopActi
     await invokeTauri<void>('desktop_activity_overlay_emit_interaction', { payload });
 }
 
+export async function emitDesktopActivityOverlayInteractionResult(
+    payload: DesktopActivityOverlayInteractionResultPayload,
+): Promise<void> {
+    await invokeTauri<void>('desktop_activity_overlay_emit_interaction_result', { payload });
+}
+
+export async function executeDesktopActivityOverlayInteractionWithResult(
+    payload: DesktopActivityOverlayInteractionPayload,
+    options: Readonly<{ timeoutMs?: number }> = {},
+): Promise<DesktopActivityOverlayInteractionResultPayload> {
+    const requestId = payload.requestId ?? createDesktopActivityOverlayInteractionRequestId();
+    const timeoutMs = options.timeoutMs ?? DESKTOP_ACTIVITY_OVERLAY_INTERACTION_RESULT_TIMEOUT_MS;
+
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let dispose: (() => void) | null = null;
+
+    return new Promise<DesktopActivityOverlayInteractionResultPayload>((resolve) => {
+        const settle = (result: DesktopActivityOverlayInteractionResultPayload) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (timeoutId !== null) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            dispose?.();
+            resolve(result);
+        };
+
+        timeoutId = setTimeout(() => {
+            settle({
+                requestId,
+                ok: false,
+                errorCode: 'ack_timeout',
+                error: 'ack_timeout',
+            });
+        }, timeoutMs);
+
+        listenDesktopActivityOverlayInteractionResult((result) => {
+            if (result.requestId !== requestId) {
+                return;
+            }
+            settle(result);
+        }).then((nextDispose) => {
+            if (settled) {
+                nextDispose();
+                return;
+            }
+            dispose = nextDispose;
+            return emitDesktopActivityOverlayInteraction({
+                ...payload,
+                requestId,
+            });
+        }).catch((error: unknown) => {
+            settle({
+                requestId,
+                ok: false,
+                errorCode: 'bridge_emit_failed',
+                error: readErrorMessage(error),
+            });
+        });
+    });
+}
+
 export async function listenDesktopActivityOverlayWindowState(
     handler: (payload: DesktopActivityOverlayWindowStatePayload) => void,
 ): Promise<() => void> {
@@ -108,4 +224,10 @@ export async function listenDesktopActivityOverlayInteraction(
     handler: (payload: DesktopActivityOverlayInteractionPayload) => void,
 ): Promise<() => void> {
     return listenTauriEvent<DesktopActivityOverlayInteractionPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interaction, handler);
+}
+
+export async function listenDesktopActivityOverlayInteractionResult(
+    handler: (payload: DesktopActivityOverlayInteractionResultPayload) => void,
+): Promise<() => void> {
+    return listenTauriEvent<DesktopActivityOverlayInteractionResultPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interactionResult, handler);
 }

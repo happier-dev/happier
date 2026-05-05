@@ -128,10 +128,14 @@ export function isSessionSurfaceVisible(sessionId: string): boolean {
     return visibleSessionRefCount.has(normalizedSessionId);
 }
 
-export function resetSessionSurfaceVisibilityForTests(): void {
+export function clearSessionSurfaceVisibilityForServerScopeReset(): void {
     visibleSessionRefCount.clear();
     focusedSessionId = null;
     routeAnchorSessionId = null;
     refreshSnapshot();
     emitChange();
+}
+
+export function resetSessionSurfaceVisibilityForTests(): void {
+    clearSessionSurfaceVisibilityForServerScopeReset();
 }

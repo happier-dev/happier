@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createUseSettingMock, flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
@@ -10,12 +11,16 @@ const fixedNow = 1_700_000_000_000;
 (globalThis as any).expo = { EventEmitter: class { } };
 
 const {
+    activeServerIdRef,
     machineExecutionRunsListSpy,
     modalSpies,
+    routeParamsRef,
     routerPushSpy,
+    stopDaemonSpy,
     stopRunSpy,
     stopSessionSpy,
 } = vi.hoisted(() => ({
+    activeServerIdRef: { current: 'server-a' },
     machineExecutionRunsListSpy: vi.fn(async () => ({ ok: true, runs: [] as any[] })),
     modalSpies: {
         alert: vi.fn(),
@@ -23,7 +28,11 @@ const {
         prompt: vi.fn(),
         show: vi.fn(),
     },
+    routeParamsRef: { current: { id: 'machine-1' } as Record<string, string> },
     routerPushSpy: vi.fn(),
+    stopDaemonSpy: vi.fn<(machineId: string, options?: Record<string, unknown>) => Promise<{ message: string }>>(
+        async () => ({ message: 'noop' }),
+    ),
     stopRunSpy: vi.fn<(..._args: any[]) => Promise<any>>(async (..._args: any[]) => ({ ok: true })),
     stopSessionSpy: vi.fn<(..._args: any[]) => Promise<any>>(async (..._args: any[]) => ({ ok: true })),
 }));
@@ -33,7 +42,7 @@ installMachineDetailsCommonModuleMocks({
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
             router: { back: vi.fn(), push: routerPushSpy, replace: vi.fn() },
-            params: { id: 'machine-1' },
+            params: () => routeParamsRef.current,
         }).module;
     },
     modal: async () => {
@@ -113,7 +122,7 @@ vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({
 
 vi.mock('@/sync/ops', () => ({
     machineSpawnNewSession: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
-    machineStopDaemon: vi.fn(async () => ({ message: 'noop' })),
+    machineStopDaemon: (machineId: string, options?: Record<string, unknown>) => stopDaemonSpy(machineId, options),
     machineStopSession: (...args: any[]) => stopSessionSpy(...args),
     machineUpdateMetadata: vi.fn(async () => ({})),
     machineExecutionRunsList: machineExecutionRunsListSpy,
@@ -130,7 +139,7 @@ vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }) }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerId: () => 'server-a',
+    getActiveServerId: () => activeServerIdRef.current,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -204,14 +213,18 @@ describe('MachineDetailScreen (execution runs section)', () => {
     }
 
     beforeEach(() => {
+        activeServerIdRef.current = 'server-a';
+        routeParamsRef.current = { id: 'machine-1' };
+        machineExecutionRunsListSpy.mockClear();
+        stopDaemonSpy.mockClear();
         routerPushSpy.mockClear();
         stopRunSpy.mockClear();
         stopSessionSpy.mockClear();
+        modalSpies.alert.mockClear();
         modalSpies.confirm.mockClear();
     });
 
     it('loads daemon execution runs for online machines', async () => {
-        machineExecutionRunsListSpy.mockClear();
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
@@ -219,6 +232,17 @@ describe('MachineDetailScreen (execution runs section)', () => {
 
         expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-a' });
         expect(screen.findByTestId('item-group:runs.title')).toBeTruthy();
+    });
+
+    it('uses the requested route server when loading execution runs', async () => {
+        routeParamsRef.current = { id: 'machine-1', serverId: 'server-b' };
+        activeServerIdRef.current = 'server-a';
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
+
+        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-b' });
     });
 
     it('renders an execution runs group when enabled', async () => {
@@ -340,5 +364,49 @@ describe('MachineDetailScreen (execution runs section)', () => {
 
         expect(stopRunSpy).toHaveBeenCalled();
         expect(stopSessionSpy).toHaveBeenCalledWith('machine-1', 'sess-1', { serverId: 'server-a' });
+    });
+
+    it('uses the requested route server when stopping runs and fallback session processes', async () => {
+        routeParamsRef.current = { id: 'machine-1', serverId: 'server-b' };
+        activeServerIdRef.current = 'server-a';
+        modalSpies.confirm.mockResolvedValueOnce(true);
+        machineExecutionRunsListSpy.mockResolvedValue({
+            ok: true,
+            runs: [createExecutionRun({ runId: 'run-running' })],
+        });
+        stopRunSpy.mockResolvedValueOnce({ ok: false, error: 'Unsupported response from session RPC' });
+        stopSessionSpy.mockResolvedValueOnce({ ok: true });
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
+
+        await screen.pressByTestIdAsync('execution-run-stop:run-running');
+        await flushHookEffects();
+
+        expect(stopRunSpy).toHaveBeenCalledWith('sess-1', { runId: 'run-running' }, { serverId: 'server-b' });
+        expect(stopSessionSpy).toHaveBeenCalledWith('machine-1', 'sess-1', { serverId: 'server-b' });
+        expect(machineExecutionRunsListSpy).toHaveBeenLastCalledWith('machine-1', { serverId: 'server-b' });
+    });
+
+    it('uses the requested route server when stopping the daemon', async () => {
+        routeParamsRef.current = { id: 'machine-1', serverId: 'server-b' };
+        activeServerIdRef.current = 'server-a';
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
+
+        await screen.pressByTestIdAsync('item:machine.stopDaemon');
+
+        const buttons = modalSpies.alert.mock.calls.at(-1)?.[2] as
+            | Array<{ text: string; onPress?: () => Promise<void> | void }>
+            | undefined;
+        await act(async () => {
+            await buttons?.[1]?.onPress?.();
+        });
+        await flushHookEffects();
+
+        expect(stopDaemonSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-b' });
     });
 });

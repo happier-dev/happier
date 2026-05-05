@@ -18,9 +18,183 @@ vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () =
 }));
 vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
+    resolveScmChangeStatsColumnWidth: (files: readonly any[]) => {
+        const maxLabelLength = files.reduce((maxLength, file) => {
+            const added = Number.isFinite(file?.linesAdded) ? String(Math.max(0, Math.trunc(file.linesAdded))) : '0';
+            const removed = Number.isFinite(file?.linesRemoved) ? String(Math.max(0, Math.trunc(file.linesRemoved))) : '0';
+            return Math.max(maxLength, `+${added}/-${removed}`.length);
+        }, 0);
+        return Math.max(38, maxLabelLength * 7 + 4);
+    },
 }));
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
+    const React = await import('react');
+    return {
+        DropdownMenu: (props: any) => React.createElement(
+            'DropdownMenu',
+            props,
+            typeof props.trigger === 'function'
+                ? props.trigger({
+                    open: false,
+                    toggle: vi.fn(),
+                    openMenu: vi.fn(),
+                    closeMenu: vi.fn(),
+                    selectedItem: props.items.find((item: any) => item.id === props.selectedId) ?? null,
+                })
+                : props.trigger,
+        ),
+    };
+});
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
 
 describe('SessionRightPanelGitCommitTab (virtualization)', () => {
+    it('hides changed-file view mode chips when only repository view is available', async () => {
+        const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
+
+        const screen = await renderScreen(<SessionRightPanelGitCommitTab
+                    theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
+                    sessionId="s1"
+                    sessionPath="/workspace"
+                    backendLabel="Git"
+                    commitActionLabel="Commit"
+                    scmSnapshot={null}
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    scmOperationStatus={null}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    commitAllowed={false}
+                    commitBlockedMessage={null}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[{
+                        fullPath: 'src/file-0.ts',
+                        path: 'src/file-0.ts',
+                        kind: 'modified',
+                        stats: { pendingAdded: 1, pendingRemoved: 0, includedAdded: 0, includedRemoved: 0, isBinary: false },
+                    }] as any}
+                    sessionAttributedFiles={[] as any}
+                    repositoryOnlyFiles={[] as any}
+                    suppressedInferredCount={0}
+                    showTurnViewToggle={false}
+                    showSessionViewToggle={false}
+                    repositorySelectedCount={0}
+                    onSelectAll={() => {}}
+                    onSelectNone={() => {}}
+                    disableSelectAll={true}
+                    disableSelectNone={true}
+                    onFilePress={() => {}}
+                    onFilePressPinned={() => {}}
+                    onToggleSelectionForFile={() => {}}
+                    renderFileActions={() => null}
+                    renderFileTrailingActions={() => null}
+                    commitDraftMessage=""
+                    onCommitDraftMessageChange={() => {}}
+                    onCommitFromMessage={() => {}}
+                    commitMessageGeneratorEnabled={false}
+                    onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                    scmStatusFiles={null}
+                    showCommitComposer={false}
+                />);
+
+        const flatList = screen.tree.findByType('FlatList' as any);
+        const headerScreen = await renderScreen(flatList.props.ListHeaderComponent);
+        const textContent = headerScreen.getTextContent();
+        expect(textContent).not.toContain('files.toolbar.repositoryView');
+        expect(textContent).not.toContain('files.toolbar.turnView');
+        expect(textContent).not.toContain('files.toolbar.sessionView');
+
+        const actionsRow = headerScreen.tree.findByProps({ testID: 'session-rightpanel-git-scope-actions-row' });
+        expect(flattenStyle(actionsRow.props.style)).toMatchObject({
+            alignItems: 'center',
+        });
+    });
+
+    it('renders scoped changed-file view modes as a compact menu next to review', async () => {
+        const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
+        const onChangedFilesViewMode = vi.fn();
+
+        const screen = await renderScreen(<SessionRightPanelGitCommitTab
+                    theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
+                    sessionId="s1"
+                    sessionPath="/workspace"
+                    backendLabel="Git"
+                    commitActionLabel="Commit"
+                    scmSnapshot={null}
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    scmOperationStatus={null}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    commitAllowed={false}
+                    commitBlockedMessage={null}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[{
+                        fullPath: 'src/file-0.ts',
+                        path: 'src/file-0.ts',
+                        kind: 'modified',
+                        stats: { pendingAdded: 1, pendingRemoved: 0, includedAdded: 0, includedRemoved: 0, isBinary: false },
+                    }] as any}
+                    turnAttributedFiles={[] as any}
+                    turnRepositoryOnlyFiles={[] as any}
+                    sessionAttributedFiles={[] as any}
+                    repositoryOnlyFiles={[] as any}
+                    suppressedInferredCount={0}
+                    showTurnViewToggle={true}
+                    showSessionViewToggle={true}
+                    onChangedFilesViewMode={onChangedFilesViewMode}
+                    repositorySelectedCount={0}
+                    onSelectAll={() => {}}
+                    onSelectNone={() => {}}
+                    disableSelectAll={true}
+                    disableSelectNone={true}
+                    onFilePress={() => {}}
+                    onFilePressPinned={() => {}}
+                    onToggleSelectionForFile={() => {}}
+                    renderFileActions={() => null}
+                    renderFileTrailingActions={() => null}
+                    commitDraftMessage=""
+                    onCommitDraftMessageChange={() => {}}
+                    onCommitFromMessage={() => {}}
+                    commitMessageGeneratorEnabled={false}
+                    onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                    scmStatusFiles={null}
+                    showCommitComposer={false}
+                    onOpenReviewAllChanges={() => {}}
+                />);
+
+        const flatList = screen.tree.findByType('FlatList' as any);
+        const headerScreen = await renderScreen(flatList.props.ListHeaderComponent);
+        const menu = headerScreen.tree.findByType('DropdownMenu' as any);
+        expect(menu.props.selectedId).toBe('repository');
+        expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual([
+            'repository',
+            'turn',
+            'session',
+        ]);
+
+        const textContent = headerScreen.getTextContent();
+        expect(textContent).toContain('files.repositoryChangedFiles');
+        expect(textContent).not.toContain('files.toolbar.changedFiles');
+        expect(textContent).toContain('files.toolbar.review');
+        expect(textContent).not.toContain('files.toolbar.repositoryView');
+        expect(textContent).not.toContain('files.toolbar.turnView');
+        expect(textContent).not.toContain('files.toolbar.sessionView');
+
+        menu.props.onSelect('session');
+        expect(onChangedFilesViewMode).toHaveBeenCalledWith('session');
+    });
+
     it('renders a FlatList for repository changed files to avoid huge ScrollView renders', async () => {
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
 
@@ -72,6 +246,76 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                 />)).tree;
 
         expect(() => tree.findByType('FlatList' as any)).not.toThrow();
+    });
+
+    it('uses the largest visible virtualized change stats as a shared stats column width', async () => {
+        const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
+        const files = [
+            {
+                fileName: 'small.ts',
+                filePath: 'src',
+                fullPath: 'src/small.ts',
+                status: 'modified',
+                isIncluded: false,
+                linesAdded: 1,
+                linesRemoved: 0,
+            },
+            {
+                fileName: 'requestId.test.ts',
+                filePath: 'src/middleware',
+                fullPath: 'src/middleware/requestId.test.ts',
+                status: 'modified',
+                isIncluded: false,
+                linesAdded: 146,
+                linesRemoved: 10,
+            },
+        ];
+
+        const screen = await renderScreen(<SessionRightPanelGitCommitTab
+                    theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
+                    sessionId="s1"
+                    sessionPath="/workspace"
+                    backendLabel="Git"
+                    commitActionLabel="Commit"
+                    scmSnapshot={null}
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    scmOperationStatus={null}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    commitAllowed={false}
+                    commitBlockedMessage={null}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={files as any}
+                    sessionAttributedFiles={[] as any}
+                    repositoryOnlyFiles={[] as any}
+                    suppressedInferredCount={0}
+                    repositorySelectedCount={0}
+                    onSelectAll={() => {}}
+                    onSelectNone={() => {}}
+                    disableSelectAll={true}
+                    disableSelectNone={true}
+                    onFilePress={() => {}}
+                    onFilePressPinned={() => {}}
+                    onToggleSelectionForFile={() => {}}
+                    renderFileActions={() => null}
+                    renderFileTrailingActions={() => null}
+                    commitDraftMessage=""
+                    onCommitDraftMessageChange={() => {}}
+                    onCommitFromMessage={() => {}}
+                    commitMessageGeneratorEnabled={false}
+                    onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                    scmStatusFiles={null}
+                    showCommitComposer={false}
+                />);
+
+        const flatList = screen.tree.findByType('FlatList' as any);
+        const firstRow = flatList.props.renderItem({ item: files[0], index: 0 });
+        const secondRow = flatList.props.renderItem({ item: files[1], index: 1 });
+
+        expect(firstRow.props.statsColumnWidth).toBe(secondRow.props.statsColumnWidth);
+        expect(firstRow.props.statsColumnWidth).toBeGreaterThan(38);
     });
 
     it('does not render selection summary above the changes list (keeps it near commit composer)', async () => {

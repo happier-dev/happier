@@ -38,9 +38,18 @@ export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
             String(entry.stats.isBinary),
         ].join('|'))
         .join('\n');
+    const remotesSig = [...(snapshot.repo.remotes ?? [])]
+        .map((remote) => [
+            remote.name,
+            remote.fetchUrl ?? '',
+            remote.pushUrl ?? '',
+        ].join('|'))
+        .sort()
+        .join('\n');
 
     return [
         snapshot.repo.rootPath ?? '',
+        remotesSig,
         snapshot.branch.head ?? '',
         snapshot.branch.upstream ?? '',
         String(snapshot.branch.ahead),
@@ -48,6 +57,10 @@ export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
         String(snapshot.branch.detached),
         String(snapshot.stashCount ?? 0),
         String(snapshot.hasConflicts),
+        snapshot.operationState?.kind ?? '',
+        snapshot.operationState?.sourceRef ?? '',
+        String(snapshot.operationState?.canContinue === true),
+        String(snapshot.operationState?.canAbort === true),
         filesSig,
     ].join('\n');
 }

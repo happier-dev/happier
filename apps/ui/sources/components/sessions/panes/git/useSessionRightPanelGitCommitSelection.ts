@@ -26,6 +26,7 @@ export type UseSessionRightPanelGitCommitSelectionResult = Readonly<{
     isSelectedForCommit: (file: ScmFileStatus) => boolean;
     toggleCommitSelectionForFile: (file: ScmFileStatus) => void;
     bulkSelectAll: () => void;
+    bulkSelectFiles: (files: readonly ScmFileStatus[]) => void;
     bulkSelectNone: () => void;
     disableSelectAll: boolean;
     disableSelectNone: boolean;
@@ -82,7 +83,7 @@ export function useSessionRightPanelGitCommitSelection(
         [input.changedFiles]
     );
 
-    const bulkSelectAll = React.useCallback(() => {
+    const bulkSelectPaths = React.useCallback((paths: readonly string[], tag: string) => {
         if (!input.scmWriteEnabled) return;
         fireAndForget(
             applyBulkFileStageAction({
@@ -92,12 +93,23 @@ export function useSessionRightPanelGitCommitSelection(
                 scmWriteEnabled: input.scmWriteEnabled,
                 commitStrategy: input.scmCommitStrategy,
                 stage: true,
-                paths: allChangedPaths,
+                paths,
                 surface: 'files',
             }),
-            { tag: 'useSessionRightPanelGitCommitSelection.bulkSelectAll' }
+            { tag }
         );
-    }, [allChangedPaths, input.scmCommitStrategy, input.scmSnapshot, input.scmWriteEnabled, input.sessionId, input.sessionPath]);
+    }, [input.scmCommitStrategy, input.scmSnapshot, input.scmWriteEnabled, input.sessionId, input.sessionPath]);
+
+    const bulkSelectAll = React.useCallback(() => {
+        bulkSelectPaths(allChangedPaths, 'useSessionRightPanelGitCommitSelection.bulkSelectAll');
+    }, [allChangedPaths, bulkSelectPaths]);
+
+    const bulkSelectFiles = React.useCallback((files: readonly ScmFileStatus[]) => {
+        bulkSelectPaths(
+            files.map((file) => file.fullPath),
+            'useSessionRightPanelGitCommitSelection.bulkSelectFiles',
+        );
+    }, [bulkSelectPaths]);
 
     const bulkSelectNone = React.useCallback(() => {
         if (!input.scmWriteEnabled) return;
@@ -137,6 +149,7 @@ export function useSessionRightPanelGitCommitSelection(
         isSelectedForCommit,
         toggleCommitSelectionForFile,
         bulkSelectAll,
+        bulkSelectFiles,
         bulkSelectNone,
         disableSelectAll,
         disableSelectNone,

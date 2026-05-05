@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { computeVisibleSessionListIndex } from './computeVisibleSessionListIndex';
 
@@ -42,6 +44,11 @@ function makeResolver(rowsByKey: Record<string, SessionListRenderableSession>) {
 }
 
 describe('computeVisibleSessionListIndex', () => {
+    afterEach(() => {
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
+    });
+
     it('returns the original array when custom ordering inputs are no-ops', () => {
         const g = 'server:s1:day:2026-02-17';
         const source: SessionListIndexItem[] = [
@@ -66,6 +73,50 @@ describe('computeVisibleSessionListIndex', () => {
         })!;
 
         expect(result).toBe(source);
+    });
+
+    it('records visible compute telemetry with index counts', () => {
+        syncPerformanceTelemetry.configure({ enabled: true });
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
+            { type: 'session', sessionId: 'a', serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+            { type: 'session', sessionId: 'b', serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+        ];
+
+        const resolveSessionRow = makeResolver({
+            's1:a': makeSessionRow('a', { createdAt: 10, updatedAt: 20 }),
+            's1:b': makeSessionRow('b', { createdAt: 20, updatedAt: 30 }),
+        });
+
+        const result = computeVisibleSessionListIndex({
+            source,
+            resolveSessionRow,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+        });
+
+        expect(result).toBe(source);
+        expect(syncPerformanceTelemetry.snapshot().events).toEqual([
+            expect.objectContaining({
+                name: 'sync.sessions.list.visible.compute',
+                count: 1,
+                fields: expect.objectContaining({
+                    items: 3,
+                    sessions: 2,
+                    headers: 1,
+                    fastPath: 1,
+                    hideInactive: 0,
+                    pins: 0,
+                    customOrder: 0,
+                    presentationEnabled: 0,
+                    storageFilter: 0,
+                }),
+            }),
+        ]);
     });
 
     it('keeps pinned sessions in their existing list order and normalizes pinned variants to default', () => {

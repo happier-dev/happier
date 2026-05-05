@@ -5,6 +5,7 @@ import { useAllMachines, useAllSessions, useProjectForSession, useSession } from
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 
 export function useSessionReachableMachineTarget(sessionId: string): { machineId: string; basePath: string } | null {
     const resolvedSessionId = normalizeSessionId(sessionId);
@@ -12,6 +13,7 @@ export function useSessionReachableMachineTarget(sessionId: string): { machineId
     const project = useProjectForSession(resolvedSessionId);
     const allMachines = useAllMachines();
     const allSessions = useAllSessions();
+    const sessionMachineId = resolveSessionMachineId(session?.metadata);
 
     return React.useMemo(
         () => readMachineTargetForSession(resolvedSessionId),
@@ -22,7 +24,7 @@ export function useSessionReachableMachineTarget(sessionId: string): { machineId
             project?.key?.rootPath,
             session?.metadata?.homeDir,
             session?.metadata?.host,
-            session?.metadata?.machineId,
+            sessionMachineId,
             session?.metadata?.path,
             resolvedSessionId,
         ],

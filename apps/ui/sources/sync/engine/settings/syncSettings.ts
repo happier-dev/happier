@@ -6,9 +6,17 @@ import {
     pickLocalOnlyAccountSettings,
     stripLocalOnlyAccountSettings,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
+import {
+    areAccountSettingsScopesEqual,
+    type AccountSettingsScope,
+} from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { loadPendingSettings } from '@/sync/domains/state/persistence';
+import {
+    loadAccountSettings,
+    loadPendingAccountSettings,
+} from '@/sync/domains/state/accountSettingsPersistence';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import {
@@ -32,14 +40,62 @@ import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 export type SyncSettingsParams = {
     credentials: AuthCredentials;
     encryption: Encryption;
+    settingsScope?: AccountSettingsScope | null;
     pendingSettings: Partial<Settings>;
-    clearPendingSettings: () => void;
+    clearPendingSettings: (nextPendingSettings: Partial<Settings>) => void;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
 };
 
+function arePendingSettingValuesEqual(left: unknown, right: unknown): boolean {
+    if (left === right) return true;
+    if (left == null || right == null) return left === right;
+    if (Array.isArray(left) || Array.isArray(right)) {
+        if (!Array.isArray(left) || !Array.isArray(right)) return false;
+        if (left.length !== right.length) return false;
+        for (let index = 0; index < left.length; index += 1) {
+            if (!arePendingSettingValuesEqual(left[index], right[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (typeof left !== 'object' || typeof right !== 'object') return false;
+
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    if (leftKeys.length !== rightKeys.length) return false;
+    for (const key of leftKeys) {
+        if (!(key in rightRecord)) return false;
+        if (!arePendingSettingValuesEqual(leftRecord[key], rightRecord[key])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function removeCommittedPendingSettings(
+    currentPendingSettings: Partial<Settings>,
+    submittedPendingSettings: Partial<Settings>,
+): Partial<Settings> {
+    type MutablePartialSettings = { -readonly [K in keyof Settings]?: Settings[K] };
+    const nextPendingSettings: MutablePartialSettings = { ...currentPendingSettings };
+    for (const key of Object.keys(submittedPendingSettings) as Array<keyof Settings>) {
+        if (
+            key in currentPendingSettings
+            && arePendingSettingValuesEqual(currentPendingSettings[key], submittedPendingSettings[key])
+        ) {
+            Reflect.deleteProperty(nextPendingSettings, key);
+        }
+    }
+    return nextPendingSettings;
+}
+
 export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
+    const settingsScope = params.settingsScope ?? null;
     const settingsSecretsKey = params.settingsSecretsKey ?? null;
     const settingsSecretsReadKeys = params.settingsSecretsReadKeys ?? (settingsSecretsKey ? [settingsSecretsKey] : []);
 
@@ -51,6 +107,56 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
 
     const encryptionMode = await fetchAccountEncryptionMode(credentials);
     const accountMode = encryptionMode.mode === 'plain' ? 'plain' : 'e2ee';
+
+    function isSettingsScopeActive(): boolean {
+        if (!settingsScope) return true;
+        return areAccountSettingsScopesEqual(storage.getState().settingsScope, settingsScope);
+    }
+
+    function loadSettingsForCapturedScope(): { settings: Settings; version: number | null } {
+        if (!settingsScope || isSettingsScopeActive()) {
+            const currentState = storage.getState();
+            return {
+                settings: currentState.settings,
+                version: currentState.settingsVersion,
+            };
+        }
+        const loaded = loadAccountSettings(settingsScope);
+        return {
+            settings: settingsParse(loaded.settings),
+            version: loaded.version,
+        };
+    }
+
+    function loadPendingSettingsForCapturedScope(): Partial<Settings> {
+        // Pre-auth/bootstrap calls may not have a captured account scope yet. Authenticated
+        // sync paths always pass a scope and therefore use scoped pending settings.
+        return settingsScope ? loadPendingAccountSettings(settingsScope) : loadPendingSettings();
+    }
+
+    function applySettingsForCapturedScope(nextSettings: Settings, nextVersion: number): void {
+        if (settingsScope) {
+            storage.getState().applySettingsForScope(settingsScope, nextSettings, nextVersion);
+            return;
+        }
+        storage.getState().applySettings(nextSettings, nextVersion);
+    }
+
+    function replaceSettingsForCapturedScope(nextSettings: Settings, nextVersion: number): void {
+        if (settingsScope) {
+            storage.getState().replaceSettingsForScope(settingsScope, nextSettings, nextVersion);
+            return;
+        }
+        storage.getState().replaceSettings(nextSettings, nextVersion);
+    }
+
+    function applyActiveSettingsSideEffects(nextSettings: Settings): void {
+        if (!isSettingsScopeActive()) return;
+        if (tracking) {
+            nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
+        }
+        applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
+    }
 
     async function fetchSettingsV2(): Promise<{ content: unknown; version: number }> {
         const response = await serverFetch('/v2/account/settings', {
@@ -190,8 +296,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         });
 
         while (retryCount < maxRetries) {
-            const version = storage.getState().settingsVersion;
-            const mergedSettings = applySettings(storage.getState().settings, pendingServerSettings);
+            const scopedLocal = loadSettingsForCapturedScope();
+            const version = scopedLocal.version;
+            const mergedSettings = applySettings(scopedLocal.settings, pendingServerSettings);
             const settingsForServer = normalizeSettingsForServerStorage({ raw: mergedSettings, mode: accountMode });
 
             let e2eeCiphertext: string | null = null;
@@ -229,7 +336,10 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             }
 
             if (data.success) {
-                clearPendingSettings();
+                clearPendingSettings(removeCommittedPendingSettings(
+                    loadPendingSettingsForCapturedScope(),
+                    pendingServerSettings,
+                ));
                 dbgSettings('syncSettings: POST success; pending cleared', {
                     endpoint: activeServerUrl,
                     newServerVersion: (version ?? 0) + 1,
@@ -263,7 +373,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 const mergedServerSettings = applySettings(serverSettings, pendingServerSettings);
                 const mergedSettings = applySettings(
                     mergedServerSettings,
-                    pickLocalOnlyAccountSettings(storage.getState().settings),
+                    pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings),
                 );
                 dbgSettings('syncSettings: version-mismatch merge', {
                     endpoint: activeServerUrl,
@@ -279,13 +389,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 // Important: `data.currentVersion` can be LOWER than our local `settingsVersion`
                 // (e.g. when switching accounts/servers, or after server-side reset). If we only
                 // "apply when newer", we'd never converge and would retry forever.
-                storage.getState().replaceSettings(mergedSettings, data.currentVersion);
+                replaceSettingsForCapturedScope(mergedSettings, data.currentVersion);
 
-                // Sync tracking state with merged settings
-                if (tracking) {
-                    mergedSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
-                }
-                applyCrashReportsOptOut(mergedSettings.crashReportsOptOut);
+                applyActiveSettingsSideEffects(mergedSettings);
 
                 // Log and retry
                 retryCount++;
@@ -297,7 +403,10 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     } else if (Object.keys(pendingSettings).length > 0) {
         // Pending keys can include UI-local server-selection fields, which are intentionally local-only.
         // Drop them from pending storage to avoid unnecessary sync attempts.
-        clearPendingSettings();
+        clearPendingSettings(removeCommittedPendingSettings(
+            loadPendingSettingsForCapturedScope(),
+            pendingSettings,
+        ));
         dbgSettings('syncSettings: cleared local-only pending settings keys', {
             endpoint: activeServerUrl,
             pendingKeys: Object.keys(pendingSettings).sort(),
@@ -364,7 +473,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     //   and accidentally clobber recent local edits before the pending POST flush runs.
     // - Pending settings are persisted for crash safety; reload from disk so in-flight sync calls
     //   don't miss deltas when the Sync instance replaces the pending object reference.
-    const pendingLatest = loadPendingSettings();
+    const pendingLatest = loadPendingSettingsForCapturedScope();
     const pendingLatestForServer = stripLocalOnlyAccountSettings(pendingLatest);
 
     const mergedWithPending =
@@ -372,16 +481,12 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             ? applySettings(parsedSettings, pendingLatestForServer)
             : parsedSettings;
 
-    const nextSettings = applySettings(mergedWithPending, pickLocalOnlyAccountSettings(storage.getState().settings));
+    const nextSettings = applySettings(mergedWithPending, pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings));
 
     // Apply settings to storage
-    storage.getState().applySettings(nextSettings, fetched.version);
+    applySettingsForCapturedScope(nextSettings, fetched.version);
 
-    // Sync PostHog opt-out state with settings
-    if (tracking) {
-        nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
-    }
-    applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
+    applyActiveSettingsSideEffects(nextSettings);
 
     // Best-effort migration: if settings were readable but not in canonical `account_scoped_v1` format,
     // rewrite them so other clients can decrypt them reliably.
@@ -415,7 +520,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                     expectedVersion: fetched.version,
                 });
                 if ((migrateRes as any)?.success) {
-                    storage.getState().applySettings(nextSettings, (migrateRes as any).version);
+                    applySettingsForCapturedScope(nextSettings, (migrateRes as any).version);
                 }
             }
         } catch {

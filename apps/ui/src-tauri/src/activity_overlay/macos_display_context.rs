@@ -1,4 +1,7 @@
-use super::host_mode::DesktopActivityOverlayDisplayContext;
+use super::host_mode::{
+    DesktopActivityOverlayDisplayContext, DesktopActivityOverlayPhysicalNotchSize,
+};
+use super::display_identity::{resolve_display_identity, DisplayIdentityComponents};
 use super::placement::Rect;
 
 #[cfg(target_os = "macos")]
@@ -10,7 +13,9 @@ use objc2::MainThreadMarker;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSScreen;
 #[cfg(target_os = "macos")]
-use objc2_core_graphics::CGDisplayIsBuiltin;
+use objc2_core_graphics::{
+    CGDisplayIsBuiltin, CGDisplayModelNumber, CGDisplaySerialNumber, CGDisplayVendorNumber,
+};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSNumber, NSString};
 use tauri::{AppHandle, Runtime};
@@ -23,6 +28,10 @@ pub(crate) fn resolve_overlay_display_context_for_monitor<R: Runtime>(
     app: &AppHandle<R>,
     monitor: Rect,
 ) -> Option<DesktopActivityOverlayDisplayContext> {
+    if MainThreadMarker::new().is_some() {
+        return resolve_overlay_display_context_for_monitor_on_main_thread(monitor);
+    }
+
     let (tx, rx) = std::sync::mpsc::channel();
     if app
         .run_on_main_thread(move || {
@@ -49,7 +58,8 @@ pub(crate) fn resolve_overlay_display_context_for_monitor<R: Runtime>(
 fn resolve_overlay_display_context_for_monitor_on_main_thread(
     monitor: Rect,
 ) -> Option<DesktopActivityOverlayDisplayContext> {
-    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let mtm = MainThreadMarker::new()
+        .expect("expected overlay display context resolution to run on the main thread");
     let screens = NSScreen::screens(mtm);
     let screen_count = screens.count();
     let mut best_match: Option<(usize, Rect, f64)> = None;
@@ -93,18 +103,56 @@ fn build_display_context_for_screen(
     let auxiliary_top_right = rect_from_ns_rect(unsafe { screen.auxiliaryTopRightArea() });
     let display_id = read_display_id(screen)?;
     let is_builtin_display = unsafe { CGDisplayIsBuiltin(display_id) };
+    let display_identity = resolve_display_identity(DisplayIdentityComponents {
+        cg_display_id: Some(display_id),
+        vendor_id: Some(unsafe { CGDisplayVendorNumber(display_id) }),
+        model_id: Some(unsafe { CGDisplayModelNumber(display_id) }),
+        serial_number: Some(unsafe { CGDisplaySerialNumber(display_id) }),
+    });
     let has_physical_notch = is_builtin_display
         && auxiliary_top_left.width > 0.0
         && auxiliary_top_right.width > 0.0
         && auxiliary_top_left.x < auxiliary_top_right.x;
+    let physical_notch_size = derive_physical_notch_size(
+        screen_frame,
+        safe_area_top,
+        auxiliary_top_left,
+        auxiliary_top_right,
+        has_physical_notch,
+    );
 
     Some(DesktopActivityOverlayDisplayContext {
         is_macos: true,
         is_builtin_display,
         has_physical_notch,
         safe_area_top,
+        physical_notch_size,
+        display_identity: Some(display_identity),
         screen_frame,
         visible_frame,
+    })
+}
+
+fn derive_physical_notch_size(
+    screen_frame: Rect,
+    safe_area_top: f64,
+    auxiliary_top_left: Rect,
+    auxiliary_top_right: Rect,
+    has_physical_notch: bool,
+) -> Option<DesktopActivityOverlayPhysicalNotchSize> {
+    if !has_physical_notch || !safe_area_top.is_finite() || safe_area_top <= 0.0 {
+        return None;
+    }
+
+    let auxiliary_width = auxiliary_top_left.width + auxiliary_top_right.width;
+    let measured_width = screen_frame.width - auxiliary_width + 4.0;
+    if !measured_width.is_finite() || measured_width <= 0.0 {
+        return None;
+    }
+
+    Some(DesktopActivityOverlayPhysicalNotchSize {
+        width: measured_width,
+        height: safe_area_top,
     })
 }
 
@@ -192,5 +240,67 @@ mod tests {
         assert!(
             rect_match_distance(builtin_like, monitor) < rect_match_distance(external, monitor)
         );
+    }
+
+    #[test]
+    fn derives_physical_notch_size_from_auxiliary_top_areas() {
+        let size = derive_physical_notch_size(
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            38.0,
+            Rect {
+                x: 0.0,
+                y: 944.0,
+                width: 644.0,
+                height: 38.0,
+            },
+            Rect {
+                x: 868.0,
+                y: 944.0,
+                width: 644.0,
+                height: 38.0,
+            },
+            true,
+        );
+
+        assert_eq!(
+            size,
+            Some(DesktopActivityOverlayPhysicalNotchSize {
+                width: 228.0,
+                height: 38.0,
+            }),
+        );
+    }
+
+    #[test]
+    fn omits_physical_notch_size_when_the_screen_has_no_notch() {
+        let size = derive_physical_notch_size(
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            0.0,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            },
+            false,
+        );
+
+        assert_eq!(size, None);
     }
 }

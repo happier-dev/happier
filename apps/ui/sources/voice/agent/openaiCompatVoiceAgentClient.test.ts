@@ -222,7 +222,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
 
     expect(guidanceCalls[0]).toMatchObject({
       machineId: 'machine-cached',
-      surfaces: ['voice_action_block'],
+      surfaces: ['voice'],
     });
   });
 

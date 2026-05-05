@@ -9,6 +9,8 @@ const machineRpcMock = vi.hoisted(() => vi.fn());
 const getStateMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 
+type SessionScmTestCall = (sessionId: string, request: Record<string, unknown>) => Promise<unknown>;
+
 vi.mock('@/sync/api/session/apiSocket', () => ({
   apiSocket: {
         machineRPC: machineRpcMock,
@@ -235,6 +237,61 @@ describe('sessionScm', () => {
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 
+    it('prefers machine RPC for linked direct sessions without top-level machine metadata', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: false,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'codex',
+                            machineId: 'machine-direct',
+                            remoteSessionId: 'remote-1',
+                            source: { kind: 'codexHome', home: 'user' },
+                        },
+                    },
+                },
+            },
+            machines: {
+                'machine-other': {
+                    id: 'machine-other',
+                    active: true,
+                    activeAt: 20,
+                    metadata: { host: 'other.local' },
+                },
+                'machine-direct': {
+                    id: 'machine-direct',
+                    active: false,
+                    activeAt: 1,
+                    metadata: { host: 'direct.local' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+        machineRpcMock.mockResolvedValue({
+            success: true,
+            snapshot: undefined,
+        });
+
+        const { sessionScmStatusSnapshot } = await import('./sessionScm');
+        const response = await sessionScmStatusSnapshot('session-1', {});
+
+        expect(response.success).toBe(true);
+        expect(machineRpcMock).toHaveBeenCalledWith(
+            'machine-direct',
+            RPC_METHODS.SCM_STATUS_SNAPSHOT,
+            { cwd: '~/repo' },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
+
     it('fails closed for inactive sessions when machine target is unavailable', async () => {
         getStateMock.mockReturnValue({
             settings: {
@@ -262,6 +319,66 @@ describe('sessionScm', () => {
         expect(response.success).toBe(false);
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
         expect(machineRpcMock).not.toHaveBeenCalled();
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('routes remote management and branch integration through the attached machine target', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: true,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcMock.mockResolvedValue({ success: true, stdout: '', stderr: '' });
+
+        const module = await import('./sessionScm');
+        const sessionScmRemoteAdd = (module as unknown as {
+            sessionScmRemoteAdd: SessionScmTestCall;
+        }).sessionScmRemoteAdd;
+        const sessionScmBranchRebase = (module as unknown as {
+            sessionScmBranchRebase: SessionScmTestCall;
+        }).sessionScmBranchRebase;
+
+        await sessionScmRemoteAdd('session-1', {
+            cwd: '.',
+            name: 'origin',
+            fetchUrl: '/tmp/remote.git',
+        });
+        await sessionScmBranchRebase('session-1', {
+            cwd: '.',
+            sourceRef: 'main',
+        });
+
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            1,
+            'machine-1',
+            RPC_METHODS.SCM_REMOTE_ADD,
+            {
+                cwd: '~/repo',
+                name: 'origin',
+                fetchUrl: '/tmp/remote.git',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            2,
+            'machine-1',
+            RPC_METHODS.SCM_BRANCH_REBASE,
+            {
+                cwd: '~/repo',
+                sourceRef: 'main',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 });

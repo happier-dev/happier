@@ -67,6 +67,7 @@ export function DetectedClisModal({ onClose, setChrome, machineId, isOnline, ser
         actions: headerActions,
         footer,
         dimensions: { width: 360, maxHeightRatio: 0.85 },
+        scrollHost: 'body' as const,
     }), [footer, headerActions, title]);
 
     useModalCardChrome(setChrome, chrome);

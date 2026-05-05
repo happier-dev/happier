@@ -82,6 +82,8 @@ function buildScmSnapshotMock(capabilities: any) {
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
+    TextSelectabilityScope: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -125,6 +127,9 @@ vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
         getPluginForSnapshot: () => ({
             displayName: 'Git',
             commitActionConfig: () => ({ label: 'Commit' }),
+            remoteActionConfig: () => ({ fetch: true, pull: true, push: true }),
+            inferRemoteTarget: () => ({ remote: 'origin', branch: 'main' }),
+            mapCapabilitiesToUiPolicy: () => ({ supportedDiffAreas: ['pending'], changeSetModel: 'index' }),
         }),
     },
 }));
@@ -135,10 +140,6 @@ vi.mock('@/scm/scmStatusSync', () => ({
 
 vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () => ({
     ScmCommitComposerCard: (props: any) => React.createElement('ScmCommitComposerCard', props),
-}));
-
-vi.mock('@/components/sessions/files/SourceControlOperationsPanel', () => ({
-    SourceControlOperationsPanel: (props: any) => React.createElement('SourceControlOperationsPanel', props),
 }));
 
 vi.mock('@/components/sessions/files/SourceControlOperationsHistorySection', () => ({
@@ -179,6 +180,18 @@ vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', ()
 
 vi.mock('@/scm/scmAttribution', () => ({
     getDefaultChangedFilesViewMode: () => 'session',
+    resolveChangedFilesViewMode: (input: {
+        mode: 'repository' | 'selected' | 'turn' | 'session';
+        showTurnViewToggle: boolean;
+        showSessionViewToggle: boolean;
+        showSelectedViewToggle?: boolean;
+    }) => {
+        if (input.mode === 'repository') return input.mode;
+        if (input.mode === 'selected' && input.showSelectedViewToggle === true) return input.mode;
+        if (input.mode === 'turn' && input.showTurnViewToggle) return input.mode;
+        if (input.mode === 'session' && input.showSessionViewToggle) return input.mode;
+        return 'session';
+    },
 }));
 
 vi.mock('@/scm/settings/commitStrategy', () => ({

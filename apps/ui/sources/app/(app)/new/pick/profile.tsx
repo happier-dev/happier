@@ -56,6 +56,13 @@ export default React.memo(function ProfilePickerScreen() {
     const machineId = typeof params.machineId === 'string' ? params.machineId : undefined;
     const profileId = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const secretRequirementResultId = typeof params.secretRequirementResultId === 'string' ? params.secretRequirementResultId : '';
+    const hasUsableRouteState = Boolean(
+        selectedId.trim()
+        || dataId?.trim()
+        || machineId?.trim()
+        || (typeof profileId === 'string' && profileId.trim().length > 0)
+        || secretRequirementResultId.trim(),
+    );
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
@@ -118,6 +125,11 @@ export default React.memo(function ProfilePickerScreen() {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
     }, [currentRouteParams, dataId, machineId, navigation, roundTripBackendParams, router, spawnServerId]);
+
+    React.useEffect(() => {
+        if (hasUsableRouteState) return;
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [hasUsableRouteState, navigation, router]);
 
     // When the secret requirement screen is used (native), it returns a temp id via params.
     // We handle it here and then return to the previous route with the correct selection.

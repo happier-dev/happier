@@ -8,6 +8,8 @@ export const SessionGitSurface = React.memo((props: Readonly<{
     onOpenFile?: (fullPath: string) => void;
     onOpenFilePinned?: (fullPath: string) => void;
     onOpenCommit?: (sha: string) => void;
+    onOpenReviewAllChanges?: () => void;
+    onOpenStashDetails?: () => void;
 }>) => {
     return (
         <SessionRightPanelGitView
@@ -16,6 +18,8 @@ export const SessionGitSurface = React.memo((props: Readonly<{
             onOpenFile={props.onOpenFile}
             onOpenFilePinned={props.onOpenFilePinned}
             onOpenCommit={props.onOpenCommit}
+            onOpenReviewAllChanges={props.onOpenReviewAllChanges}
+            onOpenStashDetails={props.onOpenStashDetails}
         />
     );
 });

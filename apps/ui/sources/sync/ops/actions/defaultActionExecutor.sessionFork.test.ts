@@ -177,7 +177,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const res = await executor.execute(
       'session.fork' as any,
       { sessionId: 'sess_parent' },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(res.ok).toBe(true);
@@ -226,7 +226,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const res = await executor.execute(
       'session.fork' as any,
       { sessionId: 'sess_parent' },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(res.ok).toBe(true);
@@ -267,7 +267,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const res = await executor.execute(
       'session.fork' as any,
       { sessionId: 'sess_parent' },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(res.ok).toBe(true);
@@ -314,7 +314,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const res = await executor.execute(
       'session.fork' as any,
       { sessionId: 'sess_parent' },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(res.ok).toBe(true);
@@ -360,7 +360,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const res = await executor.execute(
       'session.handoff' as any,
       { sessionId: 'sess_parent', targetMachineId: 'machine_2' },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(res.ok).toBe(true);
@@ -414,7 +414,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const res = await executor.execute(
       'session.handoff' as any,
       { sessionId: 'sess_parent', targetMachineId: 'machine_2' },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(res.ok).toBe(true);
@@ -475,7 +475,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           ignoredIncludeGlobs: [],
         },
       },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(res.ok).toBe(true);
@@ -527,7 +527,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const result = await executor.execute(
       'session.rollback' as any,
       { sessionId: 'sess_parent' },
-      { defaultSessionId: 'sess_parent', surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { defaultSessionId: 'sess_parent', surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(result.ok).toBe(true);
@@ -569,7 +569,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const result = await executor.execute(
       'session.rollback' as any,
       { sessionId: 'sess_parent' },
-      { defaultSessionId: 'sess_parent', surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { defaultSessionId: 'sess_parent', surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
     expect(result.ok).toBe(true);

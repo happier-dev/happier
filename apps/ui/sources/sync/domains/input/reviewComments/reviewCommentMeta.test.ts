@@ -10,9 +10,10 @@ describe('reviewCommentMeta', () => {
                 id: 'c1',
                 filePath: 'src/a.ts',
                 source: 'file',
-                anchor: { kind: 'fileLine', startLine: 1 },
+                anchor: { kind: 'fileLine', startLine: 1, lineHash: 'lh1:1234567890abcdef' },
                 snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
                 body: 'nit',
+                includeInPrompt: false,
                 createdAt: 1,
             },
         ];
@@ -22,11 +23,27 @@ describe('reviewCommentMeta', () => {
         expect(parsed.sessionId).toBe('s1');
         expect(parsed.comments).toHaveLength(1);
         expect(parsed.comments[0].filePath).toBe('src/a.ts');
+        expect(parsed.comments[0].anchor).toMatchObject({ lineHash: 'lh1:1234567890abcdef' });
+        expect(parsed.comments[0].includeInPrompt).toBe(false);
     });
 
-    it('parses valid payload and rejects invalid payload', () => {
+    it('parses valid legacy payload and rejects invalid payload', () => {
         expect(parseReviewCommentsV1({ sessionId: 's1', comments: [] })).not.toBeNull();
         expect(parseReviewCommentsV1({ sessionId: 123 })).toBeNull();
     });
-});
 
+    it('rejects invalid line hashes', () => {
+        expect(parseReviewCommentsV1({
+            sessionId: 's1',
+            comments: [{
+                id: 'c1',
+                filePath: 'src/a.ts',
+                source: 'file',
+                anchor: { kind: 'fileLine', startLine: 1, lineHash: 'not-a-line-hash' },
+                snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                body: 'nit',
+                createdAt: 1,
+            }],
+        })).toBeNull();
+    });
+});

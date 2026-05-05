@@ -1,5 +1,13 @@
 import { getAllProviderDefinitions } from '@happier-dev/agents';
-import { AcpCatalogSettingsV1Schema, BackendTargetRefV2Schema, LlmTaskRunnerConfigV1Schema, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    AcpCatalogSettingsV1Schema,
+    BackendTargetRefV2Schema,
+    DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
+    LlmTaskRunnerConfigV1Schema,
+    PeerMediationPreferencesV1Schema,
+    buildSettingArtifacts,
+    defineSettingDefinitions,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 const BUILT_IN_BACKEND_IDS = new Set<string>(getAllProviderDefinitions().map((entry) => entry.id));
@@ -115,6 +123,54 @@ function buildAcpCatalogSummaryProperties(value: unknown): Record<string, number
     };
 }
 
+function buildPeerMediationPreferencesSummaryProperties(value: unknown): Record<string, number> {
+    const record = value && typeof value === 'object' && !Array.isArray(value)
+        ? value as { byMachineId?: unknown; flows?: unknown }
+        : {};
+    const accountFlows = record.flows && typeof record.flows === 'object' && !Array.isArray(record.flows)
+        ? Object.values(record.flows as Record<string, unknown>)
+        : [];
+    const machineEntries = record.byMachineId && typeof record.byMachineId === 'object' && !Array.isArray(record.byMachineId)
+        ? Object.values(record.byMachineId as Record<string, unknown>)
+        : [];
+
+    let accountDirectOverrideCount = 0;
+    let machineDirectOverrideCount = 0;
+    let directEnabledCount = 0;
+    let directDisabledCount = 0;
+
+    const countFlowPreference = (entry: unknown, scope: 'account' | 'machine') => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+        const direct = (entry as Record<string, unknown>).direct;
+        if (direct !== 'enabled' && direct !== 'disabled') return;
+        if (scope === 'account') {
+            accountDirectOverrideCount += 1;
+        } else {
+            machineDirectOverrideCount += 1;
+        }
+        if (direct === 'enabled') directEnabledCount += 1;
+        if (direct === 'disabled') directDisabledCount += 1;
+    };
+
+    for (const entry of accountFlows) countFlowPreference(entry, 'account');
+    for (const machineEntry of machineEntries) {
+        if (!machineEntry || typeof machineEntry !== 'object' || Array.isArray(machineEntry)) continue;
+        const flows = (machineEntry as Record<string, unknown>).flows;
+        if (!flows || typeof flows !== 'object' || Array.isArray(flows)) continue;
+        for (const entry of Object.values(flows as Record<string, unknown>)) {
+            countFlowPreference(entry, 'machine');
+        }
+    }
+
+    return {
+        machineCount: machineEntries.length,
+        accountDirectOverrideCount,
+        machineDirectOverrideCount,
+        directEnabledCount,
+        directDisabledCount,
+    };
+}
+
 export const SessionTmuxMachineOverrideSchema = z.object({
     useTmux: z.boolean(),
     sessionName: z.string(),
@@ -182,6 +238,20 @@ export const ACCOUNT_RUNTIME_SETTING_DEFINITIONS = defineSettingDefinitions({
             privacy: 'count_only',
             identityScope: 'person',
             serializeCurrentProperties: buildExecutionRunsGuidanceSummaryProperties,
+        },
+    },
+    peerMediationPreferencesV1: {
+        schema: PeerMediationPreferencesV1Schema,
+        default: DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
+        description: 'Direct peer mediation route preferences',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrentProperties: buildPeerMediationPreferencesSummaryProperties,
         },
     },
     sessionTmuxByMachineId: {

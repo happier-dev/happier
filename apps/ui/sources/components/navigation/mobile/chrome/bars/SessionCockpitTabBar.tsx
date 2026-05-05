@@ -1,4 +1,14 @@
 import * as React from 'react';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+
+import {
+    DEFAULT_AGENT_ID,
+    getAgentCore,
+    resolveAgentIdFromFlavor,
+    type AgentId,
+} from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { useSession } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { CockpitTabBar, type CockpitTabBarTabDefinition } from './CockpitTabBar';
@@ -17,10 +27,30 @@ type SessionCockpitTabDefinition = Readonly<{
 }>;
 
 export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps) => {
+    const session = useSession(props.sessionId);
+    const agentId: AgentId = React.useMemo(() => (
+        resolveAgentIdFromSessionMetadata(session?.metadata ?? null)
+        ?? resolveAgentIdFromFlavor(session?.metadata?.flavor)
+        ?? DEFAULT_AGENT_ID
+    ), [session?.metadata]);
+
     const tabs: readonly SessionCockpitTabDefinition[] = [
-        { id: 'chat', label: t('common.message'), icon: 'chatbubble-ellipses-outline' },
+        {
+            id: 'chat',
+            label: t(getAgentCore(agentId).displayNameKey),
+            icon: {
+                render: ({ active, size }) => (
+                    <AgentIcon
+                        agentId={agentId}
+                        size={size}
+                        style={{ opacity: active ? 1 : 0.68 }}
+                        testID="session-cockpit-tab-chat-agent-icon"
+                    />
+                ),
+            },
+        },
         { id: 'browse', label: t('common.files'), icon: 'folder-outline' },
-        { id: 'git', label: t('settings.sourceControl'), icon: 'git-branch-outline' },
+        { id: 'git', label: t('session.rightPanel.tabs.git'), icon: 'git-branch-outline' },
         { id: 'tabs', label: t('common.tabs'), icon: 'albums-outline' },
         ...(props.terminalTabAvailable
             ? [{ id: 'terminal', label: t('settings.terminal'), icon: 'terminal-outline' } satisfies SessionCockpitTabDefinition]

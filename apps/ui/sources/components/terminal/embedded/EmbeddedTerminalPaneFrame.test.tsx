@@ -64,6 +64,16 @@ import { EmbeddedTerminalPaneFrame } from './EmbeddedTerminalPaneFrame';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('EmbeddedTerminalPaneFrame', () => {
     it('keeps the disconnected overlay inside the terminal surface so toolbar actions remain accessible', async () => {
         const controller: EmbeddedTerminalPaneController = {
@@ -94,5 +104,35 @@ describe('EmbeddedTerminalPaneFrame', () => {
         expect(overlay).toBeTruthy();
         expect(overlay?.parent?.props.style).toBe(embeddedTerminalPaneStyles.terminalSurface);
         expect(screen.findByTestId('provider-auth-terminal-close')).toBeTruthy();
+    });
+
+    it('reserves bottom space for the native keyboard inside the terminal surface', async () => {
+        const controller: EmbeddedTerminalPaneController = {
+            status: 'connected',
+            error: null,
+            detectedUrl: null,
+            onInput: () => {},
+            onResize: () => {},
+            onReady: () => {},
+            clearTerminal: () => {},
+            requestRestart: () => {},
+            retryConnect: () => {},
+            dismissDetectedUrl: () => {},
+        };
+
+        const screen = await renderScreen(
+            React.createElement(EmbeddedTerminalPaneFrame, {
+                title: 'Terminal',
+                controller,
+                surface: React.createElement('TerminalSurface'),
+                footer: React.createElement('QuickKeys'),
+                testIdPrefix: 'embedded-terminal',
+                platformOS: 'ios',
+                keyboardBottomInset: 216,
+            }),
+        );
+
+        const surface = screen.findByTestId('embedded-terminal-surface');
+        expect(flattenStyle(surface?.props.style).marginBottom).toBe(216);
     });
 });

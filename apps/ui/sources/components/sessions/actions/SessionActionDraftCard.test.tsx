@@ -197,7 +197,7 @@ describe('SessionActionDraftCard', () => {
     expect(executeSpy).toHaveBeenCalledWith(
       'subagents.plan.start',
       { sessionId: 's1', backendTargetKeys: ['agent:claude'], instructions: 'Plan this.' },
-      { defaultSessionId: 's1', surface: 'ui_button', placement: 'session_action_menu' },
+      { defaultSessionId: 's1', surface: 'ui', placement: 'session_action_menu' },
     );
 
     // Should transition to running then succeeded.

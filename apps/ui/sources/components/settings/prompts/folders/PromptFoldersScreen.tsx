@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PromptBundleBodyV1Schema, PromptDocBodyV1Schema } from '@happier-dev/protocol';
@@ -139,7 +138,6 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: t('promptLibrary.folders') }} />
       <ItemList containerStyle={styles.content}>
         <ItemGroup title={t('promptLibrary.folders')}>
           {folders.length > 0 ? folders.map((folder) => (

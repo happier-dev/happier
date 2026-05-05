@@ -1,29 +1,11 @@
 import type { MarkdownSpan } from "./parseMarkdown";
+import { normalizeMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
 
 // Updated pattern to handle nested markdown and asterisks
 const pattern = /(\*\*(.*?)(?:\*\*|$))|(\*(.*?)(?:\*|$))|(\[([^\]]+)\](?:\(([^)]+)\))?)|(`(.*?)(?:`|$))/g;
 
 const autoLinkPattern = /\b((?:https?:\/\/|www\.)[^\s<]+)/g;
 const trailingPunctuationPattern = /[.,)\]}]+$/;
-
-function normalizeMarkdownLinkUrl(raw: string): string | null {
-    const trimmed = String(raw ?? '').trim();
-    if (!trimmed) return null;
-
-    const lowerTrimmed = trimmed.toLowerCase();
-    const candidate = lowerTrimmed.startsWith('www.') ? `https://${trimmed}` : trimmed;
-    const lower = candidate.toLowerCase();
-
-    // Reject common unsafe URL schemes (XSS on web) and any URL containing whitespace/control characters.
-    if (lower.startsWith('javascript:') || lower.startsWith('data:')) return null;
-    if (/\s|[\u0000-\u001F\u007F]/.test(candidate)) return null;
-
-    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('mailto:')) {
-        return candidate;
-    }
-
-    return null;
-}
 
 function splitPlainTextWithAutoLinks(text: string): MarkdownSpan[] {
     const out: MarkdownSpan[] = [];

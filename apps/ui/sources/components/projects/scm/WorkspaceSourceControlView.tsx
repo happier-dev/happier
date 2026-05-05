@@ -5,31 +5,37 @@ import { Octicons } from '@expo/vector-icons';
 
 import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
-import { SourceControlRemoteActionsRail } from '@/components/workspaces/scm/SourceControlRemoteActionsRail';
 import { buildWorkspaceChangedFilesData } from '@/hooks/workspaces/scm/buildWorkspaceChangedFilesData';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { ChangedFilesViewModeMenu } from '@/components/sessions/files/ChangedFilesViewModeMenu';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
 import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { countCommitSelectionItems } from '@/scm/operations/commitSelectionHints';
 import { isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
+import { resolveChangedFilesViewMode, type ChangedFilesViewMode } from '@/scm/scmAttribution';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     storage,
     useSetting,
+    useSettingMutable,
     useWorkspaceScmCommitSelectionPatches,
     useWorkspaceScmCommitSelectionPaths,
 } from '@/sync/domains/state/storage';
 import { buildCommitSelectionPathHints } from '@/scm/operations/commitSelectionHints';
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
+import { resolveCommitAdjacentPushActionState } from '@/scm/operations/commitAdjacentPushAction';
+import { confirmCommitAdjacentPush } from '@/scm/operations/commitAdjacentPushConfirmation';
+import { formatRemoteTargetForDisplay } from '@/scm/operations/remoteFeedback';
+import type { ScmPushRejectPolicy } from '@/scm/settings/preferences';
+import { normalizeScmRemoteConfirmPolicy } from '@/scm/settings/remoteConfirmationPolicy';
 import { machineScmStashList } from '@/sync/ops/scm/machineScm';
 import { resolveSnapshotScmStashCount, useScmStashSummaryCount } from '@/scm/stash/useScmStashSummaryCount';
-import { tracking } from '@/track';
 import { WorkspaceSourceControlBranchMenu } from './WorkspaceSourceControlBranchMenu';
 import { applyWorkspaceFileStageAction, WorkspaceScmCommitSelectionToggleButton } from './WorkspaceScmCommitSelectionToggleButton';
 import { WorkspaceScmChangeDiscardButton } from './WorkspaceScmChangeDiscardButton';
@@ -58,6 +64,7 @@ function matchesQuery(filePath: string, query: string): boolean {
 export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceControlViewProps) => {
     const { theme } = useUnistyles();
     const [searchQuery, setSearchQuery] = React.useState('');
+    const [requestedChangedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>('repository');
     const [commitDraftMessage, setCommitDraftMessage] = React.useState('');
     const [scmOperationBusy, setScmOperationBusy] = React.useState(false);
     const [scmOperationStatus, setScmOperationStatus] = React.useState<string | null>(null);
@@ -70,35 +77,31 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
     const commitSelectionPaths = useWorkspaceScmCommitSelectionPaths(scope);
     const commitSelectionPatches = useWorkspaceScmCommitSelectionPatches(scope);
     const scmCommitStrategySetting = useSetting('scmCommitStrategy');
-    const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
-    const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
+    const [scmRemoteConfirmPolicySetting, setScmRemoteConfirmPolicy] = useSettingMutable('scmRemoteConfirmPolicy');
+    const scmPushRejectPolicySetting = useSetting('scmPushRejectPolicy');
     const scmCommitStrategy: ScmCommitStrategy = React.useMemo(() => {
         if (typeof scmCommitStrategySetting !== 'string') return 'atomic';
         return SCM_COMMIT_STRATEGIES.includes(scmCommitStrategySetting as ScmCommitStrategy)
             ? (scmCommitStrategySetting as ScmCommitStrategy)
             : 'atomic';
     }, [scmCommitStrategySetting]);
-    const normalizedRemoteConfirmPolicy = React.useMemo(() => {
-        return scmRemoteConfirmPolicy === 'always' || scmRemoteConfirmPolicy === 'push_only' || scmRemoteConfirmPolicy === 'never'
-            ? scmRemoteConfirmPolicy
-            : 'never';
-    }, [scmRemoteConfirmPolicy]);
-    const normalizedPushRejectPolicy = React.useMemo(() => {
-        return scmPushRejectPolicy === 'auto_fetch' || scmPushRejectPolicy === 'prompt_fetch' || scmPushRejectPolicy === 'manual'
-            ? scmPushRejectPolicy
+    const normalizedRemoteConfirmPolicy = React.useMemo(
+        () => normalizeScmRemoteConfirmPolicy(scmRemoteConfirmPolicySetting),
+        [scmRemoteConfirmPolicySetting],
+    );
+    const normalizedPushRejectPolicy: ScmPushRejectPolicy = React.useMemo(() => {
+        return scmPushRejectPolicySetting === 'auto_fetch'
+            || scmPushRejectPolicySetting === 'prompt_fetch'
+            || scmPushRejectPolicySetting === 'manual'
+            ? scmPushRejectPolicySetting
             : 'manual';
-    }, [scmPushRejectPolicy]);
+    }, [scmPushRejectPolicySetting]);
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
 
-    const { scmStatusFiles, changedFilesCount, allRepositoryChangedFiles } = React.useMemo(
+    const { scmStatusFiles, allRepositoryChangedFiles } = React.useMemo(
         () => buildWorkspaceChangedFilesData({ scmSnapshot: snapshot }),
         [snapshot],
     );
-
-    const filteredChangedFiles = React.useMemo(() => {
-        if (!searchQuery.trim()) return allRepositoryChangedFiles;
-        return allRepositoryChangedFiles.filter((file) => matchesQuery(file.fullPath, searchQuery));
-    }, [allRepositoryChangedFiles, searchQuery]);
 
     const openFile = React.useCallback((file: ScmFileStatus) => {
         props.onOpenFile(file.fullPath);
@@ -126,6 +129,27 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
         return isAtomicCommitStrategy(scmCommitStrategy) ? commitSelectionSet.has(file.fullPath) : file.isIncluded === true;
     }, [commitSelectionSet, scmCommitStrategy]);
 
+    const selectedRepositoryChangedFiles = React.useMemo(() => {
+        return allRepositoryChangedFiles.filter((file) => isSelectedForCommit(file));
+    }, [allRepositoryChangedFiles, isSelectedForCommit]);
+
+    const changedFilesViewMode = React.useMemo(() => resolveChangedFilesViewMode({
+        mode: requestedChangedFilesViewMode,
+        showTurnViewToggle: false,
+        showSessionViewToggle: false,
+        showSelectedViewToggle: selectedRepositoryChangedFiles.length > 0,
+    }), [requestedChangedFilesViewMode, selectedRepositoryChangedFiles.length]);
+
+    const currentScopeChangedFiles = React.useMemo(() => {
+        if (changedFilesViewMode === 'selected') return selectedRepositoryChangedFiles;
+        return allRepositoryChangedFiles;
+    }, [allRepositoryChangedFiles, changedFilesViewMode, selectedRepositoryChangedFiles]);
+
+    const filteredChangedFiles = React.useMemo(() => {
+        if (!searchQuery.trim()) return currentScopeChangedFiles;
+        return currentScopeChangedFiles.filter((file) => matchesQuery(file.fullPath, searchQuery));
+    }, [currentScopeChangedFiles, searchQuery]);
+
     const repositorySelectedCount = React.useMemo(() => {
         if (isAtomicCommitStrategy(scmCommitStrategy)) return commitSelectionCount;
         return filteredChangedFiles.filter((file) => isSelectedForCommit(file)).length;
@@ -148,17 +172,6 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
             commitSelectionPaths: commitSelectionPathHints,
         });
     }, [commitSelectionPathHints, scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
-    const commitAllowed = commitPreflight.allowed;
-    const commitBlockedMessage = commitPreflight.allowed ? null : commitPreflight.message;
-    const pullPreflight = React.useMemo(() => {
-        return evaluateScmOperationPreflight({
-            intent: 'pull',
-            scmWriteEnabled,
-            sessionPath: scope.rootPath,
-            snapshot,
-            commitStrategy: scmCommitStrategy,
-        });
-    }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
     const pushPreflight = React.useMemo(() => {
         return evaluateScmOperationPreflight({
             intent: 'push',
@@ -168,94 +181,8 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
             commitStrategy: scmCommitStrategy,
         });
     }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
-
-    const remoteActions = React.useMemo(() => {
-        if (scmWriteEnabled !== true) return [];
-        if (!snapshot?.repo.isRepo) return [];
-        const actions: Array<React.ComponentProps<typeof SourceControlRemoteActionsRail>['actions'][number]> = [];
-        if (snapshot.capabilities?.writeRemoteFetch === true) {
-            actions.push({
-                key: 'fetch',
-                iconName: 'sync',
-                label: t('files.sourceControlOperations.actions.fetch'),
-                disabled: scmOperationBusy,
-                onPress: () => {
-                    void executeWorkspaceScmRemoteOperation({
-                        kind: 'fetch',
-                        scope,
-                        scmSnapshot: snapshot,
-                        scmWriteEnabled,
-                        scmCommitStrategy,
-                        scmRemoteConfirmPolicy: normalizedRemoteConfirmPolicy,
-                        scmPushRejectPolicy: normalizedPushRejectPolicy,
-                        refreshScmData: refresh,
-                        setScmOperationBusy,
-                        setScmOperationStatus,
-                        tracking,
-                    });
-                },
-            });
-        }
-        if (snapshot.capabilities?.writeRemotePull === true) {
-            actions.push({
-                key: 'pull',
-                iconName: 'arrow-down',
-                label: t('files.sourceControlOperations.actions.pull'),
-                disabled: scmOperationBusy || !pullPreflight.allowed,
-                onPress: () => {
-                    void executeWorkspaceScmRemoteOperation({
-                        kind: 'pull',
-                        scope,
-                        scmSnapshot: snapshot,
-                        scmWriteEnabled,
-                        scmCommitStrategy,
-                        scmRemoteConfirmPolicy: normalizedRemoteConfirmPolicy,
-                        scmPushRejectPolicy: normalizedPushRejectPolicy,
-                        refreshScmData: refresh,
-                        setScmOperationBusy,
-                        setScmOperationStatus,
-                        tracking,
-                    });
-                },
-            });
-        }
-        if (snapshot.capabilities?.writeRemotePush === true) {
-            actions.push({
-                key: 'push',
-                iconName: 'arrow-up',
-                label: t('files.sourceControlOperations.actions.push'),
-                disabled: scmOperationBusy || !pushPreflight.allowed,
-                onPress: () => {
-                    void executeWorkspaceScmRemoteOperation({
-                        kind: 'push',
-                        scope,
-                        scmSnapshot: snapshot,
-                        scmWriteEnabled,
-                        scmCommitStrategy,
-                        scmRemoteConfirmPolicy: normalizedRemoteConfirmPolicy,
-                        scmPushRejectPolicy: normalizedPushRejectPolicy,
-                        refreshScmData: refresh,
-                        setScmOperationBusy,
-                        setScmOperationStatus,
-                        tracking,
-                    });
-                },
-            });
-        }
-        return actions;
-    }, [
-        pullPreflight.allowed,
-        pushPreflight.allowed,
-        refresh,
-        scmCommitStrategy,
-        scmOperationBusy,
-        normalizedPushRejectPolicy,
-        normalizedRemoteConfirmPolicy,
-        scmWriteEnabled,
-        scope,
-        snapshot,
-    ]);
-
+    const commitAllowed = commitPreflight.allowed;
+    const commitBlockedMessage = commitPreflight.allowed ? null : commitPreflight.message;
     const branchSummaryDisabled = scmOperationBusy;
     const stashCount = useScmStashSummaryCount({
         enabled: snapshot?.capabilities?.readStash === true,
@@ -293,6 +220,69 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
             tracking: null,
         });
     }, [commitSelectionPatches, commitSelectionPaths, refresh, scmCommitStrategy, scope]);
+
+    const commitAdjacentPushState = React.useMemo(() => {
+        return resolveCommitAdjacentPushActionState({
+            snapshot,
+            pushPreflight,
+            scmWriteEnabled,
+            sessionPath: scope.rootPath,
+            scmOperationBusy,
+            hasGlobalOperationInFlight: false,
+            isLockedByOtherSession: false,
+        });
+    }, [pushPreflight, scmOperationBusy, scmWriteEnabled, scope.rootPath, snapshot]);
+
+    const onCommitAdjacentPush = React.useCallback(() => {
+        if (!commitAdjacentPushState.visible) return;
+        void (async () => {
+            const confirmed = await confirmCommitAdjacentPush({
+                target: commitAdjacentPushState.target,
+                policy: normalizedRemoteConfirmPolicy,
+                setRemoteConfirmPolicy: setScmRemoteConfirmPolicy,
+                detachedHeadLabel: t('files.detachedHead'),
+            });
+            if (!confirmed) return;
+            await executeWorkspaceScmRemoteOperation({
+                kind: 'push',
+                scope,
+                scmSnapshot: snapshot,
+                scmWriteEnabled,
+                scmCommitStrategy,
+                scmRemoteConfirmPolicy: normalizedRemoteConfirmPolicy,
+                scmPushRejectPolicy: normalizedPushRejectPolicy,
+                refreshScmData: refresh,
+                setScmOperationBusy,
+                setScmOperationStatus,
+                tracking: null,
+                skipConfirmation: true,
+            });
+        })();
+    }, [
+        commitAdjacentPushState,
+        normalizedPushRejectPolicy,
+        normalizedRemoteConfirmPolicy,
+        refresh,
+        scmCommitStrategy,
+        scmWriteEnabled,
+        scope,
+        setScmRemoteConfirmPolicy,
+        snapshot,
+    ]);
+
+    const commitAdjacentPushAction = React.useMemo(() => {
+        if (!commitAdjacentPushState.visible) return null;
+        const displayTarget = formatRemoteTargetForDisplay(
+            commitAdjacentPushState.target,
+            t('files.detachedHead'),
+        );
+        return {
+            label: t('files.commitAdjacentPush.accessibilityLabel', { target: displayTarget }),
+            disabled: commitAdjacentPushState.disabled,
+            busy: commitAdjacentPushState.busy,
+            onPress: onCommitAdjacentPush,
+        };
+    }, [commitAdjacentPushState, onCommitAdjacentPush]);
 
     if (error && !snapshot) {
         return (
@@ -385,19 +375,6 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                 )}
                             />
                         ) : null}
-                        <SourceControlRemoteActionsRail
-                            theme={theme}
-                            actions={remoteActions}
-                            hint={remoteActions.length > 0
-                                ? (
-                                    !pullPreflight.allowed
-                                        ? pullPreflight.message
-                                        : !pushPreflight.allowed
-                                            ? pushPreflight.message
-                                            : null
-                                )
-                                : null}
-                        />
                         <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
                             <View
                                 style={{
@@ -434,9 +411,15 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                     {t('files.toolbar.changedFiles')}
                                 </Text>
                                 <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
-                                    {String(changedFilesCount)}
+                                    {String(filteredChangedFiles.length)}
                                 </Text>
                             </View>
+                            <ChangedFilesViewModeMenu
+                                theme={theme}
+                                changedFilesViewMode={changedFilesViewMode}
+                                showSelectedViewToggle={selectedRepositoryChangedFiles.length > 0}
+                                onChangedFilesViewMode={setChangedFilesViewMode}
+                            />
                             {props.onOpenReviewAllChanges ? (
                                 <Pressable
                                     testID="workspace-scm-open-review"
@@ -583,6 +566,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                         selectionCount={repositorySelectedCount}
                         onClearSelection={repositorySelectedCount > 0 ? handleClearSelection : undefined}
                         onSelectAllSelection={isAtomicCommitStrategy(scmCommitStrategy) ? handleSelectAll : undefined}
+                        pushShortcut={commitAdjacentPushAction}
                         variant="railFooter"
                         commitMessageGeneratorEnabled={false}
                     />

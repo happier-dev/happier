@@ -5,26 +5,40 @@ import { Pressable, View } from 'react-native';
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
-import { buildReviewCommentsDisplayText } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
+import {
+    buildReviewCommentsDisplayText,
+    filterReviewCommentDraftsIncludedInPrompt,
+} from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { t } from '@/text';
 
-function openReviewCommentsDraftsAlert(params: Readonly<{
+import { ReviewCommentsDraftsModal } from './ReviewCommentsDraftsModal';
+
+function detachReviewCommentsFromPrompt(params: Readonly<{
     reviewCommentDrafts: readonly ReviewCommentDraft[];
+    onSetDraftIncluded: (draftId: string, included: boolean) => void;
+}>) {
+    for (const draft of params.reviewCommentDrafts) {
+        params.onSetDraftIncluded(draft.id, false);
+    }
+}
+
+function openReviewCommentsRemovePrompt(params: Readonly<{
+    reviewCommentDrafts: readonly ReviewCommentDraft[];
+    onSetDraftIncluded: (draftId: string, included: boolean) => void;
     onClearDrafts: () => void;
 }>) {
-    const preview = params.reviewCommentDrafts
-        .slice(0, 12)
-        .map((draft, idx) => `${idx + 1}) ${draft.filePath}: ${draft.body}`)
-        .join('\n');
-
     Modal.alert(
-        buildReviewCommentsDisplayText({ drafts: params.reviewCommentDrafts }),
-        preview.length > 0 ? preview : undefined,
+        t('files.reviewComments.detachOrDiscardTitle'),
+        t('files.reviewComments.detachOrDiscardBody'),
         [
             {
                 text: t('common.cancel'),
                 style: 'cancel',
+            },
+            {
+                text: t('files.reviewComments.detachFromPrompt'),
+                onPress: () => detachReviewCommentsFromPrompt(params),
             },
             {
                 text: t('common.discard'),
@@ -35,36 +49,83 @@ function openReviewCommentsDraftsAlert(params: Readonly<{
     );
 }
 
-export function createReviewCommentsActionChip(params: Readonly<{
+function openReviewCommentsDraftsModal(params: Readonly<{
+    sessionId?: string;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
+    onUpdateDraft: (draft: ReviewCommentDraft) => void;
+    onDeleteDraft: (draftId: string) => void;
+}>) {
+    Modal.show({
+        component: ReviewCommentsDraftsModal,
+        props: {
+            sessionId: params.sessionId,
+            reviewCommentDrafts: params.reviewCommentDrafts,
+            onUpdateDraft: params.onUpdateDraft,
+            onDeleteDraft: params.onDeleteDraft,
+        },
+        chrome: {
+            kind: 'card',
+            title: buildReviewCommentsDisplayText({ drafts: params.reviewCommentDrafts }),
+            subtitle: t('files.reviewComments.modalSubtitle'),
+            dimensions: {
+                size: 'lg',
+                maxHeightRatio: 0.84,
+            },
+        },
+    });
+}
+
+export function createReviewCommentsActionChip(params: Readonly<{
+    sessionId?: string;
+    reviewCommentDrafts: readonly ReviewCommentDraft[];
+    onSetDraftIncluded: (draftId: string, included: boolean) => void;
+    onUpdateDraft: (draft: ReviewCommentDraft) => void;
+    onDeleteDraft: (draftId: string) => void;
     onClearDrafts: () => void;
 }>): AgentInputExtraActionChip | undefined {
     const reviewCommentDraftCount = params.reviewCommentDrafts.length;
     if (reviewCommentDraftCount <= 0) return undefined;
 
-    const label = t('files.reviewComments.draftsChipLabel', { count: reviewCommentDraftCount });
-    const openDraftsAlert = () => {
-        openReviewCommentsDraftsAlert({
+    const includedReviewCommentDrafts = filterReviewCommentDraftsIncludedInPrompt(params.reviewCommentDrafts);
+    const label = t('files.reviewComments.draftsChipLabel', { count: includedReviewCommentDrafts.length });
+    const openDraftsModal = () => {
+        openReviewCommentsDraftsModal({
+            sessionId: params.sessionId,
             reviewCommentDrafts: params.reviewCommentDrafts,
-            onClearDrafts: params.onClearDrafts,
+            onUpdateDraft: params.onUpdateDraft,
+            onDeleteDraft: params.onDeleteDraft,
         });
     };
 
     return {
         key: 'review-comments',
         controlId: 'reviewComments',
+        composerAttachmentBadge: includedReviewCommentDrafts.length > 0 ? {
+            key: 'review-comments',
+            label,
+            testID: 'agent-input-review-comments-attachment-badge',
+            accessibilityLabel: label,
+            icon: (tint) => <Ionicons name="chatbox-ellipses-outline" size={14} color={tint} />,
+            onPress: openDraftsModal,
+            onRemove: () => openReviewCommentsRemovePrompt({
+                reviewCommentDrafts: params.reviewCommentDrafts,
+                onSetDraftIncluded: params.onSetDraftIncluded,
+                onClearDrafts: params.onClearDrafts,
+            }),
+            removeAccessibilityLabel: t('files.reviewComments.detachOrDiscardTitle'),
+        } : undefined,
         collapsedAction: ({ tint, dismiss }) => ({
             id: 'review-comments',
             label,
             icon: <Ionicons name="chatbox-ellipses-outline" size={16} color={tint} />,
             onPress: () => {
                 dismiss();
-                openDraftsAlert();
+                openDraftsModal();
             },
         }),
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
             <Pressable
-                onPress={openDraftsAlert}
+                onPress={openDraftsModal}
                 style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

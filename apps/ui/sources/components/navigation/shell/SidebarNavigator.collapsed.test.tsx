@@ -15,9 +15,32 @@ const hoistedState = vi.hoisted(() => ({
     mockWindowDimensions: { width: 1000, height: 800 },
     mockPathname: '/' as string,
     mockSegments: ['(app)'] as string[],
+    routerReplaceMock: vi.fn(),
 }));
 
 installNavigationShellCommonModuleMocks({
+    appPaneProvider: () => ({
+        useAppPaneContext: () => {
+            const focusModeScopeId = mockAppPaneStore.useContextValue();
+            return {
+                dispatch: mockAppPaneStore.dispatch,
+                state: {
+                    activeScopeId: 'session:s1',
+                    focusMode: { scopeId: focusModeScopeId },
+                    scopes: {
+                        'session:s1': {
+                            right: { isOpen: true },
+                            details: { isOpen: true },
+                            bottom: { isOpen: false },
+                        },
+                    },
+                },
+                getDriver: () => null,
+                driverRegistryVersion: 1,
+                registerDriver: () => () => {},
+            };
+        },
+    }),
     reactNative: installReactNativeWebMock({
         View: (props: any) => React.createElement('View', props, props.children),
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
@@ -49,6 +72,9 @@ installNavigationShellCommonModuleMocks({
         return createExpoRouterMock({
             pathname: () => hoistedState.mockPathname,
             segments: () => hoistedState.mockSegments,
+            router: {
+                replace: hoistedState.routerReplaceMock,
+            },
         }).module;
     },
     storage: installPartialStorageModuleMock({
@@ -57,14 +83,12 @@ installNavigationShellCommonModuleMocks({
                 (listener) => mockLocalSettingsStore.subscribe(listener),
                 () => {
                     if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
                     if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
                     if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
                     return false;
                 },
                 () => {
                     if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
                     if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
                     if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
                     return false;
@@ -76,14 +100,12 @@ installNavigationShellCommonModuleMocks({
                 (listener: any) => mockLocalSettingsStore.subscribe(listener),
                 () => {
                     if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
                     if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
                     if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
                     return false;
                 },
                 () => {
                     if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
                     if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
                     if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
                     return false;
@@ -93,7 +115,6 @@ installNavigationShellCommonModuleMocks({
                 val,
                 (next: unknown) => {
                     if (key === 'sidebarCollapsed' && typeof next === 'boolean') mockLocalSettingsStore.setSidebarCollapsed(next);
-                    if (key === 'editorFocusModeEnabled' && typeof next === 'boolean') mockLocalSettingsStore.setEditorFocusModeEnabled(next);
                     if (key === 'sidebarWidthPx' && typeof next === 'number') mockLocalSettingsStore.setSidebarWidthPx(next);
                     if (key === 'sidebarWidthBasisPx' && typeof next === 'number') mockLocalSettingsStore.setSidebarWidthBasisPx(next);
                 },
@@ -104,7 +125,6 @@ installNavigationShellCommonModuleMocks({
 
 const mockLocalSettingsStore = (() => {
   let sidebarCollapsed = false;
-  let editorFocusModeEnabled = false;
   let sidebarWidthPx = 320;
   let sidebarWidthBasisPx = 1200;
   const listeners = new Set<() => void>();
@@ -112,9 +132,6 @@ const mockLocalSettingsStore = (() => {
   return {
     get sidebarCollapsed() {
       return sidebarCollapsed;
-    },
-    get editorFocusModeEnabled() {
-      return editorFocusModeEnabled;
     },
     get sidebarWidthPx() {
       return sidebarWidthPx;
@@ -124,10 +141,6 @@ const mockLocalSettingsStore = (() => {
     },
     setSidebarCollapsed(next: boolean) {
       sidebarCollapsed = next;
-      for (const l of listeners) l();
-    },
-    setEditorFocusModeEnabled(next: boolean) {
-      editorFocusModeEnabled = next;
       for (const l of listeners) l();
     },
     setSidebarWidthPx(next: number) {
@@ -142,6 +155,47 @@ const mockLocalSettingsStore = (() => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+  };
+})();
+
+const mockAppPaneStore = (() => {
+  let focusModeScopeId: string | null = null;
+  const listeners = new Set<() => void>();
+  const dispatch = vi.fn((action: any) => {
+    if (action?.type === 'enterFocusMode') {
+      focusModeScopeId = action.scopeId;
+    }
+    if (action?.type === 'exitFocusMode') {
+      if (!action.scopeId || action.scopeId === focusModeScopeId) focusModeScopeId = null;
+    }
+    for (const listener of listeners) listener();
+  });
+
+  return {
+    get focusModeScopeId() {
+      return focusModeScopeId;
+    },
+    setFocusModeScopeId(next: string | null) {
+      focusModeScopeId = next;
+      for (const listener of listeners) listener();
+    },
+    reset() {
+      focusModeScopeId = null;
+      dispatch.mockClear();
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    useContextValue() {
+      return React.useSyncExternalStore(
+        (listener) => mockAppPaneStore.subscribe(listener),
+        () => mockAppPaneStore.focusModeScopeId,
+        () => mockAppPaneStore.focusModeScopeId,
+      );
+    },
+    dispatch,
   };
 })();
 
@@ -174,11 +228,6 @@ vi.mock('expo-router/drawer', () => {
   };
 });
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
-
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }));
@@ -188,15 +237,19 @@ vi.mock('./SidebarView', () => ({
 }));
 
 vi.mock('./CollapsedSidebarView', () => ({
-  CollapsedSidebarView: () =>
+  CollapsedSidebarView: (props: any) =>
     React.createElement(
       'CollapsedSidebarView',
-      {},
+      props,
+      React.createElement('Pressable', {
+        testID: 'collapsed-sidebar-home-button',
+        onPress: () => props.onExitFocusMode?.(),
+      }),
       React.createElement(
         'Pressable',
         {
           testID: 'sidebar-expand-button',
-          onPress: () => mockLocalSettingsStore.setSidebarCollapsed(false),
+          onPress: () => props.onRequestExpand?.() ?? mockLocalSettingsStore.setSidebarCollapsed(false),
         },
         React.createElement('SidebarCollapseIcon', {}, null)
       )
@@ -222,14 +275,15 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
   beforeEach(() => {
     act(() => {
       mockLocalSettingsStore.setSidebarCollapsed(false);
-      mockLocalSettingsStore.setEditorFocusModeEnabled(false);
       mockLocalSettingsStore.setSidebarWidthPx(320);
       mockLocalSettingsStore.setSidebarWidthBasisPx(1200);
+      mockAppPaneStore.reset();
     });
     hoistedState.mockPlatformOS = 'web';
     hoistedState.mockWindowDimensions = { width: 1000, height: 800 };
     hoistedState.mockPathname = '/';
     hoistedState.mockSegments = ['(app)'];
+    hoistedState.routerReplaceMock.mockReset();
     mockDrawerLifecycle.mounts = 0;
     mockDrawerLifecycle.unmounts = 0;
   });
@@ -371,6 +425,25 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
     const expandButton = tree.findByProps({ testID: 'sidebar-expand-button' });
     expect(expandButton.findByType('SidebarCollapseIcon' as any)).toBeDefined();
+    expect(tree.findByProps({ testID: 'collapsed-sidebar-home-button' })).toBeDefined();
+  });
+
+  it('clears scoped focus mode when the current route no longer matches the focused pane scope', async () => {
+    hoistedState.mockPathname = '/settings';
+    act(() => {
+      mockAppPaneStore.setFocusModeScopeId('session:s1');
+    });
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    tree = (await renderScreen(<SidebarNavigator />)).tree;
+
+    expect(mockAppPaneStore.dispatch).toHaveBeenCalledWith({
+      type: 'exitFocusMode',
+      scopeId: 'session:s1',
+    });
+    const drawer = getDrawer(tree);
+    expect(drawer.props.screenOptions.drawerStyle.width).toBeGreaterThan(72);
   });
 
   it('can collapse again on the first resize attempt after expanding from compact view', async () => {
@@ -423,7 +496,8 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(mockLocalSettingsStore.sidebarCollapsed).toBe(true);
   });
 
-  it('hides the permanent drawer when editorFocusModeEnabled toggles without remounting (so session state is preserved)', async () => {
+  it('uses the collapsed permanent drawer when scoped focus mode toggles without remounting', async () => {
+    hoistedState.mockPathname = '/session/s1';
     const { SidebarNavigator } = await import('./SidebarNavigator');
     let tree!: renderer.ReactTestRenderer;
 
@@ -436,7 +510,7 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(drawerBefore.props.screenOptions.drawerStyle.width).toBeGreaterThan(0);
 
     await act(async () => {
-      mockLocalSettingsStore.setEditorFocusModeEnabled(true);
+      mockAppPaneStore.setFocusModeScopeId('session:s1');
     });
 
     // No remount: toggling focus should not reset session/details state.
@@ -445,9 +519,17 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
     const drawerAfter = getDrawer(tree);
     expect(drawerAfter).toBeDefined();
-    expect(drawerAfter.props.screenOptions.drawerType).toBe('front');
-    expect(drawerAfter.props.screenOptions.drawerStyle.width).toBe(0);
-    expect(drawerAfter.props.screenOptions.drawerStyle.display).toBe('none');
+    expect(drawerAfter.props.screenOptions.drawerType).toBe('permanent');
+    expect(drawerAfter.props.screenOptions.drawerStyle.width).toBe(72);
+    expect(drawerAfter.findByType('CollapsedSidebarView' as any).props.focusModeActive).toBe(true);
+
+    const expandButton = tree.findByProps({ testID: 'sidebar-expand-button' });
+    await act(async () => {
+      await pressTestInstanceAsync(expandButton);
+    });
+
+    expect(mockAppPaneStore.dispatch).toHaveBeenCalledWith({ type: 'exitFocusMode' });
+    expect(mockLocalSettingsStore.sidebarCollapsed).toBe(false);
   });
 
   it('bypasses the desktop drawer shell for terminal connect on web', async () => {

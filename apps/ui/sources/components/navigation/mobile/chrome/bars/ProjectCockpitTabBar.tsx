@@ -19,7 +19,7 @@ export const ProjectCockpitTabBar = React.memo((props: ProjectCockpitTabBarProps
     const tabs: readonly ProjectCockpitTabDefinition[] = [
         { id: 'overview', label: t('diagnosis.sections.overview'), icon: 'grid-outline' },
         { id: 'browse', label: t('common.files'), icon: 'folder-outline' },
-        { id: 'git', label: t('settings.sourceControl'), icon: 'git-branch-outline' },
+        { id: 'git', label: t('session.rightPanel.tabs.git'), icon: 'git-branch-outline' },
         { id: 'tabs', label: t('common.tabs'), icon: 'albums-outline' },
         { id: 'terminal', label: t('settings.terminal'), icon: 'terminal-outline' },
     ];

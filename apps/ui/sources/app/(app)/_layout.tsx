@@ -1,13 +1,12 @@
 import { Stack, router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
-import { Typography } from '@/constants/Typography';
-import { createHeader } from '@/components/navigation/Header';
 import { Platform, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { useUnistyles } from 'react-native-unistyles';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
+import { createAppStackScreenOptions } from '@/components/navigation/createAppStackScreenOptions';
 import { useAuth } from '@/auth/context/AuthContext';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
@@ -37,6 +36,11 @@ import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDae
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
+import {
+    clearPendingMobileSurfaceTransitionForPathname,
+    resolvePendingMobileSurfaceTransitionStackOptions,
+} from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
+import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
 import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
@@ -47,6 +51,14 @@ import {
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
+type StackScreenProps = React.ComponentProps<typeof Stack.Screen>;
+type StackScreenOptions = NonNullable<StackScreenProps['options']>;
+type StackNavigatorScreenOptionsInput = Readonly<{
+    route: Readonly<{
+        name?: string;
+    }>;
+}>;
+
 export default function RootLayout() {
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
@@ -55,6 +67,7 @@ export default function RootLayout() {
     const pathname = usePathname();
     const globalSearchParams = useGlobalSearchParams();
     const { theme } = useUnistyles();
+    const preferredLanguage = getPreferredLanguage();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
@@ -127,10 +140,12 @@ export default function RootLayout() {
                 fireAndForget(refreshAuth(), { tag: 'RootLayout.webServerOverrideBootstrapped.refreshAuth' });
             }
             setIsApplyingWebServerOverride(false);
-            try {
-                window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
-            } catch {
-                // ignore
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                try {
+                    window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
+                } catch {
+                    // ignore
+                }
             }
             return;
         }
@@ -151,10 +166,12 @@ export default function RootLayout() {
             }
         })(), { tag: 'RootLayout.webServerOverride' });
 
-        try {
-            window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
-        } catch {
-            // ignore
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            try {
+                window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
+            } catch {
+                // ignore
+            }
         }
     }, [isAuthenticated, refreshAuth]);
 
@@ -164,6 +181,7 @@ export default function RootLayout() {
         const didConsume = consumeLegacySessionDeepLinkFromWebLocation({
             isAuthenticated,
             replaceRelativeUrl: (nextRelativeUrl) => {
+                if (Platform.OS !== 'web' || typeof window === 'undefined') return;
                 try {
                     window.history.replaceState(null, '', nextRelativeUrl);
                 } catch {
@@ -277,13 +295,230 @@ export default function RootLayout() {
         };
     }, [happierVoiceSupported, isAuthenticated]);
 
+    // Use custom header on Android and Mac Catalyst, native header on iOS (non-Catalyst)
+    const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
+    const rootStackScreenOptions = React.useMemo(() => createAppStackScreenOptions({
+        contentStyle: stackContentStyle,
+        headerBackTitle: t('common.back'),
+        shouldUseCustomHeader,
+        theme,
+    }), [
+        shouldUseCustomHeader,
+        stackContentStyle,
+        preferredLanguage,
+        theme.colors.header.background,
+        theme.colors.header.tint,
+    ]);
+    const rootStackScreenOptionsWithTransitions = React.useCallback((input: StackNavigatorScreenOptionsInput) => ({
+        ...rootStackScreenOptions,
+        ...resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: input.route.name,
+        }),
+    }), [rootStackScreenOptions]);
+    const rootStackRouteOptions = React.useMemo(() => {
+        const back = t('common.back');
+        const cancel = t('common.cancel');
+        const hiddenHeader: StackScreenOptions = { headerShown: false };
+        const blankBack: StackScreenOptions = {
+            headerTitle: '',
+            headerBackTitle: back,
+        };
+        const visibleBlankBack: StackScreenOptions = {
+            headerShown: true,
+            headerTitle: '',
+            headerBackTitle: back,
+        };
+        const visibleSessionHistory: StackScreenOptions = {
+            headerShown: true,
+            headerTitle: t('sessionHistory.title'),
+            headerBackTitle: back,
+        };
+
+        return {
+            index: {
+                headerShown: false,
+                headerTitle: '',
+            },
+            inboxIndex: createInboxStackScreenOptions(t),
+            friendsIndex: createFriendsStackScreenOptions(t),
+            hiddenHeader,
+            settings: {
+                // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
+                headerShown: false,
+            },
+            desktopActivityOverlay: {
+                headerShown: false,
+                contentStyle: {
+                    backgroundColor: 'transparent',
+                },
+            },
+            automationsIndex: {
+                headerShown: true,
+                headerTitle: t('navigation.automations'),
+                headerBackTitle: back,
+            },
+            automationsId: {
+                headerShown: true,
+                headerTitle: t('navigation.automation'),
+                headerBackTitle: back,
+            },
+            automationsNew: {
+                headerShown: true,
+                headerTitle: t('navigation.newAutomation'),
+                headerBackTitle: back,
+            },
+            visibleBlankBack,
+            sessionRuns: {
+                headerShown: true,
+                headerTitle: t('runs.title'),
+                headerBackTitle: back,
+            },
+            files: hiddenHeader,
+            sessionRecent: visibleSessionHistory,
+            sessionArchived: visibleSessionHistory,
+            terminalIndex: {
+                headerTitle: t('navigation.connectTerminal'),
+            },
+            changelog: {
+                headerShown: true,
+                headerTitle: t('navigation.whatsNew'),
+                headerBackTitle: back,
+            },
+            artifactsIndex: {
+                headerShown: true,
+                headerTitle: t('artifacts.title'),
+                headerBackTitle: back,
+            },
+            artifactsId: {
+                headerShown: false,
+            },
+            artifactsNew: {
+                headerShown: true,
+                headerTitle: t('artifacts.new'),
+                headerBackTitle: cancel,
+            },
+            artifactsEdit: {
+                headerShown: true,
+                headerTitle: t('artifacts.edit'),
+                headerBackTitle: cancel,
+            },
+            friendsSearch: {
+                headerShown: true,
+                headerTitle: t('friends.addFriend'),
+                headerBackTitle: back,
+            },
+            userId: visibleBlankBack,
+            devIndex: {
+                headerTitle: t('navigation.developerTools'),
+            },
+            devListDemo: {
+                headerTitle: t('navigation.listComponentsDemo'),
+            },
+            devTypography: {
+                headerTitle: t('navigation.typography'),
+            },
+            devColors: {
+                headerTitle: t('navigation.colors'),
+            },
+            devTools2: {
+                headerTitle: t('navigation.toolViewsDemo'),
+            },
+            devShimmerDemo: {
+                headerTitle: t('navigation.shimmerViewDemo'),
+            },
+            devMultiTextInput: {
+                headerTitle: t('navigation.multiTextInput'),
+            },
+            blankBack,
+            newPickSecretRequirement: {
+                headerShown: false,
+                // /new is presented modally on iOS. Ensure this overlay screen is too,
+                // otherwise it can end up pushed "behind" the modal (invisible but on the back stack).
+                presentation: Platform.OS === 'ios' ? 'containedModal' : 'modal',
+            },
+            zenIndex: hiddenHeader,
+            zenNew: {
+                presentation: 'modal',
+                headerTitle: t('navigation.zenNewTask'),
+                headerBackTitle: cancel,
+            },
+            zenView: {
+                presentation: 'modal',
+                headerTitle: t('navigation.zenTaskDetails'),
+                headerBackTitle: back,
+            },
+        } satisfies Record<string, StackScreenOptions>;
+    }, [preferredLanguage]);
+    const friendsManageScreenOptions = React.useCallback((args: { navigation: { navigate: (route: never) => void } }) => ({
+        headerShown: true,
+        headerTitle: t('navigation.friends'),
+        headerBackTitle: t('common.back'),
+        headerRight: () =>
+            (
+                <TouchableOpacity
+                    onPress={() => args.navigation.navigate('friends/search' as never)}
+                    style={{ paddingHorizontal: 16, opacity: friendsIdentityReady ? 1 : 0.5 }}
+                    disabled={!friendsIdentityReady}
+                    accessibilityState={{ disabled: !friendsIdentityReady }}
+                >
+                    <Text style={{ color: theme.colors.button.primary.tint, fontSize: 16 }}>
+                        {t('friends.addFriend')}
+                    </Text>
+                </TouchableOpacity>
+            ),
+    }), [friendsIdentityReady, preferredLanguage, theme.colors.button.primary.tint]);
+    const newSessionScreenOptions = React.useMemo<StackScreenOptions>(() => ({
+        headerTitle: t('newSession.title'),
+        headerShown: true,
+        headerBackTitle: t('common.cancel'),
+        presentation: 'modal',
+        gestureEnabled: true,
+        fullScreenGestureEnabled: true,
+        // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
+        headerBackVisible: false,
+        headerLeft: () => null,
+        headerRight: () => (
+            <TouchableOpacity
+                onPress={() => router.back()}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.cancel')}
+            >
+                <Ionicons name="close" size={22} color={theme.colors.header.tint} />
+            </TouchableOpacity>
+        ),
+    }), [preferredLanguage, theme.colors.header.tint]);
+    const directBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
+        headerTitle: t('directSessions.browseTitle'),
+        headerShown: true,
+        headerBackTitle: t('common.cancel'),
+        presentation: 'modal',
+        gestureEnabled: true,
+        fullScreenGestureEnabled: true,
+        headerBackVisible: false,
+        headerLeft: () => null,
+        headerRight: () => (
+            <TouchableOpacity
+                onPress={() => router.back()}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.cancel')}
+            >
+                <Ionicons name="close" size={22} color={theme.colors.header.tint} />
+            </TouchableOpacity>
+        ),
+    }), [preferredLanguage, theme.colors.header.tint]);
+
+    React.useEffect(() => {
+        clearPendingMobileSurfaceTransitionForPathname(pathname);
+    }, [pathname]);
+
     // Avoid rendering protected screens for a frame during redirect.
     if (shouldRedirect || isApplyingWebServerOverride) {
         return null;
     }
-
-    // Use custom header on Android and Mac Catalyst, native header on iOS (non-Catalyst)
-    const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
 
     return (
         <>
@@ -292,6 +527,7 @@ export default function RootLayout() {
                     <ActivityBadgeRuntime />
                     <ActivitySurfacesRuntime />
                     <ActivityLocalNotificationRuntime />
+                    <PetAppShellCompanionMount />
                     {isTauriDesktopHost ? (
                         <>
                             <DesktopTrayRuntime />
@@ -309,459 +545,231 @@ export default function RootLayout() {
                     <Text>{pathname}</Text>
                 </View>
             ) : null}
-            <Stack
-                screenOptions={{
-                    header: shouldUseCustomHeader ? createHeader : undefined,
-                    headerBackTitle: t('common.back'),
-                    headerShadowVisible: false,
-                    contentStyle: stackContentStyle,
-                    headerStyle: {
-                        backgroundColor: theme.colors.header.background,
-                    },
-                    headerTintColor: theme.colors.header.tint,
-                    headerTitleStyle: {
-                        color: theme.colors.header.tint,
-                        ...Typography.default('semiBold'),
-                    },
-
-                }}
-            >
-            <Stack.Screen
-                name="index"
-                options={{
-                    headerShown: false,
-                    headerTitle: ''
-                }}
-            />
-            <Stack.Screen
-                name="inbox/index"
-                options={createInboxStackScreenOptions(t)}
-            />
-            <Stack.Screen
-                name="friends/index"
-                options={createFriendsStackScreenOptions(t)}
-            />
-            <Stack.Screen
-                name="oauth/[provider]"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="settings"
-                options={{
-                    // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="desktop/activity-overlay"
-                options={{
-                    headerShown: false,
-                    contentStyle: {
-                        backgroundColor: 'transparent',
-                    },
-                }}
-            />
-            <Stack.Screen
-                name="automations/index"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.automations'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="automations/[id]"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.automation'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="automations/new"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.newAutomation'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/info"
-                options={{
-                    headerShown: true,
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/runs"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('runs.title'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/runs/new"
-                options={{
-                    headerShown: true,
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/runs/[runId]"
-                options={{
-                    headerShown: true,
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/files"
-                options={{
-                    // The Files/SCM mobile route renders the exact same surface as the desktop right panel,
-                    // including its own header (tabs + close button). Avoid double headers.
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/git"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/details"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/terminal"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="projects/[workspaceRefId]/terminal"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/index"
-                options={{
-                    headerShown: false
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/message/[messageId]"
-                options={{
-                    headerShown: true,
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/recent"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('sessionHistory.title'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/archived"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('sessionHistory.title'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="terminal/connect"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="terminal/index"
-                options={{
-                    headerTitle: t('navigation.connectTerminal'),
-                }}
-            />
-            <Stack.Screen
-                name="scan/terminal"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="scan/account"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="restore/index"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="restore/show-qr"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="restore/manual"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="restore/lost-access"
-                options={{
-                    headerShown: false,
-                }}
-            />
-            <Stack.Screen
-                name="changelog"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.whatsNew'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="artifacts/index"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('artifacts.title'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="artifacts/[id]"
-                options={{
-                    headerShown: false, // We'll set header dynamically
-                }}
-            />
-            <Stack.Screen
-                name="artifacts/new"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('artifacts.new'),
-                    headerBackTitle: t('common.cancel'),
-                }}
-            />
-            <Stack.Screen
-                name="artifacts/edit/[id]"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('artifacts.edit'),
-                    headerBackTitle: t('common.cancel'),
-                }}
-            />
-            <Stack.Screen
-                name="friends/manage"
-                options={({ navigation }) => ({
-                    headerShown: true,
-                    headerTitle: t('navigation.friends'),
-                    headerBackTitle: t('common.back'),
-                    headerRight: () =>
-                        (
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate('friends/search' as never)}
-                                style={{ paddingHorizontal: 16, opacity: friendsIdentityReady ? 1 : 0.5 }}
-                                disabled={!friendsIdentityReady}
-                                accessibilityState={{ disabled: !friendsIdentityReady }}
-                            >
-                                <Text style={{ color: theme.colors.button.primary.tint, fontSize: 16 }}>
-                                    {t('friends.addFriend')}
-                                </Text>
-                            </TouchableOpacity>
-                        ),
-                })}
-            />
-            <Stack.Screen
-                name="friends/search"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('friends.addFriend'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="user/[id]"
-                options={{
-                    headerShown: true,
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="dev/index"
-                options={{
-                    headerTitle: t('navigation.developerTools'),
-                }}
-            />
-
-            <Stack.Screen
-                name="dev/list-demo"
-                options={{
-                    headerTitle: t('navigation.listComponentsDemo'),
-                }}
-            />
-            <Stack.Screen
-                name="dev/typography"
-                options={{
-                    headerTitle: t('navigation.typography'),
-                }}
-            />
-            <Stack.Screen
-                name="dev/colors"
-                options={{
-                    headerTitle: t('navigation.colors'),
-                }}
-            />
-            <Stack.Screen
-                name="dev/tools2"
-                options={{
-                    headerTitle: t('navigation.toolViewsDemo'),
-                }}
-            />
-            <Stack.Screen
-                name="dev/shimmer-demo"
-                options={{
-                    headerTitle: t('navigation.shimmerViewDemo'),
-                }}
-            />
-            <Stack.Screen
-                name="dev/multi-text-input"
-                options={{
-                    headerTitle: t('navigation.multiTextInput'),
-                }}
-            />
-            <Stack.Screen
-                name="new/pick/machine"
-                options={{
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="new/pick/path"
-                options={{
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="new/pick/profile"
-                options={{
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="new/pick/server"
-                options={{
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="new/pick/profile-edit"
-                options={{
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="new/pick/secret-requirement"
-                options={{
-                    headerShown: false,
-                    // /new is presented modally on iOS. Ensure this overlay screen is too,
-                    // otherwise it can end up pushed "behind" the modal (invisible but on the back stack).
-                    presentation: Platform.OS === 'ios' ? 'containedModal' : 'modal',
-                }}
-            />
-            <Stack.Screen
-                name="new/index"
-                options={{
-                    headerTitle: t('newSession.title'),
-                    headerShown: true,
-                    headerBackTitle: t('common.cancel'),
-                    presentation: 'modal',
-                    gestureEnabled: true,
-                    fullScreenGestureEnabled: true,
-                    // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
-                    headerBackVisible: false,
-                    headerLeft: () => null,
-                    headerRight: () => (
-                        <TouchableOpacity
-                            onPress={() => router.back()}
-                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                            style={{ paddingHorizontal: 12, paddingVertical: 6 }}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('common.cancel')}
-                        >
-                            <Ionicons name="close" size={22} color={theme.colors.header.tint} />
-                        </TouchableOpacity>
-                    ),
-                }}
-            />
-            <Stack.Screen
-                name="direct/browse"
-                options={{
-                    headerTitle: t('directSessions.browseTitle'),
-                    headerShown: true,
-                    headerBackTitle: t('common.cancel'),
-                    presentation: 'modal',
-                    gestureEnabled: true,
-                    fullScreenGestureEnabled: true,
-                    headerBackVisible: false,
-                    headerLeft: () => null,
-                    headerRight: () => (
-                        <TouchableOpacity
-                            onPress={() => router.back()}
-                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                            style={{ paddingHorizontal: 12, paddingVertical: 6 }}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('common.cancel')}
-                        >
-                            <Ionicons name="close" size={22} color={theme.colors.header.tint} />
-                        </TouchableOpacity>
-                    ),
-                }}
-            />
-            <Stack.Screen
-                name="zen/index"
-                options={{
-                    headerShown: false
-                }}
-            />
-            <Stack.Screen
-                name="zen/new"
-                options={{
-                    presentation: 'modal',
-                    headerTitle: t('navigation.zenNewTask'),
-                    headerBackTitle: t('common.cancel'),
-                }}
-            />
-            <Stack.Screen
-                name="zen/view"
-                options={{
-                    presentation: 'modal',
-                    headerTitle: t('navigation.zenTaskDetails'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
+            <Stack screenOptions={rootStackScreenOptionsWithTransitions}>
+                <Stack.Screen
+                    name="index"
+                    options={rootStackRouteOptions.index}
+                />
+                <Stack.Screen
+                    name="inbox/index"
+                    options={rootStackRouteOptions.inboxIndex}
+                />
+                <Stack.Screen
+                    name="friends/index"
+                    options={rootStackRouteOptions.friendsIndex}
+                />
+                <Stack.Screen
+                    name="oauth/[provider]"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="settings"
+                    options={rootStackRouteOptions.settings}
+                />
+                <Stack.Screen
+                    name="desktop/activity-overlay"
+                    options={rootStackRouteOptions.desktopActivityOverlay}
+                />
+                <Stack.Screen
+                    name="automations/index"
+                    options={rootStackRouteOptions.automationsIndex}
+                />
+                <Stack.Screen
+                    name="automations/[id]"
+                    options={rootStackRouteOptions.automationsId}
+                />
+                <Stack.Screen
+                    name="automations/new"
+                    options={rootStackRouteOptions.automationsNew}
+                />
+                <Stack.Screen
+                    name="session/[id]/info"
+                    options={rootStackRouteOptions.visibleBlankBack}
+                />
+                <Stack.Screen
+                    name="session/[id]/runs"
+                    options={rootStackRouteOptions.sessionRuns}
+                />
+                <Stack.Screen
+                    name="session/[id]/runs/new"
+                    options={rootStackRouteOptions.visibleBlankBack}
+                />
+                <Stack.Screen
+                    name="session/[id]/runs/[runId]"
+                    options={rootStackRouteOptions.visibleBlankBack}
+                />
+                <Stack.Screen
+                    name="session/[id]/files"
+                    options={rootStackRouteOptions.files}
+                />
+                <Stack.Screen
+                    name="session/[id]/git"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="session/[id]/details"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="session/[id]/terminal"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="projects/[workspaceRefId]/terminal"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="session/[id]/index"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="session/[id]/message/[messageId]"
+                    options={rootStackRouteOptions.visibleBlankBack}
+                />
+                <Stack.Screen
+                    name="session/recent"
+                    options={rootStackRouteOptions.sessionRecent}
+                />
+                <Stack.Screen
+                    name="session/archived"
+                    options={rootStackRouteOptions.sessionArchived}
+                />
+                <Stack.Screen
+                    name="terminal/connect"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="terminal/index"
+                    options={rootStackRouteOptions.terminalIndex}
+                />
+                <Stack.Screen
+                    name="scan/terminal"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="scan/account"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="restore/index"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="restore/show-qr"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="restore/manual"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="restore/lost-access"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="changelog"
+                    options={rootStackRouteOptions.changelog}
+                />
+                <Stack.Screen
+                    name="artifacts/index"
+                    options={rootStackRouteOptions.artifactsIndex}
+                />
+                <Stack.Screen
+                    name="artifacts/[id]"
+                    options={rootStackRouteOptions.artifactsId}
+                />
+                <Stack.Screen
+                    name="artifacts/new"
+                    options={rootStackRouteOptions.artifactsNew}
+                />
+                <Stack.Screen
+                    name="artifacts/edit/[id]"
+                    options={rootStackRouteOptions.artifactsEdit}
+                />
+                <Stack.Screen
+                    name="friends/manage"
+                    options={friendsManageScreenOptions}
+                />
+                <Stack.Screen
+                    name="friends/search"
+                    options={rootStackRouteOptions.friendsSearch}
+                />
+                <Stack.Screen
+                    name="user/[id]"
+                    options={rootStackRouteOptions.userId}
+                />
+                <Stack.Screen
+                    name="dev/index"
+                    options={rootStackRouteOptions.devIndex}
+                />
+                <Stack.Screen
+                    name="dev/list-demo"
+                    options={rootStackRouteOptions.devListDemo}
+                />
+                <Stack.Screen
+                    name="dev/typography"
+                    options={rootStackRouteOptions.devTypography}
+                />
+                <Stack.Screen
+                    name="dev/colors"
+                    options={rootStackRouteOptions.devColors}
+                />
+                <Stack.Screen
+                    name="dev/tools2"
+                    options={rootStackRouteOptions.devTools2}
+                />
+                <Stack.Screen
+                    name="dev/shimmer-demo"
+                    options={rootStackRouteOptions.devShimmerDemo}
+                />
+                <Stack.Screen
+                    name="dev/multi-text-input"
+                    options={rootStackRouteOptions.devMultiTextInput}
+                />
+                <Stack.Screen
+                    name="new/pick/machine"
+                    options={rootStackRouteOptions.blankBack}
+                />
+                <Stack.Screen
+                    name="new/pick/path"
+                    options={rootStackRouteOptions.blankBack}
+                />
+                <Stack.Screen
+                    name="new/pick/profile"
+                    options={rootStackRouteOptions.blankBack}
+                />
+                <Stack.Screen
+                    name="new/pick/server"
+                    options={rootStackRouteOptions.blankBack}
+                />
+                <Stack.Screen
+                    name="new/pick/profile-edit"
+                    options={rootStackRouteOptions.blankBack}
+                />
+                <Stack.Screen
+                    name="new/pick/secret-requirement"
+                    options={rootStackRouteOptions.newPickSecretRequirement}
+                />
+                <Stack.Screen
+                    name="new/index"
+                    options={newSessionScreenOptions}
+                />
+                <Stack.Screen
+                    name="direct/browse"
+                    options={directBrowseScreenOptions}
+                />
+                <Stack.Screen
+                    name="zen/index"
+                    options={rootStackRouteOptions.zenIndex}
+                />
+                <Stack.Screen
+                    name="zen/new"
+                    options={rootStackRouteOptions.zenNew}
+                />
+                <Stack.Screen
+                    name="zen/view"
+                    options={rootStackRouteOptions.zenView}
+                />
             </Stack>
             <MobileBottomChromeHost />
         </>

@@ -67,7 +67,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         isAuthenticated: false,
         isTauriDesktop: isDesktopShell,
         isTablet: false,
-        editorFocusModeEnabled: false,
         isTerminalConnectRoute: false,
     });
     const resolvedDesktopWindowControls = useResolvedDesktopWindowControls({

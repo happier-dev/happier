@@ -15,11 +15,21 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 const { requests } = vi.hoisted(() => ({
     requests: [] as Array<Record<string, unknown>>,
 }));
+const hookCalls = vi.hoisted(() => ({
+    capabilities: [] as Array<{ machineId: string | null; serverId?: string | null; enabled: boolean }>,
+    daemonProjection: [] as Array<{ machineId: string | null; serverId?: string | null; enabled: boolean }>,
+}));
 const modalSpies = vi.hoisted(() => ({
     alert: vi.fn(),
     confirm: vi.fn(),
     prompt: vi.fn(),
     show: vi.fn(),
+}));
+const routeParamsRef = vi.hoisted(() => ({
+    current: { id: 'machine-1' } as Record<string, string>,
+}));
+const activeServerIdRef = vi.hoisted(() => ({
+    current: 'server-a',
 }));
 
 installMachineDetailsCommonModuleMocks({
@@ -27,7 +37,7 @@ installMachineDetailsCommonModuleMocks({
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
             router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
-            params: { id: 'machine-1' },
+            params: () => routeParamsRef.current,
         }).module;
     },
     modal: async () => {
@@ -112,15 +122,33 @@ vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => {
     type UseMachineCapabilitiesParams = {
+        machineId: string | null;
+        serverId?: string | null;
+        enabled: boolean;
         request: Record<string, unknown>;
     };
     return {
         useMachineCapabilitiesCache: (params: UseMachineCapabilitiesParams) => {
             requests.push(params.request);
+            hookCalls.capabilities.push({
+                machineId: params.machineId,
+                serverId: params.serverId,
+                enabled: params.enabled,
+            });
             return { state: { status: 'idle' }, refresh: vi.fn() };
         },
     };
 });
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: (params: { machineId: string | null; serverId?: string | null; enabled: boolean }) => {
+        hookCalls.daemonProjection.push({
+            machineId: params.machineId,
+            serverId: params.serverId,
+            enabled: params.enabled,
+        });
+        return { inputs: null };
+    },
+}));
 
 vi.mock('@/sync/ops', () => {
     return {
@@ -169,7 +197,7 @@ vi.mock('@/utils/path/pathUtils', () => {
 });
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerId: () => 'server-a',
+    getActiveServerId: () => activeServerIdRef.current,
 }));
 
 vi.mock('@/sync/domains/settings/terminalSettings', () => {
@@ -206,6 +234,12 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 
 describe('MachineDetailScreen capabilities request', () => {
     it('passes a stable request object to useMachineCapabilitiesCache', async () => {
+        requests.length = 0;
+        hookCalls.capabilities.length = 0;
+        hookCalls.daemonProjection.length = 0;
+        routeParamsRef.current = { id: 'machine-1' };
+        activeServerIdRef.current = 'server-a';
+
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -217,5 +251,26 @@ describe('MachineDetailScreen capabilities request', () => {
 
         expect(requests.length).toBeGreaterThanOrEqual(2);
         expect(requests[0]).toBe(requests[1]);
+    });
+
+    it('prefers the requested route server for machine-scoped capability and projection hooks', async () => {
+        requests.length = 0;
+        hookCalls.capabilities.length = 0;
+        hookCalls.daemonProjection.length = 0;
+        routeParamsRef.current = { id: 'machine-1', serverId: 'server-b' };
+        activeServerIdRef.current = 'server-a';
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        await renderScreen(React.createElement(MachineDetailScreen));
+
+        expect(hookCalls.capabilities.at(0)).toMatchObject({
+            machineId: 'machine-1',
+            serverId: 'server-b',
+        });
+        expect(hookCalls.daemonProjection.at(0)).toMatchObject({
+            machineId: 'machine-1',
+            serverId: 'server-b',
+            enabled: true,
+        });
     });
 });

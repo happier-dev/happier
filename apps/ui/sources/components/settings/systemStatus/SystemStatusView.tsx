@@ -37,6 +37,7 @@ import {
   buildMachineDoctorSnapshotTargetKey,
   useMachineDoctorSnapshotCollection,
 } from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshotCollection';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { OtaUpdateStatusSection } from './OtaUpdateStatusSection';
 
 function formatRelativeTimeMs(ms: number | null | undefined): string {
@@ -62,6 +63,13 @@ function resolveMachineDisplayName(params: Readonly<{ host?: string; displayName
 function resolveServerProfileLabel(profile: ServerProfile): string {
   const name = String(profile.name ?? '').trim();
   return name || profile.id || profile.serverUrl;
+}
+
+function doServerUrlsMismatch(left: string, right: string): boolean {
+  const leftKey = createServerUrlComparableKey(left);
+  const rightKey = createServerUrlComparableKey(right);
+  if (leftKey && rightKey) return leftKey !== rightKey;
+  return left.replace(/\/+$/, '') !== right.replace(/\/+$/, '');
 }
 
 export const SystemStatusView = React.memo(function SystemStatusView() {
@@ -235,7 +243,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
   }, [serverProfiles]);
 
   const openDiagnosis = React.useCallback(() => {
-    router.push('/(app)/settings/diagnosis');
+    router.push('/settings/diagnosis');
   }, [router]);
 
   return (
@@ -289,7 +297,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             subtitle={<Text style={{ color: theme.colors.textSecondary }}>{activeServerUrl || t('status.unknown')}</Text>}
             detail={activeServerSnapshot.serverId}
             icon={<Ionicons name="server-outline" size={24} color={theme.colors.accent.blue} />}
-            onPress={() => router.push('/server')}
+            onPress={() => router.push('/settings/server')}
           />
         </ItemGroup>
 
@@ -384,7 +392,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                     if (fetchEntry.status === 'ready') {
                       const daemonServerUrl = fetchEntry.snapshot.server.serverUrl;
                       const daemonAccountId = fetchEntry.snapshot.accountId ?? t('status.unknown');
-                      const serverMismatch = activeServerUrl && daemonServerUrl && daemonServerUrl !== activeServerUrl;
+                      const serverMismatch = Boolean(activeServerUrl && daemonServerUrl && doServerUrlsMismatch(activeServerUrl, daemonServerUrl));
                       const accountMismatch = profile?.id && fetchEntry.snapshot.accountId && fetchEntry.snapshot.accountId !== profile.id;
 
                       const mismatchLabel = serverMismatch || accountMismatch ? ` • ${t('systemStatus.mismatch')}` : '';

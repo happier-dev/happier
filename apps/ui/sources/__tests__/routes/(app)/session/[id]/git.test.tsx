@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
+import { getStyleValue, installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +11,7 @@ const routerBackSpy = vi.fn();
 const routerPushSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 let mockSessionId = 'session-1';
+let mockServerId: string | undefined;
 let isFocused = true;
 let canGoBack = true;
 let deviceType: 'phone' | 'tablet' | 'desktop' = 'desktop';
@@ -49,17 +50,27 @@ installSessionRouteCommonModuleMocks({
         });
         return {
             ...routerMock.module,
-            useLocalSearchParams: () => ({ id: mockSessionId }),
-            useGlobalSearchParams: () => ({ id: mockSessionId }),
+            useLocalSearchParams: () => ({ id: mockSessionId, serverId: mockServerId }),
+            useGlobalSearchParams: () => ({ id: mockSessionId, serverId: mockServerId }),
             useNavigation: () => ({ canGoBack: () => canGoBack }),
         };
+    },
+    safeAreaInsets: {
+        top: 13,
+        bottom: 27,
     },
     storageModule: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useLocalSetting: ((key: string) => (key === 'mobileWorkspaceExperienceV1' ? mobileWorkspaceExperience : null)) as any,
+                useSetting: ((key: string) => (key === 'mobileWorkspaceExperienceV1' ? mobileWorkspaceExperience : null)) as any,
+                useLocalSetting: ((key: string) => {
+                    if (key === 'mobileWorkspaceExperienceV1') {
+                        throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
+                    }
+                    return null;
+                }) as any,
             },
         });
     },
@@ -110,6 +121,7 @@ describe('/session/[id]/git', () => {
 
     beforeEach(() => {
         mockSessionId = 'session-1';
+        mockServerId = undefined;
         isFocused = true;
         canGoBack = true;
         deviceType = 'desktop';
@@ -139,9 +151,14 @@ describe('/session/[id]/git', () => {
     it('renders the shared SessionRightPanel surface fullscreen and opens the git tab', async () => {
         const screen = await renderRouteScreen();
 
+        const root = screen.tree.root.findAll((node) => String(node.type) === 'View' && node.props.testID === 'session-git-screen')[0];
+        expect(root).toBeTruthy();
         const panel = screen.findByType('SessionRightPanel' as never);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
+        expect(panel.props.presentation).toBe('screen');
+        expect(getStyleValue(root, 'paddingTop')).toBe(13);
+        expect(getStyleValue(root, 'paddingBottom')).toBe(27);
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'git' });
         expect(setRightTabSpy).toHaveBeenCalledWith('git');
     });
@@ -149,12 +166,19 @@ describe('/session/[id]/git', () => {
     it('renders the session cockpit shell on phone in cockpit mode', async () => {
         deviceType = 'phone';
         mobileWorkspaceExperience = 'cockpit';
+        mockServerId = 'server-b';
 
         const screen = await renderRouteScreen();
 
         const cockpit = screen.findByType('SessionCockpitShell' as never);
         expect(cockpit.props.sessionId).toBe('session-1');
+        expect(cockpit.props.routeServerId).toBe('server-b');
         expect(cockpit.props.surface).toBe('git');
+        expect(cockpit.props.safeAreaPadding).toBe(false);
+        const root = screen.tree.root.findAll((node) => String(node.type) === 'View' && node.props.testID === 'session-cockpit-route-screen')[0];
+        expect(root).toBeTruthy();
+        expect(getStyleValue(root, 'paddingTop')).toBe(0);
+        expect(getStyleValue(root, 'paddingBottom')).toBe(27);
         expect(screen.findAllByType('SessionRightPanel' as never)).toHaveLength(0);
     });
 

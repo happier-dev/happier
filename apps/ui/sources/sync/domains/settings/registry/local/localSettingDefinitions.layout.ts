@@ -7,13 +7,6 @@ import {
 } from './localSettingDefinitions.shared';
 
 export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
-    editorFocusModeEnabled: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Hide main content + sidebar to focus on right/details panes (web/tablet)',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
     rightPaneWidthPx: {
         schema: z.number(),
         default: 360,
@@ -85,13 +78,6 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         schema: z.enum(['persisted', 'direct']),
         default: 'persisted',
         description: 'Selected session list storage tab',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    mobileWorkspaceExperienceV1: {
-        schema: z.enum(['classic', 'cockpit']),
-        default: 'classic',
-        description: 'Preferred mobile workspace experience mode',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },

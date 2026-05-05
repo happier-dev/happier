@@ -62,5 +62,11 @@ if (typeof window !== 'undefined') {
     }
 }
 
+try {
+    require('./sources/activity/adapters/ios/backgroundWake/defineLiveActivityBackgroundWakeTask');
+} catch {
+    // Background wake is best-effort and native-only; unsupported runtimes keep booting normally.
+}
+
 require('./sources/unistyles');
 require('expo-router/entry');

@@ -122,6 +122,54 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         ]);
     });
 
+    it('updates collapsed previews to the newest tools when a tool is appended', async () => {
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
+        collapsedPreviewCount = 2;
+
+        const initialToolMessages = [
+            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
+            createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
+        ];
+        const nextToolMessages = [
+            ...initialToolMessages,
+            createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
+        ];
+
+        const screen = await renderToolCallsGroupView({
+            toolMessages: initialToolMessages,
+            expanded: false,
+            setExpanded: vi.fn(),
+        });
+
+        const initialPreviewIds = screen
+            .findAllByTestId('transcript-tool-calls-preview-row')
+            .map((p) => (p.props as any).children?.props?.messageId)
+            .filter(Boolean);
+        expect(initialPreviewIds).toEqual(['m1', 'm2']);
+
+        await act(async () => {
+            await screen.update(
+                <ToolCallsGroupView
+                    id="toolCalls:1"
+                    status="running"
+                    toolMessages={nextToolMessages}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                    expanded={false}
+                    setExpanded={vi.fn()}
+                />,
+            );
+        });
+
+        const previewIds = screen
+            .findAllByTestId('transcript-tool-calls-preview-row')
+            .map((p) => (p.props as any).children?.props?.messageId)
+            .filter(Boolean);
+        expect(previewIds).toEqual(['m2', 'm3']);
+        expect(screen.findAllByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
+    });
+
     it('renders no previews when count is 0', async () => {
         collapsedPreviewCount = 0;
 

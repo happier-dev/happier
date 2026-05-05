@@ -29,6 +29,12 @@ export interface SessionListRenderableMetadata {
         v: 1;
         providerId?: string;
     } | null;
+    readStateV1?: {
+        v: 1;
+        sessionSeq: number;
+        pendingActivityAt: number;
+        updatedAt: number;
+    } | null;
     hiddenSystemSession?: boolean;
 }
 
@@ -42,6 +48,7 @@ export interface SessionListRenderableSession {
     archivedAt?: number | null;
     pendingVersion?: number;
     pendingCount?: number;
+    lastViewedSessionSeq?: number | null;
     metadataVersion: number;
     agentStateVersion: number;
     metadata: SessionListRenderableMetadata | null;
@@ -57,6 +64,7 @@ export interface SessionListRenderableSession {
     hasPendingUserActionRequests?: boolean;
     hasUnreadMessages?: boolean;
     keepVisibleWhenInactive?: boolean;
+    metadataUnavailable?: boolean;
 }
 
 export type SessionListRenderableFieldSnapshot = Readonly<{
@@ -67,6 +75,7 @@ export type SessionListRenderableFieldSnapshot = Readonly<{
     archivedAt: number | null;
     pendingVersion: number | null;
     pendingCount: number | null;
+    lastViewedSessionSeq: number | null;
     metadataVersion: number;
     agentStateVersion: number;
     accessLevel: SessionListRenderableSession['accessLevel'] | null;
@@ -85,6 +94,12 @@ type SessionListRenderableStaleFieldSource = Readonly<{
     hasPendingPermissionRequests?: boolean;
     hasPendingUserActionRequests?: boolean;
 }>;
+
+function normalizeLastViewedSessionSeq(value: number | null | undefined): number | null {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(0, Math.trunc(value))
+        : null;
+}
 
 function deriveSessionListRenderableDirectSessionUnread(
     metadata: Metadata | null | undefined,
@@ -181,6 +196,7 @@ export function buildSessionListRenderableFromSession(
         archivedAt: session.archivedAt ?? null,
         pendingVersion: session.pendingVersion,
         pendingCount: session.pendingCount,
+        lastViewedSessionSeq: normalizeLastViewedSessionSeq(session.lastViewedSessionSeq),
         metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
         agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
         metadata: previous && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata)
@@ -225,6 +241,11 @@ export function preserveSessionListRenderableStaleFields(
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
     const preserveMetadata = next.metadata == null && previous?.metadata != null;
+    const preserveMetadataUnavailable =
+        !preserveMetadata
+        && next.metadata == null
+        && previous?.metadata == null
+        && previous?.metadataUnavailable === true;
     const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(next, previous);
     const preserveDirectSessionClassification =
         previous?.metadata?.directSessionV1 != null
@@ -234,7 +255,7 @@ export function preserveSessionListRenderableStaleFields(
 
     if (
         previous == null
-        || (!preserveMetadata && !preservePendingFlags && !preserveDirectSessionClassification)
+        || (!preserveMetadata && !preserveMetadataUnavailable && !preservePendingFlags && !preserveDirectSessionClassification)
     ) {
         return next;
     }
@@ -253,6 +274,11 @@ export function preserveSessionListRenderableStaleFields(
         metadataVersion: preserveMetadata ? previous.metadataVersion : next.metadataVersion,
         agentStateVersion: preservePendingFlags ? previous.agentStateVersion : next.agentStateVersion,
         metadata: nextMetadata,
+        metadataUnavailable: preserveMetadata
+            ? false
+            : preserveMetadataUnavailable
+                ? true
+                : next.metadataUnavailable,
         hasPendingPermissionRequests: preservePendingFlags
             ? previous.hasPendingPermissionRequests
             : next.hasPendingPermissionRequests,
@@ -279,6 +305,7 @@ export function areSessionListRenderablesEqual(
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
+        && (previous.lastViewedSessionSeq ?? null) === (next.lastViewedSessionSeq ?? null)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion
         && previous.thinking === next.thinking
@@ -293,6 +320,7 @@ export function areSessionListRenderablesEqual(
         && (previous.hasPendingUserActionRequests ?? null) === (next.hasPendingUserActionRequests ?? null)
         && (previous.hasUnreadMessages === true) === (next.hasUnreadMessages === true)
         && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
+        && (previous.metadataUnavailable === true) === (next.metadataUnavailable === true)
         && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata);
 }
 

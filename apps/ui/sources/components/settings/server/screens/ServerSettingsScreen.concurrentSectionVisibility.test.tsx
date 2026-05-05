@@ -32,7 +32,7 @@ installSettingsViewCommonModuleMocks({
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: ({ children, ...props }: any) => React.createElement('ItemList', props, children),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -262,5 +262,18 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
             else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
         }
+    });
+
+    it('keeps relay form actions tappable while the keyboard is open', async () => {
+        setController({ relayDriftBanner: null });
+
+        const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
+
+        const screen = await renderScreen(React.createElement(ServerSettingsScreen));
+        const itemList = screen.findByType('ItemList' as any);
+
+        expect(itemList.props.keyboardShouldPersistTaps).toBe('handled');
+        expect(itemList.props.keyboardDismissMode).toBe('interactive');
+        expect(itemList.props.automaticallyAdjustKeyboardInsets).toBe(true);
     });
 });

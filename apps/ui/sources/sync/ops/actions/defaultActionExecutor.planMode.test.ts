@@ -162,7 +162,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'agents.backends.list',
       { includeDisabled: true, limit: 2 },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -176,7 +176,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'agents.models.list',
       { agentId: 'claude', machineId: 'm1', limit: 3 },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -190,7 +190,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'agents.models.list',
       { backendTargetKey: 'acpBackend:review-bot', machineId: 'm1', limit: 2 },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -209,7 +209,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'session.spawn_new',
       { backendTargetKey: 'acpBackend:review-bot', path: '/tmp/project' },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -227,7 +227,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'session.spawn_picker',
       { backendTargetKey: 'acpBackend:review-bot' },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -243,7 +243,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'subagents.plan.start',
       { sessionId: 's1', backendTargetKeys: ['agent:claude'], instructions: 'Plan the changes.' },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -258,7 +258,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'session.mode.set',
       { sessionId: 's1', modeId: 'plan' },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -277,7 +277,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'session.mode.set',
       { sessionId: 's1', modeId: 'not-a-real-mode' },
-      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result).toEqual({
@@ -295,7 +295,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'session.mode.set',
       { sessionId: 's_acp', modeId: 'default' },
-      { defaultSessionId: 's_acp', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's_acp', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -318,7 +318,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'action.options.resolve',
       { actionId: 'session.mode.set', fieldPath: 'modeId', sessionId: 's_acp' },
-      { defaultSessionId: 's_acp', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's_acp', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
@@ -359,7 +359,7 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const result = await executor.execute(
       'session.mode.set',
       { sessionId: 's_codex', modeId: 'default' },
-      { defaultSessionId: 's_codex', surface: 'voice_tool', placement: 'voice_panel' },
+      { defaultSessionId: 's_codex', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);

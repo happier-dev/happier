@@ -243,9 +243,10 @@ describe('sync.sendMessage optimistic thinking', () => {
         await (sync as any).applySessionThinkingFromTaskLifecycle(sessionId, {
             type: 'task_complete',
             id: 'task-1',
-            createdAt: Date.now(),
+            createdAt: 12_345,
         });
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+        expect(storage.getState().sessions[sessionId].lastTurnCompletedAt ?? null).toBe(12_345);
     });
 
     it('hydrates a missing active session before sending the user message', async () => {

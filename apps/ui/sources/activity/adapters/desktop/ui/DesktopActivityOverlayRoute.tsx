@@ -1,15 +1,36 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type ViewProps } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useDesktopOverlayDragController } from '@/activity/adapters/desktop/positioning/useDesktopOverlayDragController';
+import { createActivitySurfaceSessionTarget } from '@/activity/actions/activitySurfaceTargets';
+import {
+    DESKTOP_ACTIVITY_OVERLAY_DEFAULT_HOVER_EXPAND_DELAY_MS,
+    DESKTOP_ACTIVITY_OVERLAY_EXPANDED_HOVER_LEAVE_COLLAPSE_DELAY_MS,
+    DESKTOP_ACTIVITY_OVERLAY_INPUT_LOCK_HEARTBEAT_MS,
+} from '@/activity/adapters/desktop/desktopActivityOverlayTiming';
 import {
     emitDesktopActivityOverlayInteraction,
+    executeDesktopActivityOverlayInteractionWithResult,
+    applyDesktopActivityOverlayDragDelta,
+    releaseDesktopActivityOverlayDragVelocity,
     setDesktopActivityOverlayExpanded,
+    setDesktopActivityOverlayInputLocked,
+    showDesktopMainWindow,
 } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { useDesktopActivityOverlayState } from '@/activity/adapters/desktop/runtime/useDesktopActivityOverlayState';
+import { PET_VELOCITY_SAMPLE_WINDOW_MS } from '@/components/pets/interaction/petPointerDragConfig';
+import {
+    type PetPointerDragMove,
+    usePetPointerDragSession,
+} from '@/components/pets/interaction/usePetPointerDragSession';
+import { PetCompanionSurface } from '@/components/pets/render/PetCompanionSurface';
+import { usePetSpritesheetSource } from '@/components/pets/render/usePetSpritesheetSource';
 import { Text } from '@/components/ui/text/Text';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { normalizePetCompanionSizeScale } from '@/sync/domains/pets/companionSizeScale';
+import { useLocalSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -17,8 +38,36 @@ import { DesktopActivityOverlayCollapsed } from './DesktopActivityOverlayCollaps
 import { DesktopActivityOverlayExpanded } from './DesktopActivityOverlayExpanded';
 import { DesktopActivityOverlayMotionFrame } from './DesktopActivityOverlayMotionFrame';
 import { resolveDesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
+import type { DesktopActivityOverlayUiModel } from './shared/desktopActivityOverlayUiModel';
+import { useDesktopOverlayTransparentDocumentBackground } from './useDesktopOverlayTransparentDocumentBackground';
 
-const DESKTOP_ACTIVITY_OVERLAY_HOVER_EXPAND_DELAY_MS = 1_000;
+type DesktopActivityOverlayExpandedReason =
+    | 'click'
+    | 'hover'
+    | 'outside_hover'
+    | 'keyboard_escape';
+
+type DesktopActivityOverlayCompanionDataProps = ViewProps & Readonly<{
+    dataSet: Readonly<{ petState: NonNullable<DesktopActivityOverlayUiModel['companion']>['state'] }>;
+    'data-pet-state': NonNullable<DesktopActivityOverlayUiModel['companion']>['state'];
+}>;
+
+const DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_WIDTH = 62;
+const DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_HEIGHT = 67;
+const DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_SCALE = 0.32;
+
+function resolveDesktopActivityOverlayCompanionMetrics(sizeScale: unknown): Readonly<{
+    width: number;
+    height: number;
+    scale: number;
+}> {
+    const resolvedSizeScale = normalizePetCompanionSizeScale(sizeScale);
+    return {
+        width: DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_WIDTH * resolvedSizeScale,
+        height: DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_HEIGHT * resolvedSizeScale,
+        scale: DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_SCALE * resolvedSizeScale,
+    };
+}
 
 function emitInteraction(actionIdentifier: string, data: Record<string, unknown> = {}) {
     fireAndForget(
@@ -30,108 +79,98 @@ function emitInteraction(actionIdentifier: string, data: Record<string, unknown>
     );
 }
 
-function useDesktopOverlayTransparentDocumentBackground(enabled: boolean) {
-    React.useLayoutEffect(() => {
-        if (!enabled || typeof document === 'undefined') {
-            return;
-        }
+function withOptionalServerId(
+    data: Record<string, unknown>,
+    serverId: string | null | undefined,
+): Record<string, unknown> {
+    return serverId ? { ...data, serverId } : data;
+}
 
-        const canInjectStylesheet = typeof document.createElement === 'function';
-        const styleElementId = 'desktop-activity-overlay-transparent-style';
-        const existingStyleElement = canInjectStylesheet ? document.getElementById?.(styleElementId) : null;
-        const styleElement = canInjectStylesheet
-            ? (existingStyleElement && (existingStyleElement as unknown as { nodeName?: string }).nodeName === 'STYLE'
-                ? (existingStyleElement as HTMLStyleElement)
-                : document.createElement('style'))
-            : null;
-        const injectedStyleElement = canInjectStylesheet && !existingStyleElement;
+function hasBlockingExpandedActionCard(model: DesktopActivityOverlayUiModel): boolean {
+    return (model.expanded.cards ?? []).some((card) => (
+        card.kind === 'permission_request' || card.kind === 'user_question'
+    ));
+}
 
-        if (styleElement) {
-            // Keep the stylesheet content up to date even across fast refresh or partial reloads where the
-            // style element may persist between mounts.
-            styleElement.id = styleElementId;
-            styleElement.textContent = `
-                html, body, #root, #app, #expo-root {
-                    background: transparent !important;
-                    background-color: transparent !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                    overflow: hidden !important;
-                    height: 100% !important;
-                    width: 100% !important;
-                }
-                #root > div, #root > div > div, #root > div > div > div {
-                    background: transparent !important;
-                    background-color: transparent !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                    height: 100% !important;
-                    width: 100% !important;
-                }
-            `;
-            if (injectedStyleElement) {
-                document.head?.appendChild?.(styleElement);
-            }
-        }
+function readPhysicalNotchWidth(
+    state: ReturnType<typeof useDesktopActivityOverlayState>,
+): number | null {
+    const width = state?.placementDiagnostics?.displayContext?.physicalNotchSize?.width;
+    return typeof width === 'number' && Number.isFinite(width) && width > 0 ? width : null;
+}
 
-        const htmlStyle = document.documentElement?.style;
-        const bodyStyle = document.body?.style;
-        const rootStyle = document.getElementById?.('root')?.style;
-        if (!htmlStyle || !bodyStyle) {
-            return;
-        }
+function DesktopActivityOverlayCompanion(props: Readonly<{
+    model: DesktopActivityOverlayUiModel;
+    dragState?: NonNullable<DesktopActivityOverlayUiModel['companion']>['state'] | null;
+    dragTargetRef?: ReturnType<typeof usePetPointerDragSession>['dragTargetRef'];
+    pointerHandlers?: ReturnType<typeof usePetPointerDragSession>['pointerHandlers'];
+    onActivate?: () => void | Promise<void>;
+    shouldSuppressPress?: () => boolean;
+}>): React.ReactElement | null {
+    const companion = props.model.companion;
+    const reducedMotion = useReducedMotionPreference();
+    const localSettings = useLocalSettings();
+    const metrics = React.useMemo(
+        () => resolveDesktopActivityOverlayCompanionMetrics(localSettings.petsCompanionSizeScale),
+        [localSettings.petsCompanionSizeScale],
+    );
+    const spritesheetSource = usePetSpritesheetSource(
+        companion?.pet.source,
+        'blink',
+    );
+    if (!companion?.enabled) {
+        return null;
+    }
 
-        const previousHtmlBackgroundColor = htmlStyle.backgroundColor;
-        const previousHtmlBackground = htmlStyle.background;
-        const previousBodyBackgroundColor = bodyStyle.backgroundColor;
-        const previousBodyBackground = bodyStyle.background;
-        const previousBodyMargin = bodyStyle.margin;
-        const previousBodyPadding = bodyStyle.padding;
-        const previousBodyOverflow = bodyStyle.overflow;
-        const previousRootBackgroundColor = rootStyle?.backgroundColor;
-        const previousRootBackground = rootStyle?.background;
-        const previousRootMargin = rootStyle?.margin;
-        const previousRootPadding = rootStyle?.padding;
+    const effectiveState = props.dragState ?? companion.state;
+    const dataProps: DesktopActivityOverlayCompanionDataProps = {
+        testID: 'desktop-activity-overlay-companion',
+        dataSet: { petState: effectiveState },
+        'data-pet-state': effectiveState,
+        style: [
+            styles.companion,
+            {
+                width: metrics.width,
+                height: metrics.height,
+            },
+        ],
+    };
 
-        htmlStyle.backgroundColor = 'transparent';
-        htmlStyle.background = 'transparent';
-        bodyStyle.backgroundColor = 'transparent';
-        bodyStyle.background = 'transparent';
-        bodyStyle.margin = '0px';
-        bodyStyle.padding = '0px';
-        bodyStyle.overflow = 'hidden';
-        if (rootStyle) {
-            rootStyle.backgroundColor = 'transparent';
-            rootStyle.background = 'transparent';
-            rootStyle.margin = '0px';
-            rootStyle.padding = '0px';
-        }
-
-        return () => {
-            htmlStyle.backgroundColor = previousHtmlBackgroundColor;
-            htmlStyle.background = previousHtmlBackground;
-            bodyStyle.backgroundColor = previousBodyBackgroundColor;
-            bodyStyle.background = previousBodyBackground;
-            bodyStyle.margin = previousBodyMargin;
-            bodyStyle.padding = previousBodyPadding;
-            bodyStyle.overflow = previousBodyOverflow;
-            if (rootStyle) {
-                rootStyle.backgroundColor = previousRootBackgroundColor ?? '';
-                rootStyle.background = previousRootBackground ?? '';
-                rootStyle.margin = previousRootMargin ?? '';
-                rootStyle.padding = previousRootPadding ?? '';
-            }
-            if (styleElement && injectedStyleElement) {
-                styleElement.remove();
-            }
-        };
-    }, [enabled]);
+    return (
+        <View pointerEvents="box-none" style={styles.companionLayer}>
+            <View {...dataProps}>
+                <PetCompanionSurface
+                    state={effectiveState}
+                    stateStyle={[
+                        styles.companionState,
+                        {
+                            width: metrics.width,
+                            height: metrics.height,
+                        },
+                    ]}
+                    hitboxTestID="desktop-activity-overlay-companion-hitbox"
+                    spriteTestID="desktop-activity-overlay-companion-sprite"
+                    spritesheetSource={spritesheetSource}
+                    scale={metrics.scale}
+                    reducedMotion={reducedMotion}
+                    dragTargetRef={props.dragTargetRef}
+                    pointerHandlers={props.pointerHandlers}
+                    onActivate={props.onActivate}
+                    shouldSuppressPress={props.shouldSuppressPress}
+                />
+            </View>
+        </View>
+    );
 }
 
 export function DesktopActivityOverlayRoute(): React.ReactElement {
     const state = useDesktopActivityOverlayState();
     const inOverlayWindowContext = isDesktopActivityOverlayWindowContext();
+    const [quickReplyDraft, setQuickReplyDraft] = React.useState('');
+    const [quickReplyInputLocked, setQuickReplyInputLocked] = React.useState(false);
+    const quickReplyInputLockedRef = React.useRef(false);
     const hoverExpandTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const hoverLeaveCollapseTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     useDesktopOverlayTransparentDocumentBackground(inOverlayWindowContext);
     const clearHoverExpandTimeout = React.useCallback(() => {
         if (hoverExpandTimeoutRef.current !== null) {
@@ -139,14 +178,61 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
             hoverExpandTimeoutRef.current = null;
         }
     }, []);
+    const clearHoverLeaveCollapseTimeout = React.useCallback(() => {
+        if (hoverLeaveCollapseTimeoutRef.current !== null) {
+            clearTimeout(hoverLeaveCollapseTimeoutRef.current);
+            hoverLeaveCollapseTimeoutRef.current = null;
+        }
+    }, []);
 
     React.useEffect(() => clearHoverExpandTimeout, [clearHoverExpandTimeout]);
+    React.useEffect(() => clearHoverLeaveCollapseTimeout, [clearHoverLeaveCollapseTimeout]);
 
     React.useEffect(() => {
         if (!state?.visible || state.expanded) {
             clearHoverExpandTimeout();
         }
     }, [clearHoverExpandTimeout, state?.expanded, state?.visible]);
+
+    React.useEffect(() => {
+        if (!state?.visible || !state.expanded) {
+            clearHoverLeaveCollapseTimeout();
+        }
+    }, [clearHoverLeaveCollapseTimeout, state?.expanded, state?.visible]);
+
+    const setOverlayInputLocked = React.useCallback((locked: boolean) => {
+        if (quickReplyInputLockedRef.current === locked) {
+            return;
+        }
+        quickReplyInputLockedRef.current = locked;
+        setQuickReplyInputLocked(locked);
+        fireAndForget(setDesktopActivityOverlayInputLocked(locked), {
+            tag: locked
+                ? 'DesktopActivityOverlayRoute.inputLock.lock'
+                : 'DesktopActivityOverlayRoute.inputLock.unlock',
+        });
+        emitInteraction('overlay-input-locked', { locked });
+    }, []);
+
+    React.useEffect(() => {
+        if (!state?.visible || !state.expanded || (!state.model.expanded.quickReply && quickReplyDraft.length === 0)) {
+            setOverlayInputLocked(false);
+        }
+    }, [quickReplyDraft.length, setOverlayInputLocked, state?.expanded, state?.model.expanded.quickReply, state?.visible]);
+
+    React.useEffect(() => {
+        if (!quickReplyInputLocked) {
+            return;
+        }
+
+        const interval = setInterval(() => {
+            fireAndForget(setDesktopActivityOverlayInputLocked(true), {
+                tag: 'DesktopActivityOverlayRoute.inputLock.heartbeat',
+            });
+        }, DESKTOP_ACTIVITY_OVERLAY_INPUT_LOCK_HEARTBEAT_MS);
+
+        return () => clearInterval(interval);
+    }, [quickReplyInputLocked]);
 
     const dragHandlers = useDesktopOverlayDragController({
         enabled: Boolean(
@@ -156,6 +242,41 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
             && !state.policy.lockPosition,
         ),
     });
+    const companionDragEnabled = Boolean(
+        state
+        && state.policy.enableDragReposition
+        && !state.policy.lockPosition,
+    );
+    const handleCompanionDragMove = React.useCallback((move: PetPointerDragMove) => {
+        if (move.coordinateSpace !== 'screen') return;
+        if (!companionDragEnabled) return;
+        fireAndForget(applyDesktopActivityOverlayDragDelta(move.deltaX, move.deltaY), {
+            tag: 'DesktopActivityOverlayRoute.companionDrag.applyDragDelta',
+        });
+    }, [companionDragEnabled]);
+    const companionDrag = usePetPointerDragSession({
+        coordinateSpace: 'screen',
+        onDragMove: handleCompanionDragMove,
+        onDragRelease: (release) => {
+            if (!companionDragEnabled) return;
+            fireAndForget(releaseDesktopActivityOverlayDragVelocity({
+                pointerId: release.pointerId,
+                vx: release.velocityX,
+                vy: release.velocityY,
+                sampleWindowMs: PET_VELOCITY_SAMPLE_WINDOW_MS,
+            }), {
+                tag: 'DesktopActivityOverlayRoute.companionDrag.releaseDragVelocity',
+            });
+        },
+        onActivate: () => {
+            fireAndForget(showDesktopMainWindow(), {
+                tag: 'DesktopActivityOverlayRoute.companionDrag.activateMainWindow',
+            });
+        },
+    });
+    const companionPointerHandlers = companionDragEnabled ? companionDrag.pointerHandlers : undefined;
+    const companionDragTargetRef = companionDragEnabled ? companionDrag.dragTargetRef : undefined;
+    const shouldSuppressCompanionPress = companionDragEnabled ? companionDrag.shouldSuppressPress : undefined;
 
     if (!inOverlayWindowContext) {
         return (
@@ -181,19 +302,21 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
         presentationMode: state.policy.presentationMode,
         hostMode: state.placementDiagnostics?.hostMode ?? null,
     });
+    const physicalNotchWidth = readPhysicalNotchWidth(state);
 
-    const expandOverlay = () => {
+    const setOverlayExpanded = (expanded: boolean, reason: DesktopActivityOverlayExpandedReason) => {
         clearHoverExpandTimeout();
-        fireAndForget(setDesktopActivityOverlayExpanded(true), {
-            tag: 'DesktopActivityOverlayRoute.expand',
+        clearHoverLeaveCollapseTimeout();
+        fireAndForget(setDesktopActivityOverlayExpanded(expanded), {
+            tag: expanded ? 'DesktopActivityOverlayRoute.expand' : 'DesktopActivityOverlayRoute.collapse',
         });
-        emitInteraction('overlay-set-expanded', { expanded: true });
+        emitInteraction('overlay-set-expanded', { expanded, reason });
     };
 
-    const hoverExpandEnabled = visualMode === 'notch_integrated' || state.policy.expandedBehavior === 'hover';
+    const hoverExpandEnabled = visualMode !== 'notch_integrated' && state.policy.expandedBehavior === 'hover';
 
     const onCollapsedPress = () => {
-        expandOverlay();
+        setOverlayExpanded(true, 'click');
     };
 
     const onCollapsedHoverIn = hoverExpandEnabled
@@ -201,11 +324,28 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
             clearHoverExpandTimeout();
             hoverExpandTimeoutRef.current = setTimeout(() => {
                 hoverExpandTimeoutRef.current = null;
-                expandOverlay();
-            }, DESKTOP_ACTIVITY_OVERLAY_HOVER_EXPAND_DELAY_MS);
+                setOverlayExpanded(true, 'hover');
+            }, state.policy.hoverExpandDelayMs ?? DESKTOP_ACTIVITY_OVERLAY_DEFAULT_HOVER_EXPAND_DELAY_MS);
         }
         : undefined;
     const onCollapsedHoverOut = hoverExpandEnabled ? clearHoverExpandTimeout : undefined;
+
+    const onExpandedHoverIn = () => {
+        clearHoverLeaveCollapseTimeout();
+        emitInteraction('overlay-surface-engaged', { engaged: true });
+    };
+
+    const onExpandedHoverOut = () => {
+        emitInteraction('overlay-surface-engaged', { engaged: false });
+        if (hasBlockingExpandedActionCard(state.model) || quickReplyInputLockedRef.current || quickReplyInputLocked) {
+            return;
+        }
+        clearHoverLeaveCollapseTimeout();
+        hoverLeaveCollapseTimeoutRef.current = setTimeout(() => {
+            hoverLeaveCollapseTimeoutRef.current = null;
+            setOverlayExpanded(false, 'outside_hover');
+        }, DESKTOP_ACTIVITY_OVERLAY_EXPANDED_HOVER_LEAVE_COLLAPSE_DELAY_MS);
+    };
 
     if (state.expanded) {
         return (
@@ -213,25 +353,54 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
                 <Text testID="desktop-activity-overlay-diagnostics" style={styles.diagnosticsText}>
                     {JSON.stringify(state.placementDiagnostics ?? null)}
                 </Text>
-                <DesktopActivityOverlayMotionFrame key="expanded" visible={state.visible} expanded>
-                <DesktopActivityOverlayExpanded
-                    model={state.model}
-                    visualMode={visualMode}
-                    onCollapse={() => {
-                        fireAndForget(setDesktopActivityOverlayExpanded(false), {
-                            tag: 'DesktopActivityOverlayRoute.collapse',
-                        });
-                            emitInteraction('overlay-set-expanded', { expanded: false });
-                        }}
-                        onOpenSession={(sessionId) => {
-                            emitInteraction(`open-session:${sessionId}`, { sessionId });
-                        }}
-                        onOpenInbox={() => {
-                            emitInteraction('open-inbox');
+                <DesktopActivityOverlayMotionFrame
+                    visible={state.visible}
+                    expanded
+                    edgeAnchored={visualMode === 'notch_integrated'}
+                >
+                    <DesktopActivityOverlayExpanded
+                        model={state.model}
+                        visualMode={visualMode}
+                        onHoverIn={onExpandedHoverIn}
+                        onHoverOut={onExpandedHoverOut}
+                        onOpenSession={(sessionId, serverId) => {
+                            emitInteraction(
+                                createActivitySurfaceSessionTarget(sessionId, serverId),
+                                withOptionalServerId({ sessionId }, serverId),
+                            );
                         }}
                         onAction={(action) => {
                             emitInteraction(action.actionIdentifier, { ...(action.data ?? {}) });
                         }}
+                        quickReplyDraft={quickReplyDraft}
+                        onQuickReplyDraftChange={setQuickReplyDraft}
+                        onQuickReplySend={async ({ sessionId, serverId, message }) => {
+                            try {
+                                const result = await executeDesktopActivityOverlayInteractionWithResult({
+                                    actionIdentifier: 'session.message.send',
+                                    data: withOptionalServerId({ sessionId, message }, serverId),
+                                });
+                                return result.ok;
+                            } catch {
+                                return false;
+                            }
+                        }}
+                        onQuickReplyInputLockChange={setOverlayInputLocked}
+                        onQuickReplyCleanEscape={() => {
+                            setOverlayExpanded(false, 'keyboard_escape');
+                        }}
+                    />
+                    <DesktopActivityOverlayCompanion
+                        model={state.model}
+                        dragState={companionDrag.dragState}
+                        dragTargetRef={companionDragTargetRef}
+                        pointerHandlers={companionPointerHandlers}
+                        onActivate={() => {
+                            fireAndForget(showDesktopMainWindow(), {
+                                tag: 'DesktopActivityOverlayRoute.companion.activateMainWindow',
+                            });
+                        }}
+                        shouldSuppressPress={shouldSuppressCompanionPress}
                     />
                 </DesktopActivityOverlayMotionFrame>
             </View>
@@ -243,14 +412,31 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
             <Text testID="desktop-activity-overlay-diagnostics" style={styles.diagnosticsText}>
                 {JSON.stringify(state.placementDiagnostics ?? null)}
             </Text>
-            <DesktopActivityOverlayMotionFrame key="collapsed" visible={state.visible} expanded={false}>
+            <DesktopActivityOverlayMotionFrame
+                visible={state.visible}
+                expanded={false}
+                edgeAnchored={visualMode === 'notch_integrated'}
+            >
                 <DesktopActivityOverlayCollapsed
                     model={state.model}
                     visualMode={visualMode}
+                    physicalNotchWidth={physicalNotchWidth}
                     dragHandlers={dragHandlers}
                     onPress={onCollapsedPress}
                     onHoverIn={onCollapsedHoverIn}
                     onHoverOut={onCollapsedHoverOut}
+                />
+                <DesktopActivityOverlayCompanion
+                    model={state.model}
+                    dragState={companionDrag.dragState}
+                    dragTargetRef={companionDragTargetRef}
+                    pointerHandlers={companionPointerHandlers}
+                    onActivate={() => {
+                        fireAndForget(showDesktopMainWindow(), {
+                            tag: 'DesktopActivityOverlayRoute.companion.activateMainWindow',
+                        });
+                    }}
+                    shouldSuppressPress={shouldSuppressCompanionPress}
                 />
             </DesktopActivityOverlayMotionFrame>
         </View>
@@ -285,5 +471,21 @@ const styles = StyleSheet.create({
         opacity: 0,
         pointerEvents: 'none',
         fontSize: 1,
+    },
+    companionLayer: {
+        position: 'absolute',
+        right: 8,
+        bottom: 2,
+        backgroundColor: 'transparent',
+    },
+    companion: {
+        width: 62,
+        height: 67,
+        backgroundColor: 'transparent',
+    },
+    companionState: {
+        width: 62,
+        height: 67,
+        backgroundColor: 'transparent',
     },
 });

@@ -17,9 +17,13 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.alwaysOnTop).toBe(true);
         expect(policy.autoHideEnabled).toBe(true);
         expect(policy.autoHideDelayMs).toBe(6000);
+        expect(policy).toMatchObject({
+            hoverExpandDelayMs: 500,
+        });
         expect(policy.expandedBehavior).toBe('click');
         expect(policy.interactiveCollapsed).toBe(true);
         expect(policy.presentationMode).toBe('automatic');
+        expect(policy.displayMode).toBe('automatic');
         expect(policy.placementMode).toBe('anchored');
         expect(policy.anchor).toBe('top_center');
     });
@@ -37,6 +41,7 @@ describe('resolveDesktopOverlayPolicy', () => {
             desktopOverlayExpandedBehavior: 'hover',
             desktopOverlayInteractiveCollapsed: false,
             desktopOverlayPresentationMode: 'floating_overlay',
+            desktopOverlayDisplayMode: 'built_in',
             desktopOverlayPlacementMode: 'custom',
             desktopOverlayAnchor: 'bottom_right',
             desktopOverlayOffsetX: 24,
@@ -61,6 +66,7 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.expandedBehavior).toBe('click');
         expect(policy.interactiveCollapsed).toBe(true);
         expect(policy.presentationMode).toBe('floating_overlay');
+        expect(policy.displayMode).toBe('built_in');
         expect(policy.placementMode).toBe('custom');
         expect(policy.anchor).toBe('bottom_right');
         expect(policy.offsetX).toBe(24);
@@ -70,8 +76,57 @@ describe('resolveDesktopOverlayPolicy', () => {
         expect(policy.density).toBe('compact');
         expect(policy.compactStyle).toBe('pill');
         expect(policy.showSessionCount).toBe(true);
+        expect(policy.collapsedCarouselEnabled).toBe(true);
         expect(policy.showPreviewText).toBe(true);
         expect(policy.clickAction).toBe('expand_overlay');
+    });
+
+    it('reads collapsed carousel behavior from canonical desktop overlay device overrides', () => {
+        const policy = resolveDesktopOverlayPolicy({
+            attentionDeviceOverridesV1: {
+                desktopOverlay: {
+                    collapsedCarouselEnabled: false,
+                },
+            },
+        });
+
+        expect(policy.collapsedCarouselEnabled).toBe(false);
+    });
+
+    it('maps canonical hover delay overrides to explicit product timings', () => {
+        expect(resolveDesktopOverlayPolicy({
+            attentionDeviceOverridesV1: {
+                desktopOverlay: {
+                    hoverExpandDelay: 'instant',
+                },
+            },
+        })).toMatchObject({ hoverExpandDelayMs: 0 });
+        expect(resolveDesktopOverlayPolicy({
+            attentionDeviceOverridesV1: {
+                desktopOverlay: {
+                    hoverExpandDelay: 'normal',
+                },
+            },
+        })).toMatchObject({ hoverExpandDelayMs: 500 });
+        expect(resolveDesktopOverlayPolicy({
+            attentionDeviceOverridesV1: {
+                desktopOverlay: {
+                    hoverExpandDelay: 'slow',
+                },
+            },
+        })).toMatchObject({ hoverExpandDelayMs: 1000 });
+    });
+
+    it('reads and clamps quick reply phrases from canonical desktop overlay device overrides', () => {
+        const policy = resolveDesktopOverlayPolicy({
+            attentionDeviceOverridesV1: {
+                desktopOverlay: {
+                    quickReplyPhrases: [' Ship ', 'Explain', '', 'Retry', 'More', 'Stop', 'Ignored'],
+                },
+            },
+        });
+
+        expect(policy.quickReplyPhrases).toEqual(['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Ignored']);
     });
 
     it('falls back to click when the expanded behavior is invalid', () => {

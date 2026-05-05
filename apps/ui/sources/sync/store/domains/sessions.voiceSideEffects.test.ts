@@ -49,9 +49,13 @@ function mockSessionsDomainBoundaries(): void {
         peekSessionListWarmCacheEntries: vi.fn(() => null),
         saveSessionListWarmCacheEntries: vi.fn(),
     }));
-    vi.doMock('../../domains/state/warmCacheAdapters', () => ({
-        buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
-    }));
+    vi.doMock('../../domains/state/warmCacheAdapters', async () => {
+        const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
+        return {
+            ...actual,
+            buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
+        };
+    });
     vi.doMock('../../domains/session/listing/applyReachableTargetsToSessionListRenderables', () => ({
         applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
     }));

@@ -2,7 +2,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
 import { createMachineFixture, renderHook } from '@/dev/testkit';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 import { useNewSessionMachinePathState } from './useNewSessionMachinePathState';
 
@@ -42,6 +42,35 @@ function toMachines(...machines: MachineFixtureInput[]): HookParams['machines'] 
     return machines.map(makeMachine);
 }
 
+function createSession(input: Readonly<{
+    id: string;
+    machineId: string;
+    path: string;
+    updatedAt?: number;
+}>): Session {
+    return {
+        id: input.id,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: input.updatedAt ?? 1,
+        active: true,
+        activeAt: 1,
+        metadata: {
+            machineId: input.machineId,
+            path: input.path,
+            homeDir: '/Users/test',
+            host: 'host.local',
+            flavor: 'claude',
+        },
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+    };
+}
+
 function getSelection(state: HookState): Readonly<{
     selectedMachineId: string | null;
     selectedPath: string;
@@ -59,6 +88,32 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('seeds the selected path from previous sessions when no stored recent path exists', async () => {
+        const initialProps = {
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/test' } }),
+            recentMachinePaths: [],
+            machineIdParam: null,
+            pathParam: null,
+            sessions: [
+                createSession({
+                    id: 'session-1',
+                    machineId: 'machine-1',
+                    path: '/Users/test/Development/atlas',
+                    updatedAt: 25,
+                }),
+            ],
+        };
+
+        const hook = await renderMachinePathState(initialProps);
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-1',
+            selectedPath: '/Users/test/Development/atlas',
+        });
+
+        await hook.unmount();
+    });
+
     it('applies the route path param immediately even before the route machine snapshot hydrates', async () => {
         const now = Date.now();
 

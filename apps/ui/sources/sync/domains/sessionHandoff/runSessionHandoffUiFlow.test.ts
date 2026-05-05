@@ -62,7 +62,7 @@ describe('runSessionHandoffUiFlow', () => {
       execute: vi.fn() as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(openSessionHandoffProgressModalMock).toHaveBeenCalledTimes(1);
@@ -88,7 +88,7 @@ describe('runSessionHandoffUiFlow', () => {
       execute: vi.fn() as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     await vi.waitFor(() => {
@@ -160,7 +160,7 @@ describe('runSessionHandoffUiFlow', () => {
       execute: vi.fn() as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(executeSessionHandoffActionMock).toHaveBeenCalledTimes(2);
@@ -186,7 +186,7 @@ describe('runSessionHandoffUiFlow', () => {
       execute: vi.fn() as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(result).toEqual({ ok: false, handled: true });
@@ -219,7 +219,7 @@ describe('runSessionHandoffUiFlow', () => {
       execute: vi.fn() as any,
       sessionId: 'sess_3',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_3', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_3', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(openSessionHandoffFailureRecoveryModalMock).toHaveBeenCalledWith({
@@ -290,7 +290,7 @@ describe('runSessionHandoffUiFlow', () => {
       execute: vi.fn() as any,
       sessionId: 'sess_4',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_4', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_4', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(performSessionHandoffRecoveryActionMock).toHaveBeenCalledWith({

@@ -1,6 +1,7 @@
 import {
     applyObservedProgressToDirectSessionAttentionV1,
     buildDirectSessionAttentionV1,
+    markDirectSessionAttentionUnreadV1,
     markDirectSessionAttentionViewedV1,
     type DirectSessionObservedProgress,
 } from '@happier-dev/protocol';
@@ -31,6 +32,19 @@ export function updateMetadataWithViewedDirectSessionProgress(metadata: Metadata
     if (!attention) return metadata;
 
     const nextAttention = markDirectSessionAttentionViewedV1(attention);
+    if (nextAttention === attention) return metadata;
+
+    return {
+        ...metadata,
+        ...(nextAttention ? { directSessionAttentionV1: buildDirectSessionAttentionV1(nextAttention) } : {}),
+    };
+}
+
+export function updateMetadataWithUnreadDirectSessionProgress(metadata: Metadata): Metadata {
+    const attention = readDirectSessionAttention(metadata);
+    if (!attention) return metadata;
+
+    const nextAttention = markDirectSessionAttentionUnreadV1(attention);
     if (nextAttention === attention) return metadata;
 
     return {

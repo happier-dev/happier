@@ -78,7 +78,7 @@ const DEFAULTS = {
 // Allow opt-in overrides for local dev tooling without changing upstream defaults.
 const nameOverride = (process.env.EXPO_APP_NAME || process.env.HAPPY_STACKS_IOS_APP_NAME || '').trim();
 const iosBundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || process.env.HAPPY_STACKS_IOS_BUNDLE_ID || '').trim();
-const androidPackageOverride = (process.env.EXPO_ANDROID_PACKAGE || process.env.EXPO_APP_BUNDLE_ID || '').trim();
+const androidPackageOverride = (process.env.EXPO_ANDROID_PACKAGE || '').trim();
 const ownerOverride = (process.env.EXPO_APP_OWNER || '').trim();
 const slugOverride = (process.env.EXPO_APP_SLUG || '').trim();
 const versionOverride = (process.env.EXPO_APP_VERSION || '').trim();
@@ -186,6 +186,11 @@ function resolveDefaultExpoRuntimeVersion() {
 
 const devClientLaunchMode = (process.env.HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE || '').trim();
 const devClientSilentLaunch = parseOptionalBoolean(process.env.HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH);
+const devClientAddGeneratedScheme = parseOptionalBoolean(process.env.HAPPIER_EXPO_DEVCLIENT_ADD_GENERATED_SCHEME);
+const devClientPluginOptions = {
+    ...(devClientLaunchMode ? { launchMode: devClientLaunchMode } : {}),
+    ...(devClientAddGeneratedScheme !== null ? { addGeneratedScheme: devClientAddGeneratedScheme } : {}),
+};
 const updatesNativeDebugEnabled =
     parseOptionalBoolean(process.env.HAPPIER_EXPO_USE_NATIVE_DEBUG) ??
     parseOptionalBoolean(process.env.EX_UPDATES_NATIVE_DEBUG) ??
@@ -255,6 +260,29 @@ const iosLiveActivitiesFrequentUpdates =
         process.env.EXPO_PUBLIC_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES
             ?? process.env.EXPO_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES
     ) ?? false;
+const iosLiveActivitiesPushNotifications =
+    parseOptionalBoolean(
+        process.env.EXPO_PUBLIC_IOS_LIVE_ACTIVITIES_PUSH_NOTIFICATIONS
+            ?? process.env.EXPO_IOS_LIVE_ACTIVITIES_PUSH_NOTIFICATIONS
+    ) ?? true;
+
+function resolveIosLiveActivityApnsEnvironment() {
+    const configured = String(
+        process.env.EXPO_PUBLIC_HAPPIER_IOS_APNS_ENVIRONMENT
+            ?? process.env.EXPO_IOS_APNS_ENVIRONMENT
+            ?? ''
+    ).trim().toLowerCase();
+    if (configured === 'production') return 'production';
+    if (configured === 'sandbox') return 'sandbox';
+    return appIdentityVariant === 'production' ? 'production' : 'sandbox';
+}
+
+const iosLiveActivityApnsEnvironment = resolveIosLiveActivityApnsEnvironment();
+const syncTuningJson = (
+    process.env.EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON ||
+    process.env.HAPPIER_SYNC_TUNING_JSON ||
+    ''
+).trim();
 
 // Native model packs (Sherpa-ONNX) are download-on-demand. Expo "public" env vars are embedded
 // at bundle time, so we provide a dev-safe default mapping that can be overridden in EAS/env.
@@ -367,9 +395,10 @@ const baseExpoConfig = {
             ],
             ...(devClientLaunchMode ? [[
                 "expo-dev-client",
-                {
-                    launchMode: devClientLaunchMode
-                }
+                devClientPluginOptions
+            ]] : devClientAddGeneratedScheme !== null ? [[
+                "expo-dev-client",
+                devClientPluginOptions
             ]] : []),
             "expo-updates",
             "expo-asset",
@@ -377,7 +406,9 @@ const baseExpoConfig = {
             [
                 "expo-widgets",
                 {
+                    bundleIdentifier: `${iosBundleId}.ExpoWidgetsTarget`,
                     frequentUpdates: iosLiveActivitiesFrequentUpdates,
+                    enablePushNotifications: iosLiveActivitiesPushNotifications,
                     widgets: [
                         {
                             name: "HappierFocusWidget",
@@ -415,6 +446,12 @@ const baseExpoConfig = {
             "@livekit/react-native-expo-plugin",
             "@config-plugins/react-native-webrtc",
             [
+                "react-native-enriched-markdown",
+                {
+                    enableMath: true
+                }
+            ],
+            [
                 "expo-audio",
                 {
                     microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone for voice conversations."
@@ -439,7 +476,11 @@ const baseExpoConfig = {
             [
                 "expo-notifications",
                 {
-                    "enableBackgroundRemoteNotifications": true
+                    "enableBackgroundRemoteNotifications": true,
+                    sounds: [
+                        "./sources/assets/sounds/happier_soft.wav",
+                        "./sources/assets/sounds/happier_urgent.wav",
+                    ]
                 }
             ],
             [
@@ -478,10 +519,14 @@ const baseExpoConfig = {
                 // production bundle IDs without disabling production-only native configuration.
                 variant: appVariantOverride || appVariant,
                 identityVariant: appIdentityVariant,
+                happierLiveActivityApnsEnvironment: iosLiveActivityApnsEnvironment,
+                iosLiveActivityPushNotificationsEnabled: iosLiveActivitiesPushNotifications,
+                iosBackgroundWakeNotificationsEnabled: true,
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,
-                revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE
+                revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE,
+                ...(syncTuningJson ? { syncTuningJson } : {})
             }
         },
         owner

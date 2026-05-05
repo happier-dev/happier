@@ -1770,6 +1770,8 @@ export const zhHans: TranslationStructure = {
     channelBridgesSubtitle: "将外部聊天（Telegram）桥接到会话",
     featuresTitle: "功能",
     featuresSubtitle: "启用或禁用应用功能",
+    pets: "宠物",
+    petsSubtitle: "选择 Blink 和此设备上的宠物伙伴",
     developer: "开发者",
     developerTools: "开发者工具",
     about: "关于",
@@ -2458,6 +2460,14 @@ export const zhHans: TranslationStructure = {
     remoteConfirmation: {
       title: "远程确认",
       footer: "控制 pull/push 是否需要确认。",
+      confirmBeforePulling: {
+        title: "拉取前确认",
+        subtitle: "下载并合并远程更改前先询问。",
+      },
+      confirmBeforePushing: {
+        title: "推送前确认",
+        subtitle: "将本地提交上传到远程前先询问。",
+      },
       options: {
         always: {
           title: "始终确认 pull/push",
@@ -2678,6 +2688,70 @@ export const zhHans: TranslationStructure = {
     },
   },
 
+
+
+  settingsPets: {
+    title: '宠物',
+    previewTitle: 'Blink 伙伴',
+    previewSubtitle: '用于会话状态和审阅提醒的小伙伴。',
+    disabledTitle: '宠物已停用',
+    disabledSubtitle: '启用宠物实验功能即可在此设备上使用 Blink。',
+    accountTitle: '账户默认值',
+    enabledTitle: '启用宠物',
+    enabledSubtitle: '为此账户显示伙伴界面。',
+    companionSizeTitle: '宠物大小',
+    companionSizeSubtitle: '调整此设备上的伙伴大小。',
+    companionSizeValue: ({ percent }: { percent: number }) => `${percent}%`,
+    deviceOverrideTitle: '在此设备上使用',
+    deviceOverrideSubtitle: '在本地覆盖账户宠物设置。',
+    sourceTitle: '宠物来源',
+    builtInSubtitle: '内置于 Happier。',
+    builtInBlinkSubtitle: '把会话信号变成安静的小状态灯。',
+    builtInFurySubtitle: '在进入生产前压力测试棘手流程。',
+    builtInMiloSubtitle: '保持 UI 整洁，并趴在失败测试上打盹。',
+    builtInOliSubtitle: '在构建察觉前悄悄发出修复。',
+    builtInTitiSubtitle: '以资深 staff 的专注分拣发布说明。',
+    localLibraryTitle: '此设备',
+    localLibraryFooter: '本地宠物会留在此设备上，除非你将它们导入账户。',
+    detectCodexPetsTitle: '检测 Codex 宠物',
+    detectCodexPetsSubtitle: '在本地 Codex homes 中查找兼容宠物。',
+    detectedCodexPetsTileSubtitle: '已在 Codex 中找到，准备加入此设备。',
+    detectedCodexPetsEmptyTitle: '未找到 Codex 宠物',
+    detectedCodexPetsEmptySubtitle: '在 Codex 中创建一个，然后再次运行检测。',
+    detectedCodexPetsErrorTitle: '无法检测 Codex 宠物',
+    detectedCodexPetsErrorSubtitle: '请检查 daemon 是否已连接，然后重试。',
+    detectedCodexPetsNoTargetTitle: '没有可用的 daemon',
+    detectedCodexPetsNoTargetSubtitle: '在此电脑上启动 Happier，然后再次检测 Codex 宠物。',
+    detectedCodexPetsDaemonMismatchTitle: '更新 daemon 以检测宠物',
+    detectedCodexPetsDaemonMismatchSubtitle: '此 daemon 尚未开放宠物检测。刷新 stack 后重试。',
+    useOnThisDeviceTitle: '在此设备上使用',
+    useOnThisDeviceSubtitle: '选择本地宠物且不更改账户默认值。',
+    importedLocalSubtitle: '已从此设备上的 Codex 导入。',
+    removeFromDeviceTitle: '从设备移除',
+    removeFromDeviceSubtitle: '从此设备移除此本地宠物。',
+    accountLibraryTitle: '账户库',
+    accountLibraryFooter: '已同步的宠物可在你登录的设备上使用。',
+    accountPetTileSubtitle: '已从你的账户同步。',
+    importToAccountTitle: '导入到账户',
+    importToAccountSubtitle: '上传兼容的本地宠物以跨设备使用。',
+    desktopOverlayTitle: '桌面悬浮层',
+    desktopOverlayEnabledTitle: '启用桌面悬浮层',
+    desktopOverlayEnabledSubtitle: '在透明桌面伙伴窗口中显示宠物。',
+    desktopOverlayDeviceOverrideTitle: '此设备上的桌面悬浮层',
+    desktopOverlayVisibilityModeTitle: '此设备上的悬浮层可见性',
+    desktopOverlayVisibilityModeSubtitle: '选择桌面宠物在本机何时显示。',
+    desktopOverlayResetPositionTitle: '重置位置',
+    desktopOverlayResetPositionSubtitle: '将悬浮层移回右下角。',
+    overrideInherit: '账户值',
+    overrideEnabled: '已启用',
+    overrideDisabled: '已停用',
+    visibilityModeInherit: '账户值',
+    visibilityModeAlwaysWhenEnabled: '启用时始终显示',
+    visibilityModeAttentionOrActive: '需要注意或活跃时',
+    visibilityModeAttentionOnly: '仅需要注意时',
+  },
+
+
   settingsNotifications: {
     activitySurfaces: {
       title: "活动表面",
@@ -2716,6 +2790,45 @@ export const zhHans: TranslationStructure = {
         actionButtonsTitle: "操作按钮",
         includeReadyTitle: "包含就绪会话",
         includeThinkingTitle: "包含思考中会话",
+        remoteUpdates: {
+          title: "远程更新",
+          footer: "用于在应用不再位于前台后更新 Live Activities 的所选服务器诊断。",
+          effectiveModeTitle: "实际送达方式",
+          effectiveMode: {
+            hosted_happier_relay: "托管中继",
+            direct_apns: "直接 APNs",
+            background_wake_best_effort: "后台唤醒",
+            local_only: "仅本地运行时",
+            disabled: "已禁用",
+          },
+          details: {
+            available: "可用",
+            unavailable: "不可用",
+            blocked: "已阻止",
+            missingCredentials: "缺少凭据",
+            bestEffort: "尽力而为",
+            selected: "已选择",
+            fallback: "备用",
+            preferred_unavailable: "仅本地",
+            local_only: "仅本地",
+            disabled: "已禁用",
+            runtimeOnly: "仅运行时",
+          },
+          hostedRelayTitle: "托管 Happier 中继",
+          hostedRelayAvailableSubtitle: "此所选服务器已配置托管中继。",
+          hostedRelayDisabledSubtitle: "此 self-hosted 服务器已禁用托管中继。",
+          hostedRelayBlockedSubtitle: "托管中继身份和提供方支持尚未实现。",
+          hostedRelayUnavailableSubtitle: "此所选服务器无法使用托管中继。",
+          directApnsTitle: "直接 APNs",
+          directApnsConfiguredSubtitle: "直接 APNs 凭据已配置，且不会暴露凭据材料。",
+          directApnsMissingCredentialsSubtitle: "直接 APNs 缺少服务器端凭据配置。",
+          directApnsUnavailableSubtitle: "此所选服务器无法使用直接 APNs。",
+          backgroundWakeTitle: "后台唤醒",
+          backgroundWakeBestEffortSubtitle: "后台唤醒可以尝试刷新，但 iOS 可能会延迟或丢弃它。",
+          backgroundWakeDisabledSubtitle: "此所选服务器已禁用后台唤醒备用方案。",
+          localOnlyTitle: "仅本地更新",
+          localOnlyRuntimeSubtitle: "仅本地更新会在应用运行时可执行时工作；不承诺应用被结束后的更新。",
+        },
       },
       widgets: {
         title: "主屏幕小组件",
@@ -2758,6 +2871,36 @@ export const zhHans: TranslationStructure = {
       permissionRequestsSubtitle: "当会话需要批准时显示本地通知",
       userActionsTitle: "操作请求",
       userActionsSubtitle: "当会话需要你的输入时显示本地通知",
+    },
+    quietHours: {
+      title: "免打扰时段",
+      footer: "账户免打扰时段默认在所有位置生效。设备覆盖只影响此设备。",
+      accountOffTitle: "无账户免打扰时段",
+      accountOffSubtitle: "随时送达账户通知",
+      accountNightlyTitle: "每天夜间 22:00 到 7:00",
+      accountNightlySubtitle: "在夜间静音或抑制提醒渠道",
+      deviceAccountTitle: "此设备跟随账户时段",
+      deviceAccountSubtitle: "使用已同步的账户免打扰政策",
+      deviceDisabledTitle: "在此设备上禁用免打扰时段",
+      deviceDisabledSubtitle: "即使账户免打扰时段处于活动状态，也允许此设备送达",
+      deviceCustomNightlyTitle: "此设备使用夜间免打扰时段",
+      deviceCustomNightlySubtitle: "在此设备上用 22:00 到 7:00 覆盖账户时段",
+    },
+    sounds: {
+      title: "声音",
+      footer: "账户默认声音会在所有位置同步。此设备可以静音本地声音。",
+      accountHappierTitle: "Happier 声音",
+      accountHappierSubtitle: "更新使用柔和提示音，需要注意时使用更明亮的提示音",
+      accountDefaultTitle: "系统默认",
+      accountDefaultSubtitle: "使用平台通知声音",
+      accountSilentTitle: "静音",
+      accountSilentSubtitle: "无声送达通知",
+      deviceEnabledTitle: "在此设备上播放声音",
+      deviceEnabledSubtitle: "本地通知声音的设备覆盖",
+      previewTitle: "预览声音",
+      previewSubtitle: "在此设备上发送本地预览通知",
+      previewNotificationTitle: "通知声音预览",
+      previewNotificationBody: "当前通知声音将按这种方式表现。",
     },
     push: {
       title: "推送通知",
@@ -2861,6 +3004,9 @@ export const zhHans: TranslationStructure = {
       title: "应用内通知",
       footer:
         "控制您使用应用时的通知方式。当前正在查看的会话的通知始终会被静音。",
+      account: "账户默认",
+      accountDescription:
+        "在此设备上使用账户级应用内通知行为",
       full: "完整",
       fullDescription: "显示横幅并播放声音",
       silent: "静音",
@@ -2895,6 +3041,8 @@ export const zhHans: TranslationStructure = {
       allow: '允许',
       deny: '拒绝',
       answer: '回答',
+      other: '其他',
+      alwaysAllowTool: ({ tool }: { tool: string }) => `始终允许 ${tool}`,
     },
     activity: {
       defaultSessionTitle: "会话",
@@ -3311,8 +3459,6 @@ export const zhHans: TranslationStructure = {
       preview: "预览标签页",
       persistent: "固定标签页",
     },
-    editorFocusMode: "编辑器专注模式",
-    editorFocusModeDescription: "在查看文件时隐藏会话和侧边栏（Web/平板）",
     inlineToolCalls: "内联工具调用",
     inlineToolCallsDescription: "在聊天消息中直接显示工具调用",
     expandTodoLists: "展开待办列表",
@@ -3476,6 +3622,8 @@ export const zhHans: TranslationStructure = {
     expMemorySearchSubtitle: "启用本地记忆搜索页面与设置",
     expSessionsDirect: "直连会话",
     expSessionsDirectSubtitle: "在侧边栏中列出并打开由提供方支撑的直连会话",
+    expPetsCompanion: "宠物",
+    expPetsCompanionSubtitle: "启用 Blink 伙伴界面和本地宠物选择",
     expFriends: "好友",
     expFriendsSubtitle: "启用好友功能（收件箱标签页与会话分享）",
     webFeatures: "Web 功能",
@@ -3870,6 +4018,11 @@ export const zhHans: TranslationStructure = {
 
   session: {
     inputPlaceholder: "输入消息...",
+    rightPanel: {
+      tabs: {
+        git: "Git",
+      },
+    },
     toolCalls: "工具调用",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
     forking: {
@@ -4004,8 +4157,8 @@ export const zhHans: TranslationStructure = {
       unpinTabA11y: "取消固定标签页",
       pinnedTabA11y: "已固定标签页",
       closeTabA11y: "关闭标签页",
-      enterFocusModeA11y: "进入编辑器专注模式",
-      exitFocusModeA11y: "退出编辑器专注模式",
+      enterFocusModeA11y: '进入面板专注模式',
+      exitFocusModeA11y: '退出面板专注模式',
     },
 
     actionsDraft: {
@@ -4352,6 +4505,7 @@ export const zhHans: TranslationStructure = {
     signedOut: "未登录",
     authStatusUnknown: "认证状态未知",
     switchToServer: "切换到此 Relay",
+    manageRelay: "管理 Relay",
     active: "当前",
     default: "默认",
     addServerTitle: "添加 Relay",
@@ -4584,6 +4738,12 @@ export const zhHans: TranslationStructure = {
     lastUpdated: "最后更新",
     sequence: "序列",
     quickActions: "快速操作",
+    newSessionSameSetup: "使用相同设置新建会话",
+    newSessionSameSetupSubtitle: "复用此会话的机器、文件夹、引擎、模型和会话选项。",
+    markSessionRead: "标为已读",
+    markSessionReadSubtitle: "清除此会话的未读提醒",
+    markSessionUnread: "标为未读",
+    markSessionUnreadSubtitle: "将此会话保留在未读列表中",
     executionRunsSubtitle: "查看此会话的运行",
     automationsTitle: "自动化",
     automationsSubtitle: "管理此会话的计划消息",
@@ -4653,6 +4813,8 @@ export const zhHans: TranslationStructure = {
     forkSession: "分叉会话",
     forkSessionSubtitle: "从最新上下文创建新会话",
     failedToRenameSession: "重命名会话失败",
+    failedToMarkSessionRead: "将会话标为已读失败",
+    failedToMarkSessionUnread: "将会话标为未读失败",
     sessionRenamed: "会话重命名成功",
   },
 
@@ -5249,6 +5411,8 @@ export const zhHans: TranslationStructure = {
       `会话归因的变更（${count}）`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `最近一轮变更（${count}）`,
+    selectedForCommitChanges: ({ count }: { count: number }) =>
+      `已选择提交（${count}）`,
     latestTurnDescription:
       '来自最近一次已完成轮次的提供方变更。',
     otherRepositoryChanges: ({ count }: { count: number }) =>
@@ -5314,6 +5478,13 @@ export const zhHans: TranslationStructure = {
           addCommentA11y: "添加评论",
           closeCommentA11y: "关闭评论",
           draftsChipLabel: ({ count }: { count: number }) => `审阅（${count}）`,
+          modalSubtitle: "查看哪些评论会随下一条消息发送。",
+          modalSummary: ({ included, count }: { included: number; count: number }) =>
+            `已为下一次提示选择 ${included}/${count} 条`,
+          detachOrDiscardTitle: "移除审阅评论？",
+          detachOrDiscardBody:
+            "分离会保留评论，但不随下一次提示发送。丢弃会删除这些评论。",
+          detachFromPrompt: "从提示中分离",
           errors: {
             empty: "评论不能为空",
             couldNotMapSelection: "无法将选择映射到差异行",
@@ -5345,6 +5516,17 @@ export const zhHans: TranslationStructure = {
 	          generateFailed: "生成提交信息失败",
 	          generatorDisabled: "提交信息生成器已禁用",
 	        },
+      commitAdjacentPush: {
+        accessibilityLabel: ({ target }: { target: string }) => `Push 到 ${target}`,
+        confirm: {
+          title: "推送本地提交？",
+          body: ({ target }: { target: string }) =>
+            `将你的本地提交推送到 ${target}。`,
+          push: "是",
+          notNow: "否",
+          pushAndDontAskAgain: "Push 且不再询问",
+        },
+      },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `正在加载 ${fileName}...`,
         binaryFile: "二进制文件",
@@ -5379,8 +5561,10 @@ export const zhHans: TranslationStructure = {
 	      uploadFolder: "上传文件夹",
 	      allRepositoryFiles: "仓库中的所有文件",
       repositoryView: "仓库视图",
+      selectedForCommitView: "已选择提交",
       turnView: "轮次视图",
       sessionView: "会话视图",
+      view: "视图",
       review: "审阅",
       list: "列表",
       scm: "Git",
@@ -5462,6 +5646,51 @@ export const zhHans: TranslationStructure = {
         commitBlocked: "提交被阻止",
         pullBlocked: "拉取被阻止",
         pushBlocked: "推送被阻止",
+      },
+      update: {
+        remotes: {
+          title: "远程",
+          empty: "此仓库尚未配置远程。",
+          addTitle: "添加远程",
+          editTitle: ({ name }: { name: string }) => `编辑 ${name}`,
+          add: "添加远程",
+          remove: "移除",
+          nameLabel: "远程名称",
+          fetchUrlLabel: "拉取 URL",
+          pushUrlLabel: "推送 URL",
+          namePlaceholder: "origin",
+          fetchUrlPlaceholder: "拉取 URL",
+          pushUrlPlaceholder: "Push URL（可选）",
+          noFetchUrl: "无 Fetch URL",
+          removeConfirmTitle: "移除远程？",
+          removeConfirmBody: ({ name }: { name: string }) =>
+            `从此仓库移除 ${name}？`,
+          errors: {
+            nameRequired: "请输入远程名称。",
+            fetchUrlRequired: "请输入 Fetch URL。",
+            addFailed: "添加远程失败。",
+            saveFailed: "更新远程失败。",
+            removeFailed: "移除远程失败。",
+          },
+        },
+        branchIntegration: {
+          title: "合并和变基",
+          sourceLabel: "源分支",
+          sourcePlaceholder: "分支或远程引用",
+          merge: "合并",
+          rebase: "变基",
+          continue: "继续",
+          abort: "中止",
+          operationInProgress: ({ operation, source }: { operation: string; source: string }) =>
+            `正在从 ${source} 执行 ${operation}`,
+          errors: {
+            sourceRequired: "请输入源分支或引用。",
+            mergeFailed: "合并分支失败。",
+            rebaseFailed: "变基分支失败。",
+            continueFailed: "继续操作失败。",
+            abortFailed: "中止操作失败。",
+          },
+        },
       },
     },
   },
@@ -5584,13 +5813,9 @@ export const zhHans: TranslationStructure = {
                 title: '运行卡片',
                 subtitle: '显示在执行运行卡片上。',
             },
-            voice_tool: {
-                title: '语音工具',
-                subtitle: '可供语音代理作为可调用工具使用。',
-            },
-            voice_action_block: {
-                title: '语音操作块',
-                subtitle: '显示在语音操作块和交互控件中。',
+            voice: {
+                title: '语音',
+                subtitle: '可供语音代理作为可调用表面使用。',
             },
             session_agent: {
                 title: '会话代理',
@@ -5631,6 +5856,23 @@ settingsSession: {
             show: '显示',
         },
     },
+    sessionCreation: {
+        title: '新会话快捷方式',
+        footer: '选择项目快捷方式如何填充新会话界面。',
+        rememberLastProjectSelectionsTitle: '记住项目上次会话选择',
+        rememberLastProjectSelectionsEnabledSubtitle: '项目快捷方式会复用最新会话的机器、文件夹、引擎、模型和会话选项。',
+        rememberLastProjectSelectionsDisabledSubtitle: '项目快捷方式只预选项目机器和文件夹。',
+    },
+    mobileWorkspaceExperience: {
+        title: '移动工作区',
+        subtitle: '选择默认的移动会话布局。',
+        options: {
+            cockpitTitle: '驾驶舱',
+            cockpitSubtitle: '使用底部标签栏切换聊天、文件、Git、标签页和终端。',
+            classicTitle: '经典',
+            classicSubtitle: '使用旧版单屏移动会话布局。',
+        },
+    },
     input: {
         title: '输入',
         footer: '配置代理输入栏的外观和行为。',
@@ -5638,6 +5880,9 @@ settingsSession: {
     windows: {
         title: 'Windows',
         defaultModeTitle: '默认 Windows 远程会话模式',
+        windowNameTitle: 'Windows Terminal 窗口名称',
+        windowNamePlaceholder: 'happier',
+        windowNameHint: '在 Windows Terminal 中打开的会话会使用这个命名窗口，因此新会话可以显示为标签页。',
     },
     advanced: {
         title: '高级',
@@ -5970,7 +6215,7 @@ settingsSession: {
     hiddenSubtitle: "在后台启动会话而不打开终端窗口。",
     windowsTerminal: "Windows Terminal",
     shortWindowsTerminal: "WT",
-    windowsTerminalSubtitle: "在专用的 Windows Terminal 窗口中打开会话。",
+    windowsTerminalSubtitle: "在共享的 Windows Terminal 窗口中以标签页打开会话。",
     console: "控制台",
     shortConsole: "控制台",
     consoleSubtitle: "在标准的 Windows 控制台窗口中打开会话。",
@@ -7472,6 +7717,14 @@ settingsSession: {
     runtimeInventoryInstallations: '安装项',
     runtimeInventoryServices: '服务',
     runtimeInventoryWarnings: '警告',
+    doctorRepairSummary: '修复摘要',
+    doctorRepairFindingsSummary: ({ total, warning, error, actionable }: {
+        total: number;
+        warning: number;
+        error: number;
+        actionable: number;
+    }) => `${total} 个发现 • ${warning} 个警告 • ${error} 个错误 • ${actionable} 个可处理`,
+    localRelays: '本地 Relay',
     runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
         cliVersion: string;
         daemonVersion: string;
@@ -7556,7 +7809,6 @@ settingsSession: {
     sessionRunningLocallyAndRemotely:
       "此会话已在 OpenCode 中本地附加，同时仍可从应用中控制。",
     switchingToRemote: "正在切换到远程模式…",
-    switchToLocal: "切换到本地",
     switchToRemote: "切换到远程",
     detachLocalTerminal: "断开终端",
     directSessionTakeoverAvailable:

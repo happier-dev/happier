@@ -39,10 +39,27 @@ describe('settings registry completeness', () => {
         expect(ACCOUNT_LEGACY_SETTING_ARTIFACTS.definitions).not.toHaveProperty('lastUsedAgent');
     });
 
+    it('enables remembered project session selections by default as an account-scoped setting', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.rememberLastProjectSessionSelections.storageScope).toBe('account');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('rememberLastProjectSessionSelections', true);
+    });
+
     it('owns remoteHostsV1 in canonical account settings artifacts', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
         expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('remoteHostsV1');
         expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('remoteHostsV1', []);
+    });
+
+    it('owns mobileWorkspaceExperienceV1 as an account-synced setting instead of a local-only setting', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+        const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.mobileWorkspaceExperienceV1.storageScope).toBe('account');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('mobileWorkspaceExperienceV1', 'cockpit');
+        expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty('mobileWorkspaceExperienceV1');
+        expect(LOCAL_SETTING_ARTIFACTS.defaults).not.toHaveProperty('mobileWorkspaceExperienceV1');
     });
 
     it('builds local settings schema and defaults entirely from canonical local setting artifacts', async () => {

@@ -261,9 +261,16 @@ export function BaseModal({
             right: 0,
             bottom: 0,
             zIndex: baseZ,
+            transition: [
+                `background-color ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+                `backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+                `-webkit-backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+            ].join(', '),
             ...createBackdropWebStyle({
-                backgroundColor: theme.colors.overlay.scrimWizard as unknown as string,
-                blurPx: 2,
+                backgroundColor: visible
+                    ? ((theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim) as unknown as string)
+                    : 'transparent',
+                blurPx: visible ? 2 : 0,
             }),
         };
 
@@ -331,7 +338,7 @@ export function BaseModal({
                 {showBackdrop ? (
                     <Animated.View
                         pointerEvents={visible ? 'auto' : 'none'}
-                        style={[overlayStyle as unknown as ViewStyle, { opacity: backdropOpacity }]}
+                        style={overlayStyle as unknown as ViewStyle}
                         {...(webEventHandlers as any)}
                     />
                 ) : null}

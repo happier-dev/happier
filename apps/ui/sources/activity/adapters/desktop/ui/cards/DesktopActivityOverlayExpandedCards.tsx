@@ -15,61 +15,11 @@ import {
     resolveDesktopActivityOverlayCardInstanceTestID,
     resolveDesktopActivityOverlayCardKindTestID,
 } from '../shared/desktopActivityOverlaySelectors.mjs';
-import { DesktopActivityOverlayCardActions } from './DesktopActivityOverlayCardActions';
 import { DesktopActivityOverlayCardFrame } from './DesktopActivityOverlayCardFrame';
-
-function resolveCardActions(card: DesktopActivityOverlayExpandedCard): readonly DesktopActivityOverlayActionDescriptor[] {
-    const canonicalActions = (card.actions ?? []).filter(
-        (action) => action.id !== 'open'
-            && !action.id.startsWith('open:')
-            && ('openActionIdentifier' in card ? action.actionIdentifier !== card.openActionIdentifier : true),
-    );
-    if (canonicalActions.length > 0) {
-        return canonicalActions;
-    }
-
-    switch (card.kind) {
-        case 'permission_request':
-            return [
-                ...(card.denyActionIdentifier ? [{
-                    id: 'deny',
-                    label: t('notifications.actions.deny'),
-                    actionIdentifier: card.denyActionIdentifier,
-                    data: { requestId: card.requestId, sessionId: card.sessionId },
-                    tone: 'danger' as const,
-                }] : []),
-                ...(card.allowActionIdentifier ? [{
-                    id: 'allow',
-                    label: t('notifications.actions.allow'),
-                    actionIdentifier: card.allowActionIdentifier,
-                    data: { requestId: card.requestId, sessionId: card.sessionId },
-                    tone: 'primary' as const,
-                }] : []),
-            ];
-        case 'user_question': {
-            return [
-                ...(card.denyActionIdentifier ? [{
-                    id: 'deny',
-                    label: t('notifications.actions.deny'),
-                    actionIdentifier: card.denyActionIdentifier,
-                    data: { requestId: card.requestId, sessionId: card.sessionId },
-                    tone: 'danger' as const,
-                }] : []),
-                ...(card.allowActionIdentifier ? [{
-                    id: 'allow',
-                    label: t('notifications.actions.allow'),
-                    actionIdentifier: card.allowActionIdentifier,
-                    data: { requestId: card.requestId, sessionId: card.sessionId },
-                    tone: 'primary' as const,
-                }] : []),
-            ];
-        }
-        case 'session_overview':
-            return [];
-        default:
-            return [];
-    }
-}
+import { DesktopActivityOverlayCompletionStateCard } from './DesktopActivityOverlayCompletionStateCard';
+import { DesktopActivityOverlayPermissionRequestCard } from './DesktopActivityOverlayPermissionRequestCard';
+import { DesktopActivityOverlayQuotaSummaryCard } from './DesktopActivityOverlayQuotaSummaryCard';
+import { DesktopActivityOverlayUserQuestionCard } from './DesktopActivityOverlayUserQuestionCard';
 
 function wrapCard(
     card: DesktopActivityOverlayExpandedCard,
@@ -82,13 +32,36 @@ function wrapCard(
     );
 }
 
+function DesktopActivityOverlayAutoDismissCompletionCard(props: React.PropsWithChildren<Readonly<{
+    card: Extract<DesktopActivityOverlayExpandedCard, { kind: 'completion_state' }>;
+    paused: boolean;
+    onDismiss: (cardId: string) => void;
+}>>): React.ReactElement {
+    React.useEffect(() => {
+        if (props.paused || props.card.sticky || props.card.autoDismissMs <= 0) {
+            return;
+        }
+
+        const timeoutId = setTimeout(() => {
+            props.onDismiss(props.card.id);
+        }, props.card.autoDismissMs);
+
+        return () => {
+            clearTimeout(timeoutId);
+        };
+    }, [props.card.autoDismissMs, props.card.id, props.card.sticky, props.onDismiss, props.paused]);
+
+    return <>{props.children}</>;
+}
+
 function renderCard(params: Readonly<{
     card: DesktopActivityOverlayExpandedCard;
     visualMode: DesktopActivityOverlayVisualMode;
-    onOpenSession: (sessionId: string) => void;
+    onOpenSession: (sessionId: string, serverId?: string | null) => void;
     onAction?: (action: DesktopActivityOverlayActionDescriptor) => void;
+    completionAutoDismissPaused: boolean;
+    onDismissCompletionCard: (cardId: string) => void;
 }>): React.ReactElement {
-    const actions = resolveCardActions(params.card);
     const instanceTestID = resolveDesktopActivityOverlayCardInstanceTestID(params.card);
 
     switch (params.card.kind) {
@@ -105,51 +78,47 @@ function renderCard(params: Readonly<{
         case 'permission_request':
             return wrapCard(
                 params.card,
-                <DesktopActivityOverlayCardFrame
+                <DesktopActivityOverlayPermissionRequestCard
+                    card={params.card}
                     testID={instanceTestID}
                     visualMode={params.visualMode}
-                    eyebrow={params.card.toolLabel}
-                    title={params.card.title}
-                    body={params.card.summary ?? params.card.questionText}
-                    badgeText={params.card.count > 1 ? String(params.card.count) : null}
-                >
-                    <DesktopActivityOverlayCardActions
-                        cardId={params.card.requestId}
-                        visualMode={params.visualMode}
-                        actions={actions}
-                        onAction={params.onAction}
-                    />
-                </DesktopActivityOverlayCardFrame>,
+                    onAction={params.onAction}
+                />,
             );
         case 'user_question':
             return wrapCard(
                 params.card,
-                <DesktopActivityOverlayCardFrame
+                <DesktopActivityOverlayUserQuestionCard
+                    card={params.card}
                     testID={instanceTestID}
                     visualMode={params.visualMode}
-                    eyebrow={params.card.toolLabel}
-                    title={params.card.title}
-                    body={params.card.questionText ?? params.card.summary}
-                    badgeText={params.card.count > 1 ? String(params.card.count) : null}
-                >
-                    <DesktopActivityOverlayCardActions
-                        cardId={params.card.requestId}
-                        visualMode={params.visualMode}
-                        actions={actions}
-                        onAction={params.onAction}
-                    />
-                </DesktopActivityOverlayCardFrame>,
+                    onAction={params.onAction}
+                />,
             );
         case 'quota_summary':
             return wrapCard(
                 params.card,
-                <DesktopActivityOverlayCardFrame
+                <DesktopActivityOverlayQuotaSummaryCard
+                    card={params.card}
                     testID={instanceTestID}
                     visualMode={params.visualMode}
-                    eyebrow={t('usage.activity')}
-                    title={params.card.title}
-                    body={params.card.summary}
                 />,
+            );
+        case 'completion_state':
+            return wrapCard(
+                params.card,
+                <DesktopActivityOverlayAutoDismissCompletionCard
+                    card={params.card}
+                    paused={params.completionAutoDismissPaused}
+                    onDismiss={params.onDismissCompletionCard}
+                >
+                    <DesktopActivityOverlayCompletionStateCard
+                        card={params.card}
+                        testID={instanceTestID}
+                        visualMode={params.visualMode}
+                        onAction={params.onAction}
+                    />
+                </DesktopActivityOverlayAutoDismissCompletionCard>,
             );
         case 'session_overview': {
             const card = params.card;
@@ -164,7 +133,7 @@ function renderCard(params: Readonly<{
                         subtitle={card.subtitle}
                         statusText={card.statusText ?? null}
                         previewText={card.previewText}
-                        onPress={() => params.onOpenSession(card.sessionId)}
+                        onPress={() => params.onOpenSession(card.sessionId, card.serverId)}
                     />
                 </View>,
             );
@@ -185,32 +154,73 @@ function renderCard(params: Readonly<{
                                 subtitle={row.subtitle}
                                 statusText={row.statusText}
                                 previewText={row.previewText}
-                                onPress={() => params.onOpenSession(row.sessionId)}
+                                onPress={() => params.onOpenSession(row.sessionId, row.serverId)}
                             />
                         ))}
                     </View>
                 </View>,
             );
+        default: {
+            const unsupportedCard = params.card as { kind?: unknown };
+            throw new Error(`Unsupported desktop activity overlay card kind: ${String(unsupportedCard.kind)}`);
+        }
     }
-
-    throw new Error(`Unsupported desktop activity overlay card kind: ${String(params.card.kind)}`);
 }
 
 export function DesktopActivityOverlayExpandedCards(props: Readonly<{
     model: DesktopActivityOverlayUiModel;
     visualMode: DesktopActivityOverlayVisualMode;
-    onOpenSession: (sessionId: string) => void;
+    onOpenSession: (sessionId: string, serverId?: string | null) => void;
     onAction?: (action: DesktopActivityOverlayActionDescriptor) => void;
+    completionAutoDismissPaused?: boolean;
 }>): React.ReactElement {
-    const cards = React.useDeferredValue(props.model.expanded.cards ?? []);
+    const cards = props.model.expanded.cards ?? [];
+    const [dismissedCompletionCardIds, setDismissedCompletionCardIds] = React.useState<ReadonlySet<string>>(
+        () => new Set(),
+    );
+    const presentCompletionCardIds = React.useMemo(() => new Set(
+        cards
+            .filter((card) => card.kind === 'completion_state')
+            .map((card) => card.id),
+    ), [cards]);
+    const dismissCompletionCard = React.useCallback((cardId: string) => {
+        setDismissedCompletionCardIds((previous) => {
+            if (previous.has(cardId)) {
+                return previous;
+            }
+            const next = new Set(previous);
+            next.add(cardId);
+            return next;
+        });
+    }, []);
+
+    React.useEffect(() => {
+        setDismissedCompletionCardIds((previous) => {
+            if (previous.size === 0) {
+                return previous;
+            }
+            const next = new Set<string>();
+            for (const cardId of previous) {
+                if (presentCompletionCardIds.has(cardId)) {
+                    next.add(cardId);
+                }
+            }
+            return next.size === previous.size ? previous : next;
+        });
+    }, [presentCompletionCardIds]);
+    const visibleCards = cards.filter((card) => (
+        card.kind !== 'completion_state' || !dismissedCompletionCardIds.has(card.id)
+    ));
 
     return (
         <View style={styles.cards}>
-            {cards.map((card) => renderCard({
+            {visibleCards.map((card) => renderCard({
                 card,
                 visualMode: props.visualMode,
                 onOpenSession: props.onOpenSession,
                 onAction: props.onAction,
+                completionAutoDismissPaused: props.completionAutoDismissPaused === true,
+                onDismissCompletionCard: dismissCompletionCard,
             }))}
         </View>
     );

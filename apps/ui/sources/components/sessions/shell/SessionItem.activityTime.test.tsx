@@ -10,6 +10,7 @@ const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
 const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
 const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => null));
 let hasUnreadMessagesValue = false;
+let platformOs: 'ios' | 'android' | 'web' = 'web';
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -38,7 +39,10 @@ installSessionShellCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'web',
+                get OS() {
+                    return platformOs;
+                },
+                select: (value: any) => value[platformOs] ?? value.default,
             },
         });
     },
@@ -150,6 +154,19 @@ let mockSessionStatus: MockSessionStatus = {
     ...defaultSessionStatus,
 };
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (!style || typeof style !== 'object') {
+        return {};
+    }
+    return style as Record<string, unknown>;
+}
+
 function createSession(id: string) {
     return createSessionFixture({
         id,
@@ -165,6 +182,7 @@ function createSession(id: string) {
 describe('SessionItem activity time', () => {
     beforeEach(() => {
         hasUnreadMessagesValue = false;
+        platformOs = 'web';
         mockSessionStatus = {
             ...defaultSessionStatus,
         };
@@ -218,6 +236,39 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findByType('Avatar' as any)?.props.unreadBadgeTestID).toBe('session-list-item-unread-indicator-sess_unread');
+    });
+
+    it('renders inactive sessions with a monochrome avatar even when the daemon still reports connected', async () => {
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+            isConnected: true,
+        };
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSessionFixture({
+                    id: 'sess_inactive_connected',
+                    active: false,
+                    activeAt: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    metadata: null,
+                    presence: 'online',
+                })}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(screen.findByType('Avatar' as any)?.props.monochrome).toBe(true);
     });
 
     it('renders a tiny status line in very compact mode when the session has a meaningful active state', async () => {
@@ -335,5 +386,80 @@ describe('SessionItem activity time', () => {
         expect(useSessionListRenderableWithServerScopeSpy).toHaveBeenCalledWith('server_a', 'sess_row_state');
         expect(useSessionSpy).not.toHaveBeenCalled();
         expect(useProfileSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses start-side overflow ellipsis for path subtitles on web without reordering the path', async () => {
+        platformOs = 'web';
+        const { SessionItem } = await import('./SessionItem');
+        const sessionPath = '~/Documents/Development/happier/dev';
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_path_web')}
+                subtitleOverride={sessionPath}
+                secondaryLineMode="path"
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const outerSubtitle = screen.root.findAll((node) => {
+            const style = flattenStyle(node.props?.style);
+            return String(node.type) === 'Text'
+                && node.props.numberOfLines === 1
+                && style.writingDirection === 'rtl';
+        })[0];
+        const innerSubtitle = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === sessionPath,
+        )[0];
+
+        expect(screen.getTextContent()).toContain(sessionPath);
+        expect(outerSubtitle).toBeTruthy();
+        expect(innerSubtitle).toBeTruthy();
+        expect(flattenStyle(outerSubtitle?.props.style)).toMatchObject({
+            writingDirection: 'rtl',
+            textAlign: 'left',
+        });
+        expect(flattenStyle(innerSubtitle?.props.style)).toMatchObject({
+            writingDirection: 'ltr',
+            unicodeBidi: 'isolate',
+        });
+    });
+
+    it('uses native head ellipsis for path subtitles outside web', async () => {
+        platformOs = 'ios';
+        const { SessionItem } = await import('./SessionItem');
+        const sessionPath = '~/Documents/Development/happier/dev';
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_path_native')}
+                subtitleOverride={sessionPath}
+                secondaryLineMode="path"
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const subtitle = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === sessionPath
+            && node.props.numberOfLines === 1,
+        )[0];
+
+        expect(subtitle?.props.ellipsizeMode).toBe('head');
     });
 });

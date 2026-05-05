@@ -160,6 +160,9 @@ class ConversationBackedVoiceSession implements VoiceSession {
         });
 
         const rawConversationId = await conversation.startSession(sessionConfig);
+        if (rawConversationId === null) {
+            return null;
+        }
         const conversationId = this.transport.provider.resolveConversationId({
             handle: conversation,
             rawConversationId,
@@ -290,8 +293,8 @@ export class RealtimeTransport {
         const state = this.deps.getStorageState();
         state.setRealtimeStatus(snapshot.status === 'error' ? 'disconnected' : snapshot.status);
 
-        const nextMode = snapshot.mode === 'speaking' ? 'speaking' : 'idle';
         const shouldResetMode = snapshot.status === 'disconnected' || snapshot.status === 'error';
+        const nextMode = shouldResetMode ? 'idle' : (snapshot.mode === 'speaking' ? 'speaking' : 'idle');
         state.setRealtimeMode(nextMode, shouldResetMode);
         if (shouldResetMode) {
             state.clearRealtimeModeDebounce();

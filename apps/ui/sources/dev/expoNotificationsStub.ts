@@ -20,6 +20,12 @@ export const AndroidImportance = {
     MAX: 7,
 } as const;
 
+export const BackgroundNotificationTaskResult = {
+    NewData: 0,
+    NoData: 1,
+    Failed: 2,
+} as const;
+
 export function setNotificationHandler(_handler: unknown) {
     // no-op
 }
@@ -30,6 +36,14 @@ export async function setNotificationChannelAsync(_id: string, _channel: unknown
 
 export async function setNotificationCategoryAsync(_id: string, _actions: unknown): Promise<void> {
     // no-op
+}
+
+export async function registerTaskAsync(_taskName: string): Promise<null> {
+    return null;
+}
+
+export async function unregisterTaskAsync(_taskName: string): Promise<null> {
+    return null;
 }
 
 export async function getPermissionsAsync(): Promise<{ status: PermissionStatus }> {

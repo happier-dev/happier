@@ -1,6 +1,7 @@
 import { buildSettingArtifacts, defineSettingDefinitions, WorkspaceRefV1Schema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
+import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
 import { SessionSplitCanvasLayoutsSchema } from '@/sync/domains/session/sessionSplitCanvasPersistence';
 
 function objectKeyCount(value: unknown): number {
@@ -119,6 +120,20 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: z.array(z.string()),
         default: [],
         description: 'User-defined favorite profiles (profile IDs) for quick access in profile selection',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrent: arrayCount,
+        },
+    },
+    favoriteModelSelectionsV1: {
+        schema: z.array(FavoriteModelSelectionV1Schema),
+        default: [],
+        description: 'User-defined favorite engine model selections for quick access in engine selection',
         storageScope: 'account',
         analytics: {
             trackCurrentState: true,

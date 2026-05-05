@@ -66,24 +66,24 @@ describe('PromptsSettingsHome', () => {
         expect(registriesItem).toBeTruthy();
 
         await screen.pressByTestIdAsync('settings-prompts-library-prompts');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs');
 
         await screen.pressByTestIdAsync('settings-prompts-library-skills');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills');
 
         await screen.pressByTestIdAsync('settings-prompts-folders');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/folders');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/folders');
 
         await screen.pressByTestIdAsync('settings-prompts-templates');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/templates');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/templates');
 
         await screen.pressByTestIdAsync('settings-prompts-stacks');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/stacks');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/stacks');
 
         await screen.pressByTestIdAsync('settings-prompts-assets');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/assets');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/assets');
 
         await screen.pressByTestIdAsync('settings-prompts-registries');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/registries');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/registries');
     });
 });

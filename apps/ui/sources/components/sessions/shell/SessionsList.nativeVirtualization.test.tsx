@@ -550,11 +550,30 @@ describe('SessionsList (native virtualization)', () => {
         expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
     });
 
-    it('passes FlashList layout hints for heterogeneous native session rows', async () => {
+    it('passes FlashList recycling hints without deprecated size estimates', async () => {
         await renderSessionsList();
 
-        expect(flashListCompatState.current?.props?.estimatedItemSize).toBe(SESSION_LIST_ROW_HEIGHT_DEFAULT);
+        expect(flashListCompatState.current?.props?.estimatedItemSize).toBeUndefined();
         expect(typeof flashListCompatState.current?.props?.getItemType).toBe('function');
+    });
+
+    it('keeps native virtualized list prop identities stable across unrelated rerenders', async () => {
+        const screen = await renderSessionsList();
+        const initialProps = flashListCompatState.current?.props;
+        expect(initialProps).toBeTruthy();
+        const initialKeyExtractor = initialProps?.keyExtractor;
+        const initialRenderItem = initialProps?.renderItem;
+        const initialContentContainerStyle = initialProps?.contentContainerStyle;
+        const initialFooterComponent = initialProps?.ListFooterComponent;
+        const { SessionsList } = await import('./SessionsList');
+
+        await screen.update(<SessionsList />);
+
+        const updatedProps = flashListCompatState.current?.props;
+        expect(updatedProps?.keyExtractor).toBe(initialKeyExtractor);
+        expect(updatedProps?.renderItem).toBe(initialRenderItem);
+        expect(updatedProps?.contentContainerStyle).toBe(initialContentContainerStyle);
+        expect(updatedProps?.ListFooterComponent).toBe(initialFooterComponent);
     });
 
     it('classifies native FlashList items by row kind', async () => {

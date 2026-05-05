@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { projectManager } from './projectManager';
 
-function createSession(id: string, machineId: string, path: string) {
+function createSession(id: string, machineId: string, path: string, host = 'h') {
     return {
         id,
         seq: 1,
@@ -13,7 +13,7 @@ function createSession(id: string, machineId: string, path: string) {
         metadata: {
             machineId,
             path,
-            host: 'h',
+            host,
             version: '1',
         },
         metadataVersion: 1,
@@ -61,6 +61,19 @@ describe('projectManager scm snapshot error state', () => {
         });
 
         expect(projectManager.getSessionProjectScmSnapshotError('s1')?.message).toBe('Snapshot failed');
+        expect(projectManager.getSessionProjectScmSnapshotError('s2')?.message).toBe('Snapshot failed');
+    });
+
+    it('normalizes host fallback project grouping when machineId is missing', () => {
+        projectManager.clear();
+        projectManager.addSession(createSession('s1', '' as any, '/repo', 'DEVBOX.local') as any);
+        projectManager.addSession(createSession('s2', '' as any, '/repo', 'devbox') as any);
+
+        projectManager.updateSessionProjectScmSnapshotError('s1', {
+            message: 'Snapshot failed',
+            at: 789,
+        });
+
         expect(projectManager.getSessionProjectScmSnapshotError('s2')?.message).toBe('Snapshot failed');
     });
 });

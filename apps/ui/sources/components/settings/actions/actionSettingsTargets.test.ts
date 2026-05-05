@@ -37,7 +37,7 @@ describe('actionSettingsTargets', () => {
         });
     });
 
-    it('stores approval required surfaces for slash_command targets as ui_slash_command', () => {
+    it('stores approval required surfaces for slash_command targets as ui', () => {
         const next = setActionTargetApprovalRequired({
             settings: DEFAULT_ACTIONS_SETTINGS_V1,
             actionId: 'review.start',
@@ -49,7 +49,7 @@ describe('actionSettingsTargets', () => {
             enabledPlacements: [],
             disabledSurfaces: [],
             disabledPlacements: [],
-            approvalRequiredSurfaces: ['ui_slash_command'],
+            approvalRequiredSurfaces: ['ui'],
         });
     });
 

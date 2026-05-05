@@ -213,7 +213,6 @@ installSessionShellCommonModuleMocks({
                 if (key === 'sessionsRightPaneDefaultOpen') return false;
                 if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
                 if (key === 'uiMultiPanePanelsEnabled') return true;
-                if (key === 'editorFocusModeEnabled') return false;
                 return null;
             },
         });
@@ -408,6 +407,58 @@ describe('SessionView read cursor on blur', () => {
 
         expect(markSessionViewedSpy).toHaveBeenCalledTimes(1);
         expect(markSessionViewedSpy).toHaveBeenCalledWith('s1', { sessionSeq: 2 });
+
+        await hook.unmount();
+    });
+
+    it('suppresses the focused seq-change mark when the current activation was manually held unread', async () => {
+        const {
+            getCurrentSessionViewingActivationId,
+            holdManualUnreadForActivation,
+            resetSessionManualUnreadHoldsForTests,
+        } = await import('@/sync/domains/session/readState/sessionManualUnreadHold');
+        resetSessionManualUnreadHoldsForTests();
+        sessionState.current.seq = 4;
+
+        const { useSessionViewedLifecycle } = await import('./view/useSessionViewedLifecycle');
+        const hook = await renderHook((props: {
+            sessionId: string;
+            sessionSeq: number | null;
+            surfaceFocused: boolean;
+        }) => {
+            useSessionViewedLifecycle(props);
+            return null;
+        }, {
+            initialProps: {
+                sessionId: 's1',
+                sessionSeq: 4,
+                surfaceFocused: true,
+            },
+        });
+
+        scheduledInteractionCallbacks.length = 0;
+        markSessionViewedSpy.mockClear();
+
+        const activationId = getCurrentSessionViewingActivationId('s1');
+        holdManualUnreadForActivation({ sessionId: 's1', sessionSeq: 4, activationId });
+
+        vi.useFakeTimers();
+        try {
+            await hook.rerender({
+                sessionId: 's1',
+                sessionSeq: 5,
+                surfaceFocused: true,
+            });
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(300);
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(scheduledInteractionCallbacks).toHaveLength(0);
+        expect(markSessionViewedSpy).not.toHaveBeenCalled();
 
         await hook.unmount();
     });

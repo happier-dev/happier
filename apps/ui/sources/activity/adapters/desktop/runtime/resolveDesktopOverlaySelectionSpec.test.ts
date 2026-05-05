@@ -15,6 +15,7 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
         alwaysOnTop: true,
         autoHideEnabled: true,
         autoHideDelayMs: 6000,
+        hoverExpandDelayMs: 500,
         expandedBehavior: 'click',
         interactiveCollapsed: true,
         presentationMode: 'automatic',
@@ -23,6 +24,7 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
         compactStyle: 'pill',
         showSessionCount: true,
         showPreviewText: false,
+        quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
         placementMode: 'anchored',
         anchor: 'top_center',
         offsetX: 0,
@@ -46,10 +48,12 @@ describe('resolveDesktopOverlaySelectionSpec', () => {
             includeThinking: true,
             includeQuietActive: false,
             activeOnly: false,
+            dwellMs: 90_000,
+            staleAfterMs: 120_000,
         });
     });
 
-    it('lets active-session mode include active quiet sessions plus inactive non-quiet attention regardless of trigger toggles', () => {
+    it('lets active-session mode include active quiet and active attention sessions regardless of trigger toggles', () => {
         expect(resolveDesktopOverlaySelectionSpec(createPolicy({
             visibilityMode: 'active_sessions',
             showWhenRunning: false,
@@ -65,7 +69,9 @@ describe('resolveDesktopOverlaySelectionSpec', () => {
             includeReady: true,
             includeThinking: true,
             includeQuietActive: true,
-            activeOnly: false,
+            activeOnly: true,
+            dwellMs: 90_000,
+            staleAfterMs: 120_000,
         });
     });
 
@@ -85,7 +91,9 @@ describe('resolveDesktopOverlaySelectionSpec', () => {
             includeReady: true,
             includeThinking: true,
             includeQuietActive: true,
-            activeOnly: false,
+            activeOnly: true,
+            dwellMs: 90_000,
+            staleAfterMs: 120_000,
         });
     });
 });

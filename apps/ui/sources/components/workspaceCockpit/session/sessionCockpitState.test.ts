@@ -66,6 +66,22 @@ describe('sessionCockpitState', () => {
         expect(resolveSessionRoutePathForSurface('session-1', 'terminal')).toBe('/session/session-1/terminal');
     });
 
+    it('preserves scoped route params when building cockpit route paths', () => {
+        expect(resolveSessionRoutePathForSurface('session-1', 'chat', {
+            serverId: 'server-b',
+        })).toBe('/session/session-1?mobileSurface=chat&serverId=server-b');
+        expect(resolveSessionRoutePathForSurface('session-1', 'git', {
+            serverId: 'server-b',
+        })).toBe('/session/session-1/git?serverId=server-b');
+        expect(resolveSessionRoutePathForSurface('session-1', 'tabs', {
+            serverId: 'server-b',
+            query: {
+                details: 'file',
+                path: 'src/index.ts',
+            },
+        })).toBe('/session/session-1/details?serverId=server-b&details=file&path=src%2Findex.ts');
+    });
+
     it('falls back away from the terminal surface in route parsing when the terminal tab is unavailable', () => {
         expect(
             resolveSessionCockpitRouteFromPathname('/session/session-1/terminal', null, false),

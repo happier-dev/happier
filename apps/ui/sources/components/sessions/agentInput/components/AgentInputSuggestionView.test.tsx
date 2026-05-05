@@ -54,7 +54,7 @@ function flattenStyle(style: any): Record<string, any> {
 }
 
 describe('FileMentionSuggestion', () => {
-    it('right-aligns the directory segment against the file name and truncates it from the head', async () => {
+    it('right-aligns the directory segment against the file name and uses web start ellipsis', async () => {
         const { FileMentionSuggestion } = await import('./AgentInputSuggestionView');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -65,8 +65,15 @@ describe('FileMentionSuggestion', () => {
             />
         )).tree;
 
-        const pathText = tree!.findAllByType('Text' as any).find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
-        expect(pathText.props.ellipsizeMode).toBe('head');
-        expect(flattenStyle(pathText.props.style).textAlign).toBe('right');
+        const textNodes = tree!.findAllByType('Text' as any);
+        const pathWrapper = textNodes.find((node) => flattenStyle(node.props.style).writingDirection === 'rtl')!;
+        const pathContent = textNodes.find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
+
+        expect(pathWrapper.props.ellipsizeMode).toBeUndefined();
+        expect(flattenStyle(pathWrapper.props.style).textAlign).toBe('right');
+        expect(flattenStyle(pathContent.props.style)).toMatchObject({
+            writingDirection: 'ltr',
+            unicodeBidi: 'isolate',
+        });
     });
 });

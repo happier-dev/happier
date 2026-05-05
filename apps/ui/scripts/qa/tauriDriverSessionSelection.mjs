@@ -317,7 +317,7 @@ export function resolveCandidateDriverSessionPorts({ preferredPort, env = proces
 }
 
 export function tryParseDriverSessionStatus(response) {
-    const raw = readString(response?.text, '');
+    const raw = readDriverSessionResponseText(response);
     if (!raw) return null;
     try {
         const parsed = JSON.parse(raw);

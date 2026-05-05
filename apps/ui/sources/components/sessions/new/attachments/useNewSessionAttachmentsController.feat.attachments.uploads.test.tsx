@@ -27,11 +27,20 @@ const workspaceReviewDraftsState = vi.hoisted(() => ({
             afterContext: string[];
         };
         body: string;
+        includeInPrompt?: boolean;
         createdAt: number;
     }>>(),
 }));
 const clearWorkspaceReviewCommentDraftsSpy = vi.hoisted(() => vi.fn());
+const upsertWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
+const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 const reviewDraftHandlerScopeSpy = vi.hoisted(() => vi.fn());
+const modalAlertSpy = vi.hoisted(() => vi.fn());
+const modalShowSpy = vi.hoisted(() => vi.fn());
+const readCachedSnapshotForMachinePathMock = vi.hoisted(() => vi.fn((_input: Readonly<{
+    machineId: string;
+    path: string;
+}>) => null));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledSpy(featureId),
@@ -41,8 +50,8 @@ vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspace
     useWorkspaceReviewCommentDraftHandlers: (scope: WorkspaceScopeBase | null) => {
         reviewDraftHandlerScopeSpy(scope);
         return {
-            onUpsertReviewCommentDraft: vi.fn(),
-            onDeleteReviewCommentDraft: vi.fn(),
+            onUpsertReviewCommentDraft: upsertWorkspaceReviewCommentDraftSpy,
+            onDeleteReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
             onReviewCommentError: vi.fn(),
             clearReviewCommentDrafts: clearWorkspaceReviewCommentDraftsSpy,
         };
@@ -68,12 +77,32 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', (
     followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
 }));
 
+vi.mock('@/scm/scmRepositoryService', () => ({
+    scmRepositoryService: {
+        readCachedSnapshotForMachinePath: (input: Readonly<{
+            machineId: string;
+            path: string;
+        }>) => readCachedSnapshotForMachinePathMock(input),
+    },
+}));
+
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     blurActiveElementOnWeb: vi.fn(),
     deferOnWeb: (callback: () => void) => callback(),
 }));
 
 installNewSessionScreenModelCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: (...args: unknown[]) => modalShowSpy(...args),
+                alert: (...args: unknown[]) => modalAlertSpy(...args),
+                confirm: vi.fn(),
+                prompt: vi.fn(),
+            },
+        }).module;
+    },
     storage: async (importOriginal) => {
         const original = await importOriginal<any>();
         return {
@@ -132,7 +161,13 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         featureEnabledSpy.mockClear();
         workspaceReviewDraftsState.draftsByRootPath.clear();
         clearWorkspaceReviewCommentDraftsSpy.mockReset();
+        upsertWorkspaceReviewCommentDraftSpy.mockReset();
+        deleteWorkspaceReviewCommentDraftSpy.mockReset();
         reviewDraftHandlerScopeSpy.mockReset();
+        modalAlertSpy.mockReset();
+        modalShowSpy.mockReset();
+        readCachedSnapshotForMachinePathMock.mockReset();
+        readCachedSnapshotForMachinePathMock.mockImplementation(() => null);
     });
 
     it('restores attachment drafts when the new-session flow remounts with the same flow id', async () => {
@@ -334,7 +369,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         expect(remounted.getCurrent().drafts).toHaveLength(0);
     });
 
-    it('automatically includes matching workspace review comments in the new-session follow-up flow and clears workspace drafts after success', async () => {
+    it('automatically includes matching workspace review comments in the new-session follow-up flow and removes only sent workspace drafts after success', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();
         featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
@@ -356,6 +391,25 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             },
             body: 'Please verify this project change.',
             createdAt: 1,
+        }, {
+            id: 'draft-2',
+            filePath: 'src/b.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 2,
+                side: 'after',
+                oldLine: 2,
+                newLine: 2,
+            },
+            snapshot: {
+                selectedLines: ['+export const b = 2;'],
+                beforeContext: [],
+                afterContext: [],
+            },
+            body: 'Keep this draft but do not send it yet.',
+            includeInPrompt: false,
+            createdAt: 2,
         }]);
 
         const hook = await renderHook(() => useNewSessionAttachmentsController({
@@ -380,7 +434,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const collapsedAction = Array.isArray(collapsedActionResult)
             ? collapsedActionResult[0]
             : collapsedActionResult;
-        expect(collapsedAction?.selected).toBe(true);
+        expect(collapsedAction?.selected).toBeUndefined();
         expect(reviewDraftHandlerScopeSpy).toHaveBeenCalledWith({
             serverId: 'server-b',
             machineId: 'machine-1',
@@ -433,7 +487,166 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const followUpPayload = followUpCall?.[0] as { initialMessageText: string } | undefined;
         expect(followUpPayload?.initialMessageText).toContain('Review comments:');
         expect(followUpPayload?.initialMessageText).toContain('src/a.ts');
-        expect(clearWorkspaceReviewCommentDraftsSpy).toHaveBeenCalledTimes(1);
+        expect(followUpPayload?.initialMessageText).not.toContain('src/b.ts');
+        expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('draft-1');
+        expect(deleteWorkspaceReviewCommentDraftSpy).not.toHaveBeenCalledWith('draft-2');
+        expect(clearWorkspaceReviewCommentDraftsSpy).not.toHaveBeenCalled();
+    });
+
+    it('discovers workspace review comments when the selected path is home-relative', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
+        workspaceReviewDraftsState.draftsByRootPath.set('/Users/leeroy/Documents/Development/happier-demo-projects/atlas', [{
+            id: 'draft-home',
+            filePath: 'src/middleware/requestId.test.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 8,
+                side: 'after',
+                oldLine: 8,
+                newLine: 8,
+            },
+            snapshot: {
+                selectedLines: ['+process.env.JWT_SECRET = "test-secret";'],
+                beforeContext: [],
+                afterContext: [],
+            },
+            body: 'Please verify this line.',
+            createdAt: 1,
+        }]);
+
+        const params = {
+            flowId: 'flow-review-comments-home-relative',
+            isCreating: false,
+            sessionPrompt: '',
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            selectedMachineId: 'machine-1',
+            selectedMachineHomeDir: '/Users/leeroy',
+            selectedPath: '~/Documents/Development/happier-demo-projects/atlas',
+            targetServerId: 'server-b',
+            baseActionChips: [],
+        } satisfies Parameters<typeof useNewSessionAttachmentsController>[0] & { selectedMachineHomeDir: string };
+
+        const hook = await renderHook(() => useNewSessionAttachmentsController(params));
+
+        const reviewCommentsChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        expect(reviewCommentsChip).toBeTruthy();
+        expect(reviewDraftHandlerScopeSpy).toHaveBeenCalledWith({
+            serverId: 'server-b',
+            machineId: 'machine-1',
+            rootPath: '/Users/leeroy/Documents/Development/happier-demo-projects/atlas',
+        });
+    });
+
+    it('keeps attachment metadata when selected review comments are sent with uploads', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        featureEnabledSpy.mockImplementation((featureId: string) =>
+            featureId === 'files.reviewComments' || featureId === 'attachments.uploads'
+        );
+        uploadAttachmentDraftsToSessionSpy.mockResolvedValue({
+            messageLocalId: 'm1',
+            uploaded: [{
+                name: 'note.txt',
+                path: '.happier/uploads/note.txt',
+                mimeType: 'text/plain',
+                sizeBytes: 12,
+                sha256: 'sha-note',
+            }],
+        });
+        workspaceReviewDraftsState.draftsByRootPath.set('/repo/worktree-a', [{
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 1,
+                side: 'after',
+                oldLine: 1,
+                newLine: 1,
+            },
+            snapshot: {
+                selectedLines: ['+export const a = 2;'],
+                beforeContext: ['-export const a = 1;'],
+                afterContext: [],
+            },
+            body: 'Please verify this project change.',
+            createdAt: 1,
+        }]);
+
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-review-comments-attachments',
+            isCreating: false,
+            sessionPrompt: 'Focus on correctness',
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo/worktree-a',
+            targetServerId: 'server-b',
+            baseActionChips: [],
+        }));
+
+        await act(async () => {
+            hook.getCurrent().addPickedAttachments([{
+                kind: 'native',
+                uri: 'file:///tmp/note.txt',
+                name: 'note.txt',
+                sizeBytes: 12,
+                mimeType: 'text/plain',
+            }]);
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        const afterCreated = handleCreateSession.mock.calls[0]?.[0]?.afterCreated;
+        expect(typeof afterCreated).toBe('function');
+
+        await act(async () => {
+            await afterCreated({
+                sessionId: 'session-1',
+                effectiveSpawnServerId: 'server-b',
+            });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-1',
+            targetServerId: 'server-b',
+            displayText: expect.stringContaining('[attachments block]'),
+            metaOverrides: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 'session-1',
+                        comments: [
+                            expect.objectContaining({
+                                id: 'draft-1',
+                                filePath: 'src/a.ts',
+                            }),
+                        ],
+                    },
+                },
+                happierAttachments: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [{
+                            name: 'note.txt',
+                            path: '.happier/uploads/note.txt',
+                            mimeType: 'text/plain',
+                            sizeBytes: 12,
+                            sha256: 'sha-note',
+                        }],
+                    },
+                },
+            },
+        }));
+        expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('draft-1');
     });
 
     it('hides the review comments chip when the selected path changes away from the matching workspace', async () => {
@@ -489,7 +702,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         expect(clearWorkspaceReviewCommentDraftsSpy).not.toHaveBeenCalled();
     });
 
-    it('shows a toggle chip for matching workspace review comments on a generic new-session screen and lets the user disable and re-enable it', async () => {
+    it('opens the shared review-comments modal and lets users detach or discard matching workspace review comments', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();
         featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
@@ -527,45 +740,37 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
 
         const reviewCommentsChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
         expect(reviewCommentsChip).toBeTruthy();
+        const reviewCommentsBadge = reviewCommentsChip?.composerAttachmentBadge;
+        expect(reviewCommentsBadge?.testID).toBe('agent-input-review-comments-attachment-badge');
 
         await act(async () => {
-            const collapsedActionResult = reviewCommentsChip?.collapsedAction?.({
-                tint: '#000',
-                dismiss: vi.fn(),
-                blurInput: vi.fn(),
-            });
-            const collapsedAction = Array.isArray(collapsedActionResult)
-                ? collapsedActionResult[0]
-                : collapsedActionResult;
-            collapsedAction?.onPress?.();
+            reviewCommentsBadge?.onPress?.();
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        const disabledChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
-        const disabledActionResult = disabledChip?.collapsedAction?.({
-            tint: '#000',
-            dismiss: vi.fn(),
-            blurInput: vi.fn(),
-        });
-        const disabledAction = Array.isArray(disabledActionResult)
-            ? disabledActionResult[0]
-            : disabledActionResult;
-        expect(disabledAction?.selected).toBe(false);
+        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        const modalConfig = modalShowSpy.mock.calls[0]?.[0] as any;
+        expect(modalConfig?.component?.name).toBe('ReviewCommentsDraftsModal');
 
         await act(async () => {
-            disabledAction?.onPress?.();
+            reviewCommentsBadge?.onRemove?.();
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        const reenabledChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
-        const reenabledActionResult = reenabledChip?.collapsedAction?.({
-            tint: '#000',
-            dismiss: vi.fn(),
-            blurInput: vi.fn(),
-        });
-        const reenabledAction = Array.isArray(reenabledActionResult)
-            ? reenabledActionResult[0]
-            : reenabledActionResult;
-        expect(reenabledAction?.selected).toBe(true);
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const buttons = modalAlertSpy.mock.calls[0]?.[2] as any[];
+        const detachButton = buttons.find((button) => button.text === 'files.reviewComments.detachFromPrompt');
+        const discardButton = buttons.find((button) => button.style === 'destructive');
+        expect(detachButton).toBeTruthy();
+        expect(discardButton).toBeTruthy();
+
+        detachButton.onPress();
+        expect(upsertWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'draft-1',
+            includeInPrompt: false,
+        }));
+
+        discardButton.onPress();
+        expect(clearWorkspaceReviewCommentDraftsSpy).toHaveBeenCalledTimes(1);
     });
 });

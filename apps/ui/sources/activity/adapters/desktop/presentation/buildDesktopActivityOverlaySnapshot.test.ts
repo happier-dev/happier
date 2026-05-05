@@ -8,6 +8,7 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import type { ConnectedServiceQuotaSummary } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 
 import { buildDesktopActivityOverlaySnapshot } from './buildDesktopActivityOverlaySnapshot';
+import type { DesktopActivityOverlayCompanionSnapshotInput } from './snapshot/buildDesktopActivityOverlayCompanionSnapshot';
 import type { DesktopActivityOverlaySource } from '../runtime/useDesktopActivityOverlaySource';
 
 function createDesktopPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOverlayPolicy {
@@ -20,6 +21,7 @@ function createDesktopPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): Des
         alwaysOnTop: true,
         autoHideEnabled: true,
         autoHideDelayMs: 6000,
+        hoverExpandDelayMs: 500,
         expandedBehavior: 'click',
         interactiveCollapsed: true,
         presentationMode: 'automatic',
@@ -28,6 +30,7 @@ function createDesktopPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): Des
         compactStyle: 'pill',
         showSessionCount: true,
         showPreviewText: false,
+        quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
         placementMode: 'anchored',
         anchor: 'top_center',
         offsetX: 0,
@@ -60,7 +63,47 @@ function createOverlaySource(params: Readonly<{
     };
 }
 
+function createCompanionInput(
+    overrides: Partial<DesktopActivityOverlayCompanionSnapshotInput> = {},
+): DesktopActivityOverlayCompanionSnapshotInput {
+    return {
+        enabled: true,
+        pet: {
+            source: { kind: 'builtIn', petId: 'blink' },
+            displayName: 'Blink',
+        },
+        ...overrides,
+    };
+}
+
 describe('buildDesktopActivityOverlaySnapshot', () => {
+    it('does not synthesize a visible companion when the companion policy is omitted', () => {
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({
+                sessions: [
+                    createSessionFixture({
+                        id: 'permission-without-companion-policy',
+                        active: true,
+                        presence: 'online',
+                        pendingPermissionRequestCount: 1,
+                    }),
+                ],
+            }),
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy({
+                visibilityMode: 'active_sessions',
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot.companion).toEqual(expect.objectContaining({
+            enabled: false,
+            state: 'idle',
+            attentionLevel: 'idle',
+            sessionId: null,
+        }));
+    });
+
     it('keeps active-session overlays focused on active sessions even when auto-show triggers are disabled', () => {
         const snapshot = buildDesktopActivityOverlaySnapshot({
             source: createOverlaySource({
@@ -143,10 +186,9 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(snapshot.sessions.map((session) => session.sessionId)).toEqual([
             'permission',
             'thinking',
-            'inactive-unread',
             'quiet-active',
         ]);
-        expect(model.collapsed.sessionCount).toBe(4);
+        expect(model.collapsed.sessionCount).toBe(3);
     });
 
     it('keeps desktop preview text in the snapshot when the overlay setting enables it', () => {
@@ -269,6 +311,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             desktopPolicy: createDesktopPolicy({
                 visibilityMode: 'active_sessions',
             }),
+            companion: createCompanionInput(),
             nowMs: 1_000,
         });
 
@@ -348,6 +391,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(snapshot.state).toBe('content');
         expect(snapshot.permissionRequests).toEqual([
             expect.objectContaining({
+                serverId: 'server-1',
                 sessionId: 'session-permission',
                 requestId: 'perm-1',
                 kind: 'permission_request',
@@ -357,6 +401,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         ]);
         expect(snapshot.userQuestions).toEqual([
             expect.objectContaining({
+                serverId: 'server-1',
                 sessionId: 'session-question',
                 requestId: 'question-1',
                 kind: 'user_question',
@@ -381,15 +426,106 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         ]);
     });
 
-    it('derives quota summaries and completion-ready sessions into the snapshot contract', () => {
+    it('derives permission risk from real request snapshots into model actions', () => {
         const snapshot = buildDesktopActivityOverlaySnapshot({
             source: createOverlaySource({
                 sessions: [
                     createSessionFixture({
+                        id: 'session-edit',
+                        active: true,
+                        presence: 'online',
+                        pendingPermissionRequestCount: 1,
+                        agentState: {
+                            requests: {
+                                'perm-edit': {
+                                    tool: 'Edit',
+                                    arguments: {
+                                        file_path: 'src/auth/middleware.ts',
+                                    },
+                                    createdAt: 100,
+                                },
+                            },
+                        },
+                    }),
+                    createSessionFixture({
+                        id: 'session-bash',
+                        active: true,
+                        presence: 'online',
+                        pendingPermissionRequestCount: 1,
+                        agentState: {
+                            requests: {
+                                'perm-bash': {
+                                    tool: 'Bash',
+                                    arguments: {
+                                        command: 'git status --short',
+                                    },
+                                    createdAt: 110,
+                                },
+                            },
+                        },
+                    }),
+                ],
+            }),
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy({
+                visibilityMode: 'active_sessions',
+            }),
+            companion: createCompanionInput(),
+            nowMs: 1_000,
+        });
+        const model = buildDesktopActivityOverlayModel({
+            snapshot,
+            policy: createDesktopPolicy(),
+            isExpanded: true,
+        });
+
+        expect(snapshot.permissionRequests).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                requestId: 'perm-edit',
+                risk: 'high',
+            }),
+            expect.objectContaining({
+                requestId: 'perm-bash',
+                risk: 'low',
+            }),
+        ]));
+
+        const cards = model.expanded.cards ?? [];
+        const editCard = cards.find((card) => card.id === 'permission:perm-edit');
+        const bashCard = cards.find((card) => card.id === 'permission:perm-bash');
+
+        expect(editCard).toEqual(expect.objectContaining({
+            kind: 'permission_request',
+            risk: 'high',
+            actions: [
+                expect.objectContaining({ id: 'deny:perm-edit' }),
+                expect.objectContaining({ id: 'open:perm-edit' }),
+            ],
+        }));
+        expect(editCard).not.toEqual(expect.objectContaining({
+            actions: expect.arrayContaining([
+                expect.objectContaining({ id: 'always_allow' }),
+                expect.objectContaining({ id: 'allow:perm-edit' }),
+            ]),
+        }));
+        expect(bashCard).toEqual(expect.objectContaining({
+            kind: 'permission_request',
+            risk: 'low',
+            actions: expect.arrayContaining([
+                expect.objectContaining({ id: 'always_allow' }),
+                expect.objectContaining({ id: 'allow:perm-bash' }),
+            ]),
+        }));
+    });
+
+    it('derives quota summaries and recent turn completion sessions into the snapshot contract', () => {
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({
+                sessions: [
+                    Object.assign(createSessionFixture({
                         id: 'session-ready',
                         active: true,
                         presence: 'online',
-                        pendingCount: 1,
                         seq: 5,
                         lastViewedSessionSeq: 5,
                         metadata: {
@@ -398,6 +534,8 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                             homeDir: '/Users/tester',
                             summary: { text: 'Ready session', updatedAt: 5 },
                         },
+                    }), {
+                        lastTurnCompletedAt: 990,
                     }),
                 ],
                 quotaSummaries: [
@@ -443,9 +581,101 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(snapshot.completionStates).toEqual([
             expect.objectContaining({
                 sessionId: 'session-ready',
+                serverId: 'server-1',
                 title: 'Ready session',
                 summary: expect.any(String),
+                variant: 'turn_complete',
+                autoDismissMs: 15000,
+                sticky: false,
             }),
         ]);
+    });
+
+    it('does not derive completion cards from stale completion timestamps or generic pending state', () => {
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({
+                sessions: [
+                    Object.assign(createSessionFixture({
+                        id: 'stale-ready',
+                        active: true,
+                        presence: 'online',
+                        pendingCount: 1,
+                        seq: 5,
+                        lastViewedSessionSeq: 5,
+                        metadata: {
+                            path: '/Users/tester/project/stale',
+                            host: 'tester.local',
+                            homeDir: '/Users/tester',
+                            summary: { text: 'Stale ready', updatedAt: 5 },
+                        },
+                    }), {
+                        lastTurnCompletedAt: 1_000,
+                    }),
+                ],
+            }),
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy({
+                visibilityMode: 'active_sessions',
+            }),
+            nowMs: 31_001,
+        });
+
+        expect(snapshot.completionStates).toEqual([]);
+    });
+
+    it('maps a selected permission request to a waiting companion state', () => {
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({
+                sessions: [
+                    createSessionFixture({
+                        id: 'permission-companion',
+                        active: true,
+                        presence: 'online',
+                        pendingPermissionRequestCount: 1,
+                        metadata: {
+                            path: '/Users/tester/project/permission-companion',
+                            host: 'tester.local',
+                            homeDir: '/Users/tester',
+                            summary: { text: 'Permission companion work', updatedAt: 3 },
+                        },
+                    }),
+                ],
+            }),
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy({
+                visibilityMode: 'active_sessions',
+            }),
+            companion: createCompanionInput(),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot).toHaveProperty('companion', expect.objectContaining({
+            enabled: true,
+            state: 'waiting',
+            attentionLevel: 'needsAttention',
+            reason: 'waiting',
+            sessionId: 'permission-companion',
+        }));
+    });
+
+    it('keeps the companion idle when the overlay has no selected activity session', () => {
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({
+                sessions: [],
+            }),
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy({
+                visibilityMode: 'always_when_enabled',
+            }),
+            companion: createCompanionInput(),
+            nowMs: 1_000,
+        });
+
+        expect(snapshot).toHaveProperty('companion', expect.objectContaining({
+            enabled: true,
+            state: 'idle',
+            attentionLevel: 'idle',
+            sessionId: null,
+        }));
     });
 });

@@ -25,6 +25,12 @@ function makeSnapshot(
             writeRemoteFetch: true,
             writeRemotePull: true,
             writeRemotePush: true,
+            writeRemoteAdd: true,
+            writeRemoteSetUrl: true,
+            writeRemoteRemove: true,
+            writeBranchMerge: true,
+            writeBranchRebase: true,
+            writeBranchOperationControl: true,
             worktreeCreate: true,
             operationLabels: { commit: 'Commit staged' },
         },
@@ -468,6 +474,109 @@ describe('evaluateScmOperationPreflight', () => {
         }
         if (!pullResult.allowed) {
             expect(pullResult.reason).toBe('upstream_required');
+        }
+    });
+
+    it('allows branch merge and rebase when a source ref is selected and the worktree is clean', () => {
+        const mergeResult = evaluateScmOperationPreflight({
+            intent: 'branch_merge',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot(),
+            sourceRef: 'feature/work',
+        });
+        const rebaseResult = evaluateScmOperationPreflight({
+            intent: 'branch_rebase',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot(),
+            sourceRef: 'origin/main',
+        });
+
+        expect(mergeResult.allowed).toBe(true);
+        expect(rebaseResult.allowed).toBe(true);
+    });
+
+    it('blocks branch integration without a source ref', () => {
+        const result = evaluateScmOperationPreflight({
+            intent: 'branch_merge',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot(),
+            sourceRef: '   ',
+        });
+
+        expect(result.allowed).toBe(false);
+        if (!result.allowed) {
+            expect(result.reason).toBe('source_ref_required');
+        }
+    });
+
+    it('blocks branch integration with the current branch as source', () => {
+        const result = evaluateScmOperationPreflight({
+            intent: 'branch_rebase',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot(),
+            sourceRef: 'main',
+        });
+
+        expect(result.allowed).toBe(false);
+        if (!result.allowed) {
+            expect(result.reason).toBe('source_ref_current_branch');
+        }
+    });
+
+    it('blocks branch integration when the worktree is dirty or an operation is already in progress', () => {
+        const dirtyResult = evaluateScmOperationPreflight({
+            intent: 'branch_merge',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot(undefined, { pendingFiles: 1 }),
+            sourceRef: 'feature/work',
+        });
+        const inProgressResult = evaluateScmOperationPreflight({
+            intent: 'branch_rebase',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot({
+                operationState: { kind: 'merge', sourceRef: 'feature/work', canContinue: true, canAbort: true },
+            }),
+            sourceRef: 'origin/main',
+        });
+
+        expect(dirtyResult.allowed).toBe(false);
+        expect(inProgressResult.allowed).toBe(false);
+        if (!dirtyResult.allowed) {
+            expect(dirtyResult.reason).toBe('clean_worktree_required');
+        }
+        if (!inProgressResult.allowed) {
+            expect(inProgressResult.reason).toBe('branch_operation_in_progress');
+        }
+    });
+
+    it('only allows branch operation controls when a matching operation is in progress', () => {
+        const continueResult = evaluateScmOperationPreflight({
+            intent: 'branch_operation_continue',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot({
+                operationState: { kind: 'rebase', sourceRef: 'origin/main', canContinue: true, canAbort: true },
+            }),
+            operation: 'rebase',
+        });
+        const missingResult = evaluateScmOperationPreflight({
+            intent: 'branch_operation_abort',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot(),
+            operation: 'merge',
+        });
+
+        expect(continueResult.allowed).toBe(true);
+        expect(missingResult.allowed).toBe(false);
+        if (!missingResult.allowed) {
+            expect(missingResult.reason).toBe('branch_operation_not_in_progress');
         }
     });
 });

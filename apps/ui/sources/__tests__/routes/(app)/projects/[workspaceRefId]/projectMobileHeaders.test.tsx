@@ -10,7 +10,9 @@ import { createExpoRouterMock, createStackOptionsCapture } from '@/dev/testkit/m
 const stackOptionsCapture = createStackOptionsCapture();
 const paneOpenDetailsTabSpy = vi.fn();
 const setLocalSettingSpy = vi.fn();
+const setSettingSpy = vi.fn();
 let localSettingsMock: Record<string, unknown> = {};
+let accountSettingsMock: Record<string, unknown> = {};
 let deviceTypeMock: 'phone' | 'tablet' | 'desktop' = 'phone';
 let paneScopeStateMock: {
     right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
@@ -81,10 +83,26 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useLocalSetting: (key: string) => localSettingsMock[key],
+        useSetting: (key: string) => accountSettingsMock[key],
+        useSettingMutable: (key: string) => [
+            accountSettingsMock[key],
+            (value: unknown) => {
+                accountSettingsMock[key] = value;
+                setSettingSpy(value);
+            },
+        ],
+        useLocalSetting: (key: string) => {
+            if (key === 'mobileWorkspaceExperienceV1') {
+                throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
+            }
+            return localSettingsMock[key];
+        },
         useLocalSettingMutable: (key: string) => [
             localSettingsMock[key],
             (value: unknown) => {
+                if (key === 'mobileWorkspaceExperienceV1') {
+                    throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
+                }
                 localSettingsMock[key] = value;
                 setLocalSettingSpy(value);
             },
@@ -139,12 +157,14 @@ vi.mock('@/components/workspaceCockpit/project/ProjectCockpitShell', () => ({
 describe('project mobile route headers', () => {
     beforeEach(() => {
         localSettingsMock = {};
+        accountSettingsMock = {};
         deviceTypeMock = 'phone';
         paneScopeStateMock = {
             right: { isOpen: true, activeTabId: 'git', tabState: {} },
             details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
         };
         setLocalSettingSpy.mockClear();
+        setSettingSpy.mockClear();
         stackOptionsCapture.reset();
         paneOpenDetailsTabSpy.mockClear();
         routerMock.spies.push.mockClear();
@@ -217,6 +237,8 @@ describe('project mobile route headers', () => {
         ['details', '@/app/(app)/projects/[workspaceRefId]/details', 'replace', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
         ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'push', '/projects/wr_1/details?worktreeId=gitwt_feature&showWorktrees=1'],
     ])('configures mobile header actions for the %s route', async (_name, moduleId, navigationMethod, expectedHref) => {
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
+
         const Screen = (await import(moduleId)).default as React.ComponentType;
         await renderScreen(<Screen />);
 
@@ -263,7 +285,7 @@ describe('project mobile route headers', () => {
         ['files', '@/app/(app)/projects/[workspaceRefId]/files', 'push'],
         ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'push'],
     ])('routes the cockpit worktrees header action through the root overview surface for the %s route', async (_name, moduleId, navigationMethod) => {
-        localSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
 
         const Screen = (await import(moduleId)).default as React.ComponentType;
         await renderScreen(<Screen />);
@@ -289,7 +311,7 @@ describe('project mobile route headers', () => {
     });
 
     it('routes the cockpit details header toggle through the root overview surface instead of the legacy showWorktrees query', async () => {
-        localSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
 
         const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default as React.ComponentType;
         await renderScreen(<Screen />);
@@ -307,7 +329,7 @@ describe('project mobile route headers', () => {
     });
 
     it('toggles the mobile workspace experience from the project mobile header', async () => {
-        localSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
 
         const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/git')).default as React.ComponentType;
         await renderScreen(<Screen />);
@@ -320,8 +342,8 @@ describe('project mobile route headers', () => {
             toggleButton.props.onPress();
         });
 
-        expect(setLocalSettingSpy).toHaveBeenCalledWith('cockpit');
-        expect(localSettingsMock.mobileWorkspaceExperienceV1).toBe('cockpit');
+        expect(setSettingSpy).toHaveBeenCalledWith('cockpit');
+        expect(accountSettingsMock.mobileWorkspaceExperienceV1).toBe('cockpit');
     });
 
     it.each([
@@ -330,7 +352,7 @@ describe('project mobile route headers', () => {
         ['details', '@/app/(app)/projects/[workspaceRefId]/details', 'tabs'],
         ['terminal', '@/app/(app)/projects/[workspaceRefId]/terminal', 'terminal'],
     ])('renders the project cockpit shell on the %s route when cockpit mode is enabled', async (_name, moduleId, surface) => {
-        localSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
 
         const Screen = (await import(moduleId)).default as React.ComponentType;
         const screen = await renderScreen(<Screen />);
@@ -343,8 +365,8 @@ describe('project mobile route headers', () => {
     });
 
     it('uses the mobile header test-id prefix on the phone index cockpit route', async () => {
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            mobileWorkspaceExperienceV1: 'cockpit',
             projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },

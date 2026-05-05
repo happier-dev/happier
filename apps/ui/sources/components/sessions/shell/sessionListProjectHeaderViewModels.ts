@@ -1,8 +1,7 @@
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import { resolveWorkspaceDisplayLabel } from '@/sync/domains/workspaces/workspaceLabel';
+import { resolveWorkspaceDisplayPresentation } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { LruMap } from '@/utils/cache/lruMap';
 
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
@@ -14,6 +13,7 @@ export type SessionListProjectHeaderViewModel = Readonly<{
     workspaceRefId: string | null;
     legacyWorkspaceKey: string;
     scopeHint: WorkspaceScopeBase | null;
+    seedSessionId: string | null;
 }>;
 
 export type SessionListProjectHeaderViewModelState = Readonly<{
@@ -69,6 +69,7 @@ function buildSessionListProjectHeaderViewModelStateCacheKey(input: Readonly<{
             String(item.workspaceScopeHint?.serverId ?? ''),
             String(item.workspaceScopeHint?.machineId ?? ''),
             String(item.workspaceScopeHint?.rootPath ?? ''),
+            String(item.seedSessionId ?? ''),
             String(item.serverId ?? ''),
             String(item.serverName ?? ''),
         ].join('|'));
@@ -86,15 +87,6 @@ export function buildSessionListProjectHeaderViewModels(input: Readonly<{
     const cachedState = SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE.get(cacheKey);
     if (cachedState) {
         return cachedState;
-    }
-
-    const workspaceRefByScopeKey = new Map<string, WorkspaceRefV1>();
-    for (const workspaceRef of input.workspaceRefs) {
-        const scopeKey = tryBuildWorkspaceCacheKey(workspaceRef);
-        if (!scopeKey) {
-            continue;
-        }
-        workspaceRefByScopeKey.set(scopeKey, workspaceRef);
     }
 
     let projectHeaderViewModelByGroupKey: Map<string, SessionListProjectHeaderViewModel> | null = null;
@@ -117,29 +109,27 @@ export function buildSessionListProjectHeaderViewModels(input: Readonly<{
 
         const legacyWorkspaceKey = String(item.workspaceKey ?? '').trim();
         const scopeHint = item.workspaceScopeHint ?? null;
+        const seedSessionId = String(item.seedSessionId ?? '').trim() || null;
         if (legacyWorkspaceKey && scopeHint) {
             scopeHintByLegacyWorkspaceKey.set(legacyWorkspaceKey, scopeHint);
         }
 
-        const workspaceRef = scopeHint
-            ? (workspaceRefByScopeKey.get(tryBuildWorkspaceCacheKey(scopeHint) ?? '') ?? null)
-            : null;
-        const workspaceRefId = String(workspaceRef?.id ?? '').trim() || null;
         const legacyCustomLabel = legacyWorkspaceKey ? input.workspaceLabels?.[legacyWorkspaceKey] ?? null : null;
-        const displayTitle = scopeHint
-            ? resolveWorkspaceDisplayLabel({ scope: scopeHint, workspaceRef, fallbackPathLabel: item.title })
-            : (legacyCustomLabel ?? item.title);
-        const hasCustomLabel = scopeHint
-            ? Boolean(workspaceRef && String(workspaceRef.label ?? '').trim())
-            : Boolean(legacyCustomLabel && String(legacyCustomLabel).trim());
+        const presentation = resolveWorkspaceDisplayPresentation({
+            scope: scopeHint,
+            workspaceRefs: input.workspaceRefs,
+            fallbackPathLabel: item.title,
+            legacyLabel: legacyCustomLabel,
+        });
 
         projectHeaderViewModelByGroupKey.set(groupKey, {
             collapseKey: groupKey,
-            displayTitle,
-            hasCustomLabel,
-            workspaceRefId,
+            displayTitle: presentation.displayTitle,
+            hasCustomLabel: presentation.hasCustomLabel,
+            workspaceRefId: presentation.workspaceRefId,
             legacyWorkspaceKey,
             scopeHint,
+            seedSessionId,
         });
     }
 

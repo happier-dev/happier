@@ -572,7 +572,7 @@ describe('SessionRightPanelTerminalView.web', () => {
         await flushHookEffects();
     });
 
-    it('preserves cached transcript when a reused terminal reconnects without a cached terminal id', async () => {
+    it('preserves cached transcript without injecting output when a reused terminal reconnects without a cached terminal id', async () => {
         const cacheMod = await import('@/components/sessions/terminal/terminalSurfaceStateCache');
         cacheMod.replaceTerminalSurfaceState('session:s1:terminal', {
             terminalId: null,
@@ -599,11 +599,11 @@ describe('SessionRightPanelTerminalView.web', () => {
         expect(cached).toEqual({
             terminalId: 't1',
             cursor: 5,
-            output: 'hello\r\n[Reconnected]\r\n',
+            output: 'hello',
             detectedUrl: null,
         });
         expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
-        expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('\r\n[Reconnected]\r\n');
+        expect(terminalHandleInstances[0]?.write).not.toHaveBeenCalledWith('\r\n[Reconnected]\r\n');
     });
 
     it('drops in-flight terminal output that resolves after the user clears the transcript', async () => {

@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, useWindowDimensions, InteractionManager } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAllMachines, useMachineListByServerId, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useMachineListByServerId, useSessions, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useRouter, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -38,11 +39,11 @@ import { computeNewSessionInputMaxHeight } from '@/components/sessions/agentInpu
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useProfileMap } from '@/components/sessions/new/modules/profileHelpers';
 import { newSessionScreenStyles } from '@/components/sessions/new/newSessionScreenStyles';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
 import { buildCliAvailabilityProbeState } from '@/components/sessions/new/modules/buildCliAvailabilityProbeState';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
@@ -197,12 +198,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const settings = useSettings() ?? settingsDefaults;
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
-    React.useEffect(() => {
-        return subscribeActiveServer((snapshot) => {
-            setActiveServerSnapshot(snapshot);
-        });
-    }, []);
+    const activeServerSnapshot = useActiveServerSnapshot();
     const {
         serverProfiles,
         serverTargets,
@@ -238,7 +234,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
+    const [favoriteModelSelections, setFavoriteModelSelections] = useSettingMutable('favoriteModelSelectionsV1');
     const [dismissedCLIWarnings, setDismissedCLIWarnings] = useSettingMutable('dismissedCLIWarnings');
+    const draftScope = useActiveServerAccountScope();
 
     // Try to get data from temporary store first
     const tempSessionData = React.useMemo(() => {
@@ -247,9 +245,15 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         return null;
     }, [dataId]);
+    const shouldReplacePersistedDraftSelections = tempSessionData?.replacePersistedDraftSelections === true;
+    const loadScopedNewSessionDraft = React.useCallback(() => {
+        return draftScope ? loadNewSessionDraft(draftScope) : null;
+    }, [draftScope]);
 
     // Load persisted draft state (survives remounts/screen navigation)
-    const [persistedDraft, setPersistedDraft] = React.useState(() => loadNewSessionDraft());
+    const [scopedPersistedDraft, setScopedPersistedDraft] = React.useState(() => loadScopedNewSessionDraft());
+    const persistedDraft = shouldReplacePersistedDraftSelections ? null : scopedPersistedDraft;
+    const previousDraftScopeRef = React.useRef(draftScope);
     const hydratedTempAuthoringDraft = React.useMemo(() => {
         return tempSessionData
             ? buildNewSessionAuthoringDraftFromTempData(tempSessionData)
@@ -260,6 +264,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             ? buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)
             : null;
     }, [persistedDraft]);
+    const hydratedPersistedContentAuthoringDraft = React.useMemo(() => {
+        return scopedPersistedDraft
+            ? buildNewSessionAuthoringDraftFromPersistedDraft(scopedPersistedDraft)
+            : null;
+    }, [scopedPersistedDraft]);
     const hydratedResumeSessionId = React.useMemo(() => {
         if (typeof hydratedTempAuthoringDraft?.resumeSessionId === 'string') {
             return hydratedTempAuthoringDraft.resumeSessionId;
@@ -289,15 +298,23 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     useFocusEffect(
         React.useCallback(() => {
-            setPersistedDraft(loadNewSessionDraft());
+            setScopedPersistedDraft(loadScopedNewSessionDraft());
             // Ensure newly-registered machines show up without requiring an app restart.
             // Throttled to avoid spamming the server when navigating back/forth.
             // Defer until after interactions so the screen feels instant on iOS.
             InteractionManager.runAfterInteractions(() => {
                 fireAndForget(sync.refreshMachinesThrottled({ staleMs: 15_000 }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.focus' });
             });
-        }, [])
+        }, [loadScopedNewSessionDraft])
     );
+
+    React.useEffect(() => {
+        if (previousDraftScopeRef.current === draftScope) {
+            return;
+        }
+        previousDraftScopeRef.current = draftScope;
+        setScopedPersistedDraft(loadScopedNewSessionDraft());
+    }, [draftScope, loadScopedNewSessionDraft]);
 
     // (prefetch effect moved below, after machines/recent/favorites are defined)
 
@@ -309,6 +326,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const profileMap = useProfileMap(allProfiles);
     const activeMachines = useAllMachines();
+    const sessions = useSessions();
     const machineListByServerId = useMachineListByServerId();
     const machines = React.useMemo(() => {
         const resolvedTargetServerId = String(targetServerId ?? '').trim();
@@ -425,6 +443,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionMachinePathState({
         machines,
         recentMachinePaths,
+        sessions,
         machineIdParam: effectiveMachineIdParam,
         pathParam: effectivePathParam,
         persistedMachineId: persistedDraft?.selectedMachineId ?? tempSessionData?.machineId,
@@ -667,9 +686,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         automationTimezoneParam,
         automationEditIdParam,
         automationFeatureEnabled,
-        persistedDraftEntryIntent: persistedDraft?.entryIntent,
+        persistedDraftEntryIntent: scopedPersistedDraft?.entryIntent,
         hydratedTempAuthoringDraft,
-        hydratedPersistedAuthoringDraft,
+        hydratedPersistedAuthoringDraft: hydratedPersistedContentAuthoringDraft,
     });
     const [isCreating, setIsCreating] = React.useState(false);
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
@@ -856,6 +875,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         machines,
         recentMachinePaths,
+        sessions,
         favoriteMachines,
         useEnhancedSessionWizard,
         refreshMachineEnvPresence,
@@ -959,6 +979,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         capabilityServerId,
         selectedPath,
         settings,
+        favoriteModelSelections,
+        setFavoriteModelSelections,
         refreshProbe: cliAvailabilityProbe ?? null,
     });
 
@@ -1014,6 +1036,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedSecretIdByProfileIdByEnvVarName,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         backendNewSessionOptionStateByTargetKey,
+        draftScope,
     });
     const spawnBackendTarget = React.useMemo(() => {
         return selectedBackendEntry?.backendTarget ?? backendTarget;
@@ -1333,6 +1356,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             machineDisplayName: selectedMachine?.metadata?.displayName,
             machineHost: selectedMachine?.metadata?.host,
             machinePopover,
+            selectedMachineHomeDir: selectedMachine?.metadata?.homeDir ?? null,
             selectedPath,
             pathPopover,
             showResumePicker,

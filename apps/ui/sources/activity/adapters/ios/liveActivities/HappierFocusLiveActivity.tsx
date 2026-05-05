@@ -4,6 +4,7 @@ import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui';
 import { font, padding } from '@expo/ui/swift-ui/modifiers';
 
 import {
+    buildActivitySurfaceAttentionIconModifiers,
     renderActivitySurfaceAttentionCountBadge,
     isActivitySurfaceUrgentAttentionState,
     renderActivitySurfaceOpenInboxButton,
@@ -46,11 +47,21 @@ export const HappierFocusLiveActivityComponent: LiveActivityComponent<LiveActivi
                 {renderActivitySurfacePrimarySummary(props.title, detailLines)}
             </VStack>
         ),
-        compactLeading: <Image systemName={attentionSymbol} />,
+        compactLeading: (
+            <Image
+                systemName={attentionSymbol}
+                modifiers={buildActivitySurfaceAttentionIconModifiers(props.attentionState)}
+            />
+        ),
         compactTrailing: props.overflowCount > 0
             ? renderActivitySurfaceOverflowBadge(props.overflowCount)
             : <Text modifiers={[font({ weight: 'semibold', design: 'rounded', size: 12 })]}>{compactLabel}</Text>,
-        minimal: <Image systemName={attentionSymbol} />,
+        minimal: (
+            <Image
+                systemName={attentionSymbol}
+                modifiers={buildActivitySurfaceAttentionIconModifiers(props.attentionState)}
+            />
+        ),
         expandedLeading: renderActivitySurfacePrimarySummary(props.title, detailLines),
         expandedTrailing: renderActivitySurfaceAttentionCountBadge(
             props.totalAttentionCount,

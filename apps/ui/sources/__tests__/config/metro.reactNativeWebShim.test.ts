@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
 function getUiDir(): string {
     return join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
@@ -137,6 +137,19 @@ describe('metro.config.js (web)', () => {
         expect(config.watcher).not.toHaveProperty('unstable_workerThreads');
     });
 
+    it('allows local native profiling runs to disable an explicit Watchman opt-in', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, {
+            CI: undefined,
+            HAPPIER_STACK_STACK: undefined,
+            HAPPIER_UI_METRO_USE_WATCHMAN: 'true',
+            HAPPIER_UI_METRO_DISABLE_WATCHMAN: '1',
+        });
+
+        expect(config.resolver.useWatchman).toBe(false);
+        expect(config.watcher?.useWatchman).toBe(false);
+    });
+
     it('blocks transient hstack web artifact exports from Metro crawling', () => {
         const uiDir = getUiDir();
         const config = loadMetroConfig(uiDir);
@@ -212,6 +225,108 @@ describe('metro.config.js (web)', () => {
             type: 'sourceFile',
             filePath: join(uiDir, 'sources/platform/shims/reactNativeWebShim.ts'),
         });
+    });
+
+    it('leaves generated Worklets Bundle Mode imports on the default resolver when the flag is off', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, { HAPPIER_UI_WORKLETS_BUNDLE_MODE: '0' });
+        const defaultResolution = {
+            type: 'sourceFile',
+            filePath: join(uiDir, 'default-worklets-resolution.js'),
+        };
+
+        const resolved = config.resolver.resolveRequest(
+            {
+                originModulePath: join(uiDir, 'index.ts'),
+                resolveRequest: () => defaultResolution,
+            },
+            'react-native-worklets/.worklets/123.js',
+            'ios',
+        );
+
+        expect(resolved).toBe(defaultResolution);
+    });
+
+    it('keeps the Worklets Bundle Mode generated-worklet resolver available when explicitly enabled', () => {
+        const uiDir = getUiDir();
+        const moduleName = 'react-native-worklets/.worklets/metro-fixture.js';
+        const generatedWorkletPath = join(uiDir, 'node_modules', moduleName);
+        mkdirSync(dirname(generatedWorkletPath), { recursive: true });
+        writeFileSync(generatedWorkletPath, 'export default null;\n');
+
+        try {
+            const config = loadMetroConfig(uiDir, { HAPPIER_UI_WORKLETS_BUNDLE_MODE: '1' });
+
+            expect(existsSync(generatedWorkletPath)).toBe(true);
+
+            const resolved = config.resolver.resolveRequest(
+                {
+                    originModulePath: join(uiDir, 'index.ts'),
+                    resolveRequest: () => {
+                        throw new Error('default resolver should not receive generated worklets');
+                    },
+                },
+                moduleName,
+                'ios',
+            );
+
+            expect(resolved).toEqual({
+                type: 'sourceFile',
+                filePath: generatedWorkletPath,
+            });
+        } finally {
+            rmSync(generatedWorkletPath, { force: true });
+        }
+    });
+
+    it('reports stale Metro cache when a generated Worklets Bundle Mode import points at a missing file', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, { HAPPIER_UI_WORKLETS_BUNDLE_MODE: '1' });
+
+        expect(() => config.resolver.resolveRequest(
+            {
+                originModulePath: join(uiDir, 'index.ts'),
+                resolveRequest: () => {
+                    throw new Error('default resolver should not receive generated worklets');
+                },
+            },
+            'react-native-worklets/.worklets/123.js',
+            'ios',
+        )).toThrow(/generated Worklets Bundle Mode module.*does not exist.*clear Metro/i);
+    });
+
+    it.each([
+        ['0.7 generated worklets', 'react-native-worklets/__generatedWorklets/0.js'],
+        ['0.8 generated worklets', 'react-native-worklets/.worklets/0.js'],
+    ])('assigns deterministic generated-worklet module ids without colliding with normal modules for %s', (_label, moduleName) => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, { HAPPIER_UI_WORKLETS_BUNDLE_MODE: '1' });
+        const createModuleId = config.serializer.createModuleIdFactory();
+        const normalModuleId = createModuleId(join(uiDir, 'index.ts'));
+        const generatedWorkletId = createModuleId(join(uiDir, 'node_modules', moduleName));
+
+        expect(createModuleId(join(uiDir, 'node_modules', moduleName))).toBe(generatedWorkletId);
+        expect(generatedWorkletId).not.toBe(normalModuleId);
+    });
+
+    it('does not watch generated Worklets Bundle Mode modules by default', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, { HAPPIER_UI_WORKLETS_BUNDLE_MODE: '0' });
+
+        expect(config.watchFolders).toEqual(expect.not.arrayContaining([
+            join(uiDir, 'node_modules/react-native-worklets/__generatedWorklets'),
+            join(uiDir, 'node_modules/react-native-worklets/.worklets'),
+        ]));
+    });
+
+    it('watches generated Worklets Bundle Mode modules when explicitly enabled', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir, { HAPPIER_UI_WORKLETS_BUNDLE_MODE: '1' });
+
+        expect(config.watchFolders).toEqual(expect.arrayContaining([
+            join(uiDir, 'node_modules/react-native-worklets/__generatedWorklets'),
+            join(uiDir, 'node_modules/react-native-worklets/.worklets'),
+        ]));
     });
 
     it('keeps @react-navigation/native on the canonical package entry when it already exports NavigationProvider', () => {

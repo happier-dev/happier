@@ -1,13 +1,22 @@
 import type { ReviewCommentDraft } from './reviewCommentTypes';
 
+export function isReviewCommentDraftIncludedInPrompt(draft: ReviewCommentDraft): boolean {
+    return draft.includeInPrompt !== false;
+}
+
+export function filterReviewCommentDraftsIncludedInPrompt(drafts: readonly ReviewCommentDraft[]): ReviewCommentDraft[] {
+    return drafts.filter(isReviewCommentDraftIncludedInPrompt);
+}
+
 function formatAnchor(draft: ReviewCommentDraft): string {
+    const lineHash = draft.anchor.lineHash ? ` ${draft.anchor.lineHash}` : '';
     if (draft.anchor.kind === 'fileLine') {
-        return `L${draft.anchor.startLine}`;
+        return `L${draft.anchor.startLine}${lineHash}`;
     }
     const side = draft.anchor.side;
     const line = side === 'after' ? draft.anchor.newLine : draft.anchor.oldLine;
     const lineText = typeof line === 'number' ? `L${line}` : 'L?';
-    return `${side} ${lineText}`;
+    return `${side} ${lineText}${lineHash}`;
 }
 
 export function buildReviewCommentsPromptText(params: {
@@ -15,7 +24,7 @@ export function buildReviewCommentsPromptText(params: {
     drafts: readonly ReviewCommentDraft[];
     additionalMessage: string;
 }): string {
-    const drafts = [...params.drafts].sort((a, b) => {
+    const drafts = filterReviewCommentDraftsIncludedInPrompt(params.drafts).sort((a, b) => {
         if (a.filePath !== b.filePath) return a.filePath.localeCompare(b.filePath);
         const aLine = a.anchor.kind === 'fileLine' ? a.anchor.startLine : (a.anchor.newLine ?? a.anchor.oldLine ?? 0);
         const bLine = b.anchor.kind === 'fileLine' ? b.anchor.startLine : (b.anchor.newLine ?? b.anchor.oldLine ?? 0);
@@ -51,4 +60,3 @@ export function buildReviewCommentsDisplayText(params: { drafts: readonly Review
     if (count === 0) return 'Review comments';
     return `Review comments (${count})`;
 }
-

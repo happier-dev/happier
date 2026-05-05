@@ -45,6 +45,7 @@ const {
 type FilesDiffPresentationStyleValue = 'split' | 'unified' | undefined;
 
 let filesDiffPresentationStyleValue: FilesDiffPresentationStyleValue = 'split';
+let scmRemoteConfirmPolicyValue = 'always';
 
 installSettingsViewCommonModuleMocks({
     storage: async (importOriginal) => {
@@ -55,7 +56,7 @@ installSettingsViewCommonModuleMocks({
                 useSettingMutable: (name: string) => {
                     if (name === 'scmCommitStrategy') return ['atomic', setScmCommitStrategy];
                     if (name === 'scmGitRepoPreferredBackend') return ['git', setScmGitRepoPreferredBackend];
-                    if (name === 'scmRemoteConfirmPolicy') return ['always', setScmRemoteConfirmPolicy];
+                    if (name === 'scmRemoteConfirmPolicy') return [scmRemoteConfirmPolicyValue, setScmRemoteConfirmPolicy];
                     if (name === 'scmPushRejectPolicy') return ['prompt_fetch', setScmPushRejectPolicy];
                     if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
                     if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
@@ -110,9 +111,24 @@ describe('SourceControlSettingsView', () => {
         expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.atomic.title')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSourceControl.gitRoutingPreference.options.git.title')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.options.always.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.confirmBeforePulling.title')).toBeTruthy();
         screen.pressRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title');
         expect(setScmCommitStrategy).toHaveBeenCalledWith('git_staging');
+    });
+
+    it('maps remote pull and push confirmation switches to the persisted policy enum', async () => {
+        scmRemoteConfirmPolicyValue = 'always';
+        setScmRemoteConfirmPolicy.mockClear();
+
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+
+        screen.pressRowByTitle('settingsSourceControl.remoteConfirmation.confirmBeforePulling.title');
+        expect(setScmRemoteConfirmPolicy).toHaveBeenCalledWith('push_only');
+
+        setScmRemoteConfirmPolicy.mockClear();
+        screen.pressRowByTitle('settingsSourceControl.remoteConfirmation.confirmBeforePushing.title');
+        expect(setScmRemoteConfirmPolicy).toHaveBeenCalledWith('pull_only');
     });
 
     it('defaults diff presentation style to unified when the setting is missing', async () => {

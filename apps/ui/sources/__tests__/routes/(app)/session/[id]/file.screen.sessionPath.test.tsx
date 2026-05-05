@@ -13,6 +13,8 @@ import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers'
 let mockFilePathParam = 'a.txt';
 const routerReplaceSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
+const openRightSpy = vi.fn();
+const setRightTabSpy = vi.fn();
 let shouldRedirectToPanes = false;
 
 installSessionRouteCommonModuleMocks({
@@ -99,6 +101,8 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => {
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         openDetailsTab: openDetailsTabSpy,
+        openRight: openRightSpy,
+        setRightTab: setRightTabSpy,
     }),
 }));
 
@@ -156,11 +160,15 @@ describe('FileScreen session path hydration', () => {
         mockFilePathParam = '../secrets.txt';
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
+        openRightSpy.mockClear();
+        setRightTabSpy.mockClear();
         await renderScreen(React.createElement(FileScreen));
         await flushHookEffects();
 
         expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
         expect(openDetailsTabSpy).not.toHaveBeenCalled();
+        expect(openRightSpy).not.toHaveBeenCalled();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
     });
 
     it('redirects to panes when details routes should be in the right panel', async () => {
@@ -169,9 +177,13 @@ describe('FileScreen session path hydration', () => {
         mockFilePathParam = 'a.txt';
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
+        openRightSpy.mockClear();
+        setRightTabSpy.mockClear();
         await renderScreen(React.createElement(FileScreen));
         await flushHookEffects();
 
+        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
+        expect(setRightTabSpy).toHaveBeenCalledWith('files');
         expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenLastCalledWith({ pathname: '/session/[id]', params: { id: 'session-1' } });
@@ -183,11 +195,15 @@ describe('FileScreen session path hydration', () => {
         mockFilePathParam = '';
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
+        openRightSpy.mockClear();
+        setRightTabSpy.mockClear();
         const screen = await renderScreen(React.createElement(FileScreen));
 
         expect(screen.findByTestId('session-invalid-link')).toBeTruthy();
         expect(routerReplaceSpy).not.toHaveBeenCalled();
         expect(openDetailsTabSpy).not.toHaveBeenCalled();
+        expect(openRightSpy).not.toHaveBeenCalled();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
     });
 
     it('re-opens details when the file path param changes on the same native screen instance', async () => {
@@ -196,9 +212,13 @@ describe('FileScreen session path hydration', () => {
         mockFilePathParam = 'a.txt';
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
+        openRightSpy.mockClear();
+        setRightTabSpy.mockClear();
         const screen = await renderScreen(React.createElement(FileScreen));
         await flushHookEffects();
 
+        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
+        expect(setRightTabSpy).toHaveBeenCalledWith('files');
         expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
 
@@ -207,6 +227,8 @@ describe('FileScreen session path hydration', () => {
         await screen.update(React.createElement(FileScreen));
         await flushHookEffects();
 
+        expect(openRightSpy).toHaveBeenCalledTimes(2);
+        expect(setRightTabSpy).toHaveBeenCalledTimes(2);
         expect(openDetailsTabSpy).toHaveBeenCalledTimes(2);
         expect(routerReplaceSpy).toHaveBeenCalledTimes(2);
         expect(routerReplaceSpy).toHaveBeenNthCalledWith(1, {

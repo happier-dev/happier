@@ -9,9 +9,13 @@ type Props = Readonly<{
     profilesListProps: React.ComponentProps<typeof ProfilesList>;
 }>;
 
+const MAX_PROFILE_LIST_HEIGHT = 560;
+
 export function NewSessionProfileChipPopoverContent(props: Props) {
+    const boundedHeight = Math.min(props.maxHeight, MAX_PROFILE_LIST_HEIGHT);
+
     return (
-        <View style={[styles.container, { maxHeight: Math.min(props.maxHeight, 560) }]}>
+        <View style={[styles.container, { height: boundedHeight, maxHeight: boundedHeight }]}>
             <View style={styles.listContainer}>
                 <ProfilesList {...props.profilesListProps} />
             </View>

@@ -13,8 +13,12 @@ import { t } from '@/text';
 import {
     resolveMachineTargetForSessionFromState,
     type SessionMachineTargetState,
-} from '@/sync/ops/sessionMachineTargetFromState';
+} from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
+import {
+    resolveWorkspaceTargetForSessionFromState,
+    type WorkspaceTargetForSessionState,
+} from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 
 export type SessionListViewItem =
     | {
@@ -23,6 +27,7 @@ export type SessionListViewItem =
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared';
         groupKey?: string;
         workspaceKey?: string;
+        seedSessionId?: string | null;
         workspaceScopeHint?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
         serverId?: string;
         serverName?: string;
@@ -47,9 +52,9 @@ export interface BuildSessionListViewDataOptions {
     inactiveGroupingV1?: 'project' | 'date';
     /**
      * Optional state snapshot used to resolve reachable machine targets when session metadata is stale
-     * (e.g. after a handoff between machines).
+     * and to derive canonical workspace scope hints for grouped project headers.
      */
-    sessionTargetState?: SessionMachineTargetState;
+    sessionTargetState?: WorkspaceTargetForSessionState;
     serverScope?: {
         serverId: string;
         serverName?: string;
@@ -79,8 +84,6 @@ type ProjectGroup = {
     key: string;
     displayPath: string;
     machine: MachineDisplayRenderable;
-    workspaceMachineId: string | null;
-    workspaceRootPath: string | null;
     latestCreatedAt: number;
     sessions: SessionListRenderableSession[];
 };
@@ -137,8 +140,6 @@ function groupSessionsByProject(params: Readonly<{
             displayPath,
         );
         const key = `${groupingParts.machineGroupId}:${groupingParts.pathKey}`;
-        const normalizedMachineId = groupingParts.machineId;
-        const normalizedRootPath = groupingParts.displayPath;
 
         const existing = groups.get(key);
         if (!existing) {
@@ -151,20 +152,12 @@ function groupSessionsByProject(params: Readonly<{
                 key,
                 displayPath: groupingParts.pathKey ? formatPathRelativeToHome(groupingParts.pathKey, groupingParts.homeDir ?? undefined) : '',
                 machine: displayMachine,
-                workspaceMachineId: normalizedMachineId,
-                workspaceRootPath: normalizedRootPath,
                 latestCreatedAt: session.createdAt,
                 sessions: [session],
             });
         } else {
             existing.sessions.push(session);
             existing.latestCreatedAt = Math.max(existing.latestCreatedAt, session.createdAt);
-            if (!existing.workspaceMachineId && normalizedMachineId) {
-                existing.workspaceMachineId = normalizedMachineId;
-            }
-            if (!existing.workspaceRootPath && normalizedRootPath) {
-                existing.workspaceRootPath = normalizedRootPath;
-            }
         }
     }
 
@@ -190,6 +183,8 @@ function pushProjectGroupsToList(params: Readonly<{
     section: 'active' | 'inactive';
     serverKey: string;
     serverScopeMeta: ServerScopeMeta;
+    machines: Record<string, MachineDisplayRenderable>;
+    sessionTargetState?: WorkspaceTargetForSessionState;
 }>): void {
     for (const group of params.groups) {
         const hasGroupHeader = Boolean(group.displayPath);
@@ -212,13 +207,13 @@ function pushProjectGroupsToList(params: Readonly<{
                 headerKind: 'project',
                 groupKey,
                 workspaceKey,
-                workspaceScopeHint: params.serverScopeMeta.serverId && group.workspaceMachineId && group.workspaceRootPath
-                    ? {
-                        serverId: params.serverScopeMeta.serverId,
-                        machineId: group.workspaceMachineId,
-                        rootPath: group.workspaceRootPath,
-                    }
-                    : null,
+                seedSessionId: group.sessions[0]?.id ?? null,
+                workspaceScopeHint: resolveWorkspaceScopeHintForGroup({
+                    group,
+                    machines: params.machines,
+                    serverId: params.serverScopeMeta.serverId,
+                    sessionTargetState: params.sessionTargetState,
+                }),
                 machine: group.machine,
                 subtitle: group.machine.metadata?.displayName || group.machine.metadata?.host || group.machine.id,
             },
@@ -227,6 +222,60 @@ function pushProjectGroupsToList(params: Readonly<{
             serverScopeMeta: params.serverScopeMeta,
         });
     }
+}
+
+function resolveWorkspaceScopeHintForGroup(params: Readonly<{
+    group: ProjectGroup;
+    machines: Record<string, MachineDisplayRenderable>;
+    serverId?: string;
+    sessionTargetState?: WorkspaceTargetForSessionState;
+}>): SessionListHeaderItem['workspaceScopeHint'] {
+    const serverId = normalizeTrimmedString(params.serverId);
+    if (!serverId) {
+        return null;
+    }
+
+    if (params.sessionTargetState) {
+        for (const session of params.group.sessions) {
+            const target = resolveWorkspaceTargetForSessionFromState(
+                params.sessionTargetState,
+                session.id,
+                { fallbackServerId: serverId },
+            );
+            if (!target) {
+                continue;
+            }
+            return {
+                serverId: target.serverId,
+                machineId: target.machineId,
+                rootPath: target.rootPath,
+            };
+        }
+        return null;
+    }
+
+    for (const session of params.group.sessions) {
+        const machineId = normalizeTrimmedString(session.metadata?.machineId);
+        if (!machineId) {
+            continue;
+        }
+        const machine = params.machines[machineId];
+        const groupingParts = resolveSessionProjectGroupingKeyPartsWithMachineMetadata(
+            session.metadata ?? null,
+            machine?.metadata ?? null,
+            session.metadata?.path,
+        );
+        if (!groupingParts.pathKey) {
+            continue;
+        }
+        return {
+            serverId,
+            machineId,
+            rootPath: groupingParts.pathKey,
+        };
+    }
+
+    return null;
 }
 
 function pushSessionGroupEntriesToList(params: Readonly<{
@@ -306,6 +355,8 @@ function pushSessionSectionToList(params: Readonly<{
             section: params.section,
             serverKey: params.serverKey,
             serverScopeMeta: params.serverScopeMeta,
+            machines: params.machines,
+            sessionTargetState: params.sessionTargetState,
         });
         return;
     }

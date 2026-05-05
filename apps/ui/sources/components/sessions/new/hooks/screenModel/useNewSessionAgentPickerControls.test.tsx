@@ -111,6 +111,89 @@ describe('useNewSessionAgentPickerControls', () => {
         ]);
     });
 
+    it('adds a favorites rail option when favorite model selections exist', async () => {
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [claudeEntry, codexEntry],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            setBackendTarget: vi.fn(),
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+            favoriteModelSelections: [
+                { backendTargetKey: codexEntry.backendTargetKey, builtInAgentId: 'codex', modelId: 'gpt-5.4' },
+            ],
+            setFavoriteModelSelections: vi.fn(),
+        }));
+
+        expect(hook.getCurrent().agentPickerOptions?.map((option) => option.id)).toEqual([
+            'favorite-models',
+            claudeEntry.backendTargetKey,
+            codexEntry.backendTargetKey,
+        ]);
+        expect(hook.getCurrent().agentPickerOptions?.[0]?.label).toBe('profiles.groups.favorites');
+        expect(hook.getCurrent().agentPickerOptions?.[0]?.closeOnSelectImmediate).toBe(false);
+    });
+
+    it('does not expose favorite model selections for backends incompatible with the selected profile', async () => {
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: true,
+            selectedProfileId: 'profile-1',
+            profileMap: new Map([[
+                'profile-1',
+                { id: 'profile-1', name: 'Profile 1' } as any,
+            ]]),
+            resolvedBackendEntries: [claudeEntry, codexEntry],
+            getCompatibleProfileBackendEntries: () => ([claudeEntry]),
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            setBackendTarget: vi.fn(),
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+            favoriteModelSelections: [
+                {
+                    backendTargetKey: codexEntry.backendTargetKey,
+                    providerAgentId: 'codex',
+                    builtInAgentId: 'codex',
+                    modelId: 'gpt-5.4',
+                },
+            ],
+            setFavoriteModelSelections: vi.fn(),
+        }));
+
+        expect(hook.getCurrent().agentPickerOptions?.map((option) => option.id)).toEqual([
+            claudeEntry.backendTargetKey,
+            codexEntry.backendTargetKey,
+        ]);
+    });
+
     it('keeps unavailable backends selectable (muted) and orders available entries first', async () => {
         const setBackendTarget = vi.fn();
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);

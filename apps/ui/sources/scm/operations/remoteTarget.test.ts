@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
-import { inferRemoteTargetFromSnapshot } from './remoteTarget';
+import { inferRemoteTargetFromSnapshot, resolvePublishRemoteFromSnapshot } from './remoteTarget';
 
 function makeSnapshot(partial?: Partial<ScmWorkingSnapshot['branch']>): ScmWorkingSnapshot {
     return {
@@ -99,5 +99,20 @@ describe('inferRemoteTargetFromSnapshot', () => {
             remote: 'origin',
             branch: null,
         });
+    });
+});
+
+describe('resolvePublishRemoteFromSnapshot', () => {
+    it('prefers the backend-inferred remote when it is configured on the repository', () => {
+        expect(resolvePublishRemoteFromSnapshot({
+            ...makeSnapshot({ upstream: 'upstream/feature/x' }),
+            repo: {
+                ...makeSnapshot().repo,
+                remotes: [
+                    { name: 'origin', fetchUrl: 'git@example.com:origin.git' },
+                    { name: 'upstream', fetchUrl: 'git@example.com:upstream.git' },
+                ],
+            },
+        })).toBe('upstream');
     });
 });

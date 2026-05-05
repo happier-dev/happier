@@ -66,6 +66,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
+    const petsCompanionEnabled = useFeatureEnabled('pets.companion');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
@@ -396,6 +397,15 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.indigo} />}
                     onPress={() => pushRoute('/(app)/settings/appearance')}
                 />
+                {petsCompanionEnabled ? (
+                    <Item
+                        testID="settings-pets-row"
+                        title={t('settings.pets')}
+                        subtitle={t('settings.petsSubtitle')}
+                        icon={<Ionicons name="paw-outline" size={29} color={theme.colors.accent.green} />}
+                        onPress={() => pushRoute('/(app)/settings/pets')}
+                    />
+                ) : null}
                 <Item
                     title={t('settings.featuresTitle')}
                     subtitle={t('settings.featuresSubtitle')}

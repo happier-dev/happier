@@ -24,16 +24,57 @@ installPopoverCommonModuleMocks({
 });
 
 describe('PopoverPortalTargetProvider (web dom)', () => {
+    it('does not target an unrelated dialog when the scope anchor is outside that dialog', async () => {
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+        const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
+
+        function TargetParentProbe() {
+            const target = useModalPortalTarget();
+            const parent = target instanceof HTMLElement ? target.parentElement : null;
+            return React.createElement('div', {
+                'data-testid': 'target-parent',
+                'data-parent': parent?.getAttribute('data-testid') ?? 'none',
+            });
+        }
+
+        const unrelatedDialog = document.createElement('div');
+        unrelatedDialog.setAttribute('data-radix-dialog-content', '');
+        unrelatedDialog.setAttribute('data-testid', 'unrelated-dialog');
+        document.body.appendChild(unrelatedDialog);
+
+        const container = document.createElement('div');
+        container.setAttribute('data-testid', 'sidebar-root');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(
+                    <PopoverPortalTargetProvider>
+                        <TargetParentProbe />
+                    </PopoverPortalTargetProvider>,
+                );
+            });
+
+            const targetParent = container.querySelector('[data-testid="target-parent"]');
+            expect(targetParent?.getAttribute('data-parent')).toBe('none');
+        } finally {
+            await act(async () => {
+                root.unmount();
+            });
+            container.remove();
+            unrelatedDialog.remove();
+        }
+    });
+
     it('keeps the exposed portal target attached after StrictMode effect replay', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
 
+        const observedTargetRef: { current: Element | DocumentFragment | null } = { current: null };
         function TargetProbe() {
             const target = useModalPortalTarget();
-            return React.createElement('div', {
-                'data-testid': 'portal-state',
-                'data-connected': String(Boolean(target?.isConnected)),
-            });
+            observedTargetRef.current = target;
+            return React.createElement('div', { 'data-testid': 'portal-state' });
         }
 
         const container = document.createElement('div');
@@ -50,8 +91,12 @@ describe('PopoverPortalTargetProvider (web dom)', () => {
                 );
             });
 
-            const portalState = container.querySelector('[data-testid="portal-state"]');
-            expect(portalState?.getAttribute('data-connected')).toBe('true');
+            expect(container.querySelector('[data-testid="portal-state"]')).toBeTruthy();
+            const observedTarget = observedTargetRef.current;
+            if (!observedTarget) {
+                throw new Error('Expected the provider to expose a web portal target');
+            }
+            expect(observedTarget.isConnected).toBe(true);
         } finally {
             await act(async () => {
                 root.unmount();
@@ -64,22 +109,24 @@ describe('PopoverPortalTargetProvider (web dom)', () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
 
+        const observedTargets: Array<Element | DocumentFragment> = [];
         function Child(props: { bump: () => void }) {
             const target = useModalPortalTarget();
             React.useLayoutEffect(() => {
                 if (!target) return;
+                observedTargets.push(target);
                 props.bump();
             }, [props.bump, target]);
             return React.createElement('div', { 'data-testid': 'observer' });
         }
 
-        function Harness() {
+        function Harness(props: { label: string }) {
             const [tick, setTick] = React.useState(0);
             const bump = React.useCallback(() => setTick((value) => value + 1), []);
             return (
                 <PopoverPortalTargetProvider>
                     <Child bump={bump} />
-                    <div data-testid="tick" data-value={tick} />
+                    <div data-testid="tick" data-value={tick} data-label={props.label} />
                 </PopoverPortalTargetProvider>
             );
         }
@@ -91,13 +138,58 @@ describe('PopoverPortalTargetProvider (web dom)', () => {
             await act(async () => {
                 root.render(
                     <React.StrictMode>
-                        <Harness />
+                        <Harness label="initial" />
                     </React.StrictMode>,
                 );
             });
 
             const tickNode = container.querySelector('[data-testid="tick"]');
-            expect(tickNode?.getAttribute('data-value')).toBe('1');
+            const tickBeforeRerender = tickNode?.getAttribute('data-value');
+
+            await act(async () => {
+                root.render(
+                    <React.StrictMode>
+                        <Harness label="updated" />
+                    </React.StrictMode>,
+                );
+            });
+
+            const updatedTickNode = container.querySelector('[data-testid="tick"]');
+            expect(updatedTickNode?.getAttribute('data-label')).toBe('updated');
+            expect(updatedTickNode?.getAttribute('data-value')).toBe(tickBeforeRerender);
+            expect(new Set(observedTargets).size).toBe(1);
+        } finally {
+            await act(async () => {
+                root.unmount();
+            });
+            container.remove();
+        }
+    });
+
+    it('does not rerender children just to expose the web portal target', async () => {
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+        const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
+
+        let childRenderCount = 0;
+        function Child() {
+            useModalPortalTarget();
+            childRenderCount += 1;
+            return React.createElement('div', { 'data-testid': 'child' });
+        }
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(
+                    <PopoverPortalTargetProvider>
+                        <Child />
+                    </PopoverPortalTargetProvider>,
+                );
+            });
+
+            expect(childRenderCount).toBe(1);
         } finally {
             await act(async () => {
                 root.unmount();

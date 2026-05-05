@@ -1,11 +1,55 @@
 import type { ActivityOverviewSnapshot, SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import type { ActivitySurfaceSessionViewModel } from '@/activity/presentation/activitySurfaceViewModels';
+import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
 
 export type DesktopActivityOverlaySnapshotState = 'idle' | 'content';
 
+export type DesktopActivityOverlayCompanionAnimationState =
+    | 'idle'
+    | 'running-right'
+    | 'running-left'
+    | 'waving'
+    | 'jumping'
+    | 'failed'
+    | 'waiting'
+    | 'running'
+    | 'review';
+
+export type DesktopActivityOverlayCompanionAttentionLevel =
+    | 'idle'
+    | 'active'
+    | 'needsAttention'
+    | 'failed';
+
+export type DesktopActivityOverlayCompanionReason =
+    | 'idle'
+    | 'waiting'
+    | 'failed'
+    | 'review'
+    | 'running'
+    | 'queued'
+    | 'live_activity'
+    | 'attention_required'
+    | 'unread_activity'
+    | 'failure';
+
+export type DesktopActivityOverlayCompanionPet = Readonly<{
+    source: SelectedPetPackageSource;
+    displayName: string;
+}>;
+
+export type DesktopActivityOverlayCompanionSnapshot = Readonly<{
+    enabled: boolean;
+    pet: DesktopActivityOverlayCompanionPet;
+    state: DesktopActivityOverlayCompanionAnimationState;
+    attentionLevel: DesktopActivityOverlayCompanionAttentionLevel;
+    reason: DesktopActivityOverlayCompanionReason;
+    sessionId: string | null;
+}>;
+
 export type DesktopActivityOverlaySessionSnapshot = Pick<
     ActivitySurfaceSessionViewModel,
-    'sessionId' | 'title' | 'subtitle' | 'statusText' | 'previewText' | 'attentionState'
+    'sessionId' | 'serverId' | 'title' | 'subtitle' | 'statusText' | 'previewText' | 'attentionState'
 > & Readonly<{
     active: boolean;
     updatedAt: number;
@@ -15,6 +59,7 @@ export type DesktopActivityOverlayRequestSnapshot = Readonly<{
     kind: 'permission_request' | 'user_question';
     requestId: string;
     sessionId: string;
+    serverId: string | null;
     title: string;
     summary: string | null;
     toolLabel: string;
@@ -23,6 +68,7 @@ export type DesktopActivityOverlayRequestSnapshot = Readonly<{
     openActionIdentifier: string;
     allowActionIdentifier?: string;
     denyActionIdentifier?: string;
+    risk?: 'low' | 'high';
     directOptions: readonly Readonly<{
         id: string;
         label: string;
@@ -43,9 +89,13 @@ export type DesktopActivityOverlayQuotaSummarySnapshot = Readonly<{
 
 export type DesktopActivityOverlayCompletionStateSnapshot = Readonly<{
     sessionId: string;
+    serverId: string | null;
     title: string;
     summary: string | null;
     openActionIdentifier: string;
+    variant: 'turn_complete' | 'subagent_done' | 'pending_tool';
+    autoDismissMs: number;
+    sticky: boolean;
 }>;
 
 export type DesktopActivityOverlaySnapshotLabels = Readonly<{
@@ -69,6 +119,7 @@ export type DesktopActivityOverlaySnapshot = Readonly<{
     userQuestions: readonly DesktopActivityOverlayRequestSnapshot[];
     quotaSummaries: readonly DesktopActivityOverlayQuotaSummarySnapshot[];
     completionStates: readonly DesktopActivityOverlayCompletionStateSnapshot[];
+    companion: DesktopActivityOverlayCompanionSnapshot;
     defaultTarget: string;
     labels: DesktopActivityOverlaySnapshotLabels;
 }>;

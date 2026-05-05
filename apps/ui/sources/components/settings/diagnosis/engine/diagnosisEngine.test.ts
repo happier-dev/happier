@@ -35,6 +35,82 @@ describe('buildDiagnosisReport', () => {
     expect(report.findings.some((f) => f.code === 'server.mismatch.ui_vs_machine')).toBe(true);
   });
 
+  it('treats loopback-equivalent UI and machine serverUrls as the same Relay', () => {
+    const report = buildDiagnosisReport({
+      ui: {
+        activeServerId: 'local',
+        activeServerUrl: 'http://localhost:34567',
+        profileId: 'acct_1',
+      },
+      serverProfiles: [{ id: 'local', serverUrl: 'http://localhost:34567' }],
+      machinesByServerId: { local: [{ id: 'm1', active: true }] },
+      machineDoctorSnapshots: [{
+        machineId: 'm1',
+        serverId: 'local',
+        snapshot: {
+          capturedAt: '2026-02-23T00:00:00.000Z',
+          server: {
+            activeServerId: 'local',
+            serverUrl: 'http://127.0.0.1:34567',
+            publicServerUrl: 'http://127.0.0.1:34567',
+            webappUrl: 'http://localhost:34567',
+          },
+          accountId: 'acct_1',
+          settings: { activeServerId: 'local', servers: [], knownAccountIds: ['acct_1'] },
+        },
+      }],
+      pastedDoctorSnapshots: [{
+        capturedAt: '2026-02-23T00:00:00.000Z',
+        server: {
+          activeServerId: 'local',
+          serverUrl: 'http://127.0.0.1:34567',
+          publicServerUrl: 'http://127.0.0.1:34567',
+          webappUrl: 'http://localhost:34567',
+        },
+        accountId: 'acct_1',
+        settings: { activeServerId: 'local', servers: [], knownAccountIds: ['acct_1'] },
+      }],
+      serverDiagnostics: { state: 'ok' },
+      nowMs: 0,
+    });
+
+    expect(report.findings.some((f) => f.code === 'server.mismatch.ui_vs_machine')).toBe(false);
+    expect(report.findings.some((f) => f.code === 'server.mismatch.ui_vs_pasted')).toBe(false);
+  });
+
+  it('uses UI server URL canonicalization for scheme-less local Relay URLs', () => {
+    const report = buildDiagnosisReport({
+      ui: {
+        activeServerId: 'local',
+        activeServerUrl: 'localhost:34567',
+        profileId: 'acct_1',
+      },
+      serverProfiles: [{ id: 'local', serverUrl: 'http://127.0.0.1:34567' }],
+      machinesByServerId: { local: [{ id: 'm1', active: true }] },
+      machineDoctorSnapshots: [{
+        machineId: 'm1',
+        serverId: 'local',
+        snapshot: {
+          capturedAt: '2026-02-23T00:00:00.000Z',
+          server: {
+            activeServerId: 'local',
+            serverUrl: 'http://127.0.0.1:34567',
+            publicServerUrl: 'http://127.0.0.1:34567',
+            webappUrl: 'http://localhost:34567',
+          },
+          accountId: 'acct_1',
+          settings: { activeServerId: 'local', servers: [], knownAccountIds: ['acct_1'] },
+        },
+      }],
+      pastedDoctorSnapshots: [],
+      serverDiagnostics: { state: 'ok' },
+      nowMs: 0,
+    });
+
+    expect(report.findings.some((f) => f.code === 'server.profile_missing_for_active_url')).toBe(false);
+    expect(report.findings.some((f) => f.code === 'server.mismatch.ui_vs_machine')).toBe(false);
+  });
+
   it('detects UI vs machine accountId mismatch', () => {
     const report = buildDiagnosisReport({
       ui: {

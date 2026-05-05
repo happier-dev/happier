@@ -50,11 +50,11 @@ const themeColors = vi.hoisted(() => ({
 }));
 
 let sessionsRightPaneDefaultOpen = false;
-let editorFocusModeEnabled = false;
 let rightScopeState: any = null;
 let authCredentials: any = { token: 't', secret: 's' };
 let uiMultiPanePanelsEnabledSetting: any = true;
 let lastUrlSyncEnabled: boolean | null = null;
+let mockPathname = '/session/s1';
 let pendingMessagesState: { messages: any[]; discarded: any[]; isLoaded: boolean } = {
     messages: [],
     discarded: [],
@@ -92,7 +92,7 @@ installSessionShellCommonModuleMocks({
     modal: async () => createModalModuleMock().module,
     router: async () =>
         createExpoRouterMock({
-            pathname: '/',
+            pathname: () => mockPathname,
             router: {
                 push: vi.fn(),
                 back: vi.fn(),
@@ -131,7 +131,6 @@ installSessionShellCommonModuleMocks({
                 const overrides: Partial<LocalSettings> = {
                     acknowledgedCliVersions: {},
                     uiMultiPanePanelsEnabled: uiMultiPanePanelsEnabledSetting,
-                    editorFocusModeEnabled,
                     detailsPaneTabsBehavior: 'preview',
                     rightPaneWidthPx: 360,
                     rightPaneWidthBasisPx: 1200,
@@ -145,7 +144,6 @@ installSessionShellCommonModuleMocks({
                 (({
                     acknowledgedCliVersions: {},
                     uiMultiPanePanelsEnabled: uiMultiPanePanelsEnabledSetting,
-                    editorFocusModeEnabled,
                     detailsPaneTabsBehavior: 'preview',
                     rightPaneWidthPx: 360,
                     rightPaneWidthBasisPx: 1200,
@@ -350,7 +348,6 @@ describe('SessionView (right pane auto-open)', () => {
     beforeEach(() => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
         sessionsRightPaneDefaultOpen = false;
-        editorFocusModeEnabled = false;
         rightScopeState = {
             right: { isOpen: false, activeTabId: null, tabState: {} },
             details: { isOpen: false, tabs: [], activeTabKey: null },
@@ -358,6 +355,7 @@ describe('SessionView (right pane auto-open)', () => {
         authCredentials = { token: 't', secret: 's' };
         uiMultiPanePanelsEnabledSetting = true;
         lastUrlSyncEnabled = null;
+        mockPathname = '/session/s1';
         pendingMessagesState = {
             messages: [],
             discarded: [],
@@ -406,26 +404,22 @@ describe('SessionView (right pane auto-open)', () => {
         await screen.unmount();
     });
 
-    it('does not blank the main content when editor focus mode is enabled (AppPaneScopeHost handles hiding)', async () => {
-        editorFocusModeEnabled = true;
-        rightScopeState = {
-            right: { isOpen: true, activeTabId: 'files', tabState: {} },
-            details: { isOpen: false, tabs: [], activeTabKey: null },
-        };
-
-        const screen = await renderSessionView();
-
-        expect(screen.findAllByType('AgentContentView' as any).length).toBeGreaterThan(0);
-
-        await screen.unmount();
-    });
-
     it('keeps URL pane sync enabled when multi-pane setting is unset', async () => {
         uiMultiPanePanelsEnabledSetting = undefined;
 
         const screen = await renderSessionView({ rightTabId: 'git' });
 
         expect(lastUrlSyncEnabled).toBe(true);
+
+        await screen.unmount();
+    });
+
+    it('disables URL pane sync while the browser is on the details route', async () => {
+        mockPathname = '/session/s1/details';
+
+        const screen = await renderSessionView({ rightTabId: 'git' });
+
+        expect(lastUrlSyncEnabled).toBe(false);
 
         await screen.unmount();
     });

@@ -109,7 +109,7 @@ describe('runSessionHandoffPickerFlow', () => {
             context: {
                 defaultSessionId: 'sess_1',
                 serverId: 'server_a',
-                surface: 'ui_button',
+                surface: 'ui',
                 placement: 'session_action_menu',
             },
         });

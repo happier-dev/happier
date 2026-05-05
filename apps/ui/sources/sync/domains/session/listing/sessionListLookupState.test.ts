@@ -549,6 +549,64 @@ describe('sessionListLookupState', () => {
         expect(resolveSessionListPreferredSessionMetadataFromState(state, 'missing')).toBeNull();
     });
 
+    it('preserves canonical direct-session machine identity when lookup metadata is stripped', () => {
+        const state: any = {
+            sessions: {
+                s1: {
+                    id: 's1',
+                    metadata: {
+                        path: '/workspace/direct-repo',
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'codex',
+                            machineId: 'm-direct',
+                            remoteSessionId: 'remote-1',
+                            source: { kind: 'codexHome', home: 'user' },
+                        },
+                    },
+                },
+            },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 2,
+                    active: false,
+                    activeAt: 0,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: {
+                        path: '/workspace/direct-repo',
+                        machineId: null,
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'codex',
+                        },
+                    },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 0,
+                },
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    {
+                        type: 'session',
+                        sessionId: 's1',
+                        serverId: 'server-a',
+                        serverName: 'Server A',
+                    },
+                ],
+            },
+        };
+
+        expect(resolveSessionListPreferredSessionMetadataFromState(state, 's1')).toEqual(expect.objectContaining({
+            path: '/workspace/direct-repo',
+            machineId: 'm-direct',
+        }));
+    });
+
     it('reuses the preferred session metadata for repeated lookups on the same state snapshot', () => {
         let metadataReads = 0;
         const state: any = {

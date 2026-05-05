@@ -20,6 +20,7 @@ let pinnedWorkspaceRefIdsV1Mock: string[] = [];
 let deviceTypeMock: 'phone' | 'tablet' = 'tablet';
 let paneScopesMock: Record<string, { right?: { activeTabId?: string | null } }> = {};
 let localSettingsMock: Record<string, unknown> = {};
+let accountSettingsMock: Record<string, unknown> = {};
 const setWorkspaceRefsV1Spy = vi.hoisted(() => vi.fn());
 const setPinnedWorkspaceRefIdsV1Spy = vi.hoisted(() => vi.fn());
 
@@ -102,6 +103,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createPartialStorageModuleMock(importOriginal, {
         useAllMachines: () => machinesMock,
+        useSetting: (key: string) => accountSettingsMock[key],
         useLocalSetting: (key: string) => localSettingsMock[key],
         useSettingMutable: (key: string) => {
             if (key === 'workspaceRefsV1') return [workspaceRefsV1Mock, setWorkspaceRefsV1Spy];
@@ -162,6 +164,7 @@ describe('ProjectsListView', () => {
         deviceTypeMock = 'tablet';
         paneScopesMock = {};
         localSettingsMock = {};
+        accountSettingsMock = {};
         translationPrefixMock = '';
         openMachinePathBrowserModalSpy.mockReset();
         workspaceListDirectorySpy.mockReset();
@@ -242,6 +245,7 @@ describe('ProjectsListView', () => {
 
     it('defaults mobile project opens to the files route when no last tab is remembered', async () => {
         deviceTypeMock = 'phone';
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
         workspaceRefsV1Mock = [{
             id: 'wr_1',
             serverId: 'server-1',
@@ -295,6 +299,7 @@ describe('ProjectsListView', () => {
 
     it('reopens the remembered mobile worktree path without reviving the retired route setting', async () => {
         deviceTypeMock = 'phone';
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
         workspaceRefsV1Mock = [{
             id: 'wr_1',
             serverId: 'server-1',
@@ -327,8 +332,8 @@ describe('ProjectsListView', () => {
             label: 'Repo',
             createdAtMs: 1,
         }];
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            mobileWorkspaceExperienceV1: 'cockpit',
             projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
@@ -352,8 +357,8 @@ describe('ProjectsListView', () => {
             label: 'Repo',
             createdAtMs: 1,
         }];
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            mobileWorkspaceExperienceV1: 'cockpit',
             projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },

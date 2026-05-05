@@ -17,7 +17,6 @@ describe('buildLocalSettingsSnapshot', () => {
             uiMultiPanePanelsEnabled: false,
             sessionsRightPaneDefaultOpen: true,
             detailsPaneTabsBehavior: 'persistent',
-            editorFocusModeEnabled: true,
             activitySurfacesEnabled: false,
             liveActivitiesEnabled: false,
             liveActivitiesStrategy: 'pinned_primary',
@@ -80,7 +79,7 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_setting__uiMultiPanePanelsEnabled).toBe(false);
         expect(snapshot.properties.local_setting__sessionsRightPaneDefaultOpen).toBe(true);
         expect(snapshot.properties.local_setting__detailsPaneTabsBehavior).toBe('persistent');
-        expect(snapshot.properties.local_setting__editorFocusModeEnabled).toBe(true);
+        expect(snapshot.properties.local_setting__editorFocusModeEnabled).toBeUndefined();
         expect(snapshot.properties.local_setting__activitySurfacesEnabled).toBe(false);
         expect(snapshot.properties.local_setting__liveActivitiesEnabled).toBe(false);
         expect(snapshot.properties.local_setting__liveActivitiesStrategy).toBe('pinned_primary');

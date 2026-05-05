@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { accountSettingsParse } from '@happier-dev/protocol';
+
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { resolveForegroundNotificationBehavior } from './resolveForegroundNotificationBehavior';
 
 describe('resolveForegroundNotificationBehavior', () => {
@@ -75,5 +78,34 @@ describe('resolveForegroundNotificationBehavior', () => {
                 } as never,
             },
         })).toBe('full');
+    });
+
+    it('uses the unified account delivery foreground behavior when present', () => {
+        expect(resolveForegroundNotificationBehavior({
+            localSettings: {},
+            accountSettings: accountSettingsParse({
+                attentionDeliveryPolicyV1: {
+                    v: 1,
+                    foregroundBehavior: 'silent',
+                },
+            }),
+        })).toBe('silent');
+    });
+
+    it('lets nested device foreground overrides supersede account delivery policy', () => {
+        expect(resolveForegroundNotificationBehavior({
+            localSettings: localSettingsParse({
+                attentionDeviceOverridesV1: {
+                    v: 1,
+                    foregroundBehavior: 'off',
+                },
+            }),
+            accountSettings: accountSettingsParse({
+                attentionDeliveryPolicyV1: {
+                    v: 1,
+                    foregroundBehavior: 'full',
+                },
+            }),
+        })).toBe('off');
     });
 });

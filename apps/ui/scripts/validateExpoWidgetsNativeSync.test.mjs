@@ -19,6 +19,7 @@ test('assertExpoWidgetsIntrospectionOutput returns the resolved widget and targe
     {
       targetName: 'ExpoWidgetsTarget',
       bundleIdentifier: 'dev.happier.app.dev.internal.ExpoWidgetsTarget',
+      enablePushNotifications: true,
       widgets: [
         { name: 'HappierFocusWidget' },
         { name: 'HappierSessionsWidget' },
@@ -30,12 +31,33 @@ test('assertExpoWidgetsIntrospectionOutput returns the resolved widget and targe
   assert.deepEqual(assertExpoWidgetsIntrospectionOutput(output), {
     targetName: 'ExpoWidgetsTarget',
     bundleIdentifier: 'dev.happier.app.dev.internal.ExpoWidgetsTarget',
+    enablePushNotifications: true,
     widgetNames: [
       'HappierFocusWidget',
       'HappierSessionsWidget',
       'HappierFocusLiveActivity',
     ],
   });
+});
+
+test('assertExpoWidgetsIntrospectionOutput rejects output with ActivityKit push support disabled', () => {
+  const output = `
+    {
+      targetName: 'ExpoWidgetsTarget',
+      bundleIdentifier: 'dev.happier.app.dev.internal.ExpoWidgetsTarget',
+      enablePushNotifications: false,
+      widgets: [
+        { name: 'HappierFocusWidget' },
+        { name: 'HappierSessionsWidget' },
+        { name: 'HappierFocusLiveActivity' }
+      ]
+    }
+  `;
+
+  assert.throws(
+    () => assertExpoWidgetsIntrospectionOutput(output),
+    /push notifications/i,
+  );
 });
 
 test('assertExpoWidgetsIntrospectionOutput rejects output that is missing the widget target', () => {
@@ -60,6 +82,7 @@ test('assertExpoWidgetsIntrospectionOutput rejects output that is missing one re
     {
       targetName: 'ExpoWidgetsTarget',
       bundleIdentifier: 'dev.happier.app.dev.internal.ExpoWidgetsTarget',
+      enablePushNotifications: true,
       widgets: [
         { name: 'HappierFocusWidget' },
         { name: 'HappierSessionsWidget' }

@@ -3,47 +3,53 @@ import { z } from 'zod';
 import { isModelMode, isPermissionMode, type ModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
+import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getPersistenceStorage } from './persistenceStorage';
 
-function sessionDraftsKey(): string {
-    return 'session-drafts';
+function scopedSessionLocalStateKey(baseKey: string, scope?: ServerAccountScope | null): string {
+    if (!scope) return baseKey;
+    return `${baseKey}:scope:v2:${serverAccountScopeKeySuffix(scope)}`;
 }
 
-function sessionPermissionModesKey(): string {
-    return 'session-permission-modes';
+function sessionDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-drafts', scope);
 }
 
-function sessionPermissionModeUpdatedAtsKey(): string {
-    return 'session-permission-mode-updated-ats';
+function sessionPermissionModesKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-permission-modes', scope);
 }
 
-function sessionLastViewedKey(): string {
-    return 'session-last-viewed';
+function sessionPermissionModeUpdatedAtsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-permission-mode-updated-ats', scope);
 }
 
-function sessionModelModesKey(): string {
-    return 'session-model-modes';
+function sessionLastViewedKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-last-viewed', scope);
 }
 
-function sessionModelModeUpdatedAtsKey(): string {
-    return 'session-model-mode-updated-ats-v1';
+function sessionModelModesKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-model-modes', scope);
 }
 
-function sessionReviewCommentsDraftsKey(): string {
-    return 'session-review-comments-draft-v1';
+function sessionModelModeUpdatedAtsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-model-mode-updated-ats-v1', scope);
 }
 
-function workspaceReviewCommentsDraftsKey(): string {
-    return 'workspace-review-comments-draft-v1';
+function sessionReviewCommentsDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-review-comments-draft-v1', scope);
 }
 
-function sessionActionDraftsKey(): string {
-    return 'session-action-drafts-v1';
+function workspaceReviewCommentsDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('workspace-review-comments-draft-v1', scope);
 }
 
-export function loadSessionDrafts(): Record<string, string> {
+function sessionActionDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-action-drafts-v1', scope);
+}
+
+export function loadSessionDrafts(scope?: ServerAccountScope | null): Record<string, string> {
     const mmkv = getPersistenceStorage();
-    const drafts = mmkv.getString(sessionDraftsKey());
+    const drafts = mmkv.getString(sessionDraftsKey(scope));
     if (drafts) {
         try {
             return JSON.parse(drafts);
@@ -55,18 +61,18 @@ export function loadSessionDrafts(): Record<string, string> {
     return {};
 }
 
-export function saveSessionDrafts(drafts: Record<string, string>) {
+export function saveSessionDrafts(drafts: Record<string, string>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionDraftsKey(), JSON.stringify(drafts));
+    mmkv.set(sessionDraftsKey(scope), JSON.stringify(drafts));
 }
 
 export type SessionReviewCommentDraftsBySessionId = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
 
 export type WorkspaceReviewCommentDraftsByWorkspaceCacheKey = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
 
-export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsBySessionId {
+export function loadSessionReviewCommentsDrafts(scope?: ServerAccountScope | null): SessionReviewCommentDraftsBySessionId {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionReviewCommentsDraftsKey());
+    const raw = mmkv.getString(sessionReviewCommentsDraftsKey(scope));
     if (!raw) return {};
     try {
         const parsed = JSON.parse(raw);
@@ -91,18 +97,22 @@ export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsByS
     }
 }
 
-export function saveSessionReviewCommentsDrafts(drafts: SessionReviewCommentDraftsBySessionId): void {
+export function saveSessionReviewCommentsDrafts(
+    drafts: SessionReviewCommentDraftsBySessionId,
+    scope?: ServerAccountScope | null,
+): void {
     const mmkv = getPersistenceStorage();
+    const key = sessionReviewCommentsDraftsKey(scope);
     if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(sessionReviewCommentsDraftsKey());
+        mmkv.delete(key);
         return;
     }
-    mmkv.set(sessionReviewCommentsDraftsKey(), JSON.stringify(drafts));
+    mmkv.set(key, JSON.stringify(drafts));
 }
 
-export function loadWorkspaceReviewCommentsDrafts(): WorkspaceReviewCommentDraftsByWorkspaceCacheKey {
+export function loadWorkspaceReviewCommentsDrafts(scope?: ServerAccountScope | null): WorkspaceReviewCommentDraftsByWorkspaceCacheKey {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(workspaceReviewCommentsDraftsKey());
+    const raw = mmkv.getString(workspaceReviewCommentsDraftsKey(scope));
     if (!raw) return {};
     try {
         const parsed = JSON.parse(raw);
@@ -128,20 +138,24 @@ export function loadWorkspaceReviewCommentsDrafts(): WorkspaceReviewCommentDraft
     }
 }
 
-export function saveWorkspaceReviewCommentsDrafts(drafts: WorkspaceReviewCommentDraftsByWorkspaceCacheKey): void {
+export function saveWorkspaceReviewCommentsDrafts(
+    drafts: WorkspaceReviewCommentDraftsByWorkspaceCacheKey,
+    scope?: ServerAccountScope | null,
+): void {
     const mmkv = getPersistenceStorage();
+    const key = workspaceReviewCommentsDraftsKey(scope);
     if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(workspaceReviewCommentsDraftsKey());
+        mmkv.delete(key);
         return;
     }
-    mmkv.set(workspaceReviewCommentsDraftsKey(), JSON.stringify(drafts));
+    mmkv.set(key, JSON.stringify(drafts));
 }
 
 export type SessionActionDraftsBySessionId = Record<string, z.infer<typeof SessionActionDraftSchema>[]>;
 
-export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
+export function loadSessionActionDrafts(scope?: ServerAccountScope | null): SessionActionDraftsBySessionId {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionActionDraftsKey());
+    const raw = mmkv.getString(sessionActionDraftsKey(scope));
     if (!raw) return {};
     try {
         const parsed = JSON.parse(raw);
@@ -166,18 +180,22 @@ export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
     }
 }
 
-export function saveSessionActionDrafts(drafts: SessionActionDraftsBySessionId): void {
+export function saveSessionActionDrafts(
+    drafts: SessionActionDraftsBySessionId,
+    scope?: ServerAccountScope | null,
+): void {
     const mmkv = getPersistenceStorage();
+    const key = sessionActionDraftsKey(scope);
     if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(sessionActionDraftsKey());
+        mmkv.delete(key);
         return;
     }
-    mmkv.set(sessionActionDraftsKey(), JSON.stringify(drafts));
+    mmkv.set(key, JSON.stringify(drafts));
 }
 
-export function loadSessionPermissionModes(): Record<string, PermissionMode> {
+export function loadSessionPermissionModes(scope?: ServerAccountScope | null): Record<string, PermissionMode> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionPermissionModesKey());
+    const raw = mmkv.getString(sessionPermissionModesKey(scope));
     if (raw) {
         try {
             const parsed = JSON.parse(raw);
@@ -200,14 +218,14 @@ export function loadSessionPermissionModes(): Record<string, PermissionMode> {
     return {};
 }
 
-export function saveSessionPermissionModes(modes: Record<string, PermissionMode>) {
+export function saveSessionPermissionModes(modes: Record<string, PermissionMode>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionPermissionModesKey(), JSON.stringify(modes));
+    mmkv.set(sessionPermissionModesKey(scope), JSON.stringify(modes));
 }
 
-export function loadSessionPermissionModeUpdatedAts(): Record<string, number> {
+export function loadSessionPermissionModeUpdatedAts(scope?: ServerAccountScope | null): Record<string, number> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionPermissionModeUpdatedAtsKey());
+    const raw = mmkv.getString(sessionPermissionModeUpdatedAtsKey(scope));
     if (raw) {
         try {
             const parsed = JSON.parse(raw);
@@ -230,14 +248,17 @@ export function loadSessionPermissionModeUpdatedAts(): Record<string, number> {
     return {};
 }
 
-export function saveSessionPermissionModeUpdatedAts(updatedAts: Record<string, number>) {
+export function saveSessionPermissionModeUpdatedAts(
+    updatedAts: Record<string, number>,
+    scope?: ServerAccountScope | null,
+) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionPermissionModeUpdatedAtsKey(), JSON.stringify(updatedAts));
+    mmkv.set(sessionPermissionModeUpdatedAtsKey(scope), JSON.stringify(updatedAts));
 }
 
-export function loadSessionLastViewed(): Record<string, number> {
+export function loadSessionLastViewed(scope?: ServerAccountScope | null): Record<string, number> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionLastViewedKey());
+    const raw = mmkv.getString(sessionLastViewedKey(scope));
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -260,14 +281,14 @@ export function loadSessionLastViewed(): Record<string, number> {
     return {};
 }
 
-export function saveSessionLastViewed(data: Record<string, number>) {
+export function saveSessionLastViewed(data: Record<string, number>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionLastViewedKey(), JSON.stringify(data));
+    mmkv.set(sessionLastViewedKey(scope), JSON.stringify(data));
 }
 
-export function loadSessionModelModes(): Record<string, ModelMode> {
+export function loadSessionModelModes(scope?: ServerAccountScope | null): Record<string, ModelMode> {
     const mmkv = getPersistenceStorage();
-    const modes = mmkv.getString(sessionModelModesKey());
+    const modes = mmkv.getString(sessionModelModesKey(scope));
     if (modes) {
         try {
             const parsed: unknown = JSON.parse(modes);
@@ -291,14 +312,14 @@ export function loadSessionModelModes(): Record<string, ModelMode> {
     return {};
 }
 
-export function saveSessionModelModes(modes: Record<string, ModelMode>) {
+export function saveSessionModelModes(modes: Record<string, ModelMode>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionModelModesKey(), JSON.stringify(modes));
+    mmkv.set(sessionModelModesKey(scope), JSON.stringify(modes));
 }
 
-export function loadSessionModelModeUpdatedAts(): Record<string, number> {
+export function loadSessionModelModeUpdatedAts(scope?: ServerAccountScope | null): Record<string, number> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionModelModeUpdatedAtsKey());
+    const raw = mmkv.getString(sessionModelModeUpdatedAtsKey(scope));
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -321,7 +342,49 @@ export function loadSessionModelModeUpdatedAts(): Record<string, number> {
     return {};
 }
 
-export function saveSessionModelModeUpdatedAts(data: Record<string, number>) {
+export function saveSessionModelModeUpdatedAts(data: Record<string, number>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionModelModeUpdatedAtsKey(), JSON.stringify(data));
+    mmkv.set(sessionModelModeUpdatedAtsKey(scope), JSON.stringify(data));
+}
+
+export function prepareSessionPersistenceScopeForActivation(scope: ServerAccountScope): void {
+    const mmkv = getPersistenceStorage();
+
+    if (typeof mmkv.getString(sessionDraftsKey(scope)) !== 'string') {
+        const legacyDrafts = loadSessionDrafts();
+        if (Object.keys(legacyDrafts).length > 0) {
+            saveSessionDrafts(legacyDrafts, scope);
+        }
+    }
+
+    if (typeof mmkv.getString(sessionReviewCommentsDraftsKey(scope)) !== 'string') {
+        const legacyReviewDrafts = loadSessionReviewCommentsDrafts();
+        if (Object.keys(legacyReviewDrafts).length > 0) {
+            saveSessionReviewCommentsDrafts(legacyReviewDrafts, scope);
+        }
+    }
+
+    if (typeof mmkv.getString(workspaceReviewCommentsDraftsKey(scope)) !== 'string') {
+        const legacyWorkspaceReviewDrafts = loadWorkspaceReviewCommentsDrafts();
+        if (Object.keys(legacyWorkspaceReviewDrafts).length > 0) {
+            saveWorkspaceReviewCommentsDrafts(legacyWorkspaceReviewDrafts, scope);
+        }
+    }
+
+    if (typeof mmkv.getString(sessionActionDraftsKey(scope)) !== 'string') {
+        const legacyActionDrafts = loadSessionActionDrafts();
+        if (Object.keys(legacyActionDrafts).length > 0) {
+            saveSessionActionDrafts(legacyActionDrafts, scope);
+        }
+    }
+
+    mmkv.delete(sessionDraftsKey());
+    mmkv.delete(sessionReviewCommentsDraftsKey());
+    mmkv.delete(workspaceReviewCommentsDraftsKey());
+    mmkv.delete(sessionActionDraftsKey());
+    mmkv.delete(sessionPermissionModesKey());
+    mmkv.delete(sessionPermissionModeUpdatedAtsKey());
+    mmkv.delete(sessionModelModesKey());
+    mmkv.delete(sessionModelModeUpdatedAtsKey());
+    mmkv.delete(sessionLastViewedKey());
 }

@@ -67,6 +67,7 @@ const refreshMachineCapabilitiesMock = vi.hoisted(() => vi.fn());
 const machineMarketplaceSourceRegistryGetMock = vi.hoisted(() => vi.fn());
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const navigationSetOptionsSpy = vi.hoisted(() => vi.fn());
 
 const MARKETPLACE_CAPABILITY_ID = 'tool.plugins';
 
@@ -185,6 +186,9 @@ installSettingsViewCommonModuleMocks({
                 back: vi.fn(),
                 replace: vi.fn(),
                 setParams: vi.fn(),
+            },
+            navigation: {
+                setOptions: (options: Readonly<Record<string, unknown>>) => navigationSetOptionsSpy(options),
             },
         }).module;
     },
@@ -323,6 +327,7 @@ afterEach(() => {
     machineMarketplaceSourceRegistryGetMock.mockReset();
     machineContributionRegistryProjectionDescribeMock.mockReset();
     routerPushSpy.mockReset();
+    navigationSetOptionsSpy.mockReset();
     vi.unstubAllGlobals();
 });
 
@@ -558,6 +563,20 @@ describe('PluginSettingsHomeScreen', () => {
                             },
                         ],
                     },
+                    'installed-plugin.agentSettings': {
+                        id: 'installed-plugin.agentSettings',
+                        pluginId: 'installed-plugin',
+                        surface: 'agentSettings',
+                        title: 'Agent settings',
+                        fields: [
+                            {
+                                id: 'agentSecret',
+                                type: 'secret',
+                                title: 'Agent secret',
+                                options: [],
+                            },
+                        ],
+                    },
                     'installed-plugin.backendSettings': {
                         id: 'installed-plugin.backendSettings',
                         pluginId: 'installed-plugin',
@@ -620,6 +639,9 @@ describe('PluginSettingsHomeScreen', () => {
         expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-1', expect.objectContaining({
             serverId: 'server-a',
         }));
+        expect(navigationSetOptionsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            headerTitle: 'Installed Plugin',
+        }));
         expect(screen.findRow('settings.plugins.detail.installed-plugin.header')).toBeTruthy();
         expect(screen.findRow('settings.plugins.detail.installed-plugin.summary')).toBeTruthy();
         expect(screen.getTextContent()).toContain('trusted');
@@ -629,6 +651,7 @@ describe('PluginSettingsHomeScreen', () => {
         expect(screen.findRow('settings.plugins.detail.installed-plugin.descriptor.settings.installed-plugin.settings.b.secret')).toBeTruthy();
         expect(screen.findRow('settings.plugins.detail.installed-plugin.descriptor.settings.installed-plugin.settings.b.runSetup')).toBeTruthy();
         expect(screen.findRow('settings.plugins.detail.installed-plugin.descriptor.setup.installed-plugin.setup.connect')).toBeTruthy();
+        expect(screen.findRow('settings.plugins.detail.installed-plugin.descriptor.agentSettings.installed-plugin.agentSettings.agentSecret')).toBeTruthy();
         expect(screen.findRow('settings.plugins.detail.installed-plugin.descriptor.providerSettings.installed-plugin.providerSettings.providerSecret')).toBeTruthy();
         expect(screen.findRow('settings.plugins.detail.installed-plugin.descriptor.backendSettings.installed-plugin.backendSettings.maxParallel')).toBeTruthy();
         expect(screen.findRow('settings.plugins.detail.installed-plugin.descriptor.status.installed-plugin.status.generation')).toBeTruthy();

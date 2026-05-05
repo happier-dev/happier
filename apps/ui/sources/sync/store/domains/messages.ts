@@ -6,6 +6,7 @@ import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
 import { isToolPotentiallyMutableForScm } from '@/sync/domains/tools/toolMutationClassification';
+import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
@@ -54,6 +55,7 @@ export type SessionMessages = {
     latestThinkingMessageId: string | null;
     latestThinkingMessageActivityAtMs: number | null;
     messagesVersion: number;
+    lastAppliedAgentStateVersion?: number | null;
     isLoaded: boolean;
 };
 
@@ -146,6 +148,11 @@ function coerceSessionMessages(input: unknown): SessionMessages {
             ? Math.trunc(raw.messagesVersion)
             : 0;
 
+    const lastAppliedAgentStateVersion: number | null =
+        typeof raw?.lastAppliedAgentStateVersion === 'number' && Number.isFinite(raw.lastAppliedAgentStateVersion)
+            ? Math.trunc(raw.lastAppliedAgentStateVersion)
+            : null;
+
     const isLoaded = raw?.isLoaded === true;
 
     return {
@@ -156,6 +163,7 @@ function coerceSessionMessages(input: unknown): SessionMessages {
         latestThinkingMessageId,
         latestThinkingMessageActivityAtMs,
         messagesVersion,
+        lastAppliedAgentStateVersion,
         isLoaded,
     };
 }
@@ -294,7 +302,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
         ? { ...existing.reducerState.latestUsage }
         : undefined;
 
-    const didMessageChange = processedMessages.length > 0;
+    const didMessageChange = processedMessages.length > 0 || reducerResult.reducerStateChanged === true;
     const didThinkingMetadataChange =
         latestThinkingMessageId !== existing.latestThinkingMessageId
         || latestThinkingMessageActivityAtMs !== (existing.latestThinkingMessageActivityAtMs ?? null);
@@ -318,6 +326,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             latestThinkingMessageId,
             latestThinkingMessageActivityAtMs,
             messagesVersion: existing.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
+            lastAppliedAgentStateVersion: existing.lastAppliedAgentStateVersion,
         },
         sessionLatestUsage: latestUsage,
         sessionTodos: reducerResult.todos,
@@ -335,6 +344,7 @@ function createEmptySessionMessages(): SessionMessages {
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
         messagesVersion: 0,
+        lastAppliedAgentStateVersion: null,
         isLoaded: false,
     };
 }
@@ -365,6 +375,11 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             return toolCallMessage.tool?.name ? isToolPotentiallyMutableForScm(toolCallMessage.tool?.name) : true;
         },
         applyMessages: (sessionId: string, messages: NormalizedMessage[]) => {
+            const telemetryFields: Record<string, number> = { messages: messages.length };
+            return syncPerformanceTelemetry.measure(
+                'sync.store.messages.apply',
+                telemetryFields,
+                () => {
             let changed = new Set<string>();
             let hasReadyEvent = false;
             set((state) => {
@@ -381,6 +396,23 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 // Get the session's agentState if available
                 const session = state.sessions[sessionId];
                 const agentState = session?.agentState;
+                const agentStateVersion =
+                    typeof session?.agentStateVersion === 'number' && Number.isFinite(session.agentStateVersion)
+                        ? Math.trunc(session.agentStateVersion)
+                        : null;
+                const shouldApplyAgentState = agentState != null && (
+                    messages.length > 0
+                    || agentStateVersion === null
+                    || existingSession.lastAppliedAgentStateVersion !== agentStateVersion
+                );
+                telemetryFields.agentStateApplied = shouldApplyAgentState ? 1 : 0;
+                if (messages.length === 0 && !shouldApplyAgentState) {
+                    telemetryFields.processed = 0;
+                    telemetryFields.changed = 0;
+                    telemetryFields.noop = 1;
+                    telemetryFields.stateChanged = 0;
+                    return state;
+                }
 
                 // Messages are already normalized, no need to process them again
                 const normalizedMessages = messages;
@@ -392,8 +424,21 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 });
 
                 // Run reducer with agentState
-                const reducerResult = reducer(existingSession.reducerState, normalizedMessages, agentState);
+                const reducerResult = syncPerformanceTelemetry.measure(
+                    'sync.store.messages.reducer',
+                    {
+                        messages: normalizedMessages.length,
+                        agentStateApplied: shouldApplyAgentState ? 1 : 0,
+                    },
+                    () => reducer(
+                        existingSession.reducerState,
+                        normalizedMessages,
+                        shouldApplyAgentState ? agentState : null,
+                    ),
+                );
                 const processedMessages = reducerResult.messages;
+                telemetryFields.processed = processedMessages.length;
+                telemetryFields.reducerStateChanged = reducerResult.reducerStateChanged === true ? 1 : 0;
                 for (let message of processedMessages) {
                     changed.add(message.id);
                 }
@@ -467,9 +512,21 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     }
                 }
 
-                let nextIds = (() => {
+                const indexTelemetryFields: Record<string, number> = {
+                    processed: processedMessages.length,
+                    insertedOrMoved: idsToInsert.length,
+                    removedForReorder: idsToRemove.size,
+                };
+                let nextIds = syncPerformanceTelemetry.measure(
+                    'sync.store.messages.index',
+                    indexTelemetryFields,
+                    () => {
                     const existingIds = existingSession.messageIdsOldestFirst;
-                    if (idsToInsert.length === 0 && idsToRemove.size === 0) return existingIds;
+                    if (idsToInsert.length === 0 && idsToRemove.size === 0) {
+                        indexTelemetryFields.idsChanged = 0;
+                        indexTelemetryFields.uniqueInsertedOrMoved = 0;
+                        return existingIds;
+                    }
 
                     const filtered = idsToRemove.size > 0
                         ? existingIds.filter((id) => !idsToRemove.has(id))
@@ -477,13 +534,20 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 
                     const uniqueInsertIds = Array.from(new Set(idsToInsert));
                     uniqueInsertIds.sort((a, b) => compareTranscriptMessagesOldestFirst(messagesById[a]!, messagesById[b]!));
+                    indexTelemetryFields.idsChanged = 1;
+                    indexTelemetryFields.uniqueInsertedOrMoved = uniqueInsertIds.length;
 
                     return mergeSortedMessageIdsOldestFirst({
                         existingSortedIds: filtered,
                         insertSortedIds: uniqueInsertIds,
                         messagesById,
                     });
-                })();
+                    },
+                );
+                telemetryFields.insertedOrMoved = indexTelemetryFields.insertedOrMoved ?? 0;
+                telemetryFields.removedForReorder = indexTelemetryFields.removedForReorder ?? 0;
+                telemetryFields.uniqueInsertedOrMoved = indexTelemetryFields.uniqueInsertedOrMoved ?? 0;
+                telemetryFields.idsChanged = indexTelemetryFields.idsChanged ?? 0;
 
                 if (shouldRecomputeLatestThinking) {
                     latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: nextIds, messagesById });
@@ -494,6 +558,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 } else if (didSeeThinkingUpdateFromInput || didSeeThinkingTextChange) {
                     latestThinkingMessageActivityAtMs = Date.now();
                 }
+                const didThinkingMetadataChange =
+                    latestThinkingMessageId !== existingSession.latestThinkingMessageId
+                    || latestThinkingMessageActivityAtMs !== (existingSession.latestThinkingMessageActivityAtMs ?? null);
+                telemetryFields.thinkingMetadataChanged = didThinkingMetadataChange ? 1 : 0;
 
                 const inferred = inferLatestUserPermissionModeFromChangedMessages(processedMessages);
                 const inferredPermissionMode = inferred?.mode ?? null;
@@ -571,6 +639,31 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     }
                 }
 
+                const didApplyNewAgentStateVersion =
+                    shouldApplyAgentState
+                    && agentStateVersion !== null
+                    && existingSession.lastAppliedAgentStateVersion !== agentStateVersion;
+                const didSessionMessagesChange =
+                    processedMessages.length > 0
+                    || reducerResult.reducerStateChanged === true
+                    || didThinkingMetadataChange
+                    || didApplyNewAgentStateVersion;
+                telemetryFields.agentStateVersionChanged = didApplyNewAgentStateVersion ? 1 : 0;
+                telemetryFields.messageStateChanged = didSessionMessagesChange ? 1 : 0;
+                telemetryFields.sessionChanged = updatedSessions === state.sessions ? 0 : 1;
+                telemetryFields.pendingChanged = updatedSessionPending === state.sessionPending ? 0 : 1;
+                if (
+                    !didSessionMessagesChange
+                    && updatedSessions === state.sessions
+                    && updatedSessionPending === state.sessionPending
+                ) {
+                    telemetryFields.noop = 1;
+                    telemetryFields.stateChanged = 0;
+                    return state;
+                }
+                telemetryFields.noop = 0;
+                telemetryFields.stateChanged = 1;
+
                 return {
                     ...state,
                     sessions: updatedSessions,
@@ -586,6 +679,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
                             messagesVersion: existingSession.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
+                            lastAppliedAgentStateVersion: shouldApplyAgentState
+                                ? agentStateVersion
+                                : existingSession.lastAppliedAgentStateVersion,
                             isLoaded: existingSession.isLoaded
                         }
                     },
@@ -593,7 +689,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 };
             });
 
-            return { changed: Array.from(changed), hasReadyEvent };
+                telemetryFields.changed = changed.size;
+                return { changed: Array.from(changed), hasReadyEvent };
+                },
+            );
         },
         applyMessagesLoaded: (sessionId: string) => set((state) => {
             const rawExistingSession = state.sessionMessages[sessionId];
@@ -656,6 +755,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
                             messagesVersion,
+                            lastAppliedAgentStateVersion:
+                                typeof session?.agentStateVersion === 'number' && Number.isFinite(session.agentStateVersion)
+                                    ? Math.trunc(session.agentStateVersion)
+                                    : null,
                             isLoaded: true
                         } satisfies SessionMessages
                     }
@@ -693,6 +796,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         latestThinkingMessageId: null,
                         latestThinkingMessageActivityAtMs: null,
                         messagesVersion: 0,
+                        lastAppliedAgentStateVersion: null,
                         isLoaded: false,
                     } satisfies SessionMessages,
                 },

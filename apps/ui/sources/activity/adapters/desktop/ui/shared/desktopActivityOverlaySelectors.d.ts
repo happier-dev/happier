@@ -17,6 +17,7 @@ export declare function resolveDesktopActivityOverlaySurfaceSelector(
     visualMode: DesktopActivityOverlayVisualModeForTestID,
 ): string;
 export declare function resolveDesktopActivityOverlayCardKindTestID(kind: unknown): string;
+export declare function resolveDesktopActivityOverlayCardKindSelector(kind: unknown): string;
 export declare function resolveDesktopActivityOverlayCardInstanceTestID(card: Record<string, unknown>): string;
 export declare function resolveDesktopActivityOverlayCardSelectorByKind(
     kind: unknown,

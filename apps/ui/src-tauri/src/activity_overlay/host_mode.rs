@@ -1,4 +1,5 @@
 use super::diagnostics::DesktopActivityOverlayHostFallbackReason;
+use super::display_identity::DesktopActivityOverlayDisplayIdentity;
 use super::placement::{clamp, resolve_overlay_placement, OverlayPlacementRect, Rect};
 use super::{
     DesktopActivityOverlayAnchor, DesktopActivityOverlayPlacementMode,
@@ -15,11 +16,22 @@ pub(crate) enum DesktopActivityOverlayHostMode {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopActivityOverlayPhysicalNotchSize {
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct DesktopActivityOverlayDisplayContext {
     pub(crate) is_macos: bool,
     pub(crate) is_builtin_display: bool,
     pub(crate) has_physical_notch: bool,
     pub(crate) safe_area_top: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) physical_notch_size: Option<DesktopActivityOverlayPhysicalNotchSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) display_identity: Option<DesktopActivityOverlayDisplayIdentity>,
     pub(crate) screen_frame: Rect,
     pub(crate) visible_frame: Rect,
 }
@@ -50,12 +62,14 @@ pub(crate) fn resolve_desktop_activity_overlay_host_mode_resolution(
     _anchor: DesktopActivityOverlayAnchor,
     display_context: Option<DesktopActivityOverlayDisplayContext>,
 ) -> DesktopActivityOverlayHostModeResolution {
-    let requested_mode =
-        resolve_requested_desktop_activity_overlay_host_mode(presentation_mode, display_context);
+    let requested_mode = resolve_requested_desktop_activity_overlay_host_mode(
+        presentation_mode,
+        display_context.as_ref(),
+    );
     let fallback_reason = resolve_requested_host_mode_fallback_reason(
         presentation_mode,
         requested_mode,
-        display_context,
+        display_context.as_ref(),
     );
 
     DesktopActivityOverlayHostModeResolution {
@@ -73,7 +87,7 @@ pub(crate) fn resolve_desktop_activity_overlay_host_mode_resolution(
 
 fn resolve_requested_desktop_activity_overlay_host_mode(
     presentation_mode: DesktopActivityOverlayPresentationMode,
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
+    display_context: Option<&DesktopActivityOverlayDisplayContext>,
 ) -> DesktopActivityOverlayHostMode {
     match presentation_mode {
         DesktopActivityOverlayPresentationMode::FloatingOverlay => {
@@ -95,7 +109,7 @@ fn resolve_requested_desktop_activity_overlay_host_mode(
 fn resolve_requested_host_mode_fallback_reason(
     presentation_mode: DesktopActivityOverlayPresentationMode,
     requested_mode: DesktopActivityOverlayHostMode,
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
+    display_context: Option<&DesktopActivityOverlayDisplayContext>,
 ) -> Option<DesktopActivityOverlayHostFallbackReason> {
     if presentation_mode != DesktopActivityOverlayPresentationMode::NotchIntegrated
         || requested_mode != DesktopActivityOverlayHostMode::NotchIntegrated
@@ -107,7 +121,7 @@ fn resolve_requested_host_mode_fallback_reason(
 }
 
 fn resolve_notch_integrated_host_fallback_reason(
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
+    display_context: Option<&DesktopActivityOverlayDisplayContext>,
 ) -> Option<DesktopActivityOverlayHostFallbackReason> {
     let Some(display_context) = display_context else {
         return Some(DesktopActivityOverlayHostFallbackReason::MissingDisplayContext);
@@ -127,7 +141,7 @@ fn resolve_notch_integrated_host_fallback_reason(
 }
 
 fn supports_notch_integrated_mode(
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
+    display_context: Option<&DesktopActivityOverlayDisplayContext>,
 ) -> bool {
     display_context
         .map(|context| context.is_macos && context.is_builtin_display && context.has_physical_notch)
@@ -149,8 +163,6 @@ pub(crate) fn resolve_overlay_placement_for_host_mode(
             resolve_notch_integrated_top_center_placement(
                 monitor,
                 overlay,
-                offset_x,
-                offset_y,
                 display_context.safe_area_top,
             )
         }
@@ -161,8 +173,6 @@ pub(crate) fn resolve_overlay_placement_for_host_mode(
 fn resolve_notch_integrated_top_center_placement(
     monitor: Rect,
     overlay: Rect,
-    _offset_x: f64,
-    _offset_y: f64,
     safe_area_top: f64,
 ) -> OverlayPlacementRect {
     let center_x = monitor.x + (monitor.width - overlay.width) / 2.0;
@@ -190,6 +200,8 @@ mod tests {
             is_builtin_display: true,
             has_physical_notch: has_notch,
             safe_area_top: 74.0,
+            physical_notch_size: None,
+            display_identity: None,
             screen_frame: Rect {
                 x: 0.0,
                 y: 0.0,
@@ -269,6 +281,8 @@ mod tests {
                 is_builtin_display: false,
                 has_physical_notch: true,
                 safe_area_top: 74.0,
+                physical_notch_size: None,
+                display_identity: None,
                 screen_frame: Rect {
                     x: 0.0,
                     y: 0.0,
@@ -325,6 +339,8 @@ mod tests {
                 is_builtin_display: false,
                 has_physical_notch: true,
                 safe_area_top: 74.0,
+                physical_notch_size: None,
+                display_identity: None,
                 screen_frame: Rect {
                     x: 0.0,
                     y: 0.0,
@@ -406,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn notch_integrated_placement_ignores_stale_saved_offsets() {
+    fn notch_integrated_placement_ignores_custom_offsets() {
         let placement = resolve_overlay_placement_for_host_mode(
             Rect {
                 x: 0.0,
@@ -423,6 +439,33 @@ mod tests {
             DesktopActivityOverlayAnchor::BottomRight,
             124.0,
             48.0,
+            12.0,
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+            Some(display_context(true)),
+        );
+
+        assert!((placement.x - 576.0).abs() < 0.001);
+        assert!((placement.y - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn notch_integrated_placement_ignores_extreme_custom_offsets() {
+        let placement = resolve_overlay_placement_for_host_mode(
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 360.0,
+                height: 68.0,
+            },
+            DesktopActivityOverlayAnchor::BottomRight,
+            9_999.0,
+            9_999.0,
             12.0,
             DesktopActivityOverlayHostMode::NotchIntegrated,
             Some(display_context(true)),

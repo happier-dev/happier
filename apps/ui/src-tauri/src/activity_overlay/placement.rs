@@ -23,12 +23,75 @@ pub(crate) enum DesktopActivityOverlayMonitorSource {
     MainWindow,
     OverlayWindow,
     Primary,
+    BuiltIn,
+    Focused,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ResolvedOverlayAnchorMonitorRect {
     pub(crate) source: DesktopActivityOverlayMonitorSource,
     pub(crate) rect: Rect,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DesktopActivityOverlayDisplayMode {
+    #[default]
+    Automatic,
+    Focused,
+    Main,
+    BuiltIn,
+}
+
+pub(crate) fn resolve_overlay_anchor_monitor_resolution(
+    display_mode: DesktopActivityOverlayDisplayMode,
+    placement_mode: DesktopActivityOverlayPlacementMode,
+    main_window_monitor: Option<Rect>,
+    overlay_window_monitor: Option<Rect>,
+    primary_monitor: Option<Rect>,
+    built_in_monitor: Option<Rect>,
+    focused_monitor: Option<Rect>,
+) -> Result<ResolvedOverlayAnchorMonitorRect, String> {
+    match display_mode {
+        DesktopActivityOverlayDisplayMode::Automatic => {
+            resolve_overlay_anchor_monitor_resolution_for_placement_mode(
+                placement_mode,
+                main_window_monitor,
+                overlay_window_monitor,
+                primary_monitor,
+            )
+        }
+        DesktopActivityOverlayDisplayMode::Focused => first_monitor([
+            (DesktopActivityOverlayMonitorSource::Focused, focused_monitor),
+            (DesktopActivityOverlayMonitorSource::MainWindow, main_window_monitor),
+            (DesktopActivityOverlayMonitorSource::OverlayWindow, overlay_window_monitor),
+            (DesktopActivityOverlayMonitorSource::Primary, primary_monitor),
+        ]),
+        DesktopActivityOverlayDisplayMode::Main => first_monitor([
+            (DesktopActivityOverlayMonitorSource::MainWindow, main_window_monitor),
+            (DesktopActivityOverlayMonitorSource::Focused, focused_monitor),
+            (DesktopActivityOverlayMonitorSource::OverlayWindow, overlay_window_monitor),
+            (DesktopActivityOverlayMonitorSource::Primary, primary_monitor),
+        ]),
+        DesktopActivityOverlayDisplayMode::BuiltIn => first_monitor([
+            (DesktopActivityOverlayMonitorSource::BuiltIn, built_in_monitor),
+            (DesktopActivityOverlayMonitorSource::MainWindow, main_window_monitor),
+            (DesktopActivityOverlayMonitorSource::OverlayWindow, overlay_window_monitor),
+            (DesktopActivityOverlayMonitorSource::Primary, primary_monitor),
+        ]),
+    }
+}
+
+fn first_monitor<const N: usize>(
+    candidates: [(DesktopActivityOverlayMonitorSource, Option<Rect>); N],
+) -> Result<ResolvedOverlayAnchorMonitorRect, String> {
+    for (source, rect) in candidates {
+        if let Some(rect) = rect {
+            return Ok(ResolvedOverlayAnchorMonitorRect { source, rect });
+        }
+    }
+
+    Err("Unable to resolve a monitor for desktop activity overlay".to_string())
 }
 
 pub(crate) fn resolve_overlay_anchor_monitor_resolution_for_placement_mode(
@@ -247,6 +310,84 @@ mod tests {
     }
 
     #[test]
+    fn placement_clamp_boundary_fuzz_stays_inside_monitor() {
+        let monitors = [
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            },
+            Rect {
+                x: -1440.0,
+                y: 80.0,
+                width: 1440.0,
+                height: 900.0,
+            },
+        ];
+        let overlays = [
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 320.0,
+                height: 72.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 2400.0,
+                height: 1200.0,
+            },
+        ];
+        let offsets = [
+            -10_000.0,
+            -4096.0,
+            0.0,
+            4096.0,
+            10_000.0,
+            f64::INFINITY,
+            f64::NAN,
+        ];
+        let anchors = [
+            DesktopActivityOverlayAnchor::TopCenter,
+            DesktopActivityOverlayAnchor::TopLeft,
+            DesktopActivityOverlayAnchor::TopRight,
+            DesktopActivityOverlayAnchor::BottomCenter,
+            DesktopActivityOverlayAnchor::BottomLeft,
+            DesktopActivityOverlayAnchor::BottomRight,
+            DesktopActivityOverlayAnchor::LeftCenter,
+            DesktopActivityOverlayAnchor::RightCenter,
+        ];
+
+        for monitor in monitors {
+            for overlay in overlays {
+                for anchor in anchors {
+                    for offset_x in offsets {
+                        for offset_y in offsets {
+                            let placement = resolve_overlay_placement(
+                                monitor, overlay, anchor, offset_x, offset_y, 12.0,
+                            );
+                            let min_x = monitor.x + 12.0;
+                            let min_y = monitor.y + 12.0;
+                            let max_x =
+                                (monitor.x + monitor.width - overlay.width - 12.0).max(min_x);
+                            let max_y =
+                                (monitor.y + monitor.height - overlay.height - 12.0).max(min_y);
+
+                            assert!(placement.x.is_finite());
+                            assert!(placement.y.is_finite());
+                            assert!(placement.x >= min_x - 0.001);
+                            assert!(placement.x <= max_x + 0.001);
+                            assert!(placement.y >= min_y - 0.001);
+                            assert!(placement.y <= max_y + 0.001);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn resolves_overlay_top_center_on_a_non_zero_origin_monitor() {
         let monitor = Rect {
             x: 3000.0,
@@ -363,5 +504,79 @@ mod tests {
             DesktopActivityOverlayMonitorSource::OverlayWindow
         );
         assert!((resolved.rect.x - 3000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn display_mode_can_prefer_the_builtin_monitor_without_relying_on_react_geometry() {
+        let resolved = resolve_overlay_anchor_monitor_resolution(
+            DesktopActivityOverlayDisplayMode::BuiltIn,
+            DesktopActivityOverlayPlacementMode::Custom,
+            Some(Rect {
+                x: 200.0,
+                y: 40.0,
+                width: 1600.0,
+                height: 1000.0,
+            }),
+            Some(Rect {
+                x: 3000.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            }),
+            Some(Rect {
+                x: 3000.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            }),
+            Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            }),
+            None,
+        )
+        .expect("expected a resolved monitor");
+
+        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::BuiltIn);
+        assert_eq!(resolved.rect.width, 1512.0);
+    }
+
+    #[test]
+    fn display_mode_can_follow_the_focused_monitor_when_available() {
+        let resolved = resolve_overlay_anchor_monitor_resolution(
+            DesktopActivityOverlayDisplayMode::Focused,
+            DesktopActivityOverlayPlacementMode::Anchored,
+            Some(Rect {
+                x: 200.0,
+                y: 40.0,
+                width: 1600.0,
+                height: 1000.0,
+            }),
+            Some(Rect {
+                x: 3000.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            }),
+            Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1512.0,
+                height: 982.0,
+            }),
+            None,
+            Some(Rect {
+                x: 3000.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            }),
+        )
+        .expect("expected a resolved monitor");
+
+        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::Focused);
+        assert_eq!(resolved.rect.x, 3000.0);
     }
 }

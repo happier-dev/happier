@@ -12,4 +12,16 @@ describe('vitestRnShim', () => {
             /Unsupported alias require/i,
         );
     });
+
+    it('stubs posthog-react-native requires in the Node test runtime', () => {
+        const posthogModule = (globalThis as any).require('posthog-react-native') as {
+            __isHappierPostHogReactNativeStub?: unknown;
+            default?: unknown;
+            PostHogProvider?: unknown;
+        };
+
+        expect(posthogModule.__isHappierPostHogReactNativeStub).toBe(true);
+        expect(typeof posthogModule.default).toBe('function');
+        expect(typeof posthogModule.PostHogProvider).toBe('function');
+    });
 });

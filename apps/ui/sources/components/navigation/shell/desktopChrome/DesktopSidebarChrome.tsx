@@ -1,63 +1,234 @@
-import { Image } from 'expo-image';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Pressable, View, type ImageStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
+import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { DESKTOP_SIDEBAR_CHROME_ACTIONS_COMPACT_THRESHOLD_PX } from './desktopChromeMetrics';
+import {
+    DESKTOP_SIDEBAR_CHROME_ACTIONS_COMPACT_THRESHOLD_PX,
+    DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_SIZE_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_GLYPH_SIZE_PX,
+} from './desktopChromeMetrics';
 import { desktopSidebarChromeStyles } from './desktopSidebarChromeStyles';
 import { DesktopShellUpdateIndicatorHost } from './DesktopShellUpdateIndicatorHost';
 import { DesktopShellWindowControlsHost } from './DesktopShellWindowControlsHost';
+import { SidebarCollapseIcon } from '../SidebarIcons';
 
 type DesktopSidebarChromeProps = Readonly<{
     sidebarWidthPx?: number | null;
     headerHeightPx: number;
     onPressHome: () => void;
+    onPressCollapse?: () => void;
+    onPressBack?: () => void;
+    onPressForward?: () => void;
     environmentBadge: string | null;
     headerActions: ItemAction[];
+    topUtilityActions?: ItemAction[];
     renderHeaderOverflowVisual: () => React.ReactNode;
     popoverBoundaryRef: React.RefObject<any>;
     desktopWindowControls?: React.ReactNode;
     desktopUpdateIndicator?: React.ReactNode;
 }>;
 
+const DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_STYLE: ImageStyle = {
+    height: DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_SIZE_PX,
+    width: DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_SIZE_PX,
+};
+
 export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps) => {
     const styles = desktopSidebarChromeStyles;
     const { theme } = useUnistyles();
     const hasDesktopWindowControls = props.desktopWindowControls != null;
+    const topStripDragProps = useDesktopWindowDragMouseProps();
+    const topUtilityActions = props.topUtilityActions ?? [];
+    const topUtilityActionIds = React.useMemo(
+        () => new Set(topUtilityActions.map((action) => action.id)),
+        [topUtilityActions],
+    );
+    const contentHeaderActions = React.useMemo(
+        () => {
+            if (hasDesktopWindowControls) {
+                return props.headerActions.filter((action) => !topUtilityActionIds.has(action.id));
+            }
+
+            return props.headerActions;
+        },
+        [hasDesktopWindowControls, props.headerActions, topUtilityActionIds],
+    );
+    const compactContentActionIds = React.useMemo(() => {
+        return hasDesktopWindowControls
+            ? ['projects', 'newSession']
+            : ['projects', 'settings', 'newSession'];
+    }, [hasDesktopWindowControls]);
+
+    const renderTopUtilityAction = React.useCallback((action: ItemAction) => {
+        const color = action.color ?? theme.colors.header.tint;
+        const isSettingsAction = action.id === 'settings';
+        const iconSize = isSettingsAction
+            ? DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_GLYPH_SIZE_PX
+            : DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX;
+        const icon = typeof action.icon === 'string'
+            ? action.id === 'inbox'
+                ? <Octicons name="inbox" size={iconSize} color={color} />
+                : <Ionicons name={action.icon} size={iconSize} color={color} />
+            : action.icon;
+
+        return (
+            <Pressable
+                key={action.id}
+                testID={action.inlineTestID}
+                onPress={action.onPress}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={action.title}
+                style={isSettingsAction ? styles.topSettingsIconButton : styles.topIconButton}
+            >
+                {icon}
+            </Pressable>
+        );
+    }, [styles.topIconButton, styles.topSettingsIconButton, theme.colors.header.tint]);
+
+    const actionsRow = (
+        <View testID="desktop-sidebar-chrome-actions-row" style={styles.rightContainer}>
+            <DesktopShellUpdateIndicatorHost>
+                {props.desktopUpdateIndicator}
+            </DesktopShellUpdateIndicatorHost>
+            <ItemRowActions
+                title={t('common.moreActions')}
+                actions={contentHeaderActions}
+                layoutWidthPx={props.sidebarWidthPx ?? null}
+                compactThreshold={DESKTOP_SIDEBAR_CHROME_ACTIONS_COMPACT_THRESHOLD_PX}
+                compactActionIds={compactContentActionIds}
+                pinnedActionIds={compactContentActionIds}
+                overflowPosition="beforePinned"
+                overflowPlacement="bottom"
+                overflowPortal={{ anchorAlign: 'center' }}
+                overflowTriggerTestID="sidebar-header-actions-overflow"
+                popoverBoundaryRef={props.popoverBoundaryRef}
+                renderOverflowAnchorOverlay={props.renderHeaderOverflowVisual}
+                gap={4}
+                renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
+                    <Pressable
+                        testID={testID}
+                        hitSlop={15}
+                        style={open ? { opacity: 0 } : undefined}
+                        pointerEvents={open ? 'none' : 'auto'}
+                        onPress={open ? undefined : toggle}
+                        focusable={!open}
+                        accessibilityRole="button"
+                        accessibilityLabel={accessibilityLabel}
+                        accessibilityHint={accessibilityHint}
+                        accessibilityState={{ expanded: open, disabled: open }}
+                        accessibilityElementsHidden={open}
+                        importantForAccessibility={open ? 'no-hide-descendants' : 'auto'}
+                    >
+                        {props.renderHeaderOverflowVisual()}
+                    </Pressable>
+                )}
+            />
+        </View>
+    );
 
     return (
         <View testID="desktop-sidebar-chrome" style={styles.header}>
             {hasDesktopWindowControls ? (
-                <View testID="desktop-sidebar-chrome-controls-row" style={styles.windowControlsRow}>
+                <View
+                    {...topStripDragProps}
+                    testID="desktop-sidebar-chrome-controls-row"
+                    style={styles.windowControlsRow}
+                >
                     <DesktopShellWindowControlsHost>
                         {props.desktopWindowControls}
                     </DesktopShellWindowControlsHost>
+                    <View testID="desktop-sidebar-chrome-utility-row" style={styles.utilityRow}>
+                        {props.onPressBack ? (
+                            <Pressable
+                                testID="sidebar-back-button"
+                                onPress={props.onPressBack}
+                                hitSlop={10}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('common.previous')}
+                                style={styles.topIconButton}
+                            >
+                                <Ionicons
+                                    name="arrow-back"
+                                    size={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX}
+                                    color={theme.colors.header.tint}
+                                />
+                            </Pressable>
+                        ) : null}
+                        {props.onPressForward ? (
+                            <Pressable
+                                testID="sidebar-forward-button"
+                                onPress={props.onPressForward}
+                                hitSlop={10}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('common.next')}
+                                style={styles.topIconButton}
+                            >
+                                <Ionicons
+                                    name="arrow-forward"
+                                    size={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX}
+                                    color={theme.colors.header.tint}
+                                />
+                            </Pressable>
+                        ) : null}
+                        {topUtilityActions.map(renderTopUtilityAction)}
+                        {props.onPressCollapse ? (
+                            <Pressable
+                                testID="sidebar-collapse-button"
+                                onPress={props.onPressCollapse}
+                                hitSlop={10}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('common.collapse')}
+                                style={styles.topIconButton}
+                            >
+                                <View style={styles.leftSidebarCollapseIcon}>
+                                    <SidebarCollapseIcon
+                                        size={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX}
+                                        color={theme.colors.header.tint}
+                                    />
+                                </View>
+                            </Pressable>
+                        ) : null}
+                    </View>
                 </View>
             ) : null}
 
-            <View testID="desktop-sidebar-chrome-content-row" style={[styles.contentRow, { minHeight: props.headerHeightPx }]}>
+            <View
+                testID="desktop-sidebar-chrome-content-row"
+                style={[
+                    styles.contentRow,
+                    hasDesktopWindowControls ? styles.compactContentRow : { minHeight: props.headerHeightPx },
+                ]}
+            >
                 <View testID="desktop-sidebar-chrome-brand-group" style={styles.brandGroup}>
                     <Pressable
+                        testID="desktop-sidebar-brand-button"
                         onPress={props.onPressHome}
                         hitSlop={15}
                         accessibilityRole="button"
                         accessibilityLabel={t('common.home')}
-                        style={[styles.logoContainer, styles.iconButton]}
+                        style={styles.brandButton}
                     >
-                        <Image
+                        <SafeExpoImage
+                            testID="desktop-sidebar-logo"
                             source={theme.dark ? require('@/assets/images/logo-white.png') : require('@/assets/images/logo-black.png')}
                             contentFit="contain"
-                            style={styles.logo}
+                            style={[styles.brandLogo, DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_STYLE]}
                         />
                     </Pressable>
-
-                    <View style={styles.titleContainerLeft}>
+                    <View testID="desktop-sidebar-title-container" style={styles.titleContainerLeft}>
                         <View style={styles.titleRow}>
-                            <Text style={styles.titleText}>{t('sidebar.sessionsTitle')}</Text>
+                            <Text testID="desktop-sidebar-title-text" style={styles.titleText} numberOfLines={1}>
+                                {t('sidebar.sessionsTitle')}
+                            </Text>
                             {props.environmentBadge ? (
                                 <View style={styles.envBadge}>
                                     <Text style={styles.envBadgeText}>{props.environmentBadge}</Text>
@@ -65,10 +236,7 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                             ) : null}
                         </View>
                         <View
-                            style={[
-                                styles.statusControlWrapper,
-                                Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as const) : null,
-                            ]}
+                            style={styles.statusControlWrapper}
                         >
                             <ConnectionStatusControl
                                 variant="sidebar"
@@ -78,40 +246,7 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                     </View>
                 </View>
 
-                <View testID="desktop-sidebar-chrome-actions-row" style={styles.rightContainer}>
-                    <DesktopShellUpdateIndicatorHost>
-                        {props.desktopUpdateIndicator}
-                    </DesktopShellUpdateIndicatorHost>
-                    <ItemRowActions
-                        title={t('common.moreActions')}
-                        actions={props.headerActions}
-                        layoutWidthPx={props.sidebarWidthPx ?? null}
-                        compactThreshold={DESKTOP_SIDEBAR_CHROME_ACTIONS_COMPACT_THRESHOLD_PX}
-                        compactActionIds={['projects', 'settings', 'newSession']}
-                        pinnedActionIds={['projects', 'settings', 'newSession']}
-                        overflowPosition="beforePinned"
-                        overflowPlacement="bottom"
-                        overflowPortal={{ anchorAlign: 'center' }}
-                        overflowTriggerTestID="sidebar-header-actions-overflow"
-                        popoverBoundaryRef={props.popoverBoundaryRef}
-                        renderOverflowAnchorOverlay={props.renderHeaderOverflowVisual}
-                        gap={4}
-                        renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
-                            <Pressable
-                                testID={testID}
-                                hitSlop={15}
-                                style={open ? { opacity: 0 } : undefined}
-                                onPress={toggle}
-                                accessibilityRole="button"
-                                accessibilityLabel={accessibilityLabel}
-                                accessibilityHint={accessibilityHint}
-                                accessibilityState={{ expanded: open }}
-                            >
-                                {props.renderHeaderOverflowVisual()}
-                            </Pressable>
-                        )}
-                    />
-                </View>
+                {actionsRow}
             </View>
         </View>
     );

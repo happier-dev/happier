@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { KeyboardAvoidingView, Platform } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -50,13 +50,16 @@ export function ServerSettingsScreen() {
     }, []);
 
     return (
-        <>
-            <Stack.Screen options={controller.screenOptions} />
             <KeyboardAvoidingView
                 style={styles.keyboardAvoidingView}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 >
-                    <ItemList style={styles.itemListContainer}>
+                    <ItemList
+                        style={styles.itemListContainer}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                        {...(Platform.OS === 'ios' ? { automaticallyAdjustKeyboardInsets: true } : {})}
+                    >
                     {controller.relayDriftBanner ? (
                         isDesktop ? (
                             <RelayDriftActionCard banner={controller.relayDriftBanner} />
@@ -155,6 +158,5 @@ export function ServerSettingsScreen() {
                     ) : null}
                 </ItemList>
             </KeyboardAvoidingView>
-        </>
     );
 }

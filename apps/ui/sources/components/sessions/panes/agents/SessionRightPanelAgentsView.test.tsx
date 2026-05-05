@@ -36,6 +36,12 @@ const directSessionRuntimeState = vi.hoisted(() => ({
 }));
 
 installSessionDetailsPanelCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { push: routerPushSpy },
+        }).module;
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -197,14 +203,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
 
 describe('SessionRightPanelAgentsView', () => {
     beforeAll(async () => {

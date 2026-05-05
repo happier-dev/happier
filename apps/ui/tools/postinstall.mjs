@@ -137,6 +137,65 @@ if (wants('patch-package')) {
     }
 }
 
+if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
+    const packageDirs = [
+        path.resolve(repoRootNodeModulesDir, 'react-native-enriched-markdown'),
+        path.resolve(expoAppNodeModulesDir, 'react-native-enriched-markdown'),
+    ].filter((packageDir) => fs.existsSync(packageDir));
+
+    if (packageDirs.length === 0) {
+        console.error('Could not find react-native-enriched-markdown under repo or UI node_modules.');
+        process.exit(1);
+    }
+
+    const unpatchedPaths = [];
+    for (const packageDir of packageDirs) {
+        const enrichedMarkdownTextPath = path.resolve(packageDir, 'lib', 'module', 'web', 'EnrichedMarkdownText.js');
+        const streamingRevealPath = path.resolve(packageDir, 'lib', 'module', 'web', 'streamingReveal.js');
+        const parseMarkdownPath = path.resolve(packageDir, 'lib', 'module', 'web', 'parseMarkdown.js');
+        const iosTailFadeAnimatorPath = path.resolve(packageDir, 'ios', 'utils', 'ENRMTailFadeInAnimator.m');
+        const androidTailFadeAnimatorPath = path.resolve(packageDir, 'android', 'src', 'main', 'java', 'com', 'swmansion', 'enriched', 'markdown', 'utils', 'text', 'TailFadeInAnimator.kt');
+
+        if (
+            !fs.existsSync(enrichedMarkdownTextPath)
+            || !fs.existsSync(streamingRevealPath)
+            || !fs.existsSync(parseMarkdownPath)
+            || !fs.existsSync(iosTailFadeAnimatorPath)
+            || !fs.existsSync(androidTailFadeAnimatorPath)
+        ) {
+            unpatchedPaths.push(packageDir);
+            continue;
+        }
+
+        const enrichedMarkdownTextContents = fs.readFileSync(enrichedMarkdownTextPath, 'utf8');
+        const streamingRevealContents = fs.readFileSync(streamingRevealPath, 'utf8');
+        const parseMarkdownContents = fs.readFileSync(parseMarkdownPath, 'utf8');
+        const iosTailFadeAnimatorContents = fs.readFileSync(iosTailFadeAnimatorPath, 'utf8');
+        const androidTailFadeAnimatorContents = fs.readFileSync(androidTailFadeAnimatorPath, 'utf8');
+        if (
+            !enrichedMarkdownTextContents.includes('markStreamingRevealOffsets')
+            || !enrichedMarkdownTextContents.includes('streamingAnimation')
+            || !enrichedMarkdownTextContents.includes('updateStreamingRevealRanges')
+            || !parseMarkdownContents.includes('preloadMarkdownRuntime')
+            || !streamingRevealContents.includes('data-happier-enriched-markdown-reveal')
+            || !streamingRevealContents.includes('updateStreamingRevealRanges')
+            || !iosTailFadeAnimatorContents.includes('ENRMActiveFadeRange')
+            || !androidTailFadeAnimatorContents.includes('activeRanges')
+        ) {
+            unpatchedPaths.push(packageDir);
+        }
+    }
+
+    if (unpatchedPaths.length > 0) {
+        console.error(
+            `react-native-enriched-markdown web streaming patch does not appear to be applied to:\n${unpatchedPaths
+                .map((p) => `- ${p}`)
+                .join('\n')}`,
+        );
+        process.exit(1);
+    }
+}
+
 if (wants('verify-expo-router-web-modal-patch')) {
     const expoRouterWebModalCandidatePaths = [
         path.resolve(repoRootDir, 'node_modules', 'expo-router', 'build', 'layouts', '_web-modal.js'),

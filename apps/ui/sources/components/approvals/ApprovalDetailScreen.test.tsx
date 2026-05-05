@@ -362,7 +362,7 @@ describe('ApprovalDetailScreen', () => {
             'approval.request.decide',
             { artifactId: 'artifact-1', decision: 'approve' },
             expect.objectContaining({
-                surface: 'ui_button',
+                surface: 'ui',
                 serverId: 'server-approval',
             }),
         );
@@ -384,7 +384,7 @@ describe('ApprovalDetailScreen', () => {
             'approval.request.decide',
             { artifactId: 'artifact-1', decision: 'approve' },
             expect.objectContaining({
-                surface: 'ui_button',
+                surface: 'ui',
                 serverId: 'server-approval',
             }),
         );
@@ -410,7 +410,7 @@ describe('ApprovalDetailScreen', () => {
             'approval.request.decide',
             { artifactId: 'artifact-1', decision: 'approve' },
             expect.objectContaining({
-                surface: 'ui_button',
+                surface: 'ui',
                 serverId: 'server-approval',
             }),
         );

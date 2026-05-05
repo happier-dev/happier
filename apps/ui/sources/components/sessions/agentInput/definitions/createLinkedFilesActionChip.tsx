@@ -65,9 +65,8 @@ function createBaseLinkFileChip(params: Readonly<{
             renderContent: params.popoverContent,
             maxHeightCap: params.maxHeightCap,
             maxWidthCap: params.maxWidthCap,
-            // Important on native: without a scroll surface, popovers that render flex children (lists)
-            // can collapse to 0-height when the child doesn't provide an explicit intrinsic height.
-            scrollEnabled: true,
+            // The picker wraps its virtualized browser with an explicit height, so the browser owns scrolling.
+            scrollEnabled: false,
         },
         render: ({ chipStyle, iconColor, showLabel, textStyle, countTextStyle, chipAnchorRef, toggleCollapsedPopover }) => (
             <Pressable

@@ -2,6 +2,8 @@ import type { ApiEphemeralUpdate } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
+import { markStreamingMessagesAppliedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { normalizeRawMessage } from '@/sync/typesRaw';
 
@@ -9,12 +11,22 @@ type TranscriptStreamSegmentEphemeralUpdate = Extract<ApiEphemeralUpdate, { type
 
 type SessionMessageEncryption = Pick<SessionEncryption, 'decryptMessage'>;
 
-export async function handleTranscriptStreamSegmentEphemeralUpdate(params: Readonly<{
+type TranscriptStreamSegmentTelemetryFields = Readonly<{
+    encrypted: number;
+    plain: number;
+}>;
+
+type HandleTranscriptStreamSegmentEphemeralUpdateParams = Readonly<{
     update: TranscriptStreamSegmentEphemeralUpdate;
     getSessionEncryption: (sessionId: string) => SessionMessageEncryption | null;
     getSession: (sessionId: string) => Session | undefined;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
-}>): Promise<void> {
+}>;
+
+async function applyTranscriptStreamSegmentEphemeralUpdate(
+    params: HandleTranscriptStreamSegmentEphemeralUpdateParams,
+    telemetryFields?: TranscriptStreamSegmentTelemetryFields,
+): Promise<void> {
     const { update, getSessionEncryption, getSession, applyMessages } = params;
     const sessionId = update.sessionId;
     const session = getSession(sessionId);
@@ -22,13 +34,13 @@ export async function handleTranscriptStreamSegmentEphemeralUpdate(params: Reado
         return;
     }
 
-    const encryption = getSessionEncryption(sessionId);
     const expectsEncryptedMessages = session.encryptionMode !== 'plain';
+    const encryption = expectsEncryptedMessages ? getSessionEncryption(sessionId) : null;
     if (!encryption && expectsEncryptedMessages) {
         return;
     }
 
-    const decrypted = await readStoredSessionMessage({
+    const readMessage = () => readStoredSessionMessage({
         message: {
             id: update.message.localId,
             seq: 0,
@@ -40,19 +52,69 @@ export async function handleTranscriptStreamSegmentEphemeralUpdate(params: Reado
         },
         decryptMessage: encryption ? (message) => encryption.decryptMessage(message) : undefined,
     });
+
+    const decrypted = telemetryFields
+        ? await syncPerformanceTelemetry.measureAsync(
+            'sync.sessions.socket.transcriptStreamSegment.readMessage',
+            telemetryFields,
+            readMessage,
+        )
+        : await readMessage();
     if (!decrypted) {
         return;
     }
+    if (!getSession(sessionId)) {
+        return;
+    }
 
-    const normalized = normalizeRawMessage(
+    const normalizeMessage = () => normalizeRawMessage(
         update.message.localId,
         decrypted.localId,
         decrypted.createdAt,
         decrypted.content,
     );
+
+    const normalized = telemetryFields
+        ? syncPerformanceTelemetry.measure(
+            'sync.sessions.socket.transcriptStreamSegment.normalize',
+            telemetryFields,
+            normalizeMessage,
+        )
+        : normalizeMessage();
     if (!normalized) {
         return;
     }
 
     applyMessages(sessionId, [normalized]);
+    markStreamingMessagesAppliedForSessionUiTelemetry({
+        sessionId,
+        messages: [normalized],
+        source: 'transcriptStreamSegment',
+    });
+    if (telemetryFields) {
+        syncPerformanceTelemetry.count('sync.sessions.socket.transcriptStreamSegment.apply', {
+            ...telemetryFields,
+            normalized: 1,
+        });
+    }
+}
+
+export async function handleTranscriptStreamSegmentEphemeralUpdate(
+    params: HandleTranscriptStreamSegmentEphemeralUpdateParams,
+): Promise<void> {
+    const { update } = params;
+    if (!syncPerformanceTelemetry.isEnabled()) {
+        return applyTranscriptStreamSegmentEphemeralUpdate(params);
+    }
+
+    const telemetryFields = {
+        encrypted: update.message.content?.t === 'encrypted' ? 1 : 0,
+        plain: update.message.content?.t === 'plain' ? 1 : 0,
+    };
+
+    return syncPerformanceTelemetry.measureAsync(
+        'sync.sessions.socket.transcriptStreamSegment',
+        telemetryFields,
+        () => applyTranscriptStreamSegmentEphemeralUpdate(params, telemetryFields),
+    );
 }

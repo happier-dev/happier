@@ -3,9 +3,12 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
+    DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
     type NotificationChannelV1,
     type NotificationsSettingsV1,
+    type AttentionDeliveryPolicyV1,
 } from '@happier-dev/protocol';
+import { DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -25,10 +28,57 @@ const modalPromptMock = vi.fn();
 const modalConfirmMock = vi.fn();
 const modalAlertMock = vi.fn();
 const routerPushMock = vi.fn();
+const sendExpoLocalNotificationMock = vi.fn();
+const liveActivityRemoteDiagnosticsState = vi.hoisted(() => ({
+    value: {
+        modes: {
+            hosted_happier_relay: {
+                available: false,
+                reasons: ['hosted_relay_provider_blocked'],
+            },
+            direct_apns: {
+                available: false,
+                reasons: ['direct_apns_not_configured'],
+                configurationDiagnostics: ['apns_private_key_missing'],
+            },
+            background_wake_best_effort: {
+                available: false,
+                reasons: ['background_wake_disabled'],
+            },
+        },
+        capabilities: {
+            perActivityUpdate: {
+                id: 'per_activity_update',
+                status: 'supported_when_configured',
+                events: ['update', 'end'],
+                targetKinds: ['activitykit_update_token'],
+                availableModes: [],
+                reasons: [],
+            },
+            pushToStart: {
+                id: 'push_to_start',
+                status: 'future_unsupported',
+                events: ['start'],
+                targetKinds: ['activitykit_push_to_start_token'],
+                availableModes: [],
+                reasons: ['not_in_phase_9_5'],
+            },
+            broadcastChannel: {
+                id: 'broadcast_channel',
+                status: 'future_unsupported',
+                events: [],
+                targetKinds: [],
+                availableModes: [],
+                reasons: ['private_per_session_surface_not_broadcast'],
+            },
+        },
+    },
+}));
 
 const settingsState: {
     notificationsSettingsV1: NotificationsSettingsV1;
     notificationChannelsV1: NotificationChannelV1[];
+    attentionDeliveryPolicyV1: AttentionDeliveryPolicyV1;
 } = {
     notificationsSettingsV1: {
         v: 1,
@@ -53,9 +103,11 @@ const settingsState: {
             readyIncludeMessageText: true,
         },
     ],
+    attentionDeliveryPolicyV1: DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
 };
 
 const localSettingsState = {
+    attentionDeviceOverridesV1: DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
     activityBadgesEnabled: true,
     activityBadgeShowUnread: true,
     activityBadgeShowPendingPermissionRequests: true,
@@ -164,16 +216,7 @@ installSettingsViewCommonModuleMocks({
     },
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    accent: { blue: '#00f' },
-                    success: '#0f0',
-                    textSecondary: '#666',
-                    warning: '#f90',
-                },
-            },
-        });
+        return createUnistylesMock();
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -194,9 +237,17 @@ vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
 }));
 
+vi.mock('@/activity/notifications/channels/sendExpoLocalNotification', () => ({
+    sendExpoLocalNotification: sendExpoLocalNotificationMock,
+}));
+
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
     useApplyLocalSettings: () => applyLocalSettingsMock,
+}));
+
+vi.mock('@/hooks/server/useFeatureDetails', () => ({
+    useFeatureDetails: () => liveActivityRemoteDiagnosticsState.value,
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -229,6 +280,8 @@ describe('NotificationsSettingsView', () => {
         modalConfirmMock.mockReset();
         modalAlertMock.mockReset();
         routerPushMock.mockReset();
+        sendExpoLocalNotificationMock.mockReset();
+        sendExpoLocalNotificationMock.mockResolvedValue('preview-notification-id');
 
         settingsState.notificationsSettingsV1 = {
             v: 1,
@@ -253,6 +306,26 @@ describe('NotificationsSettingsView', () => {
                 readyIncludeMessageText: true,
             },
         ];
+        settingsState.attentionDeliveryPolicyV1 = DEFAULT_ATTENTION_DELIVERY_POLICY_V1;
+        localSettingsState.attentionDeviceOverridesV1 = DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1;
+        liveActivityRemoteDiagnosticsState.value = {
+            modes: {
+                hosted_happier_relay: {
+                    available: false,
+                    reasons: ['hosted_relay_provider_blocked'],
+                },
+                direct_apns: {
+                    available: false,
+                    reasons: ['direct_apns_not_configured'],
+                    configurationDiagnostics: ['apns_private_key_missing'],
+                },
+                background_wake_best_effort: {
+                    available: false,
+                    reasons: ['background_wake_disabled'],
+                },
+            },
+            capabilities: liveActivityRemoteDiagnosticsState.value.capabilities,
+        };
     });
 
     it('navigates to push notification troubleshooting', async () => {
@@ -272,9 +345,11 @@ describe('NotificationsSettingsView', () => {
             'settingsNotifications.activitySurfaces.title',
             'settingsNotifications.activitySurfaces.shared.title',
             'settingsNotifications.activitySurfaces.liveActivities.title',
+            'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.title',
             'settingsNotifications.activitySurfaces.widgets.title',
             'settingsNotifications.badges.title',
             'settingsNotifications.local.title',
+            'settingsNotifications.sounds.title',
             'settingsNotifications.push.title',
             'settingsNotifications.webhooks.title',
             'settingsNotifications.types.title',
@@ -285,9 +360,11 @@ describe('NotificationsSettingsView', () => {
             'settingsNotifications.activitySurfaces.title',
             'settingsNotifications.activitySurfaces.shared.title',
             'settingsNotifications.activitySurfaces.liveActivities.title',
+            'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.title',
             'settingsNotifications.activitySurfaces.widgets.title',
             'settingsNotifications.badges.title',
             'settingsNotifications.local.title',
+            'settingsNotifications.sounds.title',
             'settingsNotifications.push.title',
             'settingsNotifications.webhooks.title',
             'settingsNotifications.types.title',
@@ -304,8 +381,24 @@ describe('NotificationsSettingsView', () => {
         expect(screen.findRow('settings-notifications-activity-surfaces-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-badges-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-local-enabled')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-sounds-account-happier')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-sounds-account-system')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-sounds-device-enabled')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-quiet-hours-account-off')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-quiet-hours-account-nightly')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-quiet-hours-device-account')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-quiet-hours-device-disabled')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-quiet-hours-device-custom-nightly')).toBeTruthy();
         expect(screen.findRow('settings-notifications-push-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-add-webhook')).toBeTruthy();
+    });
+
+    it('marks the Happier sound preset selected for the implicit default policy', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(requireRow(screen, 'settings-notifications-sounds-account-happier').props.selected).toBe(true);
     });
 
     it('writes the activity surfaces master toggle through the local settings writer', async () => {
@@ -401,6 +494,121 @@ describe('NotificationsSettingsView', () => {
         expect(screen.findRowByTitle('settingsNotifications.activitySurfaces.liveActivities.preferMoreFrequentUpdatesTitle')).toBeFalsy();
     });
 
+    it('renders selected-server Live Activity remote update diagnostics without raw credential material', async () => {
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            liveActivityRemoteUpdates: {
+                ...settingsState.attentionDeliveryPolicyV1.liveActivityRemoteUpdates,
+                preferredMode: 'direct_apns',
+                allowBackgroundWakeFallback: true,
+            },
+        };
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(screen.findGroup('settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.title')).toBeTruthy();
+        expect(requireRow(screen, 'settings-notifications-live-activity-remote-updates-direct-apns').props).toMatchObject({
+            subtitle: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.directApnsMissingCredentialsSubtitle',
+        });
+        expect(requireRow(screen, 'settings-notifications-live-activity-remote-updates-direct-apns').props.detail)
+            .toContain('apns_private_key_missing');
+        expect(requireRow(screen, 'settings-notifications-live-activity-remote-updates-background-wake').props.detail)
+            .toBe('settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.unavailable');
+        const renderedDiagnostics = screen.listRows('settings-notifications-live-activity-remote-updates-')
+            .map((row) => ({
+                testID: row.props.testID,
+                title: row.props.title,
+                subtitle: row.props.subtitle,
+                detail: row.props.detail,
+            }));
+        expect(JSON.stringify(renderedDiagnostics)).not.toContain('PRIVATE KEY');
+        expect(JSON.stringify(renderedDiagnostics)).not.toContain('rawToken');
+    });
+
+    it('labels background wake fallback as best effort and local-only as runtime-only', async () => {
+        liveActivityRemoteDiagnosticsState.value = {
+            ...liveActivityRemoteDiagnosticsState.value,
+            modes: {
+                hosted_happier_relay: {
+                    available: false,
+                    reasons: ['hosted_relay_provider_blocked'],
+                },
+                direct_apns: {
+                    available: false,
+                    reasons: ['direct_apns_not_configured'],
+                    configurationDiagnostics: [],
+                },
+                background_wake_best_effort: {
+                    available: true,
+                    reasons: [],
+                },
+            },
+        };
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            liveActivityRemoteUpdates: {
+                ...settingsState.attentionDeliveryPolicyV1.liveActivityRemoteUpdates,
+                preferredMode: 'background_wake_best_effort',
+            },
+        };
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(requireRow(screen, 'settings-notifications-live-activity-remote-updates-background-wake').props).toMatchObject({
+            detail: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.bestEffort',
+            subtitle: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.backgroundWakeBestEffortSubtitle',
+        });
+        expect(requireRow(screen, 'settings-notifications-live-activity-remote-updates-local-only').props.subtitle)
+            .toBe('settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.localOnlyRuntimeSubtitle');
+    });
+
+    it('reflects the device Live Activity remote update override in diagnostics', async () => {
+        localSettingsState.attentionDeviceOverridesV1 = {
+            ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
+            liveActivities: {
+                ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1.liveActivities,
+                remoteUpdateModeOverride: 'local_only',
+            },
+        };
+        liveActivityRemoteDiagnosticsState.value = {
+            ...liveActivityRemoteDiagnosticsState.value,
+            modes: {
+                hosted_happier_relay: {
+                    available: false,
+                    reasons: ['hosted_relay_provider_blocked'],
+                },
+                direct_apns: {
+                    available: true,
+                    reasons: [],
+                    configurationDiagnostics: [],
+                },
+                background_wake_best_effort: {
+                    available: true,
+                    reasons: [],
+                },
+            },
+        };
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            liveActivityRemoteUpdates: {
+                ...settingsState.attentionDeliveryPolicyV1.liveActivityRemoteUpdates,
+                preferredMode: 'direct_apns',
+                allowBackgroundWakeFallback: true,
+            },
+        };
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(requireRow(screen, 'settings-notifications-live-activity-remote-updates-effective-mode').props)
+            .toMatchObject({
+                detail: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.local_only',
+                subtitle: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.effectiveMode.local_only',
+            });
+    });
+
     it('hides the activity surfaces section on non-iOS non-desktop platforms', async () => {
         platformState.os = 'web';
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
@@ -434,7 +642,15 @@ describe('NotificationsSettingsView', () => {
             badgeItem.props.rightElement.props.onValueChange(false);
         });
 
-        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ activityBadgesEnabled: false });
+        const delta = applyLocalSettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
+            attentionDeviceOverridesV1: expect.objectContaining({
+                badge: expect.objectContaining({
+                    enabled: false,
+                }),
+            }),
+        }));
+        expect(delta).not.toHaveProperty('activityBadgesEnabled');
     });
 
     it('writes device-local local-notification topic settings through the local settings writer', async () => {
@@ -447,7 +663,17 @@ describe('NotificationsSettingsView', () => {
             readyItem.props.rightElement.props.onValueChange(false);
         });
 
-        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ localNotificationsShowReady: false });
+        const delta = applyLocalSettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
+            attentionDeviceOverridesV1: expect.objectContaining({
+                localNotifications: expect.objectContaining({
+                    events: expect.objectContaining({
+                        ready: false,
+                    }),
+                }),
+            }),
+        }));
+        expect(delta).not.toHaveProperty('localNotificationsShowReady');
     });
 
     it('writes device-local ready preview settings through the local settings writer', async () => {
@@ -460,7 +686,107 @@ describe('NotificationsSettingsView', () => {
             previewItem.props.rightElement.props.onValueChange(false);
         });
 
-        expect(applyLocalSettingsMock).toHaveBeenCalledWith({ localNotificationsShowReadyMessageText: false });
+        const delta = applyLocalSettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
+            attentionDeviceOverridesV1: expect.objectContaining({
+                localNotifications: expect.objectContaining({
+                    previewBehavior: 'status_only',
+                }),
+            }),
+        }));
+        expect(delta).not.toHaveProperty('localNotificationsShowReadyMessageText');
+    });
+
+    it('allows foreground notifications to inherit the account default again', async () => {
+        localSettingsState.attentionDeviceOverridesV1 = {
+            ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
+            foregroundBehavior: 'silent',
+        };
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const accountDefaultItem = requireRow(screen, 'settings-notifications-foreground-account');
+
+        await act(async () => {
+            accountDefaultItem.props.onPress();
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith(expect.objectContaining({
+            attentionDeviceOverridesV1: expect.objectContaining({
+                foregroundBehavior: 'account',
+            }),
+        }));
+    });
+
+    it('writes account quiet-hours presets through the canonical policy', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const nightlyItem = requireRow(screen, 'settings-notifications-quiet-hours-account-nightly');
+
+        await act(async () => {
+            nightlyItem.props.onPress();
+        });
+
+        expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                quietHours: {
+                    enabled: true,
+                    timezone: expect.any(String),
+                    windows: [
+                        {
+                            startLocalTime: '22:00',
+                            endLocalTime: '07:00',
+                        },
+                    ],
+                },
+            }),
+        }));
+    });
+
+    it('writes device quiet-hours overrides through canonical local settings', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const disabledItem = requireRow(screen, 'settings-notifications-quiet-hours-device-disabled');
+
+        await act(async () => {
+            disabledItem.props.onPress();
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith(expect.objectContaining({
+            attentionDeviceOverridesV1: expect.objectContaining({
+                quietHoursOverride: {
+                    mode: 'disabled',
+                },
+            }),
+        }));
+    });
+
+    it('writes custom device quiet-hours overrides through canonical local settings', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const customItem = requireRow(screen, 'settings-notifications-quiet-hours-device-custom-nightly');
+
+        await act(async () => {
+            customItem.props.onPress();
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith(expect.objectContaining({
+            attentionDeviceOverridesV1: expect.objectContaining({
+                quietHoursOverride: {
+                    mode: 'custom',
+                    timezone: expect.any(String),
+                    windows: [
+                        {
+                            startLocalTime: '22:00',
+                            endLocalTime: '07:00',
+                        },
+                    ],
+                },
+            }),
+        }));
     });
 
     it('writes remote push settings through the synced account settings writer', async () => {
@@ -473,31 +799,34 @@ describe('NotificationsSettingsView', () => {
             pushItem.props.rightElement.props.onValueChange(false);
         });
 
-        expect(applySettingsMock).toHaveBeenCalledWith({
-            notificationsSettingsV1: {
-                v: 1,
-                pushEnabled: false,
-                ready: true,
-                readyIncludeMessageText: true,
-                permissionRequest: true,
-                userActionRequest: true,
-                foregroundBehavior: 'full',
-            },
-            notificationChannelsV1: [
-                {
-                    v: 1,
-                    id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-                    kind: 'expo_push',
-                    enabled: false,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                    },
-                    readyIncludeMessageText: true,
-                },
-            ],
-        });
+        const delta = applySettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                channels: expect.objectContaining({
+                    expo_push: expect.objectContaining({
+                        enabled: false,
+                    }),
+                }),
+            }),
+        }));
+        expect(delta).not.toHaveProperty('notificationsSettingsV1');
+        expect(delta).not.toHaveProperty('notificationChannelsV1');
+    });
+
+    it('backfills remote push state from legacy notification settings when canonical policy is absent', async () => {
+        settingsState.notificationsSettingsV1 = {
+            ...settingsState.notificationsSettingsV1,
+            pushEnabled: false,
+        };
+        delete (settingsState as Partial<typeof settingsState>).notificationChannelsV1;
+        delete (settingsState as Partial<typeof settingsState>).attentionDeliveryPolicyV1;
+
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const pushItem = requireRow(screen, 'settings-notifications-push-enabled');
+
+        expect(pushItem.props.rightElement.props.value).toBe(false);
     });
 
     it('writes synced ready preview settings through the account settings writer', async () => {
@@ -510,31 +839,98 @@ describe('NotificationsSettingsView', () => {
             previewItem.props.rightElement.props.onValueChange(false);
         });
 
-        expect(applySettingsMock).toHaveBeenCalledWith({
-            notificationsSettingsV1: {
-                v: 1,
-                pushEnabled: true,
-                ready: true,
-                readyIncludeMessageText: false,
-                permissionRequest: true,
-                userActionRequest: true,
-                foregroundBehavior: 'full',
-            },
-            notificationChannelsV1: [
-                {
-                    v: 1,
-                    id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-                    kind: 'expo_push',
-                    enabled: true,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                    },
-                    readyIncludeMessageText: false,
-                },
-            ],
+        const delta = applySettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                channels: expect.objectContaining({
+                    expo_push: expect.objectContaining({
+                        previewBehavior: 'status_only',
+                    }),
+                }),
+            }),
+        }));
+        expect(delta).not.toHaveProperty('notificationsSettingsV1');
+        expect(delta).not.toHaveProperty('notificationChannelsV1');
+    });
+
+    it('writes account sound defaults through the canonical policy', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const silentItem = requireRowByTitle(screen, 'settingsNotifications.sounds.accountSilentTitle');
+
+        await act(async () => {
+            silentItem.props.onPress();
         });
+
+        const delta = applySettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                sounds: expect.objectContaining({
+                    defaultSoundId: 'none',
+                }),
+            }),
+        }));
+        expect(delta).not.toHaveProperty('notificationsSettingsV1');
+    });
+
+    it('keeps native system notification sounds selectable', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const systemItem = requireRow(screen, 'settings-notifications-sounds-account-system');
+
+        await act(async () => {
+            systemItem.props.onPress();
+        });
+
+        const delta = applySettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                sounds: expect.objectContaining({
+                    defaultSoundId: 'default',
+                }),
+            }),
+        }));
+        const policy = delta.attentionDeliveryPolicyV1 as { sounds?: { eventSoundIds?: Record<string, unknown> } };
+        expect(policy.sounds?.eventSoundIds).not.toHaveProperty('permission_request');
+        expect(policy.sounds?.eventSoundIds).not.toHaveProperty('user_action_request');
+    });
+
+    it('writes device sound overrides through canonical local settings', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const soundsItem = requireRow(screen, 'settings-notifications-sounds-device-enabled');
+
+        await act(async () => {
+            soundsItem.props.rightElement.props.onValueChange(false);
+        });
+
+        expect(applyLocalSettingsMock).toHaveBeenCalledWith(expect.objectContaining({
+            attentionDeviceOverridesV1: expect.objectContaining({
+                sounds: expect.objectContaining({
+                    enabled: false,
+                }),
+            }),
+        }));
+    });
+
+    it('previews native notification sounds through the local notification sender', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const previewItem = requireRow(screen, 'settings-notifications-sounds-preview');
+
+        await act(async () => {
+            previewItem.props.onPress();
+        });
+
+        expect(sendExpoLocalNotificationMock).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'settingsNotifications.sounds.previewNotificationTitle',
+            body: 'settingsNotifications.sounds.previewNotificationBody',
+            sound: 'happier_soft.wav',
+        }));
     });
 
     it('adds a webhook notification channel from the settings screen', async () => {
@@ -548,8 +944,8 @@ describe('NotificationsSettingsView', () => {
             screen.pressRow('settings-notifications-add-webhook');
         });
 
-        expect(applySettingsMock).toHaveBeenCalledWith({
-            notificationsSettingsV1: settingsState.notificationsSettingsV1,
+        const delta = applySettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(delta).toEqual(expect.objectContaining({
             notificationChannelsV1: [
                 {
                     v: 1,
@@ -578,7 +974,20 @@ describe('NotificationsSettingsView', () => {
                     readyIncludeMessageText: false,
                 },
             ],
-        });
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                channels: expect.objectContaining({
+                    webhook: expect.objectContaining({
+                        enabled: true,
+                        events: expect.objectContaining({
+                            ready: { enabled: true },
+                            permission_request: { enabled: true },
+                            user_action_request: { enabled: true },
+                        }),
+                    }),
+                }),
+            }),
+        }));
+        expect(delta).not.toHaveProperty('notificationsSettingsV1');
     });
 
     it('removes a webhook notification channel from the settings screen', async () => {
@@ -613,8 +1022,7 @@ describe('NotificationsSettingsView', () => {
             await deleteAction.onPress();
         });
 
-        expect(applySettingsMock).toHaveBeenCalledWith({
-            notificationsSettingsV1: settingsState.notificationsSettingsV1,
+        expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
             notificationChannelsV1: [
                 {
                     v: 1,
@@ -629,7 +1037,14 @@ describe('NotificationsSettingsView', () => {
                     readyIncludeMessageText: true,
                 },
             ],
-        });
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                channels: expect.objectContaining({
+                    webhook: expect.objectContaining({
+                        enabled: false,
+                    }),
+                }),
+            }),
+        }));
     });
 
     it('sets a webhook signing secret from the settings screen', async () => {
@@ -660,8 +1075,7 @@ describe('NotificationsSettingsView', () => {
             screen.pressRowByTitle('settingsNotifications.webhooks.signingSecretTitle');
         });
 
-        expect(applySettingsMock).toHaveBeenCalledWith({
-            notificationsSettingsV1: settingsState.notificationsSettingsV1,
+        expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
             notificationChannelsV1: [
                 {
                     v: 1,
@@ -693,7 +1107,14 @@ describe('NotificationsSettingsView', () => {
                     readyIncludeMessageText: false,
                 },
             ],
-        });
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                channels: expect.objectContaining({
+                    webhook: expect.objectContaining({
+                        enabled: true,
+                    }),
+                }),
+            }),
+        }));
     });
 
     it('clears a configured webhook signing secret from the settings screen', async () => {
@@ -730,8 +1151,7 @@ describe('NotificationsSettingsView', () => {
             await clearAction.onPress();
         });
 
-        expect(applySettingsMock).toHaveBeenCalledWith({
-            notificationsSettingsV1: settingsState.notificationsSettingsV1,
+        expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
             notificationChannelsV1: [
                 {
                     v: 1,
@@ -760,6 +1180,13 @@ describe('NotificationsSettingsView', () => {
                     readyIncludeMessageText: false,
                 },
             ],
-        });
+            attentionDeliveryPolicyV1: expect.objectContaining({
+                channels: expect.objectContaining({
+                    webhook: expect.objectContaining({
+                        enabled: true,
+                    }),
+                }),
+            }),
+        }));
     });
 });

@@ -95,4 +95,18 @@ describe('Item web testID forwarding', () => {
         expect(view.props.testID).toBe('settings-static-row');
         expect(view.props['data-testid']).toBe('settings-static-row');
     });
+
+    it('exposes a stable selected-state attribute for interactive web rows', async () => {
+        const { Item } = await import('./Item');
+        const screen = await renderScreen(<Item
+                    testID="settings-notifications-sounds-account-happier"
+                    title="Happier"
+                    selected
+                    onPress={() => {}}
+                />);
+
+        const row = screen.findByTestId('settings-notifications-sounds-account-happier');
+        expect(row).toBeTruthy();
+        expect(row?.props['aria-selected']).toBe(true);
+    });
 });

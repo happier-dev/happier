@@ -20,7 +20,10 @@ const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok
 const machineDirectSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
 const syncRefreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
-const syncSubmitMessageSpy = vi.hoisted(() => vi.fn(async () => {}));
+const syncSubmitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
+const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
+const clearWorkspaceReviewCommentDraftsSpy = vi.hoisted(() => vi.fn());
+const setWorkspaceReviewCommentDraftIncludedSpy = vi.hoisted(() => vi.fn());
 const publishSessionAcpSessionModeOverrideToMetadataSpy = vi.hoisted(() => vi.fn(async () => {}));
 const publishSessionAcpConfigOptionOverrideToMetadataSpy = vi.hoisted(() => vi.fn(async () => {}));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
@@ -194,7 +197,6 @@ installSessionShellCommonModuleMocks({
     const readLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
       if (key === 'acknowledgedCliVersions') return {} as LocalSettings[K];
       if (key === 'uiMultiPanePanelsEnabled') return true as LocalSettings[K];
-      if (key === 'editorFocusModeEnabled') return false as LocalSettings[K];
       if (key === 'detailsPaneTabsBehavior') return 'preview' as LocalSettings[K];
       if (key === 'rightPaneWidthPx') return 360 as LocalSettings[K];
       if (key === 'rightPaneWidthBasisPx') return 1200 as LocalSettings[K];
@@ -425,6 +427,10 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
     ...actual,
   };
 });
+vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
+  resolveWorkspaceScopeForSession: () => ({ serverId: 'server-canonical', machineId: 'machine-1', rootPath: '/tmp' }),
+  useWorkspaceScopeForSession: () => ({ serverId: 'server-canonical', machineId: 'machine-1', rootPath: '/tmp' }),
+}));
 
 describe('SessionView (direct sessions)', () => {
   async function renderSessionView() {
@@ -468,6 +474,9 @@ describe('SessionView (direct sessions)', () => {
     modalAlertSpy.mockReset();
     syncRefreshSessionMessagesSpy.mockReset();
     syncSubmitMessageSpy.mockReset();
+    deleteWorkspaceReviewCommentDraftSpy.mockReset();
+    clearWorkspaceReviewCommentDraftsSpy.mockReset();
+    setWorkspaceReviewCommentDraftIncludedSpy.mockReset();
     machineDirectSessionTakeoverSpy.mockReset();
     machineDirectSessionTakeoverPersistSpy.mockReset();
     machineDirectSessionStatusGetSpy.mockReset();
@@ -485,6 +494,7 @@ describe('SessionView (direct sessions)', () => {
     reviewCommentDraftsState.current = [];
     focusState.current = true;
     pathnameState.current = '/session/s1';
+    preferredServerIdState.current = 'server-canonical';
     storageState.sessions.s1 = {
       id: 's1',
       seq: 1,
@@ -512,6 +522,11 @@ describe('SessionView (direct sessions)', () => {
     };
     storageState.settings = settingsState.current;
     storageState.concurrentSessionListCacheByServerId = {};
+    delete (storageState as any).sessionListRenderables;
+    delete (storageState as any).machines;
+    (storageState as any).deleteWorkspaceReviewCommentDraft = deleteWorkspaceReviewCommentDraftSpy;
+    (storageState as any).clearWorkspaceReviewCommentDrafts = clearWorkspaceReviewCommentDraftsSpy;
+    (storageState as any).setWorkspaceReviewCommentDraftIncluded = setWorkspaceReviewCommentDraftIncludedSpy;
     recipientStateState.current = {
       recipient: null,
       setManualRecipient: vi.fn(),
@@ -945,6 +960,75 @@ describe('SessionView (direct sessions)', () => {
       controlId: 'reviewComments',
     }));
     expect(typeof reviewCommentsChip?.collapsedAction).toBe('function');
+  });
+
+  it('removes only sent workspace review comment drafts after submitting them', async () => {
+    featureEnabledState['files.reviewComments'] = true;
+    reviewCommentDraftsState.current = [
+      {
+        id: 'included-draft',
+        filePath: 'src/included.ts',
+        source: 'file',
+        anchor: { kind: 'fileLine', startLine: 12 },
+        snapshot: { selectedLines: ['const included = true;'], beforeContext: [], afterContext: [] },
+        body: 'Send this comment.',
+        createdAt: 1,
+      },
+      {
+        id: 'detached-draft',
+        filePath: 'src/detached.ts',
+        source: 'file',
+        anchor: { kind: 'fileLine', startLine: 24 },
+        snapshot: { selectedLines: ['const detached = true;'], beforeContext: [], afterContext: [] },
+        body: 'Keep this comment for later.',
+        includeInPrompt: false,
+        createdAt: 2,
+      },
+    ];
+    (storageState as any).sessionListRenderables = {
+      s1: {
+        id: 's1',
+        metadata: {
+          machineId: 'machine-1',
+          path: '/tmp',
+        },
+      },
+    };
+    (storageState as any).machines = {
+      'machine-1': {
+        id: 'machine-1',
+        active: true,
+        metadata: { host: 'happy-host' },
+      },
+    };
+    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+
+    const screen = await renderSessionView();
+
+    const agentInput = findAgentInput(screen);
+    await act(async () => {
+      await agentInput.props.onSend();
+    });
+
+    expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('Send this comment.'),
+      expect.any(String),
+      expect.objectContaining({
+        happier: expect.objectContaining({
+          kind: 'review_comments.v1',
+          payload: expect.objectContaining({
+            comments: [
+              expect.objectContaining({ id: 'included-draft' }),
+            ],
+          }),
+        }),
+      }),
+    );
+    expect(syncSubmitMessageSpy.mock.calls[0]?.[1]).not.toContain('Keep this comment for later.');
+    expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith(expect.any(String), 'included-draft');
+    expect(deleteWorkspaceReviewCommentDraftSpy).not.toHaveBeenCalledWith(expect.any(String), 'detached-draft');
+    expect(clearWorkspaceReviewCommentDraftsSpy).not.toHaveBeenCalled();
   });
 
 	  it('promotes project file link into canonical extra control metadata', async () => {

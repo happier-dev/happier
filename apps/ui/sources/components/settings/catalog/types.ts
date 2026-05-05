@@ -21,6 +21,7 @@ export const SETTINGS_PAGE_IDS = {
     remoteHosts: 'remoteHosts',
 
     appearance: 'appearance',
+    pets: 'pets',
     language: 'language',
     features: 'features',
 

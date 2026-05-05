@@ -4,8 +4,18 @@ import type { SessionListRenderableSession } from '../../domains/session/listing
 import type { Machine, Session } from '../../domains/state/storageTypes';
 import type { SessionListIndexItem } from '../../domains/sessionList/sessionListIndex';
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
-import { customerInfoToPurchases, type Purchases } from '../../domains/purchases/purchases';
-import { applySettings, settingsParse, type Settings } from '../../domains/settings/settings';
+import { customerInfoToPurchases, purchasesDefaults, type Purchases } from '../../domains/purchases/purchases';
+import { applySettings, settingsDefaults, settingsParse, type Settings } from '../../domains/settings/settings';
+import {
+    loadAccountSettings,
+    prepareAccountSettingsScopeForActivation,
+    saveAccountSettings,
+} from '../../domains/state/accountSettingsPersistence';
+import {
+    areAccountSettingsScopesEqual,
+    type AccountSettingsScope,
+} from '../../domains/settings/scope/accountSettingsScope';
+import { loadAccountPurchases, saveAccountPurchases } from '../../domains/state/accountProfilePersistence';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/settingsPersistence';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ConcurrentSessionListCacheByServerId } from '../../domains/session/listing/concurrentSessionListCache';
@@ -33,11 +43,16 @@ function safeSetPreferredLanguageFromSettings(preferredLanguage: unknown): void 
 export type SettingsDomain = {
     settings: Settings;
     settingsVersion: number | null;
+    settingsScope: AccountSettingsScope | null;
     localSettings: LocalSettings;
     purchases: Purchases;
     applySettingsLocal: (delta: Partial<Settings>) => void;
     applySettings: (settings: Settings, version: number) => void;
     replaceSettings: (settings: Settings, version: number) => void;
+    activateSettingsScope: (scope: AccountSettingsScope) => void;
+    clearSettingsScope: () => void;
+    applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
+    replaceSettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     applyLocalSettings: (delta: Partial<LocalSettings>, options?: { source?: SettingsAnalyticsSource }) => void;
     applyPurchases: (customerInfo: CustomerInfo) => void;
 };
@@ -109,6 +124,44 @@ function rebuildSessionListIndexesForSettingsChange(
     return { ...nextSessionListIndexByServerId, ...concurrentUpdates };
 }
 
+function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainDependencies>(
+    state: S,
+    nextSettings: Settings,
+    nextVersion: number | null,
+    nextScope: AccountSettingsScope | null,
+): S {
+    safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
+
+    const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
+        state.settings,
+        nextSettings,
+    );
+    const nextSessionListIndexByServerId = shouldRebuildSessionListIndex
+        ? rebuildSessionListIndexesForSettingsChange(state, nextSettings)
+        : (state.sessionListIndexByServerId ?? {});
+
+    return {
+        ...state,
+        settings: nextSettings,
+        settingsVersion: nextVersion,
+        settingsScope: nextScope,
+        sessionListIndexByServerId: nextSessionListIndexByServerId,
+    };
+}
+
+function loadParsedAccountSettings(scope: AccountSettingsScope): { settings: Settings; version: number | null } {
+    const loaded = loadAccountSettings(scope);
+    return {
+        settings: settingsParse(loaded.settings),
+        version: loaded.version,
+    };
+}
+
+function shouldAcceptScopedSettings(scope: AccountSettingsScope, nextVersion: number): boolean {
+    const loaded = loadAccountSettings(scope);
+    return loaded.version == null || loaded.version < nextVersion;
+}
+
 export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDependencies>({
     set,
 }: {
@@ -124,65 +177,75 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     return {
         settings,
         settingsVersion: version,
+        settingsScope: null,
         localSettings,
         purchases,
         applySettingsLocal: (delta) =>
             set((state) => {
                 const newSettings = applySettings(state.settings, delta);
-                saveSettings(newSettings, state.settingsVersion ?? 0);
-                const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
-                    state.settings,
-                    newSettings,
-                );
-
-                safeSetPreferredLanguageFromSettings(newSettings.preferredLanguage);
-                const nextSessionListIndexByServerId = shouldRebuildSessionListIndex
-                    ? rebuildSessionListIndexesForSettingsChange(state, newSettings)
-                    : (state.sessionListIndexByServerId ?? {});
-                return {
-                    ...state,
-                    settings: newSettings,
-                    sessionListIndexByServerId: nextSessionListIndexByServerId,
-                };
+                if (state.settingsScope) {
+                    saveAccountSettings(state.settingsScope, newSettings, state.settingsVersion ?? 0);
+                } else {
+                    saveSettings(newSettings, state.settingsVersion ?? 0);
+                }
+                return buildSettingsProjectionState(state, newSettings, state.settingsVersion, state.settingsScope);
             }),
         applySettings: (nextSettings, nextVersion) =>
             set((state) => {
+                if (state.settingsScope) {
+                    if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
+                        saveAccountSettings(state.settingsScope, nextSettings, nextVersion);
+                        return buildSettingsProjectionState(state, nextSettings, nextVersion, state.settingsScope);
+                    }
+                    return state;
+                }
                 if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                     saveSettings(nextSettings, nextVersion);
-                    safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
-                    const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
-                        state.settings,
-                        nextSettings,
-                    );
-                    const nextSessionListIndexByServerId = shouldRebuildSessionListIndex
-                        ? rebuildSessionListIndexesForSettingsChange(state, nextSettings)
-                        : (state.sessionListIndexByServerId ?? {});
-                    return {
-                        ...state,
-                        settings: nextSettings,
-                        settingsVersion: nextVersion,
-                        sessionListIndexByServerId: nextSessionListIndexByServerId,
-                    };
+                    return buildSettingsProjectionState(state, nextSettings, nextVersion, null);
                 }
                 return state;
             }),
         replaceSettings: (nextSettings, nextVersion) =>
             set((state) => {
+                if (state.settingsScope) {
+                    saveAccountSettings(state.settingsScope, nextSettings, nextVersion);
+                    return buildSettingsProjectionState(state, nextSettings, nextVersion, state.settingsScope);
+                }
                 saveSettings(nextSettings, nextVersion);
-                safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
-                const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(
-                    state.settings,
-                    nextSettings,
-                );
-                const nextSessionListIndexByServerId = shouldRebuildSessionListIndex
-                    ? rebuildSessionListIndexesForSettingsChange(state, nextSettings)
-                    : (state.sessionListIndexByServerId ?? {});
+                return buildSettingsProjectionState(state, nextSettings, nextVersion, null);
+            }),
+        activateSettingsScope: (scope) =>
+            set((state) => {
+                prepareAccountSettingsScopeForActivation(scope);
+                const loaded = loadParsedAccountSettings(scope);
                 return {
-                    ...state,
-                    settings: nextSettings,
-                    settingsVersion: nextVersion,
-                    sessionListIndexByServerId: nextSessionListIndexByServerId,
+                    ...buildSettingsProjectionState(state, loaded.settings, loaded.version, scope),
+                    purchases: loadAccountPurchases(scope),
                 };
+            }),
+        clearSettingsScope: () =>
+            set((state) => ({
+                ...buildSettingsProjectionState(state, { ...settingsDefaults }, null, null),
+                purchases: { ...purchasesDefaults },
+            })),
+        applySettingsForScope: (scope, nextSettings, nextVersion) =>
+            set((state) => {
+                if (!shouldAcceptScopedSettings(scope, nextVersion)) {
+                    return state;
+                }
+                saveAccountSettings(scope, nextSettings, nextVersion);
+                if (!areAccountSettingsScopesEqual(state.settingsScope, scope)) {
+                    return state;
+                }
+                return buildSettingsProjectionState(state, nextSettings, nextVersion, scope);
+            }),
+        replaceSettingsForScope: (scope, nextSettings, nextVersion) =>
+            set((state) => {
+                saveAccountSettings(scope, nextSettings, nextVersion);
+                if (!areAccountSettingsScopesEqual(state.settingsScope, scope)) {
+                    return state;
+                }
+                return buildSettingsProjectionState(state, nextSettings, nextVersion, scope);
             }),
         applyLocalSettings: (delta, options) =>
             set((state) => {
@@ -202,7 +265,11 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
         applyPurchases: (customerInfo) =>
             set((state) => {
                 const nextPurchases = customerInfoToPurchases(customerInfo);
-                savePurchases(nextPurchases);
+                if (state.settingsScope) {
+                    saveAccountPurchases(state.settingsScope, nextPurchases);
+                } else {
+                    savePurchases(nextPurchases);
+                }
                 return {
                     ...state,
                     purchases: nextPurchases,

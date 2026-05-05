@@ -9,6 +9,7 @@ export type SessionListIndexItem =
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared';
         groupKey?: string;
         workspaceKey?: string;
+        seedSessionId?: string | null;
         workspaceScopeHint?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
         serverId?: string;
         serverName?: string;
@@ -79,6 +80,7 @@ function areSessionListIndexItemsEqual(
         && previous.headerKind === next.headerKind
         && previous.groupKey === next.groupKey
         && previous.workspaceKey === next.workspaceKey
+        && (previous.seedSessionId ?? null) === (next.seedSessionId ?? null)
         && previous.serverId === next.serverId
         && previous.serverName === next.serverName
         && previous.subtitle === next.subtitle
@@ -153,6 +155,7 @@ export function buildSessionListIndexFromViewData(
                 headerKind: item.headerKind,
                 groupKey: item.groupKey,
                 workspaceKey: item.workspaceKey,
+                seedSessionId: item.seedSessionId ?? null,
                 workspaceScopeHint: item.workspaceScopeHint ?? null,
                 serverId: item.serverId,
                 serverName: item.serverName,

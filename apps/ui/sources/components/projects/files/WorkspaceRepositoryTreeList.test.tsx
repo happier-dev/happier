@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -45,30 +45,43 @@ vi.mock('@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex', () 
     useScmTreeBadgeIndex: () => null,
 }));
 
+const repositoryTreeBrowserState = vi.hoisted(() => ({
+    rootLoading: false,
+    rootError: null as string | null,
+    nodes: [
+        { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
+        { path: 'README.md', name: 'README.md', type: 'file', depth: 0 },
+    ] as any[],
+}));
+
 vi.mock('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser', () => ({
     useWorkspaceRepositoryTreeBrowser: () => ({
-        rootLoading: false,
-        rootError: null,
-        nodes: [
-            { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
-            { path: 'README.md', name: 'README.md', type: 'file', depth: 0 },
-        ],
+        rootLoading: repositoryTreeBrowserState.rootLoading,
+        rootError: repositoryTreeBrowserState.rootError,
+        nodes: repositoryTreeBrowserState.nodes,
         toggleDirectory: vi.fn(),
         retryRoot: vi.fn(),
         retryDirectory: vi.fn(),
     }),
 }));
 
+const latestFilesystemBrowserProps = vi.hoisted(() => ({
+    current: null as any,
+}));
+
 vi.mock('@/components/ui/filesystemBrowser/FilesystemBrowser', () => ({
-    FilesystemBrowser: (props: any) => React.createElement(
-        'View',
-        { testID: 'workspace-repository-tree-list' },
-        ...(props.nodes ?? []).map((node: any, index: number) => React.createElement(
-            React.Fragment,
-            { key: node.path },
-            props.renderRow({ node, showDivider: index < props.nodes.length - 1 }),
-        )),
-    ),
+    FilesystemBrowser: (props: any) => {
+        latestFilesystemBrowserProps.current = props;
+        return React.createElement(
+            'View',
+            { testID: 'workspace-repository-tree-list' },
+            ...(props.nodes ?? []).map((node: any, index: number) => React.createElement(
+                React.Fragment,
+                { key: node.path },
+                props.renderRow({ node, showDivider: index < props.nodes.length - 1 }),
+            )),
+        );
+    },
 }));
 
 vi.mock('@/components/workspaces/files/repositoryTree/WebDropTargetView', () => ({
@@ -99,6 +112,16 @@ describe('WorkspaceRepositoryTreeList', () => {
         },
     } as any;
 
+    beforeEach(() => {
+        repositoryTreeBrowserState.rootLoading = false;
+        repositoryTreeBrowserState.rootError = null;
+        repositoryTreeBrowserState.nodes = [
+            { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
+            { path: 'README.md', name: 'README.md', type: 'file', depth: 0 },
+        ];
+        latestFilesystemBrowserProps.current = null;
+    });
+
     it('assigns one repository-tree row testID per shared workspace tree row on web', async () => {
         const { WorkspaceRepositoryTreeList } = await import('./WorkspaceRepositoryTreeList');
         const screen = await renderScreen(
@@ -121,5 +144,30 @@ describe('WorkspaceRepositoryTreeList', () => {
 
         expect(srcRows).toHaveLength(1);
         expect(readmeRows).toHaveLength(1);
+    });
+
+    it('reports root loading and can suppress the inline loading header while rows stay mounted', async () => {
+        repositoryTreeBrowserState.rootLoading = true;
+        const onRootLoadingChange = vi.fn();
+        const { WorkspaceRepositoryTreeList } = await import('./WorkspaceRepositoryTreeList');
+
+        const screen = await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                workspaceCacheKey="server:m1:/repo"
+                machineId="m1"
+                rootPath="/repo"
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                showInlineLoadingHeader={false}
+                onRootLoadingChange={onRootLoadingChange}
+            />,
+        );
+
+        expect(onRootLoadingChange).toHaveBeenCalledWith(true);
+        expect(latestFilesystemBrowserProps.current?.rootLoading).toBe(true);
+        expect(latestFilesystemBrowserProps.current?.showInlineLoadingHeader).toBe(false);
+        expect(screen.findAllByTestId(`repository-tree-row-${toTestIdSafeValue('src')}`).length).toBeGreaterThan(0);
     });
 });

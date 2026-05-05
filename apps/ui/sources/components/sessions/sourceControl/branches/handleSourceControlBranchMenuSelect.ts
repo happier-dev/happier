@@ -13,7 +13,6 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
     machineTarget: SourceControlBranchMenuMachineTarget;
     openNewSessionForDirectory: (directory: string) => void;
     pruneWorktrees: () => Promise<void>;
-    publishBranch: () => Promise<boolean>;
     removeWorktree: (worktreePath: string) => Promise<void>;
     router: Router;
     setIncludeRemotes: (value: boolean) => void;
@@ -22,11 +21,6 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
 }>): Promise<void> {
     const { itemId } = input;
 
-    if (itemId === 'publish') {
-        const published = await input.publishBranch();
-        if (published) input.closeMenu();
-        return;
-    }
     if (itemId === 'worktree:create-current-branch') {
         await input.createWorktreeFromCurrentBranch();
         return;

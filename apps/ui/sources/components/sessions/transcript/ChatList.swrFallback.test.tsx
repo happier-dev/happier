@@ -8,10 +8,15 @@ import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockStat
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const buildChatListItemsCachedSpy = vi.hoisted(() => vi.fn((_args: unknown) => ({ cache: null, items: [] })));
+const preloadEnrichedMarkdownRuntimeSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: () => [],
     buildChatListItemsCached: (args: unknown) => buildChatListItemsCachedSpy(args),
+}));
+
+vi.mock('@/components/markdown/enriched/preloadEnrichedMarkdownRuntime', () => ({
+    preloadEnrichedMarkdownRuntime: preloadEnrichedMarkdownRuntimeSpy,
 }));
 
 vi.mock('@shopify/flash-list', () => ({
@@ -67,7 +72,24 @@ describe('ChatList (SWR fallback)', () => {
     afterEach(() => {
         resetTranscriptCommonModuleMockState();
         buildChatListItemsCachedSpy.mockClear();
+        preloadEnrichedMarkdownRuntimeSpy.mockClear();
         vi.resetModules();
+    });
+
+    it('preloads the enriched markdown runtime when the transcript mounts', async () => {
+        installSwrFallbackMocks({ transcriptLoaded: false });
+        const { ChatList } = await import('./ChatList');
+
+        const session = {
+            id: 'session-1',
+            metadata: null,
+            accessLevel: null,
+            canApprovePermissions: true,
+        } as any;
+
+        await renderScreen(<ChatList session={session} />);
+
+        expect(preloadEnrichedMarkdownRuntimeSpy).toHaveBeenCalledOnce();
     });
 
     it('uses the SWR messages array when transcript ids are empty during a refresh', async () => {

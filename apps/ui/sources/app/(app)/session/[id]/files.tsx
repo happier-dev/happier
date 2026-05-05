@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -8,6 +8,7 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
+import { buildSessionDetailsRouteQuery } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
 import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
@@ -16,9 +17,12 @@ import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServe
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
+import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 export default function FilesScreenRoute() {
     const router = useRouter();
+    const pathname = usePathname();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{ id: string; serverId?: string }>();
@@ -36,6 +40,7 @@ export default function FilesScreenRoute() {
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;
     const setRightTab = pane.setRightTab;
+    const initializedRightPaneSessionRef = React.useRef<string | null>(null);
 
     const detailsState = pane.scopeState?.details ?? null;
     const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
@@ -48,6 +53,8 @@ export default function FilesScreenRoute() {
     React.useEffect(() => {
         if (!isFocused) return;
         if (!sessionId) return;
+        if (initializedRightPaneSessionRef.current === sessionId) return;
+        initializedRightPaneSessionRef.current = sessionId;
         openRight({ tabId: 'files' });
         if (pane.scopeState?.right?.activeTabId !== 'files') {
             setRightTab('files');
@@ -55,14 +62,26 @@ export default function FilesScreenRoute() {
     }, [isFocused, openRight, sessionId, setRightTab, pane.scopeState?.right?.activeTabId]);
 
     const handleNavigateToDetails = React.useCallback((key: string) => {
+        const targetQuery = buildSessionDetailsRouteQuery(
+            buildActiveDetailsRouteParams(detailsSelection.tabs, key),
+            'browse',
+        );
+        prepareMobileSurfaceTransition({
+            currentPathname: pathname,
+            targetHref: routeScope.buildHref(sessionId, {
+                suffix: '/details',
+                query: targetQuery,
+            }),
+            operation: 'push',
+        });
         router.push({
             pathname: '/session/[id]/details',
             params: routeScope.withParams({
                 id: sessionId,
-                ...buildActiveDetailsRouteParams(detailsSelection.tabs, key),
+                ...targetQuery,
             }),
         } as any);
-    }, [detailsSelection.tabs, routeScope, router, sessionId]);
+    }, [detailsSelection.tabs, pathname, routeScope, router, sessionId]);
 
     useFullscreenDetailsRouteAutoRedirect({
         resetKey: sessionId,
@@ -88,18 +107,32 @@ export default function FilesScreenRoute() {
     }
 
     return (
-        <View testID={cockpitEnabled ? undefined : 'session-files-screen'} style={{ flex: 1 }}>
+        <SessionFullscreenPaneSafeAreaView
+            testID={cockpitEnabled ? 'session-cockpit-route-screen' : 'session-files-screen'}
+            includeTopInset={!cockpitEnabled}
+        >
             {sessionHydrated ? (
                 cockpitEnabled ? (
-                    <SessionCockpitShell sessionId={sessionId} scopeId={scopeId} surface="browse" />
+                    <SessionCockpitShell
+                        sessionId={sessionId}
+                        scopeId={scopeId}
+                        surface="browse"
+                        safeAreaPadding={false}
+                        routeServerId={routeScope.serverId}
+                    />
                 ) : (
-                    <SessionRightPanel sessionId={sessionId} scopeId={scopeId} onRequestClose={onRequestClose} />
+                    <SessionRightPanel
+                        sessionId={sessionId}
+                        scopeId={scopeId}
+                        presentation="screen"
+                        onRequestClose={onRequestClose}
+                    />
                 )
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator />
                 </View>
             )}
-        </View>
+        </SessionFullscreenPaneSafeAreaView>
     );
 }

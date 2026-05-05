@@ -194,12 +194,21 @@ export function useSessionListViewState(storageKind: SessionListStorageFilter) {
         return map;
     }, [nodeIds, renderModels.listItems]);
 
+    const nodeByIdRef = React.useRef(nodeById);
+    nodeByIdRef.current = nodeById;
+    const listItemsRef = React.useRef(renderModels.listItems);
+    listItemsRef.current = renderModels.listItems;
+    const renderHeaderItemRef = React.useRef(renderHeaderItem);
+    renderHeaderItemRef.current = renderHeaderItem;
+    const renderSessionItemRef = React.useRef(renderSessionItem);
+    renderSessionItemRef.current = renderSessionItem;
+
     const renderVirtualizedItem = React.useCallback((params: { item: string; index: number }) => {
-        const item = nodeById.get(params.item) ?? renderModels.listItems[params.index] ?? null;
+        const item = nodeByIdRef.current.get(params.item) ?? listItemsRef.current[params.index] ?? null;
         if (!item) return null;
-        if (item.type === 'header') return renderHeaderItem(item);
-        return renderSessionItem(item, params.index);
-    }, [nodeById, renderHeaderItem, renderModels.listItems, renderSessionItem]);
+        if (item.type === 'header') return renderHeaderItemRef.current(item);
+        return renderSessionItemRef.current(item, params.index);
+    }, []);
 
     return {
         nodeIds,

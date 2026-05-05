@@ -69,6 +69,10 @@ vi.mock('./SidebarIcons', () => ({
     SidebarCollapseIcon: () => React.createElement('SidebarCollapseIcon'),
 }));
 
+vi.mock('expo-image', () => ({
+    Image: (props: Record<string, unknown>) => React.createElement('Image', props),
+}));
+
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 56,
 }));
@@ -83,6 +87,15 @@ vi.mock('@/utils/platform/desktopWindowBridge', () => ({
     closeDesktopWindow: () => desktopWindowBridgeState.closeDesktopWindow(),
     startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
 }));
+
+function styleListHasExplicitFallbackDimensions(style: unknown, dimensions: Readonly<{ width: number; height: number }>): boolean {
+    if (!Array.isArray(style)) return false;
+    return style.some((item) => {
+        if (!item || typeof item !== 'object') return false;
+        const record = item as Record<string, unknown>;
+        return record.width === dimensions.width && record.height === dimensions.height;
+    });
+}
 
 describe('CollapsedSidebarView desktop chrome', () => {
     beforeEach(() => {
@@ -117,6 +130,12 @@ describe('CollapsedSidebarView desktop chrome', () => {
         expect(screen.findByTestId('desktop-update-indicator-host')).toBeTruthy();
         expect(screen.findByTestId('injected-collapsed-window-controls')).toBeTruthy();
         expect(screen.findByTestId('injected-collapsed-update-indicator')).toBeTruthy();
+        const homeButton = screen.findByTestId('collapsed-sidebar-home-button');
+        if (!homeButton) {
+            throw new Error('Expected collapsed sidebar home button to render.');
+        }
+        const logoImage = homeButton.findByType('Image' as never);
+        expect(styleListHasExplicitFallbackDimensions(logoImage.props.style, { width: 24, height: 24 })).toBe(true);
 
         await act(async () => {
             await pressTestInstanceAsync(screen.findByTestId('sidebar-expand-button'));
@@ -124,6 +143,31 @@ describe('CollapsedSidebarView desktop chrome', () => {
 
         expect(collapsedSidebarState.setSidebarCollapsed).toHaveBeenCalledWith(false);
     });
+
+    it('exits focus mode through the expand affordance without changing persisted collapse state directly', async () => {
+        const onRequestExpand = vi.fn();
+        const { CollapsedSidebarView } = await import('./CollapsedSidebarView');
+        const screen = await renderScreen(
+            <CollapsedSidebarView
+                focusModeActive={true}
+                onRequestExpand={onRequestExpand}
+            />,
+        );
+
+        await act(async () => {
+            await pressTestInstanceAsync(screen.findByTestId('sidebar-expand-button'));
+        });
+
+        expect(onRequestExpand).toHaveBeenCalledTimes(1);
+        expect(collapsedSidebarState.setSidebarCollapsed).not.toHaveBeenCalled();
+    });
+
+    it('gives the collapsed expand affordance a translated accessible name', async () => {
+        const { CollapsedSidebarView } = await import('./CollapsedSidebarView');
+        const screen = await renderScreen(<CollapsedSidebarView />);
+
+        expect(screen.findByTestId('sidebar-expand-button')?.props.accessibilityLabel).toBe('common.expand');
+    }, 120_000);
 
     it('renders bridge-backed collapsed custom controls without horizontal overflow assumptions', async () => {
         const { CollapsedSidebarView } = await import('./CollapsedSidebarView');

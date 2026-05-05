@@ -12,6 +12,7 @@ export type SourceControlRemoteAction = Readonly<{
     label: string;
     disabled: boolean;
     onPress: () => void;
+    testID?: string;
 }>;
 
 export type SourceControlRemoteActionsRailProps = Readonly<{
@@ -26,6 +27,7 @@ export const SourceControlRemoteActionsRail = React.memo((props: SourceControlRe
     const IconButton = (p: SourceControlRemoteAction) => (
         <Pressable
             key={p.key}
+            testID={p.testID}
             accessibilityRole="button"
             accessibilityLabel={p.label}
             disabled={p.disabled}

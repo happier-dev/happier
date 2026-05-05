@@ -282,6 +282,7 @@ export type ReducerResult = {
         contextSize: number;
     };
     hasReadyEvent?: boolean;
+    reducerStateChanged?: boolean;
 };
 
 export function reducer(state: ReducerState, messages: NormalizedMessage[], agentState?: AgentState | null): ReducerResult {
@@ -521,7 +522,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // Phase 4: Process sidechains and store them in state
     //
 
-    runSidechainsPhase({
+    const sidechainStateChanged = runSidechainsPhase({
         state,
         sidechainMessages,
         changed,
@@ -601,7 +602,8 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             cacheRead: state.latestUsage.cacheRead,
             contextSize: state.latestUsage.contextSize
         } : undefined,
-        hasReadyEvent: hasReadyEvent || undefined
+        hasReadyEvent: hasReadyEvent || undefined,
+        reducerStateChanged: sidechainStateChanged || undefined,
     };
 }
 

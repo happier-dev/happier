@@ -4,9 +4,14 @@ import type { AgentInputChipPickerOption } from '@/components/sessions/agentInpu
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
+import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerResolvedOptions } from './buildNewSessionAgentPickerResolvedOptions';
+import {
+    buildNewSessionFavoriteModelsPickerOption,
+    type FavoriteModelTogglePayload,
+} from './newSessionFavoriteModelsPickerOption';
 import { partitionNewSessionAgentPickerOptions } from './partitionNewSessionAgentPickerOptions';
 import { resolveNewSessionAgentPickerSelectionContext } from './resolveNewSessionAgentPickerSelectionContext';
 
@@ -22,8 +27,14 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     selectedPath: string | null;
+    selectedBackendTargetKey: string;
+    selectedModelId: string;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
+    favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
+    onSelectFavoriteModel?: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+    onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
 }>;
 
 export type NewSessionAgentPickerOptionsState = Readonly<{
@@ -66,12 +77,36 @@ export function buildNewSessionAgentPickerOptions(
         selectedPath: params.selectedPath,
         settings: params.settings,
         refreshProbe: params.refreshProbe,
+        favoriteModelSelections: params.favoriteModelSelections ?? [],
+        onToggleFavoriteModel: params.onToggleFavoriteModel,
     });
 
     const { available, muted, disabled } = partitionNewSessionAgentPickerOptions(resolved);
+    const favoriteOption = params.onSelectFavoriteModel && params.onToggleFavoriteModel
+        ? buildNewSessionFavoriteModelsPickerOption({
+            favoriteModelSelections: params.favoriteModelSelections ?? [],
+            resolvedBackendEntries: params.resolvedBackendEntries,
+            compatibleBackendTargetKeys,
+            selectedBackendTargetKey: params.selectedBackendTargetKey,
+            selectedModelId: params.selectedModelId,
+            selectedMachineId: params.selectedMachineId,
+            capabilityServerId: params.capabilityServerId,
+            selectedPath: params.selectedPath,
+            settings: params.settings,
+            refreshProbe: params.refreshProbe,
+            onSelectFavoriteModel: params.onSelectFavoriteModel,
+            onToggleFavoriteModel: params.onToggleFavoriteModel,
+            onRemoveFavoriteModelSelection: params.onRemoveFavoriteModelSelection,
+        })
+        : null;
 
     return {
-        agentPickerOptions: [...available, ...muted, ...disabled],
+        agentPickerOptions: [
+            ...(favoriteOption ? [favoriteOption] : []),
+            ...available,
+            ...muted,
+            ...disabled,
+        ],
         selectableBackendEntries,
     };
 }

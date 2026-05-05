@@ -1,6 +1,46 @@
 import { describe, expect, it } from 'vitest';
 
 describe('resolveMachineDaemonTransferDirectPeerRoute', () => {
+    it('maps active listener classes to final direct route kinds', async () => {
+        const { resolveMachineDaemonTransferDirectPeerDiagnostics } = await import('./machineDaemonTransferState');
+
+        expect(resolveMachineDaemonTransferDirectPeerDiagnostics({
+            daemonState: {
+                transfer: {
+                    supported: {
+                        import: true,
+                        export: true,
+                    },
+                    listenerClasses: {
+                        loopback_http: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                        },
+                        lan_http: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                        },
+                        tailscale_serve_https: {
+                            enabled: true,
+                            configured: true,
+                            active: true,
+                        },
+                    },
+                    lifecycle: {
+                        mode: 'lazy_idle_shutdown',
+                        version: 1,
+                    },
+                },
+            },
+        })).toEqual(expect.objectContaining({
+            state: 'active',
+            activeListenerClasses: ['loopback_http', 'lan_http', 'tailscale_serve_https'],
+            activeRouteKinds: ['loopback_direct', 'lan_direct', 'tailscale_serve_direct'],
+        }));
+    });
+
     it('returns a viable route when a configured transfer listener is active', async () => {
         const { resolveMachineDaemonTransferDirectPeerRoute } = await import('./machineDaemonTransferState');
 
@@ -125,6 +165,7 @@ describe('resolveMachineDaemonTransferDirectPeerRoute', () => {
             state: 'configured_inactive',
             configuredListenerClasses: ['loopback_http', 'tailscale_serve_https'],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: ['loopback_http', 'tailscale_serve_https'],
             unavailableListenerClasses: [],
         });
@@ -185,6 +226,7 @@ describe('resolveMachineDaemonTransferDirectPeerRoute', () => {
             state: 'unconfigured',
             configuredListenerClasses: [],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: [],
             unavailableListenerClasses: [],
         });
@@ -236,6 +278,7 @@ describe('resolveMachineDaemonTransferDirectPeerRoute', () => {
             state: 'configured_inactive',
             configuredListenerClasses: ['loopback_http'],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: [],
             unavailableListenerClasses: ['loopback_http'],
         });

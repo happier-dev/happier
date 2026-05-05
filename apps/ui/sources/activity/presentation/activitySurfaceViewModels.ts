@@ -1,6 +1,9 @@
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 
 export type ActivitySurfaceSessionViewModel = Readonly<{
+    serverId: string | null;
+    serverUrl?: string | null;
+    serverName?: string | null;
     sessionId: string;
     title: string;
     subtitle: string | null;
@@ -10,6 +13,9 @@ export type ActivitySurfaceSessionViewModel = Readonly<{
     route: string;
     target: string;
     defaultTarget: string;
+    activityName?: string | null;
+    activityInstanceKey?: string | null;
+    canExecuteDirectActions?: boolean;
     updatedAt: number;
     isPrimary: boolean;
 }>;

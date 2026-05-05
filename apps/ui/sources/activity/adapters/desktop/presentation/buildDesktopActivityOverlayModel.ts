@@ -3,6 +3,7 @@ import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/r
 import { buildDesktopActivityOverlayCollapsedModel } from './model/buildDesktopActivityOverlayCollapsedModel';
 import { buildDesktopActivityOverlayExpandedCards } from './model/buildDesktopActivityOverlayExpandedCards';
 import type {
+    DesktopActivityOverlayCompanionModel,
     DesktopActivityOverlayModel,
     DesktopActivityOverlayWindowSizeParams,
 } from './model/desktopActivityOverlayModelTypes';
@@ -15,11 +16,11 @@ export type {
 
 const desktopActivityOverlayCollapsedWindowSizeByDensity = {
     comfortable: {
-        pill: { width: 236, height: 40 },
+        pill: { width: 270, height: 40 },
         panel: { width: 372, height: 76 },
     },
     compact: {
-        pill: { width: 224, height: 38 },
+        pill: { width: 254, height: 38 },
         panel: { width: 336, height: 68 },
     },
 } as const satisfies Record<
@@ -39,6 +40,11 @@ function resolveVisibility(params: Readonly<{
         return true;
     }
 
+    const hasSelectedSessions = params.snapshot.sessions.length > 0;
+    if (params.policy.visibilityMode === 'active_sessions') {
+        return hasSelectedSessions;
+    }
+
     const hasAttention = params.policy.showWhenAttentionRequired && params.snapshot.counts.totalAttention > 0;
     const hasRunning = params.policy.showWhenRunning && params.snapshot.counts.thinking > 0;
     const hasReady = params.policy.showWhenReady && params.snapshot.counts.queuedInput > 0;
@@ -47,8 +53,7 @@ function resolveVisibility(params: Readonly<{
         return hasAnyTrigger;
     }
 
-    const hasActiveSessions = params.snapshot.sessions.length > 0;
-    return hasAnyTrigger || hasActiveSessions;
+    return hasAnyTrigger || hasSelectedSessions;
 }
 
 function resolveWindowSize(params: DesktopActivityOverlayWindowSizeParams): Readonly<{
@@ -98,6 +103,35 @@ function resolveExpandedWindowRowCount(
     }, 0);
 }
 
+function buildQuickReplyModel(params: Readonly<{
+    snapshot: DesktopActivityOverlaySnapshot;
+    policy: DesktopOverlayPolicy;
+}>): NonNullable<DesktopActivityOverlayModel['expanded']['quickReply']> | null {
+    const targetSession = params.snapshot.primary ?? params.snapshot.sessions[0] ?? null;
+    if (!targetSession) {
+        return null;
+    }
+    const serverId = typeof targetSession.serverId === 'string' ? targetSession.serverId.trim() : '';
+    if (!serverId) {
+        return null;
+    }
+    return {
+        targetSessionId: targetSession.sessionId,
+        serverId,
+        phrases: params.policy.quickReplyPhrases,
+    };
+}
+
+function buildCompanionModel(params: Readonly<{
+    snapshot: DesktopActivityOverlaySnapshot;
+    isExpanded: boolean;
+}>): DesktopActivityOverlayCompanionModel {
+    return {
+        ...params.snapshot.companion,
+        interaction: params.isExpanded ? 'expanded' : 'none',
+    };
+}
+
 export function buildDesktopActivityOverlayModel(params: Readonly<{
     snapshot: DesktopActivityOverlaySnapshot;
     policy: DesktopOverlayPolicy;
@@ -105,6 +139,7 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
 }>): DesktopActivityOverlayModel {
     const rows = params.snapshot.sessions.slice(0, 8).map((session) => ({
         sessionId: session.sessionId,
+        serverId: session.serverId,
         title: session.title,
         subtitle: session.subtitle ?? null,
         statusText: session.statusText ?? null,
@@ -125,12 +160,22 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
             snapshot: params.snapshot,
             cards,
             showSessionCount: params.policy.showSessionCount,
+            showPreviewText: params.policy.showPreviewText,
+            carouselEnabled: params.policy.collapsedCarouselEnabled !== false,
         }),
         expanded: {
             title: params.snapshot.labels.sessionsTitle,
             rows,
             cards,
+            quickReply: buildQuickReplyModel({
+                snapshot: params.snapshot,
+                policy: params.policy,
+            }),
         },
+        companion: buildCompanionModel({
+            snapshot: params.snapshot,
+            isExpanded: params.isExpanded,
+        }),
         window,
     };
 }

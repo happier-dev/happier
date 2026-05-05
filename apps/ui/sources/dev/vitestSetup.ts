@@ -516,6 +516,8 @@ vi.mock('react-native-reanimated', () => {
     const withSpring = (value: any) => value;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const withRepeat = (value: any) => value;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withSequence = (...values: any[]) => values.at(-1);
     const cancelAnimation = () => {};
 
     const Animated = {
@@ -538,6 +540,7 @@ vi.mock('react-native-reanimated', () => {
         useDerivedValue,
         useSharedValue,
         withRepeat,
+        withSequence,
         withSpring,
         withTiming,
     };
@@ -690,6 +693,11 @@ vi.mock('react-native-unistyles', () => {
                 primary: { background: '#000000', tint: '#FFFFFF', disabled: '#C0C0C0' },
                 secondary: { tint: '#666666', surface: '#ffffff' },
             },
+            feed: {
+                card: {
+                    background: '#f8f8f8',
+                },
+            },
             input: { background: '#F5F5F5', text: '#000000', placeholder: '#999999' },
 
             //
@@ -749,9 +757,22 @@ vi.mock('react-native-unistyles', () => {
         statusBar: { height: 0 },
     } as const;
 
+    function flattenMockStyle(style: unknown): unknown {
+        if (!style) return style;
+        if (Array.isArray(style)) {
+            return style.reduce<Record<string, unknown>>((acc, entry) => ({
+                ...acc,
+                ...(flattenMockStyle(entry) as Record<string, unknown> | undefined),
+            }), {});
+        }
+        if (typeof style === 'object') return style;
+        return {};
+    }
+
     return {
         StyleSheet: {
             create: (styles: any) => (typeof styles === 'function' ? styles(theme, rt) : styles),
+            flatten: flattenMockStyle,
             configure: () => {},
             absoluteFillObject: {},
         },

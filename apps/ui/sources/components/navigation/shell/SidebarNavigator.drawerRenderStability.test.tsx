@@ -51,7 +51,6 @@ installNavigationShellCommonModuleMocks({
     },
     storage: installPartialStorageModuleMock({
         useLocalSetting: (key: string) => {
-            if (key === 'editorFocusModeEnabled') return false;
             if (key === 'sidebarCollapsed') return false;
             if (key === 'sidebarWidthPx') return 320;
             if (key === 'sidebarWidthBasisPx') return 1200;

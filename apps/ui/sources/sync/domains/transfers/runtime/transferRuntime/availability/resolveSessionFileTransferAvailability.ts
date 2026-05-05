@@ -1,5 +1,5 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
-import type { TransferRouteViabilityRecord } from '@happier-dev/transfers';
+import type { PeerRouteViabilityRecord as TransferRouteViabilityRecord } from '@happier-dev/peer-mediation';
 
 import type { TransferRouteDecision, ResolveTransferRouteDecisionInput } from '../routing/resolveTransferRouteDecision';
 import { resolveTransferRouteDecision } from '../routing/resolveTransferRouteDecision';
@@ -60,6 +60,7 @@ export function resolveSessionFileTransferAvailability(
     const decision = resolveTransferRouteDecision({
         serverFeatures: input.serverFeatures,
         directPeerRoute: directPeerRoute ?? { status: 'unknown' },
+        directPeerRouteKinds: daemonDirectPeerDiagnostics.activeRouteKinds,
         machineRpcDirectRoute: input.machineRpcDirectRoute ?? { status: 'unknown' },
         preferredRouteKinds: input.preferredRouteKinds,
     });

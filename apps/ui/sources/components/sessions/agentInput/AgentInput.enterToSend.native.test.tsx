@@ -10,6 +10,7 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 const mocks = vi.hoisted(() => ({
     onChangeText: vi.fn(),
     onSend: vi.fn(),
+    inputBlur: vi.fn(),
     suggestionMoveUp: vi.fn(),
     suggestionMoveDown: vi.fn(),
 }));
@@ -99,9 +100,14 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('Text', props, props.children),
-    TextInput: React.forwardRef((props: Record<string, unknown>, _ref) =>
-        React.createElement('TextInput', props, null),
-    ),
+    TextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
+        React.useImperativeHandle(ref, () => ({
+            blur: mocks.inputBlur,
+            focus: () => {},
+            setNativeProps: () => {},
+        }));
+        return React.createElement('TextInput', props, null);
+    }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -272,6 +278,36 @@ describe('AgentInput (enter to send on native)', () => {
         });
 
         expect(mocks.onSend).toHaveBeenCalledTimes(1);
+    });
+
+    it('blurs the existing-session composer when native Enter sends', async () => {
+        settingState.webEnterToSend = false;
+        settingState.nativeEnterToSend = true;
+
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value="hello"
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />,
+        );
+
+        const input = findNativeTextInput(screen);
+
+        await act(async () => {
+            input.props.onSubmitEditing?.();
+        });
+
+        expect(mocks.onSend).toHaveBeenCalledTimes(1);
+        expect(mocks.inputBlur).toHaveBeenCalledTimes(1);
     });
 
     it('inserts a newline for focused hardware Shift+Enter when the native enter-to-send setting is enabled', async () => {

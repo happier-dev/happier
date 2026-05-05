@@ -2,6 +2,12 @@ export type SessionMobileSurface = 'chat' | 'browse' | 'git' | 'tabs' | 'termina
 export type SessionLegacyRouteKind = 'index' | 'files' | 'git' | 'details' | 'terminal';
 
 type SessionRightTabId = 'git' | 'files' | 'terminal';
+type SessionRoutePathQueryValue = string | number | boolean | null | undefined;
+
+type SessionRoutePathOptions = Readonly<{
+    serverId?: string | null;
+    query?: Readonly<Record<string, SessionRoutePathQueryValue>>;
+}>;
 
 function normalizeSessionMobileSurface(value: string | null | undefined): SessionMobileSurface | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
@@ -9,6 +15,22 @@ function normalizeSessionMobileSurface(value: string | null | undefined): Sessio
         return normalized;
     }
     return null;
+}
+
+function normalizeRouteQueryValue(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            return String(value);
+        }
+        return null;
+    }
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+}
+
+function appendRouteSearchParams(basePath: string, params: URLSearchParams): string {
+    const search = params.toString();
+    return search.length > 0 ? `${basePath}?${search}` : basePath;
 }
 
 export function resolveSessionRightTabIdForSurface(
@@ -74,21 +96,40 @@ export function resolveSessionMobileSurfaceIntent(input: Readonly<{
 export function resolveSessionRoutePathForSurface(
     sessionId: string,
     surface: SessionMobileSurface,
+    options?: SessionRoutePathOptions,
 ): string {
     const encodedSessionId = encodeURIComponent(sessionId);
+    const searchParams = new URLSearchParams();
+    if (surface === 'chat') {
+        searchParams.set('mobileSurface', surface);
+    }
+    const serverId = normalizeRouteQueryValue(options?.serverId);
+    if (serverId) {
+        searchParams.set('serverId', serverId);
+    }
+    for (const [key, value] of Object.entries(options?.query ?? {})) {
+        if (key === 'serverId' || key === 'mobileSurface') {
+            continue;
+        }
+        const normalized = normalizeRouteQueryValue(value);
+        if (normalized) {
+            searchParams.set(key, normalized);
+        }
+    }
+
     if (surface === 'browse') {
-        return `/session/${encodedSessionId}/files`;
+        return appendRouteSearchParams(`/session/${encodedSessionId}/files`, searchParams);
     }
     if (surface === 'git') {
-        return `/session/${encodedSessionId}/git`;
+        return appendRouteSearchParams(`/session/${encodedSessionId}/git`, searchParams);
     }
     if (surface === 'tabs') {
-        return `/session/${encodedSessionId}/details`;
+        return appendRouteSearchParams(`/session/${encodedSessionId}/details`, searchParams);
     }
     if (surface === 'terminal') {
-        return `/session/${encodedSessionId}/terminal`;
+        return appendRouteSearchParams(`/session/${encodedSessionId}/terminal`, searchParams);
     }
-    return `/session/${encodedSessionId}?${new URLSearchParams({ mobileSurface: surface }).toString()}`;
+    return appendRouteSearchParams(`/session/${encodedSessionId}`, searchParams);
 }
 
 export function resolveSessionCockpitRouteFromPathname(

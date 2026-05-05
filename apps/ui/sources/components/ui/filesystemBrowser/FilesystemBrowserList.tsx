@@ -10,8 +10,9 @@ import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 
 export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const showRootLoadingHeader = props.rootLoading && props.showInlineLoadingHeader !== false;
     const listHeaderComponent = React.useMemo(() => (
-        props.rootLoading ? (
+        showRootLoadingHeader ? (
             <View
                 style={{
                     paddingHorizontal: 12,
@@ -56,7 +57,7 @@ export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.
                 </Pressable>
             </View>
         ) : null
-    ), [props.inlineRetryLabel, props.listHeaderTestID, props.loadingLabel, props.retryRoot, props.rootError, props.rootLoading, theme.colors.textLink, theme.colors.textSecondary]);
+    ), [props.inlineRetryLabel, props.listHeaderTestID, props.loadingLabel, props.retryRoot, props.rootError, showRootLoadingHeader, theme.colors.textLink, theme.colors.textSecondary]);
 
     const renderItem = React.useCallback(({ item: node, index }: { item: FilesystemBrowserListProps['nodes'][number]; index: number }) => (
         props.renderRow({

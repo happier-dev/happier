@@ -145,6 +145,7 @@ class RealtimeElevenLabsTransportProviderImpl implements RealtimeTransportProvid
 
         const sessionConfig: Record<string, unknown> = {
             connectionType: useSignedWebsocket ? 'websocket' : 'webrtc',
+            textOnly: args.config.textOnly === true,
             dynamicVariables: {
                 sessionId: args.config.sessionId,
                 initialConversationContext: args.config.initialContext ?? '',

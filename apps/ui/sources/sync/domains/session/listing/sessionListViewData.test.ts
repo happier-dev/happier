@@ -290,6 +290,70 @@ describe('buildSessionListViewData', () => {
         ]);
     });
 
+    it('uses the canonical expanded grouping path for workspace scope while keeping home-relative display text', () => {
+        const machine = makeMachine({
+            id: 'm1',
+            metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+        });
+        const data = buildSessionListViewData({
+            s1: makeSession({
+                id: 's1',
+                active: true,
+                createdAt: 1,
+                updatedAt: 1,
+                metadata: { machineId: 'm1', path: '~/repo', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+        }, {
+            [machine.id]: machine,
+        }, {
+            groupInactiveSessionsByProject: true,
+            serverScope: { serverId: 'server-1' },
+        });
+
+        const projectHeader = data.find((item) => item.type === 'header' && item.headerKind === 'project');
+        expect(projectHeader).toMatchObject({
+            title: '~/repo',
+            workspaceScopeHint: {
+                serverId: 'server-1',
+                machineId: 'm1',
+                rootPath: '/home/u/repo',
+            },
+        });
+    });
+
+    it('stores the newest project session id on project headers for session creation seeds', () => {
+        const machine = makeMachine({
+            id: 'm1',
+            metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+        });
+        const data = buildSessionListViewData({
+            older: makeSession({
+                id: 'older',
+                active: true,
+                createdAt: 10,
+                updatedAt: 10,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+            newest: makeSession({
+                id: 'newest',
+                active: true,
+                createdAt: 20,
+                updatedAt: 20,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'codex' },
+            }),
+        }, {
+            [machine.id]: machine,
+        }, {
+            groupInactiveSessionsByProject: true,
+            serverScope: { serverId: 'server-1' },
+        });
+
+        const projectHeader = data.find((item) => item.type === 'header' && item.headerKind === 'project');
+        expect(projectHeader).toMatchObject({
+            seedSessionId: 'newest',
+        });
+    });
+
     it('groups sessions by the canonical reachable machine target when metadata machine ids are stale', () => {
         const machineTarget = makeMachine({
             id: 'm-target',
@@ -299,7 +363,7 @@ describe('buildSessionListViewData', () => {
         const sessions: Record<string, Session> = {
             stale: makeSession({
                 id: 'stale',
-                createdAt: 2,
+                createdAt: 4,
                 updatedAt: 100,
                 metadata: {
                     machineId: 'm-stale',
@@ -335,6 +399,7 @@ describe('buildSessionListViewData', () => {
                     machines: { [machineTarget.id]: machineTarget },
                     getProjectForSession: () => null,
                 },
+                serverScope: { serverId: 'server-1' },
             } as any,
         );
 
@@ -344,6 +409,56 @@ describe('buildSessionListViewData', () => {
 
         expect(projectHeaders).toHaveLength(1);
         expect(projectHeaders[0]?.subtitle).toBe('target.local');
+        expect(projectHeaders[0]?.workspaceScopeHint).toMatchObject({
+            serverId: 'server-1',
+            machineId: 'm-target',
+            rootPath: '/home/u/repoA',
+        });
+    });
+
+    it('omits workspace scope hints when provided canonical state cannot resolve a workspace target', () => {
+        const machine = makeMachine({
+            id: 'm1',
+            metadata: { host: 'host-a', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+        });
+        const sessions: Record<string, Session> = {
+            s1: makeSession({
+                id: 's1',
+                active: true,
+                createdAt: 1,
+                updatedAt: 1,
+                metadata: {
+                    machineId: 'host:stale',
+                    path: '/home/u/repoA',
+                    homeDir: '/home/u',
+                    host: 'stale.local',
+                    version: '0.0.0',
+                    flavor: 'claude',
+                },
+            }),
+        };
+
+        const data = buildSessionListViewData(
+            sessions,
+            { [machine.id]: machine },
+            {
+                groupInactiveSessionsByProject: true,
+                activeGroupingV1: 'project',
+                serverScope: { serverId: 'server-1' },
+                sessionTargetState: {
+                    sessions,
+                    sessionListRenderables: sessions,
+                    machines: {},
+                    getProjectForSession: () => null,
+                },
+            } as any,
+        );
+
+        const projectHeader = data.find((item): item is Extract<typeof item, { type: 'header' }> =>
+            item.type === 'header' && item.headerKind === 'project',
+        );
+
+        expect(projectHeader?.workspaceScopeHint).toBeNull();
     });
 
     it('does not treat /home/userfoo as inside /home/user', () => {

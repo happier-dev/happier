@@ -56,6 +56,23 @@ const REQUIRED_CLIENT_TOOL_SPECS = [
   },
 ] as const;
 
+const EXPECTED_CLIENT_EVENTS = [
+  'audio',
+  'interruption',
+  'agent_response',
+  'agent_response_correction',
+  'agent_chat_response_part',
+  'user_transcript',
+  'conversation_initiation_metadata',
+  'client_tool_call',
+  'agent_tool_response',
+  'guardrail_triggered',
+] as const;
+
+function expectConversationRuntimeConfig(body: any): void {
+  expect(body.conversation_config.conversation?.client_events).toEqual(EXPECTED_CLIENT_EVENTS);
+}
+
 vi.mock('./requiredClientTools', () => ({
   resolveElevenLabsRequiredClientTools: vi.fn(() => REQUIRED_CLIENT_TOOL_SPECS),
 }));
@@ -135,6 +152,7 @@ describe('ElevenLabs BYO autoprov', () => {
 
     const body = JSON.parse(fetchMock().mock.calls[2]?.[1]?.body);
     expect(body.conversation_config.agent.prompt.tool_ids).toEqual(requiredToolNames.map((name) => `tool_${name}`));
+    expectConversationRuntimeConfig(body);
     expect(body.conversation_config.tts?.voice_id).toBe('EST9Ui6982FZPSi7gCHi');
     expect(body.conversation_config.agent.prompt.prompt).toContain('{{initialConversationContext}}');
     expect(body.conversation_config.agent.prompt.prompt).toContain('{{sessionId}}');
@@ -193,6 +211,7 @@ describe('ElevenLabs BYO autoprov', () => {
     expect(createCall).toBeTruthy();
     const createBody = JSON.parse(String(createCall?.[1]?.body ?? '{}'));
     expect(createBody.conversation_config.agent.prompt.tool_ids).toEqual(requiredToolNames.map((n) => `tool_${n}`));
+    expectConversationRuntimeConfig(createBody);
   });
 
   it('creates missing client tools before creating the agent', async () => {
@@ -273,6 +292,7 @@ describe('ElevenLabs BYO autoprov', () => {
     expect(fetchMock().mock.calls[2]?.[1]?.method).toBe('PATCH');
     const body = JSON.parse(fetchMock().mock.calls[2]?.[1]?.body);
     expect(body.conversation_config.agent.prompt.tool_ids).toEqual(requiredToolNames.map((name) => `tool_${name}`));
+    expectConversationRuntimeConfig(body);
     expect(body.conversation_config.tts?.voice_id).toBe('EST9Ui6982FZPSi7gCHi');
   });
 
@@ -312,6 +332,7 @@ describe('ElevenLabs BYO autoprov', () => {
 
     const body = JSON.parse(fetchMock().mock.calls[2]?.[1]?.body);
     expect(body.conversation_config?.turn?.turn_timeout).toBe(-1);
+    expectConversationRuntimeConfig(body);
     expect(body.conversation_config.tts?.voice_id).toBe('voice_custom');
     expect(body.conversation_config.tts?.model_id).toBe('eleven_turbo_v2_5');
     expect(body.conversation_config.tts?.voice_settings?.stability).toBe(0.45);

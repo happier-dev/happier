@@ -63,6 +63,21 @@ describe('createDesktopActivityOverlayChromeStyle', () => {
         expect(Object.keys(expandedStyle).filter((key) => key === 'boxShadow' || key.startsWith('shadow') || key === 'elevation')).toEqual([]);
     });
 
+    it('interpolates notch corner radii from render-time open progress', () => {
+        const interpolatedStyle = createDesktopActivityOverlayChromeStyle(darkTheme as never, {
+            visualMode: 'notch_integrated',
+            tone: 'expanded',
+            openProgress: 0.5,
+        });
+
+        expect(interpolatedStyle).toMatchObject({
+            borderTopLeftRadius: 12.5,
+            borderTopRightRadius: 12.5,
+            borderBottomLeftRadius: 19,
+            borderBottomRightRadius: 19,
+        });
+    });
+
     it('keeps interior controls nearly fused into the shell instead of reading like separate slabs', () => {
         const notchAction = createDesktopActivityOverlayInteriorSurfaceStyle(darkTheme as never, {
             visualMode: 'notch_integrated',

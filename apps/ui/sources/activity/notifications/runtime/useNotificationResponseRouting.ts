@@ -15,6 +15,54 @@ import {
 } from '@/sync/domains/pending/pendingNotificationAction';
 
 import { isUnsafeNotificationServerUrl, parseNotificationTap } from '../notificationRouting';
+import type { ActivityInteractionCommand } from '@/activity/actions/resolveActivityInteractionCommand';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPermissionDecisionPayload(value: unknown): value is Readonly<{
+    action: 'allow' | 'deny';
+    sessionId: string;
+    requestId: string;
+    serverId: string;
+}> {
+    return isRecord(value)
+        && (value.action === 'allow' || value.action === 'deny')
+        && typeof value.sessionId === 'string'
+        && typeof value.requestId === 'string'
+        && typeof value.serverId === 'string';
+}
+
+function resolveNotificationCommandRoute(command: ActivityInteractionCommand): string | null {
+    switch (command.kind) {
+        case 'openSession':
+        case 'openInbox':
+        case 'focusComposer':
+        case 'openSettings':
+            return command.route;
+        case 'executeAction':
+            return `/session/${encodeURIComponent(command.defaultSessionId)}`;
+        case 'ignore':
+        default:
+            return null;
+    }
+}
+
+function resolveNotificationCommandServerUrl(command: ActivityInteractionCommand): string | null {
+    switch (command.kind) {
+        case 'openSession':
+        case 'focusComposer':
+            return command.serverUrl;
+        case 'executeAction':
+            return command.target.serverUrl ?? null;
+        case 'openInbox':
+        case 'openSettings':
+        case 'ignore':
+        default:
+            return null;
+    }
+}
 
 function findSavedServerProfileForUrl(serverUrl: string): { id: string; serverUrl: string } | null {
     const targetKey = createServerUrlComparableKey(serverUrl);
@@ -103,6 +151,8 @@ export function useNotificationResponseRouting(params: Readonly<{
                 defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
             });
             if (!parsed) return;
+            const command = parsed.command;
+            if (command.kind === 'ignore') return;
 
             if (parsed.dedupeKey) {
                 const handled = handledNotificationResponseKeysRef.current;
@@ -113,10 +163,10 @@ export function useNotificationResponseRouting(params: Readonly<{
                 handled.add(parsed.dedupeKey);
             }
 
-            if (!parsed.route) return;
+            const route = resolveNotificationCommandRoute(command);
+            if (!route) return;
 
-            const route = parsed.route;
-            const serverUrl = parsed.serverUrl;
+            const serverUrl = resolveNotificationCommandServerUrl(command);
             const routeToServerSettingsForUrl = (url: string) => {
                 router.push(`/server?url=${encodeURIComponent(url)}&source=notification`);
             };
@@ -125,8 +175,8 @@ export function useNotificationResponseRouting(params: Readonly<{
             // - the server is already active, OR
             // - the server is already saved (we can switch safely), OR
             // - (otherwise) navigate only and let the user handle it in-app.
-            if (parsed.permissionAction) {
-                const { action, sessionId: actionSessionId, requestId: actionRequestId } = parsed.permissionAction;
+            if (command.kind === 'executeAction' && isPermissionDecisionPayload(command.payload)) {
+                const { action, sessionId: actionSessionId, requestId: actionRequestId } = command.payload;
                 if (!serverUrl) {
                     router.push(route);
                     return;
@@ -247,8 +297,8 @@ export function useNotificationResponseRouting(params: Readonly<{
                 }
             }
 
-            if (parsed.permissionAction) {
-                const { action, sessionId: actionSessionId, requestId: actionRequestId } = parsed.permissionAction;
+            if (command.kind === 'executeAction' && isPermissionDecisionPayload(command.payload)) {
+                const { action, sessionId: actionSessionId, requestId: actionRequestId } = command.payload;
                 fireAndForget((async () => {
                     try {
                         await performPermissionAction({ sessionId: actionSessionId, requestId: actionRequestId, action });
@@ -260,7 +310,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                 return;
             }
 
-            if (parsed.isOpenAction) {
+            if (command.kind === 'openSession' || command.kind === 'openInbox' || command.kind === 'focusComposer' || command.kind === 'openSettings') {
                 router.push(route);
             }
         };

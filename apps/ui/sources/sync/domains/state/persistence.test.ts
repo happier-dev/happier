@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsDefaults } from '../settings/settings';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import type { ServerAccountScope } from '../scope/serverAccountScope';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -16,6 +17,10 @@ vi.mock('react-native-mmkv', () => {
 
         delete(key: string) {
             store.delete(key);
+        }
+
+        getAllKeys() {
+            return [...store.keys()];
         }
 
         clearAll() {
@@ -40,6 +45,9 @@ import '../settings/settings';
 import {
     clearPersistence,
     loadNewSessionDraft,
+    saveNewSessionDraft,
+    clearNewSessionDraft,
+    prepareSessionLocalStateScopeForActivation,
     loadPendingSettings,
     savePendingSettings,
     loadSettings,
@@ -49,6 +57,9 @@ import {
     saveSessionMaterializedMaxSeqById,
     loadChangesCursor,
     saveChangesCursor,
+    loadDirectSessionTailCursor,
+    saveDirectSessionTailCursor,
+    pruneStaleInstanceChangesCursors,
     loadLastChangesCursorByAccountId,
     saveLastChangesCursorByAccountId,
     loadSessionReviewCommentsDrafts,
@@ -59,11 +70,38 @@ import {
     saveSessionActionDrafts,
     loadSessionPermissionModes,
     saveSessionPermissionModes,
+    loadLocalPetSourcesBySourceKey,
+    saveLocalPetSourcesBySourceKey,
+    type ChangesCursorScope,
 } from './persistence';
+
+type CursorScopeObject = Exclude<ChangesCursorScope, string>;
+
+function cursorScope(overrides: Partial<CursorScopeObject> = {}): CursorScopeObject {
+    return {
+        accountId: 'a1',
+        ...overrides,
+    };
+}
+
+const sessionLocalScopeA: ServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
+const sessionLocalScopeB: ServerAccountScope = { serverId: 'server-a', accountId: 'account-b' };
 
 describe('persistence', () => {
     beforeEach(() => {
         clearPersistence();
+    });
+
+    it('clears all persisted settings scopes and legacy settings state', () => {
+        store.set('settings', JSON.stringify({ settings: settingsDefaults, version: 1 }));
+        store.set('pending-settings', JSON.stringify({ analyticsOptOut: true }));
+        store.set('account-settings:v2:8:server-a9:account-a', JSON.stringify({ settings: settingsDefaults, version: 2 }));
+        store.set('pending-account-settings:v2:8:server-a9:account-a', JSON.stringify({ viewInline: true }));
+        store.set('profile', JSON.stringify({ id: 'account-a' }));
+
+        clearPersistence();
+
+        expect([...store.keys()]).toEqual([]);
     });
 
     describe('session model modes', () => {
@@ -121,6 +159,90 @@ describe('persistence', () => {
         });
     });
 
+    describe('local pet sources', () => {
+        it('returns an empty object when nothing is persisted', () => {
+            expect(loadLocalPetSourcesBySourceKey()).toEqual({});
+        });
+
+        it('roundtrips validated local pet source metadata', () => {
+            saveLocalPetSourcesBySourceKey({
+                'managed:blink': {
+                    sourceKey: 'managed:blink',
+                    source: {
+                        kind: 'happierManagedLocal',
+                        packagePath: '/Users/tester/.happy-dev/pets/imports/blink',
+                        sourceKey: 'managed:blink',
+                    },
+                    displayName: 'Blink local',
+                    manifest: {
+                        id: 'blink-local',
+                        displayName: 'Blink local',
+                        description: 'Imported from Codex.',
+                        spritesheetPath: 'spritesheet.webp',
+                    },
+                    mediaType: 'image/webp',
+                    digest: 'sha256:local',
+                    sizeBytes: 256,
+                    daemonTarget: {
+                        serverId: 'server-pets',
+                        machineId: 'machine-pets',
+                    },
+                },
+            });
+
+            expect(loadLocalPetSourcesBySourceKey()).toEqual({
+                'managed:blink': expect.objectContaining({
+                    sourceKey: 'managed:blink',
+                    displayName: 'Blink local',
+                    mediaType: 'image/webp',
+                    daemonTarget: {
+                        serverId: 'server-pets',
+                        machineId: 'machine-pets',
+                    },
+                }),
+            });
+        });
+
+        it('salvages valid pet sources and drops preview bytes from persisted entries', () => {
+            store.set('local-pet-sources-v1', JSON.stringify({
+                valid: {
+                    sourceKey: 'valid',
+                    source: {
+                        kind: 'happierManagedLocal',
+                        packagePath: '/Users/tester/.happy-dev/pets/imports/blink',
+                        sourceKey: 'valid',
+                    },
+                    displayName: 'Blink local',
+                    manifest: {
+                        id: 'blink-local',
+                        displayName: 'Blink local',
+                        description: 'Imported from Codex.',
+                        spritesheetPath: 'spritesheet.webp',
+                    },
+                    mediaType: 'image/webp',
+                    digest: 'sha256:local',
+                    sizeBytes: 256,
+                    daemonTarget: {
+                        serverId: 'server-pets',
+                        machineId: 'machine-pets',
+                    },
+                    dataBase64: 'not-allowed',
+                    bytes: [1, 2, 3],
+                },
+                invalid: {
+                    sourceKey: '',
+                    displayName: 'Broken',
+                },
+            }));
+
+            const loaded = loadLocalPetSourcesBySourceKey();
+
+            expect(Object.keys(loaded)).toEqual(['valid']);
+            expect(JSON.stringify(loaded)).not.toContain('dataBase64');
+            expect(JSON.stringify(loaded)).not.toContain('bytes');
+        });
+    });
+
     describe('session materialized max seq', () => {
         it('returns an empty object when nothing is persisted', () => {
             expect(loadSessionMaterializedMaxSeqById()).toEqual({});
@@ -160,51 +282,149 @@ describe('persistence', () => {
     });
 
     describe('changes cursor (string)', () => {
-        it('returns null when no profile is persisted', () => {
+        it('returns null when no account id is provided', () => {
             expect(loadChangesCursor()).toBeNull();
         });
 
         it('roundtrips cursor per account id', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
-            expect(loadChangesCursor()).toBeNull();
+            const scope = cursorScope();
+            expect(loadChangesCursor(scope)).toBeNull();
 
-            saveChangesCursor('123');
-            expect(loadChangesCursor()).toBe('123');
+            saveChangesCursor('123', scope);
+            expect(loadChangesCursor(scope)).toBe('123');
         });
 
         it('salvages cursor from the legacy numeric map', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
             store.set('last-changes-cursor-by-account-id-v1', JSON.stringify({ a1: 7 }));
-            expect(loadChangesCursor()).toBe('7');
+            expect(loadChangesCursor(cursorScope())).toBe('7');
         });
 
         it('clears the key when saving an empty cursor', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
-            saveChangesCursor('9');
-            expect(loadChangesCursor()).toBe('9');
+            const scope = cursorScope();
+            saveChangesCursor('9', scope);
+            expect(loadChangesCursor(scope)).toBe('9');
 
-            saveChangesCursor('');
-            expect(loadChangesCursor()).toBeNull();
+            saveChangesCursor('', scope);
+            expect(loadChangesCursor(scope)).toBeNull();
         });
 
         it('isolates cursor values by server scope when provided', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
+            const serverA = cursorScope({ serverScope: 'server-a' });
+            const serverB = cursorScope({ serverScope: 'server-b' });
 
-            (saveChangesCursor as any)('11', 'server-a');
-            expect((loadChangesCursor as any)('server-a')).toBe('11');
-            expect((loadChangesCursor as any)('server-b')).toBeNull();
+            saveChangesCursor('11', serverA);
+            expect(loadChangesCursor(serverA)).toBe('11');
+            expect(loadChangesCursor(serverB)).toBeNull();
 
-            (saveChangesCursor as any)('21', 'server-b');
-            expect((loadChangesCursor as any)('server-a')).toBe('11');
-            expect((loadChangesCursor as any)('server-b')).toBe('21');
+            saveChangesCursor('21', serverB);
+            expect(loadChangesCursor(serverA)).toBe('11');
+            expect(loadChangesCursor(serverB)).toBe('21');
         });
 
         it('does not read unscoped cursor when explicit server scope is requested', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
+            const accountOnly = cursorScope();
+            const serverA = cursorScope({ serverScope: 'server-a' });
 
-            saveChangesCursor('77');
-            expect((loadChangesCursor as any)('server-a')).toBeNull();
-            expect(loadChangesCursor()).toBe('77');
+            saveChangesCursor('77', accountOnly);
+            expect(loadChangesCursor(serverA)).toBeNull();
+            expect(loadChangesCursor(accountOnly)).toBe('77');
+        });
+
+        it('isolates cursor values by server scope and sync instance id', () => {
+            const tabA = cursorScope({ serverScope: 'server-a', instanceId: 'tab-a' });
+            const tabB = cursorScope({ serverScope: 'server-a', instanceId: 'tab-b' });
+            const serverBTabA = cursorScope({ serverScope: 'server-b', instanceId: 'tab-a' });
+
+            saveChangesCursor('11', { ...tabA, nowMs: 100 });
+            saveChangesCursor('21', { ...tabB, nowMs: 200 });
+
+            expect(loadChangesCursor(tabA)).toBe('11');
+            expect(loadChangesCursor(tabB)).toBe('21');
+            expect(loadChangesCursor(serverBTabA)).toBeNull();
+        });
+
+        it('uses the explicit account id instead of a stale persisted profile id', () => {
+            store.set('profile', JSON.stringify({ id: 'account-a', timestamp: 0, firstName: null, lastName: null, avatar: null }));
+            const accountBScope = {
+                serverScope: 'server-a',
+                accountId: 'account-b',
+                instanceId: 'tab-a',
+                nowMs: 100,
+            };
+            const accountAScope = {
+                serverScope: 'server-a',
+                accountId: 'account-a',
+                instanceId: 'tab-a',
+            };
+
+            saveChangesCursor('account-b-cursor', accountBScope);
+
+            expect(loadChangesCursor(accountBScope)).toBe('account-b-cursor');
+            expect(loadChangesCursor(accountAScope)).toBeNull();
+        });
+
+        it('uses the explicit account id even when no profile is persisted', () => {
+            const scope = {
+                serverScope: 'server-a',
+                accountId: 'account-b',
+                instanceId: 'tab-a',
+                nowMs: 100,
+            };
+
+            saveChangesCursor('account-b-cursor', scope);
+
+            expect(loadChangesCursor(scope)).toBe('account-b-cursor');
+        });
+
+        it('uses the authenticated cursor account id for direct-session tail cursors', () => {
+            store.set('profile', JSON.stringify({ id: 'account-a', timestamp: 0, firstName: null, lastName: null, avatar: null }));
+            const accountBScope = {
+                serverScope: 'server-a',
+                accountId: 'account-b',
+                instanceId: 'tab-a',
+            };
+            const accountAScope = {
+                serverScope: 'server-a',
+                accountId: 'account-a',
+                instanceId: 'tab-a',
+            };
+
+            saveDirectSessionTailCursor('session-1', 'tail-b', accountBScope);
+
+            expect(loadDirectSessionTailCursor('session-1', accountBScope)).toBe('tail-b');
+            expect(loadDirectSessionTailCursor('session-1', accountAScope)).toBeNull();
+        });
+
+        it('uses legacy server-scoped cursor only as an instance bootstrap fallback', () => {
+            const serverA = cursorScope({ serverScope: 'server-a' });
+            const tabA = cursorScope({ serverScope: 'server-a', instanceId: 'tab-a' });
+
+            saveChangesCursor('7', serverA);
+            expect(loadChangesCursor(tabA)).toBe('7');
+
+            saveChangesCursor('12', { ...tabA, nowMs: 100 });
+
+            expect(loadChangesCursor(tabA)).toBe('12');
+            expect(loadChangesCursor(serverA)).toBe('7');
+        });
+
+        it('prunes stale instance-scoped cursors by last write time only', () => {
+            const serverA = cursorScope({ serverScope: 'server-a' });
+            const oldTab = cursorScope({ serverScope: 'server-a', instanceId: 'tab-old' });
+            const freshTab = cursorScope({ serverScope: 'server-a', instanceId: 'tab-fresh' });
+            saveChangesCursor('old-tab', { ...oldTab, nowMs: 1_000 });
+            saveChangesCursor('fresh-tab', { ...freshTab, nowMs: 10_000 });
+            saveChangesCursor('legacy', serverA);
+
+            const pruned = pruneStaleInstanceChangesCursors({
+                nowMs: 10_000,
+                retentionMs: 5_000,
+            });
+
+            expect(pruned).toBe(1);
+            expect(loadChangesCursor(oldTab)).toBe('legacy');
+            expect(loadChangesCursor(freshTab)).toBe('fresh-tab');
+            expect(loadChangesCursor(serverA)).toBe('legacy');
         });
     });
 
@@ -773,6 +993,92 @@ describe('persistence', () => {
             expect(draft?.automationDraft?.enabled).toBe(true);
             expect(draft?.automationDraft?.name).toBe('Nightly');
             expect(draft?.automationDraft?.everyMinutes).toBe(30);
+        });
+
+        it('isolates new session launch drafts by server account scope', () => {
+            const draft = {
+                input: 'launch for account A',
+                selectedMachineId: 'machine-a',
+                selectedPath: '/repo-a',
+                selectedProfileId: 'profile-a',
+                selectedSecretId: 'secret-a',
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueEncByProfileIdByEnvVarName: {},
+                agentType: 'claude',
+                permissionMode: 'default',
+                modelMode: 'default',
+                acpSessionModeId: null,
+                resumeSessionId: 'resume-a',
+                updatedAt: Date.now(),
+            } satisfies NonNullable<ReturnType<typeof loadNewSessionDraft>>;
+
+            saveNewSessionDraft(draft, sessionLocalScopeA);
+
+            expect(loadNewSessionDraft(sessionLocalScopeA)).toEqual(expect.objectContaining({
+                input: 'launch for account A',
+                selectedMachineId: 'machine-a',
+                selectedProfileId: 'profile-a',
+                selectedSecretId: 'secret-a',
+                resumeSessionId: 'resume-a',
+            }));
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toBeNull();
+            expect(loadNewSessionDraft()).toBeNull();
+
+            clearNewSessionDraft(sessionLocalScopeA);
+            expect(loadNewSessionDraft(sessionLocalScopeA)).toBeNull();
+        });
+
+        it('drops legacy new session launch drafts during scope activation', () => {
+            const legacyDraft = {
+                input: 'legacy launch must not cross accounts',
+                selectedMachineId: 'legacy-machine',
+                selectedPath: '/legacy-repo',
+                selectedProfileId: 'legacy-profile',
+                selectedSecretId: 'legacy-secret',
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueEncByProfileIdByEnvVarName: {},
+                agentType: 'claude',
+                permissionMode: 'default',
+                modelMode: 'default',
+                acpSessionModeId: null,
+                updatedAt: Date.now(),
+            } satisfies NonNullable<ReturnType<typeof loadNewSessionDraft>>;
+
+            saveNewSessionDraft(legacyDraft);
+
+            prepareSessionLocalStateScopeForActivation(sessionLocalScopeB);
+
+            expect(loadNewSessionDraft()).toBeNull();
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toBeNull();
+        });
+
+        it('migrates legacy workspace review comment drafts during scope activation', () => {
+            saveWorkspaceReviewCommentsDrafts({
+                'server-a:machine-1:/repo-a': [{
+                    id: 'c1',
+                    filePath: 'src/a.ts',
+                    source: 'file',
+                    anchor: { kind: 'fileLine', startLine: 1 },
+                    snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                    body: 'nit',
+                    createdAt: 1,
+                }],
+            });
+
+            prepareSessionLocalStateScopeForActivation(sessionLocalScopeB);
+
+            expect(loadWorkspaceReviewCommentsDrafts()).toEqual({});
+            expect(loadWorkspaceReviewCommentsDrafts(sessionLocalScopeB)).toEqual({
+                'server-a:machine-1:/repo-a': [{
+                    id: 'c1',
+                    filePath: 'src/a.ts',
+                    source: 'file',
+                    anchor: { kind: 'fileLine', startLine: 1 },
+                    snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                    body: 'nit',
+                    createdAt: 1,
+                }],
+            });
         });
 
     });

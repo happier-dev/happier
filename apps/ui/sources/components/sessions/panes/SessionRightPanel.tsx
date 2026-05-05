@@ -16,10 +16,12 @@ import { SessionGitSurface } from './surfaces/SessionGitSurface';
 import { SessionTerminalSurface } from './surfaces/SessionTerminalSurface';
 import { useSessionFileDetailsOpener } from './useSessionFileDetailsOpener';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 
 export type SessionRightPanelProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    presentation?: 'pane' | 'screen';
     /**
      * Optional override for the close action. Used by fullscreen/mobile routes that render the
      * same surface as the desktop right pane but need to navigate back in the router stack.
@@ -78,6 +80,8 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     const headerPaddingTop = 10;
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
+    const closeButtonAtStart = props.presentation === 'screen' && Platform.OS !== 'web';
+    const headerSafeAreaTop = closeButtonAtStart ? 0 : insets.top;
     const rawActiveTab = (scopeState?.right.activeTabId as RightTabId | null) ?? 'git';
     const activeTab: RightTabId =
         rawActiveTab === 'terminal' && !terminalTabAvailable
@@ -103,7 +107,7 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
 
     const rightPanelTabs = React.useMemo((): ReadonlyArray<SegmentedTab<RightTabId>> => {
         const base: SegmentedTab<RightTabId>[] = [
-            { id: 'git', label: t('settings.sourceControl') },
+            { id: 'git', label: t('session.rightPanel.tabs.git') },
             { id: 'files', label: t('common.files') },
             { id: 'agents', label: t('session.subagents.panel.title') },
         ];
@@ -113,9 +117,31 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
         return base;
     }, [terminalTabAvailable]);
 
+    const closeButton = (
+        <Pressable
+            testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-close')}
+            onPress={props.onRequestClose ?? pane.closeRight}
+            style={closeButtonAtStart ? undefined : styles.closeButton}
+            hitSlop={closeButtonAtStart ? 15 : undefined}
+            accessibilityRole="button"
+            accessibilityLabel={closeButtonAtStart ? t('common.back') : t('common.close')}
+        >
+            {closeButtonAtStart ? (
+                <SafeIonicons
+                    name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+                    size={24}
+                    color={theme.colors.header.tint}
+                />
+            ) : (
+                <Octicons name="x" size={18} color={theme.colors.textSecondary} />
+            )}
+        </Pressable>
+    );
+
     return (
         <View testID="session-right-panel-root" style={styles.container}>
-            <View style={[styles.header, { paddingTop: headerPaddingTop + insets.top }]}>
+            <View style={[styles.header, { paddingTop: headerPaddingTop + headerSafeAreaTop }]}>
+                {closeButtonAtStart ? closeButton : null}
                 <View style={styles.segmentedContainer}>
                     <SegmentedTabBar
                         tabs={rightPanelTabs}
@@ -124,15 +150,7 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                         testIDPrefix={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-tab') ?? undefined}
                     />
                 </View>
-                <Pressable
-                    testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-close')}
-                    onPress={props.onRequestClose ?? pane.closeRight}
-                    style={styles.closeButton}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.close')}
-                >
-                    <Octicons name="x" size={18} color={theme.colors.textSecondary} />
-                </Pressable>
+                {closeButtonAtStart ? null : closeButton}
             </View>
             <View style={styles.body}>
                 <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>

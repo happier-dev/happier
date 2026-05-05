@@ -8,7 +8,7 @@ import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/st
 import { useAppPaneContext } from './AppPaneProvider';
 import { PANE_SIZING_DEFAULTS, resolveDockedPaneSizing, resolveScaledPaneHeightPx, resolveScaledPaneHeightPxUncapped, resolveScaledPaneWidthPx, resolveScaledPaneWidthPxUncapped } from './layout/paneSizing';
 import { resolveMultiPaneDeviceType } from './layout/resolveMultiPaneDeviceType';
-import { applyEditorFocusModePaneLayoutOverride } from './layout/applyEditorFocusModePaneLayoutOverride';
+import { applyPaneFocusModeLayoutOverride } from './layout/applyPaneFocusModeLayoutOverride';
 import { AppPaneScopeLayoutProvider } from './hooks/useAppPaneScopeLayout';
 
 export type AppPaneScopeHostProps = Readonly<{
@@ -33,8 +33,6 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     // `useLocalSetting` may return `undefined` transiently during hydration. Treat the setting as
     // enabled unless it has been explicitly disabled to avoid hiding panes on initial load.
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
-    const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
-    const [, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
 
     const rightPaneWidthPx = useLocalSetting('rightPaneWidthPx');
     const rightPaneWidthBasisPx = useLocalSetting('rightPaneWidthBasisPx');
@@ -60,6 +58,10 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const bottomOpen = Boolean(scopeState?.bottom?.isOpen);
     const detailsPaneEnabled = props.detailsPaneEnabled !== false;
     const effectiveDetailsOpen = detailsPaneEnabled ? detailsOpen : false;
+    const paneFocusModeActive =
+        state.focusMode?.scopeId === props.scopeId
+        && state.activeScopeId === props.scopeId
+        && (rightOpen || effectiveDetailsOpen);
 
     const driver = React.useMemo(() => getDriver(props.scopeId), [driverRegistryVersion, getDriver, props.scopeId]);
 
@@ -150,12 +152,12 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
             : bottomStoredMaxHeightPxForSizing;
 
     const singlePaneBudgetMaxPx = React.useMemo(() => {
-        const mainMinPx = editorFocusModeEnabled ? 0 : PANE_SIZING_DEFAULTS.mainMinPx;
+        const mainMinPx = paneFocusModeActive ? 0 : PANE_SIZING_DEFAULTS.mainMinPx;
         const clamp = (value: number, minPx: number, maxPx: number) => Math.min(maxPx, Math.max(minPx, value));
         const rightMax = clamp(containerWidthPx - mainMinPx, PANE_SIZING_DEFAULTS.right.minPx, PANE_SIZING_DEFAULTS.right.maxPx);
         const detailsMax = clamp(containerWidthPx - mainMinPx, PANE_SIZING_DEFAULTS.details.minPx, PANE_SIZING_DEFAULTS.details.maxPx);
         return { rightMax, detailsMax };
-    }, [containerWidthPx, editorFocusModeEnabled]);
+    }, [containerWidthPx, paneFocusModeActive]);
 
     const preferOverlayWhenPreferredDoesNotFit = React.useMemo(() => {
         const rightPrefers =
@@ -180,16 +182,16 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
         detailsOpen: effectiveDetailsOpen,
         rightPreferOverlayWhenPreferredDoesNotFit: preferOverlayWhenPreferredDoesNotFit.right,
         detailsPreferOverlayWhenPreferredDoesNotFit: preferOverlayWhenPreferredDoesNotFit.details,
-        mainMinPx: editorFocusModeEnabled ? 0 : PANE_SIZING_DEFAULTS.mainMinPx,
-        mainMinPxThreePane: editorFocusModeEnabled ? 0 : PANE_SIZING_DEFAULTS.mainMinThreePanePx,
+        mainMinPx: paneFocusModeActive ? 0 : PANE_SIZING_DEFAULTS.mainMinPx,
+        mainMinPxThreePane: paneFocusModeActive ? 0 : PANE_SIZING_DEFAULTS.mainMinThreePanePx,
         rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
         detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
         rightPreferredPx: rightPreferredPxForLayout,
         detailsPreferredPx: detailsPreferredPxForLayout,
     });
 
-    const resolvedLayout = applyEditorFocusModePaneLayoutOverride({
-        editorFocusModeEnabled,
+    const resolvedLayout = applyPaneFocusModeLayoutOverride({
+        paneFocusModeActive,
         rightOpen,
         detailsOpen: effectiveDetailsOpen,
         baseLayout: resolvedLayoutBase,
@@ -200,19 +202,9 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     // in state (but hidden by layout) so that closing details returns the user back to the right
     // pane on small screens.
 
-    React.useEffect(() => {
-        if (!editorFocusModeEnabled) return;
-        // On mount (or after navigation remounts), the scope might not exist yet. Avoid
-        // auto-disabling focus mode during this transient state, otherwise the toggle can
-        // appear to "do nothing" while pane scopes are re-activating.
-        if (!scopeState) return;
-        if (rightOpen || effectiveDetailsOpen) return;
-        setEditorFocusModeEnabled(false);
-    }, [effectiveDetailsOpen, editorFocusModeEnabled, rightOpen, scopeState, setEditorFocusModeEnabled]);
-
     const dockSizing = resolveDockedPaneSizing({
         containerWidthPx,
-        mainMinPx: editorFocusModeEnabled ? 0 : PANE_SIZING_DEFAULTS.mainMinPx,
+        mainMinPx: paneFocusModeActive ? 0 : PANE_SIZING_DEFAULTS.mainMinPx,
         rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
         detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
         rightWidthPx: effectiveRightDockWidthPx,
@@ -282,7 +274,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
         rightPreferredPxForLayout,
     ]);
 
-    const focusModeFillPanes = editorFocusModeEnabled;
+    const focusModeFillPanes = paneFocusModeActive;
     const focusAwareDockSizing = React.useMemo(() => {
         let rightWidthPx = baseSizing.rightWidthPx;
         let detailsWidthPx = baseSizing.detailsWidthPx;
@@ -425,7 +417,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
             >
                 <MultiPaneHostWithBottom
                     main={props.main}
-                    hideMain={editorFocusModeEnabled && (rightOpen || effectiveDetailsOpen)}
+                    hideMain={paneFocusModeActive && (rightOpen || effectiveDetailsOpen)}
                     rightPane={rightPane}
                     detailsPane={detailsPane}
                     layout={resolvedLayout}

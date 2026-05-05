@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import {
@@ -20,12 +20,12 @@ export function useMobileWorkspaceExperienceState(): Readonly<{
     toggleWorkspaceExperience: () => void;
 }> {
     const deviceType = useDeviceType();
-    const mobileWorkspaceExperience = useLocalSetting('mobileWorkspaceExperienceV1');
-    const [, setMobileWorkspaceExperience] = useLocalSettingMutable('mobileWorkspaceExperienceV1');
+    const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
+    const [, setMobileWorkspaceExperience] = useSettingMutable('mobileWorkspaceExperienceV1');
 
     return React.useMemo(() => ({
         deviceType,
-        mobileWorkspaceExperience: mobileWorkspaceExperience === 'cockpit' ? 'cockpit' : 'classic',
+        mobileWorkspaceExperience: mobileWorkspaceExperience === 'classic' ? 'classic' : 'cockpit',
         cockpitEnabled: isMobileWorkspaceCockpitEnabled({
             deviceType,
             mobileWorkspaceExperience,

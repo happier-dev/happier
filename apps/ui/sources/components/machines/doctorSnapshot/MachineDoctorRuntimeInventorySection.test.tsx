@@ -162,6 +162,33 @@ describe('MachineDoctorRuntimeInventorySection', () => {
                     ],
                 },
             },
+            repairSummary: {
+                schemaVersion: 1,
+                status: 'needs_attention',
+                findingCounts: {
+                    total: 2,
+                    warning: 1,
+                    error: 1,
+                    actionable: 1,
+                },
+                findingKinds: ['background_service_not_running'],
+            },
+            localRelays: {
+                relays: [
+                    {
+                        id: 'local-relay-preview',
+                        releaseChannel: 'preview',
+                        relayUrl: 'http://127.0.0.1:3025',
+                        version: '1.2.3-preview.1',
+                        installed: true,
+                        running: true,
+                        healthy: true,
+                        serviceEnabled: true,
+                        port: 3025,
+                        installRoot: '/opt/happier/relay-preview',
+                    },
+                ],
+            },
             warnings: [
                 {
                     code: 'MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH',
@@ -181,8 +208,14 @@ describe('MachineDoctorRuntimeInventorySection', () => {
         expect(screen.findByTestId('machine-runtime-inventory-cli')).toBeTruthy();
         expect(screen.findByTestId('machine-runtime-inventory-daemon')).toBeTruthy();
         expect(screen.findByTestId('machine-runtime-inventory-summary')).toBeTruthy();
+        expect(screen.findByTestId('machine-runtime-inventory-repair-summary')).toBeTruthy();
+        expect(screen.findByTestId('machine-runtime-inventory-local-relays')).toBeTruthy();
         expect(text).toContain('machine.runtimeInventory');
         expect(text).toContain('summary:1.2.3:1.2.0:stable:1:2:1');
+        expect(text).toContain('machine.doctorRepairSummary');
+        expect(text).toContain('machine.doctorRepairFindingsSummary');
+        expect(text).toContain('machine.localRelays');
+        expect(text).toContain('local-relay-preview');
         expect(text).toContain('machine.cliVersion');
         expect(text).toContain('/opt/happier/bin/happier');
         expect(text).toContain('com.happier.cli.daemon.preview.cloud');

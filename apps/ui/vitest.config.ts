@@ -140,6 +140,8 @@ export default defineConfig({
             { find: /^expo$/, replacement: resolve('./sources/dev/expoStub.ts') },
             // `expo-notifications` executes side-effectful native registration at import time.
             { find: 'expo-notifications', replacement: resolve('./sources/dev/expoNotificationsStub.ts') },
+            // `expo-task-manager` is native runtime plumbing for background notification tasks.
+            { find: 'expo-task-manager', replacement: resolve('./sources/dev/expoTaskManagerStub.ts') },
             // `expo-audio` is native and throws in node/Vitest.
             { find: 'expo-audio', replacement: resolve('./sources/dev/expoAudioStub.ts') },
             // `expo-speech` and `expo-speech-recognition` are not reliably node-safe (and are hard to mock
@@ -168,6 +170,9 @@ export default defineConfig({
             { find: 'react-native-purchases-ui', replacement: resolve('./sources/dev/reactNativePurchasesUiStub.ts') },
             { find: '@shopify/flash-list', replacement: resolve('./sources/dev/shopifyFlashListStub.ts') },
             { find: 'react-native-mmkv', replacement: resolve('./sources/dev/reactNativeMmkvStub.ts') },
+            { find: 'react-native-enriched-markdown', replacement: resolve('./sources/dev/reactNativeEnrichedMarkdownStub.tsx') },
+            // PostHog React Native eagerly loads optional Expo native packages in node. Keep route/unit tests node-safe.
+            { find: 'posthog-react-native', replacement: resolve('./sources/dev/posthogReactNativeStub.tsx') },
             // Use libsodium-wrappers in tests instead of the RN native binding.
             { find: '@more-tech/react-native-libsodium', replacement: 'libsodium-wrappers' },
             // Use node-safe platform adapters in tests (avoid static expo-crypto imports).

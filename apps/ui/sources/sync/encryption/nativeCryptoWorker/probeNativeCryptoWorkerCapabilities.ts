@@ -4,6 +4,7 @@ import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetr
 
 import {
     NATIVE_CRYPTO_WORKER_UNAVAILABLE_CAPABILITY,
+    rememberNativeCryptoWorkerCapability,
     normalizeNativeCryptoWorkerRouting,
     type NativeCryptoWorkerRoutingInput,
 } from './nativeCryptoWorkerRouting';
@@ -17,6 +18,7 @@ import {
 
 export type ProbeNativeCryptoWorkerCapabilitiesOptions = Readonly<{
     worker?: NativeCryptoWorker;
+    capabilityCacheKey?: object;
     routing?: NativeCryptoWorkerRoutingInput;
     telemetry?: SyncPerformanceTelemetry;
 }>;
@@ -39,6 +41,7 @@ export async function probeNativeCryptoWorkerCapabilities(
             failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.unknown,
         };
     }
+    rememberNativeCryptoWorkerCapability(options.capabilityCacheKey ?? worker, capability);
 
     if (routing.telemetryEnabled) {
         recordNativeCryptoWorkerCapability(options.telemetry ?? syncPerformanceTelemetry, capability, { mode: routing.mode });

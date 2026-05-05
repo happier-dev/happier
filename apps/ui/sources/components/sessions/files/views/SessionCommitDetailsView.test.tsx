@@ -257,6 +257,7 @@ vi.mock('@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewComm
 
 vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
     resolveWorkspaceScopeForSession: () => ({ serverId: 'server-1', machineId: 'm1', rootPath: '/repo' }),
+    useWorkspaceScopeForSession: () => ({ serverId: 'server-1', machineId: 'm1', rootPath: '/repo' }),
 }));
 
 describe('SessionCommitDetailsView', () => {

@@ -29,6 +29,11 @@ export default React.memo(function SecretPickerScreen() {
         spawnServerId?: string;
     }>();
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
+    const hasUsableRouteState = Boolean(
+        selectedId.trim()
+        || (typeof params.dataId === 'string' && params.dataId.trim().length > 0)
+        || (typeof params.machineId === 'string' && params.machineId.trim().length > 0),
+    );
     const settings = useSettings() ?? settingsDefaults;
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
@@ -112,6 +117,11 @@ export default React.memo(function SecretPickerScreen() {
     const handleBackPress = React.useCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: '/new' });
     }, [navigation, router]);
+
+    React.useEffect(() => {
+        if (hasUsableRouteState) return;
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [hasUsableRouteState, navigation, router]);
 
     const headerTitle = t('settings.secrets');
     const headerBackTitle = t('common.back');

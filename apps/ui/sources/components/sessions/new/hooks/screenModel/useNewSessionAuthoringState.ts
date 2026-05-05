@@ -8,7 +8,7 @@ import {
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
-import { saveNewSessionDraft } from '@/sync/domains/state/persistence';
+import { clearNewSessionDraft, saveNewSessionDraft } from '@/sync/domains/state/persistence';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
@@ -19,6 +19,7 @@ import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 type PersistedDraft = ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>;
 type BuildResolvedInputs = Parameters<typeof buildNewSessionAuthoringDraftFromResolvedInputs>[0];
@@ -52,6 +53,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedSecretIdByProfileIdByEnvVarName: BuildPersistedInputs['selectedSecretIdByProfileIdByEnvVarName'];
     getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => BuildPersistedInputs['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
     backendNewSessionOptionStateByTargetKey: BackendNewSessionOptionStateByTargetKey;
+    draftScope?: ServerAccountScope | null;
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
     currentAuthoringDraft: SessionAuthoringDraft;
@@ -95,6 +97,9 @@ export function useNewSessionAuthoringState(params: Readonly<{
         }) ?? null,
         windowsRemoteSessionLaunchMode: params.effectiveWindowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: null,
+        windowsTerminalWindowName: typeof params.settings.sessionWindowsTerminalWindowName === 'string'
+            ? params.settings.sessionWindowsTerminalWindowName.trim() || null
+            : null,
         experimentalCodexAcp: null,
         codexBackendMode: null,
         acpSessionModeId: params.acpSessionModeId ?? null,
@@ -186,8 +191,12 @@ export function useNewSessionAuthoringState(params: Readonly<{
             return;
         }
 
-        saveNewSessionDraft(draft);
-    }, []);
+        if (params.draftScope) {
+            saveNewSessionDraft(draft, params.draftScope);
+            return;
+        }
+        clearNewSessionDraft();
+    }, [params.draftScope]);
 
     const disableDraftPersistence = React.useCallback(() => {
         draftPersistenceEnabledRef.current = false;

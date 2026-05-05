@@ -15,6 +15,18 @@ describe('sessionListProjectGroupingKeys', () => {
         expect(parts.machineGroupId).toBe('host:example');
     });
 
+    it('normalizes host names before deriving grouping ids', async () => {
+        const { resolveSessionProjectGroupingKeyParts } = await import('./sessionListProjectGroupingKeys');
+        const parts = resolveSessionProjectGroupingKeyParts({
+            host: ' DEVBOX.local ',
+            machineId: 'm1',
+            path: '/repo',
+        });
+
+        expect(parts.host).toBe('devbox');
+        expect(parts.machineGroupId).toBe('host:devbox');
+    });
+
     it('preserves UNC/network share prefixes when normalizing slashes', async () => {
         const { resolveSessionProjectGroupingKeyParts } = await import('./sessionListProjectGroupingKeys');
         const parts = resolveSessionProjectGroupingKeyParts({
@@ -51,6 +63,23 @@ describe('sessionListProjectGroupingKeys', () => {
             homeDir: '/home/machine',
             pathKey: '/home/machine/repo',
         });
+    });
+
+    it('normalizes machine metadata host names before deriving grouping ids', async () => {
+        const { resolveSessionProjectGroupingKeyPartsWithMachineMetadata } = await import('./sessionListProjectGroupingKeys');
+        const parts = resolveSessionProjectGroupingKeyPartsWithMachineMetadata(
+            {
+                host: 'session-host',
+                machineId: 'm1',
+                path: '/repo',
+            },
+            {
+                host: ' MACHINE-HOST.local ',
+            },
+        );
+
+        expect(parts.host).toBe('machine-host');
+        expect(parts.machineGroupId).toBe('host:machine-host');
     });
 
     it('reuses canonical grouping key parts for repeated equal inputs', async () => {

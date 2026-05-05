@@ -62,7 +62,7 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', ()
 }));
 
 vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
-  FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props),
+  FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props, props.rightElement ?? null),
 }));
 
 vi.mock('@/components/workspaces/files/file/FileContentPanel', () => ({
@@ -278,7 +278,7 @@ describe('SessionFileDetailsView (binary)', () => {
 
     await act(async () => {});
 
-    expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
+    expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
   });
 
@@ -292,7 +292,7 @@ describe('SessionFileDetailsView (binary)', () => {
     await act(async () => {});
 
     expect(refreshSpy).toHaveBeenCalled();
-    expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
+    expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findAllByType('ScmChangeDiscardButton' as any).length).toBe(1);
     expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
     expect(tree.findAllByType('FileBinaryState' as any).length).toBe(1);

@@ -236,6 +236,83 @@ describe('appPaneReduce', () => {
         expect(state.scopes['session:1']?.details.focusedGroupId).toBe('group:2');
     });
 
+    it('keeps focus mode scoped to the active pane scope across details workspace changes', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('a.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'enterFocusMode', scopeId: 'session:1' });
+
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('b.txt'), openAs: 'pinned' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'setActiveDetailsTab', scopeId: 'session:1', tabKey: 'file:a.txt' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'pinDetailsTab', scopeId: 'session:1', tabKey: 'file:a.txt' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'unpinDetailsTab', scopeId: 'session:1', tabKey: 'file:a.txt' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'splitDetailsGroup', scopeId: 'session:1', axis: 'vertical' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        const splitRoot = state.scopes['session:1']?.details.root;
+        if (!splitRoot || splitRoot.kind !== 'split') {
+            throw new Error('Expected details workspace to be split');
+        }
+
+        state = appPaneReduce(state, { type: 'setDetailsSplitRatio', scopeId: 'session:1', splitId: splitRoot.id, ratio: 0.35 });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'moveDetailsTabToGroup', scopeId: 'session:1', tabKey: 'file:a.txt', targetGroupId: 'group:2' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'focusDetailsGroup', scopeId: 'session:1', groupId: 'group:2' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'setMaximizedDetailsGroup', scopeId: 'session:1', groupId: 'group:2' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+    });
+
+    it('clears focus mode when navigation activates a different scope', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'files' });
+        state = appPaneReduce(state, { type: 'enterFocusMode', scopeId: 'session:1' });
+
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:2' });
+
+        expect(state.focusMode.scopeId).toBeNull();
+    });
+
+    it('clears focus mode when the focused scope no longer has right or details panes open', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'files' });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('a.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'enterFocusMode', scopeId: 'session:1' });
+
+        state = appPaneReduce(state, { type: 'closeDetailsTab', scopeId: 'session:1', tabKey: 'file:a.txt' });
+        expect(state.focusMode.scopeId).toBe('session:1');
+
+        state = appPaneReduce(state, { type: 'closeRight', scopeId: 'session:1' });
+        expect(state.focusMode.scopeId).toBeNull();
+    });
+
+    it('clears focus mode when the focused scope is evicted', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 2 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'files' });
+        state = appPaneReduce(state, { type: 'enterFocusMode', scopeId: 'session:1' });
+
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:2' });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:3' });
+
+        expect(state.scopes['session:1']).toBeUndefined();
+        expect(state.focusMode.scopeId).toBeNull();
+    });
+
     it('evicts least-recently-used scopes beyond the max', () => {
         let state = createAppPaneState({ maxScopesInMemory: 2 });
         state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });

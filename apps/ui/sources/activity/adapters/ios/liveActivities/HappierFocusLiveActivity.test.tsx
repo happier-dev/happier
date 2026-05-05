@@ -45,12 +45,19 @@ function createLiveActivitySnapshot(overrides: Partial<LiveActivitySnapshot> = {
     return {
         version: 1,
         generatedAt: 1_000,
+        staleAt: 1_801_000,
+        serverId: 'local',
         sessionId: 'permission',
+        activityName: 'HappierFocusLiveActivity',
+        activityInstanceKey: 'local:HappierFocusLiveActivity:permission',
         title: 'Permission work',
         subtitle: null,
         previewText: null,
         statusText: 'Permission required',
         attentionState: 'permission_required',
+        presentationTemplate: 'urgentAttention',
+        apnsPriority: 10,
+        relevanceScore: 100,
         defaultTarget: 'open-session:permission',
         sessionTarget: 'open-session:permission',
         overflowCount: 0,
@@ -111,8 +118,14 @@ describe('HappierFocusLiveActivityComponent', () => {
             totalAttentionCount: 3,
         }), {} as never);
 
-        expect(asElementWithProps<{ systemName?: string }>(rendered.compactLeading).props.systemName).toBe('exclamationmark.bubble.fill');
-        expect(asElementWithProps<{ systemName?: string }>(rendered.minimal).props.systemName).toBe('exclamationmark.bubble.fill');
+        expect(asElementWithProps<{ systemName?: string; modifiers?: unknown[] }>(rendered.compactLeading).props.systemName)
+            .toBe('exclamationmark.bubble.fill');
+        expect(asElementWithProps<{ systemName?: string; modifiers?: unknown[] }>(rendered.compactLeading).props.modifiers)
+            .toContain('systemOrange');
+        expect(asElementWithProps<{ systemName?: string; modifiers?: unknown[] }>(rendered.minimal).props.systemName)
+            .toBe('exclamationmark.bubble.fill');
+        expect(asElementWithProps<{ systemName?: string; modifiers?: unknown[] }>(rendered.minimal).props.modifiers)
+            .toContain('systemOrange');
         const compactTrailing = asElementWithProps<{ children?: React.ReactNode; modifiers?: Array<{ $type?: string }> }>(rendered.compactTrailing);
         expect(compactTrailing.props.children).toBe('+2');
         expect(compactTrailing.props.modifiers?.some((modifier) => modifier?.$type === 'background')).toBe(true);

@@ -283,6 +283,17 @@ vi.mock('./components/PermissionModePicker', () => ({
     PermissionModePicker: () => null,
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    const flattened: Record<string, unknown> = {};
+    const entries = Array.isArray(style) ? style : [style];
+    for (const entry of entries) {
+        if (entry && typeof entry === 'object') {
+            Object.assign(flattened, entry);
+        }
+    }
+    return flattened;
+}
+
 describe('AgentInput (permission requests)', () => {
     it('renders PermissionFooter when pending permission requests are provided', async () => {
         const { AgentInput } = await import('./AgentInput');
@@ -321,5 +332,28 @@ describe('AgentInput (permission requests)', () => {
         }));
 
         expect(screen.findByTestId('agentInput.permissionRequests.scroll')).toBeTruthy();
+    });
+
+    it('does not reserve the maximum permission height before content is measured', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(React.createElement(AgentInput as any, {
+            value: '',
+            placeholder: 'Type',
+            onChangeText: () => {},
+            sessionId: 's1',
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            permissionRequests: [
+                { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
+            ],
+        }));
+
+        const scroll = screen.findByTestId('agentInput.permissionRequests.scroll');
+        expect(scroll).toBeTruthy();
+        const style = flattenStyle(scroll?.props.style);
+        expect(style.maxHeight).toBeGreaterThan(0);
+        expect(style.height).toBeUndefined();
     });
 });

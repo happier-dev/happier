@@ -32,4 +32,46 @@ describe('sendExpoLocalNotification', () => {
             trigger: null,
         });
     });
+
+    it('omits the notification sound when the resolved delivery plan is silent', async () => {
+        const { sendExpoLocalNotification } = await import('./sendExpoLocalNotification');
+
+        await sendExpoLocalNotification({
+            title: 'Session ready',
+            body: 'Codex finished the turn.',
+            data: { sessionId: 'session-1' },
+            sound: null,
+        });
+
+        expect(scheduleNotificationAsync).toHaveBeenCalledWith({
+            content: {
+                title: 'Session ready',
+                body: 'Codex finished the turn.',
+                data: { sessionId: 'session-1' },
+            },
+            trigger: null,
+        });
+    });
+
+    it('uses an Android channel-aware trigger when a channel id is provided', async () => {
+        const { sendExpoLocalNotification } = await import('./sendExpoLocalNotification');
+
+        await sendExpoLocalNotification({
+            title: 'Session ready',
+            body: 'Codex finished the turn.',
+            data: { sessionId: 'session-1' },
+            sound: 'happier_soft.wav',
+            channelId: 'happier.default.soft.v1',
+        });
+
+        expect(scheduleNotificationAsync).toHaveBeenCalledWith({
+            content: {
+                title: 'Session ready',
+                body: 'Codex finished the turn.',
+                data: { sessionId: 'session-1' },
+                sound: 'happier_soft.wav',
+            },
+            trigger: { channelId: 'happier.default.soft.v1' },
+        });
+    });
 });

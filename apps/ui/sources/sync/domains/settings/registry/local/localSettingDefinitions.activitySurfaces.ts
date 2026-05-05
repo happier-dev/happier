@@ -1,6 +1,48 @@
 import { z } from 'zod';
 
+import {
+    AttentionDeviceOverridesV1Schema,
+    DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
+    type AttentionDeviceOverridesV1,
+} from '../../attentionDeviceOverridesV1';
+import {
+    PET_COMPANION_SIZE_SCALE_DEFAULT,
+    normalizePetCompanionSizeScale,
+} from '@/sync/domains/pets/companionSizeScale';
 import { serializeDesktopOverlayAutoHideDelayBucket } from './localSettingDefinitions.shared';
+
+const PetEnabledOverrideSchema = z.enum(['inherit', 'enabled', 'disabled']);
+const PetSelectedOverrideSchema = z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('inherit') }),
+    z.object({
+        kind: z.literal('detectedCodexHome'),
+        sourceKey: z.string().min(1),
+    }),
+    z.object({
+        kind: z.literal('happierManagedLocal'),
+        sourceKey: z.string().min(1),
+    }),
+]);
+const DesktopPetOverlayVisibilityModeOverrideSchema = z.enum([
+    'inherit',
+    'attentionOrActive',
+    'alwaysWhenEnabled',
+    'attentionOnly',
+]);
+const DesktopPetOverlayAnchorSchema = z.enum(['bottomRight', 'bottomLeft', 'topRight', 'topLeft']);
+const DesktopPetOverlayOffsetSchema = z.object({
+    x: z.number(),
+    y: z.number(),
+});
+const PetCompanionSizeScaleSchema = z.number().catch(PET_COMPANION_SIZE_SCALE_DEFAULT);
+
+function serializePetCompanionSizeScaleBucket(value: number): 'small' | 'default' | 'large' | 'xlarge' {
+    const scale = normalizePetCompanionSizeScale(value);
+    if (scale < 0.95) return 'small';
+    if (scale <= 1.05) return 'default';
+    if (scale <= 1.25) return 'large';
+    return 'xlarge';
+}
 
 export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
     activitySurfacesEnabled: {
@@ -137,6 +179,74 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         description: 'Privacy level for activity surface previews on this device',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    petsEnabledOverride: {
+        schema: PetEnabledOverrideSchema,
+        default: 'inherit',
+        description: 'Device override for pet companion enablement',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    petsSelectedPetOverride: {
+        schema: PetSelectedOverrideSchema,
+        default: { kind: 'inherit' },
+        description: 'Device-only pet package override',
+        storageScope: 'local',
+    },
+    petsCompanionSizeScale: {
+        schema: PetCompanionSizeScaleSchema,
+        default: PET_COMPANION_SIZE_SCALE_DEFAULT,
+        description: 'Local companion size scale for pet surfaces on this device',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'bucket',
+            privacy: 'bucketed',
+            identityScope: 'device_user',
+            serializeCurrent: serializePetCompanionSizeScaleBucket,
+        },
+    },
+    petsDetectCodexPets: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Discover Codex pet packages from local Codex homes on this device',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayEnabledOverride: {
+        schema: PetEnabledOverrideSchema,
+        default: 'inherit',
+        description: 'Device override for desktop pet overlay enablement',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayVisibilityModeOverride: {
+        schema: DesktopPetOverlayVisibilityModeOverrideSchema,
+        default: 'inherit',
+        description: 'Device override for desktop pet overlay visibility mode',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayAnchor: {
+        schema: DesktopPetOverlayAnchorSchema,
+        default: 'bottomRight',
+        description: 'Desktop pet overlay anchor on this device',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayOffset: {
+        schema: DesktopPetOverlayOffsetSchema,
+        default: { x: 0, y: 0 },
+        description: 'Desktop pet overlay offset from the selected anchor on this device',
+        storageScope: 'local',
+    },
+    desktopPetOverlayLocked: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Lock desktop pet overlay dragging on this device',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
     desktopOverlayEnabled: {
         schema: z.boolean(),
@@ -296,5 +406,28 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         description: 'Legacy compatibility: historical desktop overlay compact style',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    attentionDeviceOverridesV1: {
+        schema: AttentionDeviceOverridesV1Schema,
+        default: DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
+        description: 'Canonical local device overrides for attention delivery and activity surfaces',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'enum',
+            privacy: 'safe',
+            identityScope: 'device_user',
+            serializeCurrentProperties: (value: AttentionDeviceOverridesV1) => ({
+                enabled: value.enabled,
+                localNotificationsEnabled: value.localNotifications.enabled,
+                foregroundBehavior: value.foregroundBehavior,
+                quietHoursMode: value.quietHoursOverride.mode,
+                desktopHoverExpandDelay: value.desktopOverlay.hoverExpandDelay,
+                desktopCarouselEnabled: value.desktopOverlay.collapsedCarouselEnabled,
+                liveActivityRemoteModeOverride: value.liveActivities.remoteUpdateModeOverride,
+                terminalSmartSuppressionEnabled: value.terminalSmartSuppression.enabled,
+            }),
+        },
     },
 } as const;

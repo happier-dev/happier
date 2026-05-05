@@ -8,10 +8,20 @@ import {
     isTerminalDetailsTab,
     resolveTerminalDetailsInstanceId,
 } from '@/components/terminal/terminalDetailsTabModel';
+import {
+    createSessionCommitDetailsTab,
+    createSessionFileDetailsTab,
+    createSessionScmReviewDetailsTab,
+    createSessionScmStashDetailsTab,
+    SESSION_DETAILS_SCM_REVIEW_TAB_KEY,
+    SESSION_DETAILS_SCM_STASH_TAB_KEY,
+} from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 export type SessionPaneUrlDetailsTarget =
     | Readonly<{ kind: 'file'; path: string }>
     | Readonly<{ kind: 'commit'; sha: string }>
+    | Readonly<{ kind: 'scmReview' }>
+    | Readonly<{ kind: 'scmStash' }>
     | Readonly<{ kind: 'terminal'; terminalInstanceId?: string }>;
 
 export type SessionPaneUrlState = Readonly<{
@@ -54,6 +64,12 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
     if (detailsRaw === 'commit' && shaRaw) {
         details = { kind: 'commit', sha: shaRaw };
     }
+    if (detailsRaw === 'scmReview') {
+        details = { kind: 'scmReview' };
+    }
+    if (detailsRaw === 'scmStash') {
+        details = { kind: 'scmStash' };
+    }
     if (detailsRaw === 'terminal') {
         details = terminalInstanceIdRaw
             ? { kind: 'terminal', terminalInstanceId: terminalInstanceIdRaw }
@@ -83,6 +99,12 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
     if (state.details?.kind === 'commit') {
         out.details = 'commit';
         out.sha = state.details.sha;
+    }
+    if (state.details?.kind === 'scmReview') {
+        out.details = 'scmReview';
+    }
+    if (state.details?.kind === 'scmStash') {
+        out.details = 'scmStash';
     }
     if (state.details?.kind === 'terminal') {
         out.details = 'terminal';
@@ -117,6 +139,14 @@ export function buildActiveDetailsRouteParams(
         const sha = rawSha.trim().split(/\s+/)[0] ?? '';
         if (!sha) return {};
         return serializeSessionPaneUrlState({ details: { kind: 'commit', sha } });
+    }
+
+    if (activeTab.key === SESSION_DETAILS_SCM_REVIEW_TAB_KEY || activeTab.kind === 'scmReview') {
+        return serializeSessionPaneUrlState({ details: { kind: 'scmReview' } });
+    }
+
+    if (activeTab.key === SESSION_DETAILS_SCM_STASH_TAB_KEY || activeTab.kind === 'scmStash') {
+        return serializeSessionPaneUrlState({ details: { kind: 'scmStash' } });
     }
 
     if (isTerminalDetailsTab({ resource: activeTab.resource, tabKey: activeTab.key })) {
@@ -164,6 +194,10 @@ export function deriveSessionPaneUrlStateFromScopeState(scopeState: PaneScopeSta
                     details = { kind: 'commit', sha: safeSha };
                 }
             }
+        } else if (tab?.key === SESSION_DETAILS_SCM_REVIEW_TAB_KEY || tab?.kind === 'scmReview') {
+            details = { kind: 'scmReview' };
+        } else if (tab?.key === SESSION_DETAILS_SCM_STASH_TAB_KEY || tab?.kind === 'scmStash') {
+            details = { kind: 'scmStash' };
         } else if (tab && isTerminalDetailsTab({ resource: tab.resource, tabKey: tab.key })) {
             const terminalInstanceId = resolveTerminalDetailsInstanceId({
                 resource: tab.resource,
@@ -205,25 +239,26 @@ export function applySessionPaneUrlState(
     if (state.details?.kind === 'file') {
         const fullPath = state.details.path.trim();
         if (!isSafeWorkspaceRelativePath(fullPath)) return;
-        const fileName = fullPath.split('/').pop() ?? fullPath;
-        pane.openDetailsTab({
-            key: `file:${fullPath}`,
-            kind: 'file',
-            title: fileName,
-            resource: { kind: 'file', path: fullPath },
-        });
+        pane.openDetailsTab(createSessionFileDetailsTab(fullPath));
         return;
     }
 
     if (state.details?.kind === 'commit') {
         const safeSha = state.details.sha.trim().split(/\s+/)[0] ?? '';
         if (!safeSha) return;
-        pane.openDetailsTab({
-            key: `commit:${safeSha}`,
-            kind: 'commit',
-            title: safeSha.slice(0, 7),
-            resource: { kind: 'commit', sha: safeSha },
-        });
+        const tab = createSessionCommitDetailsTab(safeSha);
+        if (!tab) return;
+        pane.openDetailsTab(tab);
+        return;
+    }
+
+    if (state.details?.kind === 'scmReview') {
+        pane.openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' });
+        return;
+    }
+
+    if (state.details?.kind === 'scmStash') {
+        pane.openDetailsTab(createSessionScmStashDetailsTab(), { intent: 'pinned' });
         return;
     }
 

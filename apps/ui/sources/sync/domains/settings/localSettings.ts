@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+    AttentionDeviceOverridesV1Schema,
+    deriveAttentionDeviceOverridesV1FromLegacyLocalSettings,
+    hasLegacyAttentionDeviceOverrideFields,
+} from './attentionDeviceOverridesV1';
 import { LOCAL_SETTING_ARTIFACTS } from './registry/local/localSettingDefinitions';
 
 //
@@ -28,6 +33,16 @@ normalizeActivitySurfaceLocalSettings(localSettingsDefaultsRecord);
 
 export const localSettingsDefaults: LocalSettings = localSettingsDefaultsRecord;
 Object.freeze(localSettingsDefaults);
+
+const deprecatedLocalSettingKeys = ['editorFocusModeEnabled'] as const;
+
+function stripDeprecatedLocalSettingsKeys(settings: Readonly<Record<string, unknown>>): Record<string, unknown> {
+    const next: Record<string, unknown> = { ...settings };
+    for (const key of deprecatedLocalSettingKeys) {
+        delete next[key];
+    }
+    return next;
+}
 
 //
 // Parsing
@@ -71,9 +86,15 @@ function normalizeLocalSettingsParseInput(settings: unknown): unknown {
         return settings;
     }
 
-    return migrateLegacyDesktopOverlayParseInput({
+    const next = stripDeprecatedLocalSettingsKeys(migrateLegacyDesktopOverlayParseInput({
         ...(settings as Record<string, unknown>),
-    });
+    }));
+    if (next.attentionDeviceOverridesV1 === undefined && hasLegacyAttentionDeviceOverrideFields(next)) {
+        next.attentionDeviceOverridesV1 = deriveAttentionDeviceOverridesV1FromLegacyLocalSettings({
+            legacy: next,
+        });
+    }
+    return next;
 }
 
 function normalizeActivitySurfaceLocalSettings(settings: LocalSettingsRecord): LocalSettingsRecord {
@@ -116,6 +137,8 @@ function normalizeActivitySurfaceLocalSettings(settings: LocalSettingsRecord): L
     );
     settings.widgetsShowMachinePath = widgetsShowMachinePath;
     settings.homeScreenWidgetsShowMachinePath = widgetsShowMachinePath;
+
+    settings.attentionDeviceOverridesV1 = AttentionDeviceOverridesV1Schema.parse(settings.attentionDeviceOverridesV1);
 
     return settings;
 }
@@ -174,9 +197,16 @@ export function localSettingsParse(settings: unknown): LocalSettings {
 // Applying changes
 //
 
-export function applyLocalSettings(settings: LocalSettings, delta: Partial<LocalSettings>): LocalSettings {
-    const normalizedDelta = normalizeActivitySurfaceLocalSettings({ ...delta } as LocalSettingsRecord);
+export function applyLocalSettings(settings: LocalSettings, delta: Partial<LocalSettings> | Readonly<Record<string, unknown>>): LocalSettings {
+    const strippedDelta = stripDeprecatedLocalSettingsKeys({ ...delta });
+    if (strippedDelta.attentionDeviceOverridesV1 === undefined && hasLegacyAttentionDeviceOverrideFields(strippedDelta)) {
+        strippedDelta.attentionDeviceOverridesV1 = deriveAttentionDeviceOverridesV1FromLegacyLocalSettings({
+            legacy: strippedDelta,
+            base: settings.attentionDeviceOverridesV1,
+        });
+    }
+    const normalizedDelta = normalizeActivitySurfaceLocalSettings(strippedDelta as LocalSettingsRecord);
     const next: LocalSettingsRecord = { ...localSettingsDefaults, ...settings, ...normalizedDelta };
     normalizeActivitySurfaceLocalSettings(next);
-    return next;
+    return stripDeprecatedLocalSettingsKeys(next) as LocalSettings;
 }

@@ -39,10 +39,10 @@ describe('createActionExecutor', () => {
             daemonMemorySearch: async () => ({ v: 1, ok: true, hits: [] }),
             daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
             daemonMemoryEnsureUpToDate: async () => ({ ok: true }),
-            isActionEnabled: (actionId: ActionId, ctx: any) => !(actionId === 'review.start' && ctx?.surface === 'voice_tool'),
+            isActionEnabled: (actionId: ActionId, ctx: any) => !(actionId === 'review.start' && ctx?.surface === 'voice'),
         });
 
-        const res = await executor.execute('review.start' as ActionId, {}, { surface: 'voice_tool' } as any);
+        const res = await executor.execute('review.start' as ActionId, {}, { surface: 'voice' } as any);
         expect(res.ok).toBe(false);
         if (!res.ok) {
             expect(res.errorCode).toBe('action_disabled');

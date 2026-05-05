@@ -13,6 +13,9 @@ const deletePushTokenMock = vi.fn();
 const fetchPushTokensMock = vi.fn();
 const modalConfirmMock = vi.fn();
 const modalAlertMock = vi.fn();
+let settingsValue: Record<string, unknown> = {
+    notificationsSettingsV1: { v: 1, pushEnabled: true },
+};
 
 function createPassthroughComponentMock(tag: string) {
     return (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -94,23 +97,12 @@ installSettingsViewCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useSettings: () => ({
-                notificationsSettingsV1: { v: 1, pushEnabled: true },
-            }),
+            useSettings: () => settingsValue,
         });
     },
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    accent: { blue: '#00f' },
-                    warning: '#f90',
-                    textSecondary: '#666',
-                    textDestructive: '#f00',
-                },
-            },
-        });
+        return createUnistylesMock();
     },
 });
 
@@ -136,6 +128,34 @@ describe('PushNotificationTroubleshootingView', () => {
         fetchPushTokensMock.mockReset();
         modalConfirmMock.mockReset();
         modalAlertMock.mockReset();
+        settingsValue = {
+            notificationsSettingsV1: { v: 1, pushEnabled: true },
+        };
+    });
+
+    it('backfills the account push status from legacy notification settings', async () => {
+        settingsValue = {
+            notificationsSettingsV1: { v: 1, pushEnabled: false },
+        };
+        const Notifications = await import('expo-notifications');
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+            status: PermissionStatus.GRANTED,
+            expires: 'never',
+            granted: true,
+            canAskAgain: false,
+        } satisfies Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({
+            type: 'expo',
+            data: 'ExponentPushToken[current]',
+        } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
+        fetchPushTokensMock.mockResolvedValue([]);
+
+        const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
+        const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
+        await flushHookEffects({ cycles: 10 });
+
+        const accountSettingRow = screen.findRowByTitle('settingsNotifications.pushTroubleshooting.status.accountSettingTitle');
+        expect(accountSettingRow?.props?.detail).toBe('common.disabled');
     });
 
     it('marks the current token as this device', async () => {

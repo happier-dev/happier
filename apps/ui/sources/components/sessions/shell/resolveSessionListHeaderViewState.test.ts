@@ -20,6 +20,7 @@ describe('resolveSessionListHeaderViewState', () => {
             workspaceRefId: 'workspace_ref_1',
             legacyWorkspaceKey: 'legacy-key',
             scopeHint: { serverId: 'server_a', machineId: 'machine_a', rootPath: '/repo' },
+            seedSessionId: null,
         };
         const input = {
             item,
@@ -40,6 +41,7 @@ describe('resolveSessionListHeaderViewState', () => {
             hasCustomLabel: true,
             legacyWorkspaceKey: 'legacy-key',
             scopeHint: { serverId: 'server_a', machineId: 'machine_a', rootPath: '/repo' },
+            seedSessionId: null,
             workspaceRefId: 'workspace_ref_1',
         });
     });
@@ -60,6 +62,7 @@ describe('resolveSessionListHeaderViewState', () => {
             workspaceRefId: 'workspace_ref_1',
             legacyWorkspaceKey: 'legacy-key',
             scopeHint: { serverId: 'server_a', machineId: 'machine_a', rootPath: '/repo' },
+            seedSessionId: null,
         };
 
         expect(resolveSessionListHeaderViewState({
@@ -75,6 +78,7 @@ describe('resolveSessionListHeaderViewState', () => {
             hasCustomLabel: true,
             legacyWorkspaceKey: 'legacy-key',
             scopeHint: { serverId: 'server_a', machineId: 'machine_a', rootPath: '/repo' },
+            seedSessionId: null,
             workspaceRefId: 'workspace_ref_1',
         });
     });

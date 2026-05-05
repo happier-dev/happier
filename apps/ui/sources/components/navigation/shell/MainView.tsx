@@ -9,7 +9,6 @@ import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsL
 import { FABWide } from '@/components/ui/buttons/FABWide';
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
-import { SettingsViewWrapper } from '@/components/settings/shell/SettingsViewWrapper';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
 import { ProjectsListView } from '@/components/projects/ProjectsListView';
 import { DirectSessionsEmptyState } from '@/components/sessions/shell/DirectSessionsEmptyState';
@@ -199,7 +198,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
         }
         return (
             <Pressable
-                onPress={() => router.push('/server')}
+                onPress={() => router.push('/settings/server')}
                 hitSlop={15}
                 style={styles.headerButton}
             >
@@ -293,8 +292,6 @@ const PhoneMainView = React.memo((props: Readonly<{
                 return friendsEnabled ? <FriendsView /> : <SessionsListWrapper />;
             case 'projects':
                 return <ProjectsListView />;
-            case 'settings':
-                return <SettingsViewWrapper />;
             case 'sessions':
             default:
                 return <SessionsListWrapper />;

@@ -200,6 +200,51 @@ function renderRuntimeWarnings(warnings: readonly HappierDoctorWarning[]): React
     ));
 }
 
+function renderRepairSummary(snapshot: DoctorSnapshot): React.ReactNode | null {
+    const repairSummary = snapshot.repairSummary;
+    if (!repairSummary) return null;
+
+    const counts = repairSummary.findingCounts;
+    return (
+        <Item
+            testID="machine-runtime-inventory-repair-summary"
+            title={t('machine.doctorRepairSummary')}
+            subtitle={counts
+                ? t('machine.doctorRepairFindingsSummary', {
+                    total: counts.total,
+                    warning: counts.warning ?? 0,
+                    error: counts.error ?? 0,
+                    actionable: counts.actionable ?? 0,
+                })
+                : t('status.unknown')}
+            detail={repairSummary.status ?? t('status.unknown')}
+            subtitleLines={0}
+            showChevron={false}
+            mode="info"
+        />
+    );
+}
+
+function renderLocalRelaySummary(snapshot: DoctorSnapshot): React.ReactNode | null {
+    const relays = snapshot.localRelays?.relays ?? [];
+    if (relays.length === 0) return null;
+    return (
+        <Item
+            testID="machine-runtime-inventory-local-relays"
+            title={t('machine.localRelays')}
+            subtitle={relays.map((relay) => [
+                relay.id,
+                relay.releaseChannel,
+                relay.relayUrl ?? null,
+            ].filter(Boolean).join(' • ')).join('\n')}
+            detail={String(relays.length)}
+            subtitleLines={0}
+            showChevron={false}
+            mode="info"
+        />
+    );
+}
+
 export const MachineDoctorRuntimeInventorySection = React.memo(function MachineDoctorRuntimeInventorySection(props: MachineDoctorRuntimeInventorySectionProps) {
     const snapshotState = props.snapshotState ?? { status: 'idle' };
 
@@ -225,6 +270,8 @@ export const MachineDoctorRuntimeInventorySection = React.memo(function MachineD
     const otherInstallations = activeInvocation?.installationId
         ? installations.filter((installation) => installation.id !== activeInvocation.installationId)
         : installations;
+    const repairSummaryItem = renderRepairSummary(snapshot);
+    const localRelaySummaryItem = renderLocalRelaySummary(snapshot);
 
     const installationRows: RuntimeInstallationViewModel[] = otherInstallations.map((installation) => ({
         installation,
@@ -244,6 +291,8 @@ export const MachineDoctorRuntimeInventorySection = React.memo(function MachineD
         return (
             <>
                 {renderRuntimeSummary(snapshot)}
+                {repairSummaryItem}
+                {localRelaySummaryItem}
                 {warningItems}
             </>
         );
@@ -277,6 +326,8 @@ export const MachineDoctorRuntimeInventorySection = React.memo(function MachineD
                     mode="info"
                 />
                 {renderRuntimeSummary(snapshot)}
+                {repairSummaryItem}
+                {localRelaySummaryItem}
             </ItemGroup>
 
             {props.mode === 'details' && installationRows.length > 0 ? (

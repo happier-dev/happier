@@ -135,7 +135,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
 
   const state = storage.getState() as any;
   const actionSpecs = listActionSpecs().filter((spec) =>
-    isActionEnabledInState(state as any, spec.id, { surface: 'ui_button', placement: 'command_palette' } as any),
+    isActionEnabledInState(state as any, spec.id, { surface: 'ui', placement: 'command_palette' } as any),
   );
   const commandPaletteActionSpecs = actionSpecs.filter((spec) => (spec.placements ?? []).includes('command_palette'));
   const byId = new Map(commandPaletteActionSpecs.map((spec) => [spec.id, spec]));

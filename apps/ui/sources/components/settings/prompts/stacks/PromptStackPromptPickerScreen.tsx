@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import type { PromptStackEntryV1, PromptStacksV1 } from '@happier-dev/protocol';
 
@@ -89,13 +89,12 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
 
   const openArtifactEditor = React.useCallback((ref: { kind: 'doc' | 'bundle'; artifactId: string }) => {
     router.push(ref.kind === 'bundle'
-      ? `/(app)/settings/prompts/skills/${ref.artifactId}`
-      : `/(app)/settings/prompts/docs/${ref.artifactId}`);
+      ? `/settings/prompts/skills/${ref.artifactId}`
+      : `/settings/prompts/docs/${ref.artifactId}`);
   }, [router]);
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: t('promptLibrary.addToStack') }} />
       <ScrollView
         contentContainerStyle={{
           paddingVertical: 12,
@@ -178,14 +177,14 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
             title={t('promptLibrary.addPrompt')}
             subtitle={t('promptLibrary.addPromptSubtitle')}
             icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
-            onPress={() => router.push('/(app)/settings/prompts/docs/new')}
+            onPress={() => router.push('/settings/prompts/docs/new')}
           />
           <Item
             testID="promptStackPicker.addSkill"
             title={t('promptLibrary.addSkill')}
             subtitle={t('promptLibrary.addSkillSubtitle')}
             icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.indigo} />}
-            onPress={() => router.push('/(app)/settings/prompts/skills/new')}
+            onPress={() => router.push('/settings/prompts/skills/new')}
           />
         </ItemGroup>
       </ScrollView>

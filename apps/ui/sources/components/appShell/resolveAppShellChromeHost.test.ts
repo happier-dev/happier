@@ -8,7 +8,6 @@ describe('resolveAppShellChromeHost', () => {
             isAuthenticated: true,
             isTauriDesktop: true,
             isTablet: true,
-            editorFocusModeEnabled: false,
             isTerminalConnectRoute: true,
         })).toBe('none');
     });
@@ -18,7 +17,6 @@ describe('resolveAppShellChromeHost', () => {
             isAuthenticated: false,
             isTauriDesktop: true,
             isTablet: true,
-            editorFocusModeEnabled: false,
             isTerminalConnectRoute: false,
         })).toBe('unauth-shell');
     });
@@ -28,19 +26,17 @@ describe('resolveAppShellChromeHost', () => {
             isAuthenticated: false,
             isTauriDesktop: false,
             isTablet: true,
-            editorFocusModeEnabled: false,
             isTerminalConnectRoute: false,
         })).toBe('web-top-right');
     });
 
-    it('returns focus-mode-fallback when desktop focus mode hides the sidebar host', () => {
+    it('keeps authenticated wide desktop shell chrome in the sidebar host', () => {
         expect(resolveAppShellChromeHost({
             isAuthenticated: true,
             isTauriDesktop: true,
             isTablet: true,
-            editorFocusModeEnabled: true,
             isTerminalConnectRoute: false,
-        })).toBe('focus-mode-fallback');
+        })).toBe('none');
     });
 
     it('returns narrow-desktop-fallback when the desktop shell is too narrow for the sidebar host', () => {
@@ -48,7 +44,6 @@ describe('resolveAppShellChromeHost', () => {
             isAuthenticated: true,
             isTauriDesktop: true,
             isTablet: false,
-            editorFocusModeEnabled: false,
             isTerminalConnectRoute: false,
         })).toBe('narrow-desktop-fallback');
     });
@@ -58,7 +53,6 @@ describe('resolveAppShellChromeHost', () => {
             isAuthenticated: true,
             isTauriDesktop: true,
             isTablet: true,
-            editorFocusModeEnabled: false,
             isTerminalConnectRoute: false,
         })).toBe('none');
     });

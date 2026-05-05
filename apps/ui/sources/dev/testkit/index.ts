@@ -24,6 +24,7 @@ export * from './mocks/modal';
 export * from './mocks/mainAppTabState';
 export * from './mocks/reactNative';
 export * from './mocks/router';
+export * from './mocks/serverScopedSessionContext';
 export * from './mocks/storage';
 export * from './mocks/capabilities';
 export * from './mocks/syncOps';

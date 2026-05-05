@@ -35,6 +35,7 @@ export type NativeCryptoWorkerBatchQueueOptions<T, R> = Readonly<{
     telemetry?: SyncPerformanceTelemetry;
     telemetryEnabled?: boolean;
     now?: () => number;
+    onIdle?: () => void;
     dispatch: (items: readonly T[], context: NativeCryptoWorkerBatchDispatchContext) => Promise<readonly R[]>;
 }>;
 
@@ -56,7 +57,7 @@ export type RunNativeCryptoWorkerQueuedBatchOptions<T, R> = Readonly<{
     dispatch: (items: readonly T[], context: NativeCryptoWorkerBatchDispatchContext) => Promise<readonly R[]>;
 }>;
 
-const queuesByOwner = new WeakMap<object, Map<string, NativeCryptoWorkerBatchQueue<unknown, unknown>>>();
+let queuesByOwner = new WeakMap<object, Map<string, NativeCryptoWorkerBatchQueue<unknown, unknown>>>();
 
 export type NativeCryptoWorkerQueueLifecycleTelemetryOptions = Readonly<{
     telemetry?: SyncPerformanceTelemetry;
@@ -269,8 +270,14 @@ export function resetNativeCryptoWorkerQueueLifecycleForTests(): void {
     lifecycleState.queuedDuringQuiesceCount = 0;
     lifecycleState.staleScopeDropsOnResume = 0;
     lifecycleState.resumePromise = null;
+    nextQueueId = 1;
+    queuesByOwner = new WeakMap<object, Map<string, NativeCryptoWorkerBatchQueue<unknown, unknown>>>();
     queueWakeups.clear();
     queueStats.clear();
+}
+
+export function getNativeCryptoWorkerOwnerQueueCountForTests(owner: object): number {
+    return queuesByOwner.get(owner)?.size ?? 0;
 }
 
 function isSignalAborted(signal: AbortSignal | undefined): boolean {
@@ -414,6 +421,9 @@ export function createNativeCryptoWorkerBatchQueue<T, R>(
                 }
             }
             updateLifecycleStats();
+            if (pending.length === 0 && inFlightCount === 0) {
+                options.onIdle?.();
+            }
         }
     }
 
@@ -487,14 +497,25 @@ export async function runNativeCryptoWorkerQueuedBatch<T, R>(
     const key = queueKeyFor(options as RunNativeCryptoWorkerQueuedBatchOptions<unknown, unknown>);
     let queue = queues.get(key) as NativeCryptoWorkerBatchQueue<T, R> | undefined;
     if (!queue) {
-        queue = createNativeCryptoWorkerBatchQueue<T, R>({
+        let createdQueue: NativeCryptoWorkerBatchQueue<T, R> | undefined;
+        createdQueue = createNativeCryptoWorkerBatchQueue<T, R>({
             maxBatchSize: options.maxBatchSize,
             operation: options.operation,
             dispatchKind: options.dispatchKind,
             telemetry: options.telemetry,
             telemetryEnabled: options.telemetryEnabled,
+            onIdle: () => {
+                const currentQueues = queuesByOwner.get(options.owner);
+                if (!currentQueues || createdQueue === undefined) return;
+                if (currentQueues.get(key) !== createdQueue) return;
+                currentQueues.delete(key);
+                if (currentQueues.size === 0) {
+                    queuesByOwner.delete(options.owner);
+                }
+            },
             dispatch: options.dispatch,
         });
+        queue = createdQueue;
         queues.set(key, queue as NativeCryptoWorkerBatchQueue<unknown, unknown>);
     }
 

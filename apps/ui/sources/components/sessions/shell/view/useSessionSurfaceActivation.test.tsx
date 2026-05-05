@@ -160,6 +160,41 @@ describe('useSessionSurfaceActivation', () => {
         await hook.unmount();
     });
 
+    it('keeps a session visible when one retained surface hides while another remains visible', async () => {
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+
+        function SurfaceParticipant(props: Readonly<{ surfaceVisible: boolean }>) {
+            useSessionSurfaceActivation({
+                sessionId: 'session-1',
+                surfaceFocused: false,
+                surfaceVisible: props.surfaceVisible,
+                routeAnchor: false,
+            });
+            return null;
+        }
+
+        function SurfaceHarness(props: Readonly<{
+            leftVisible: boolean;
+            rightVisible: boolean;
+        }>) {
+            return (
+                <>
+                    <SurfaceParticipant surfaceVisible={props.leftVisible} />
+                    <SurfaceParticipant surfaceVisible={props.rightVisible} />
+                </>
+            );
+        }
+
+        const screen = await renderScreen(<SurfaceHarness leftVisible={true} rightVisible={true} />);
+        expect(getSessionSurfaceVisibilitySnapshot().visibleSessionIds).toEqual(['session-1']);
+
+        await screen.update(<SurfaceHarness leftVisible={false} rightVisible={true} />);
+        expect(getSessionSurfaceVisibilitySnapshot().visibleSessionIds).toEqual(['session-1']);
+
+        await screen.unmount();
+        expect(getSessionSurfaceVisibilitySnapshot().visibleSessionIds).toEqual([]);
+    });
+
     it('can unmount a visible surface while a visibility subscriber is mounted', async () => {
         const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
 

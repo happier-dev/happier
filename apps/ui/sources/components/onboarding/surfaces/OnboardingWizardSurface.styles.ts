@@ -54,6 +54,9 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         maxWidth: 360,
         alignSelf: 'center',
     },
+    welcomeHero: {
+        width: '100%',
+    },
     welcomeBody: {
         width: '100%',
         alignItems: 'center',

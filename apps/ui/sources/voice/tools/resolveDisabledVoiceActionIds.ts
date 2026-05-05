@@ -8,7 +8,7 @@ function isVoiceActionAvailableInState(state: Readonly<{ settings?: unknown }>, 
   if (state?.settings && !readVoicePrivacySettings(state.settings).shareDeviceInventory && isInventoryPrivacyAction(spec.id as ActionId)) {
     return false;
   }
-  return isActionEnabledInState(state, spec.id as ActionId, { surface: 'voice_tool' });
+  return isActionEnabledInState(state, spec.id as ActionId, { surface: 'voice' });
 }
 
 export function resolveEnabledVoiceToolActionSpecsFromState(state: Readonly<{ settings?: unknown }>): readonly ActionSpec[] {

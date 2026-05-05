@@ -73,12 +73,15 @@ describe('parseActivityInteraction', () => {
             defaultActionIdentifier: 'DEFAULT',
             data: {
                 primarySessionId: 'session-primary',
+                serverId: 'server-primary',
             },
         });
         const session = parseActivityInteraction({
             actionIdentifier: 'open-session:session-2',
             defaultActionIdentifier: 'DEFAULT',
-            data: null,
+            data: {
+                serverId: 'server-2',
+            },
         });
         const inbox = parseActivityInteraction({
             actionIdentifier: 'open-inbox',
@@ -90,7 +93,7 @@ describe('parseActivityInteraction', () => {
             actionIdentifier: 'open-primary-session',
             isDefaultTap: false,
             isOpenAction: true,
-            route: '/session/session-primary',
+            route: '/session/session-primary?serverId=server-primary',
             serverUrl: null,
             permissionAction: null,
         });
@@ -98,7 +101,7 @@ describe('parseActivityInteraction', () => {
             actionIdentifier: 'open-session:session-2',
             isDefaultTap: false,
             isOpenAction: true,
-            route: '/session/session-2',
+            route: '/session/session-2?serverId=server-2',
             serverUrl: null,
             permissionAction: null,
         });

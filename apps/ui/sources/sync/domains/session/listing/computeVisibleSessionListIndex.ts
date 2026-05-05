@@ -1,5 +1,6 @@
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 import { applySessionListIndexPresentation } from './sessionListIndexPresentation';
 import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedStringArrayWithSharedEmpty';
@@ -21,6 +22,7 @@ export type ComputeVisibleSessionListIndexParams = Readonly<{
         presentation: ServerSelectionPresentation;
         selectedServerIds?: ReadonlyArray<string>;
     }>;
+    storageFilterApplied?: boolean;
 }>;
 
 const PINNED_GROUP_KEY_V1 = 'pinned-v1';
@@ -92,6 +94,33 @@ function inspectVisibleSessionListSourceState(
         hasInactiveSessionsThatNeedFiltering,
         hasOrphanHeaders: pendingSectionHeader != null || pendingGroupHeader != null,
     };
+}
+
+function countOrderedGroups(orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>> | undefined): number {
+    if (!orderByGroupKey) return 0;
+    return Object.values(orderByGroupKey).filter((keys) => Array.isArray(keys) && keys.length > 0).length;
+}
+
+function countPinnedSessionKeys(keys: ReadonlyArray<string> | undefined): number {
+    return (keys ?? []).filter((key) => typeof key === 'string' && key.trim().length > 0).length;
+}
+
+function countSessionItems(items: ReadonlyArray<SessionListIndexItem>): number {
+    let count = 0;
+    for (const item of items) {
+        if (item.type === 'session') {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+function nowMs(): number {
+    const perf = (globalThis as unknown as { performance?: { now?: () => number } }).performance;
+    if (typeof perf?.now === 'function') {
+        return perf.now();
+    }
+    return Date.now();
 }
 
 function compareSessionItemsByOrderingMode(
@@ -387,7 +416,7 @@ function filterHideInactiveSessions(
     return out;
 }
 
-export function computeVisibleSessionListIndex(
+function computeVisibleSessionListIndexUnmeasured(
     params: ComputeVisibleSessionListIndexParams,
 ): SessionListIndexItem[] | null {
     const source = params.source;
@@ -515,4 +544,34 @@ export function computeVisibleSessionListIndex(
         ...(pinnedHeader ? [pinnedHeader, ...pinnedOrdered] : []),
         ...remainderPresented,
     ];
+}
+
+export function computeVisibleSessionListIndex(
+    params: ComputeVisibleSessionListIndexParams,
+): SessionListIndexItem[] | null {
+    const source = params.source;
+    if (!source) return null;
+    if (!syncPerformanceTelemetry.isEnabled()) {
+        return computeVisibleSessionListIndexUnmeasured(params);
+    }
+
+    const startedAtMs = nowMs();
+    const result = computeVisibleSessionListIndexUnmeasured(params);
+    const sessionCount = countSessionItems(source);
+    syncPerformanceTelemetry.recordDuration(
+        'sync.sessions.list.visible.compute',
+        nowMs() - startedAtMs,
+        {
+            items: source.length,
+            sessions: sessionCount,
+            headers: source.length - sessionCount,
+            fastPath: result === source ? 1 : 0,
+            hideInactive: params.hideInactiveSessions === true ? 1 : 0,
+            pins: countPinnedSessionKeys(params.pinnedSessionKeysV1),
+            customOrder: countOrderedGroups(params.sessionListGroupOrderV1),
+            presentationEnabled: params.presentation.enabled === true ? 1 : 0,
+            storageFilter: params.storageFilterApplied === true ? 1 : 0,
+        },
+    );
+    return result;
 }

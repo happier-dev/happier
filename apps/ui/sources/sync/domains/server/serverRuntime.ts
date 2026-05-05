@@ -1,4 +1,7 @@
 import {
+    clearTabActiveServerId,
+    getDeviceDefaultServerId,
+    getTabActiveServerId,
     getActiveServerSnapshot as getSnapshotFromProfiles,
     isActiveServerSelectionExplicit as isExplicitFromProfiles,
     setActiveServerId,
@@ -24,7 +27,12 @@ export function isActiveServerSelectionExplicit(): boolean {
 }
 
 export function setActiveServer(params: Readonly<{ serverId: string; scope?: 'device' | 'tab' }>): void {
-    setActiveServerId(params.serverId, { scope: params.scope ?? 'device' });
+    const scope = params.scope ?? 'device';
+    const serverId = String(params.serverId ?? '').trim();
+    setActiveServerId(serverId, { scope });
+    if (scope === 'device' && getTabActiveServerId() && getDeviceDefaultServerId() === serverId) {
+        clearTabActiveServerId();
+    }
 }
 
 export function upsertAndActivateServer(
@@ -42,7 +50,7 @@ export function upsertAndActivateServer(
         source: params.source,
         replaceEquivalentStoredUrl: params.replaceEquivalentStoredUrl,
     });
-    setActiveServerId(profile.id, { scope: params.scope ?? 'device' });
+    setActiveServer({ serverId: profile.id, scope: params.scope ?? 'device' });
     return profile;
 }
 

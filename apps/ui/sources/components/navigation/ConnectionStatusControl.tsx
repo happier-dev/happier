@@ -8,16 +8,17 @@ import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { useSocketStatus, useSyncError, useLastSyncAt, useSettingMutable } from '@/sync/domains/state/storage';
 import { getServerUrl } from '@/sync/domains/server/serverConfig';
-import { getActiveServerId, listServerProfiles, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerId, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useRouter } from 'expo-router';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { Typography } from '@/constants/Typography';
 import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { normalizeStoredServerSelectionGroups } from '@/sync/domains/server/selection/serverSelectionMutations';
+import { writeServerSelectionActiveTargetToServer } from '@/sync/domains/server/selection/serverSelectionActiveTarget';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { useConnectionTargetActions } from '@/components/navigation/connection/useConnectionTargetActions';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
@@ -31,6 +32,8 @@ import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorS
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 type Variant = 'sidebar' | 'header';
+const MANAGE_RELAY_DROPDOWN_ITEM_ID = 'connection-popover-manage-relay';
+const RELAY_SETTINGS_ROUTE = '/settings/server';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -383,10 +386,12 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     }, [servers]);
 
     const switchServer = React.useCallback(async (serverId: string, scope: 'tab' | 'device' = 'device') => {
-        setActiveServerId(serverId, { scope });
+        await setActiveServerAndSwitch({
+            serverId,
+            scope,
+            refreshAuth: auth.refreshFromActiveServer,
+        });
         setOpen(false);
-        await switchConnectionToActiveServer();
-        await auth.refreshFromActiveServer();
     }, [auth]);
 
     const serverTargets = React.useMemo(() => {
@@ -450,8 +455,10 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             if (!server) return;
             const shouldSwitch = await confirmSignedOutSwitch(server.id);
             if (!shouldSwitch) return;
-            setServerSelectionActiveTargetKind('server');
-            setServerSelectionActiveTargetId(target.id);
+            writeServerSelectionActiveTargetToServer({
+                setServerSelectionActiveTargetKind,
+                setServerSelectionActiveTargetId,
+            }, target.serverId);
             await switchServer(target.serverId, 'device');
             if ((authStatusByServerId[target.serverId] ?? 'unknown') === 'signedOut') {
                 router.replace('/');
@@ -496,15 +503,28 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     });
 
     const relayDropdownItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => {
-        return targetActions.map((action) => ({
-            id: action.id,
-            title: action.label,
-            subtitle: action.subtitle,
-            icon: action.icon,
-            rightElement: action.right,
-            disabled: action.disabled,
-        }));
-    }, [targetActions]);
+        return [
+            ...targetActions.map((action) => ({
+                id: action.id,
+                title: action.label,
+                subtitle: action.subtitle,
+                icon: action.icon,
+                rightElement: action.right,
+                disabled: action.disabled,
+            })),
+            {
+                id: MANAGE_RELAY_DROPDOWN_ITEM_ID,
+                title: t('server.manageRelay'),
+                icon: (
+                    <Ionicons
+                        name="settings-outline"
+                        size={18}
+                        color={theme.colors.text}
+                    />
+                ),
+            },
+        ];
+    }, [targetActions, theme.colors.text]);
 
     const selectedRelayDropdownId = React.useMemo(() => {
         return targetActions.find((action) => action.selected)?.id ?? null;
@@ -542,6 +562,15 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         setRelayDropdownOpen(false);
         setOpen(false);
     }, []);
+
+    const handleManageRelay = React.useCallback(() => {
+        const result = runGuardedNavigation(() => router.push(RELAY_SETTINGS_ROUTE));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'ConnectionStatusControl.nav.manageRelay' });
+        }
+        setRelayDropdownOpen(false);
+        setOpen(false);
+    }, [router]);
 
     return (
         <>
@@ -759,6 +788,10 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                             items={relayDropdownItems}
                                             selectedId={selectedRelayDropdownId}
                                             onSelect={(itemId) => {
+                                                if (itemId === MANAGE_RELAY_DROPDOWN_ITEM_ID) {
+                                                    handleManageRelay();
+                                                    return;
+                                                }
                                                 targetActionById.get(itemId)?.onPress();
                                             }}
                                             variant="default"

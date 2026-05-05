@@ -1,5 +1,3 @@
-import type { Metadata } from '@/sync/domains/state/storageTypes';
-
 import { readDirectSessionLink } from './readDirectSessionLink';
 
 function normalizeMachineId(value: unknown): string | null {
@@ -8,8 +6,13 @@ function normalizeMachineId(value: unknown): string | null {
   return machineId.length > 0 ? machineId : null;
 }
 
-export function resolveSessionMachineId(metadata: Metadata | null | undefined): string | null {
-  const topLevelMachineId = normalizeMachineId(metadata?.machineId);
+function readTopLevelMachineId(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  return normalizeMachineId((metadata as { machineId?: unknown }).machineId);
+}
+
+export function resolveSessionMachineId(metadata: unknown): string | null {
+  const topLevelMachineId = readTopLevelMachineId(metadata);
   if (topLevelMachineId) return topLevelMachineId;
   return normalizeMachineId(readDirectSessionLink(metadata)?.machineId);
 }

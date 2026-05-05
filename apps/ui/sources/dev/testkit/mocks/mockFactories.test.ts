@@ -381,10 +381,12 @@ describe('UI testkit mock factories', () => {
 
         const modalMock = createModalModuleMock();
         const provider = modalMock.module.ModalProvider({
+            active: false,
             children: 'child',
-        }) as unknown as { type: string; props: { children?: unknown } };
+        }) as unknown as { type: string; props: { active?: boolean; children?: unknown } };
 
         expect(provider.type).toBe('ModalProvider');
+        expect(provider.props.active).toBe(false);
         expect(provider.props.children).toBe('child');
     });
 
@@ -474,8 +476,10 @@ describe('UI testkit mock factories', () => {
     it('creates a selector-capable storage store mock with getState support', async () => {
         const { createStorageStoreMock } = await import('./storage');
         const { createSessionMessagesFixture } = await import('../fixtures/transcriptFixtures');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
 
         const mockStore = createStorageStoreMock({
+            settings: settingsDefaults,
             sessionMessages: {
                 'session-1': createSessionMessagesFixture(),
             },
@@ -483,7 +487,7 @@ describe('UI testkit mock factories', () => {
 
         expect(mockStore((state) => state.sessionMessages['session-1']?.messagesById ?? null)).toEqual({});
         expect(mockStore.getState().sessionMessages['session-1']?.messagesMap).toEqual({});
-        expect(mockStore.getState().localSettings.mobileWorkspaceExperienceV1).toBeDefined();
+        expect(mockStore.getState().settings.mobileWorkspaceExperienceV1).toBeDefined();
     });
 
     it('creates a useSetting mock from a keyed settings map with optional fallback', async () => {

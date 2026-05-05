@@ -11,7 +11,9 @@ export function shouldRequestRemoteControl(session: Session | null, authState?: 
 }
 
 export function shouldRequestRemoteControlAfterPendingEnqueue(session: Session | null, authState?: SessionControlAuthState): boolean {
-    return shouldRequestRemoteControl(session, authState);
+    void session;
+    void authState;
+    return false;
 }
 
 export function shouldRenderChatTimelineForSession(opts: {
@@ -19,11 +21,9 @@ export function shouldRenderChatTimelineForSession(opts: {
     pendingMessagesCount: number;
     controlledByUser: boolean;
     forceRenderFooter?: boolean;
-    showLocalControlFooter?: boolean;
 }): boolean {
     return opts.committedMessagesCount > 0
         || opts.pendingMessagesCount > 0
         || opts.controlledByUser === true
-        || opts.showLocalControlFooter === true
         || opts.forceRenderFooter === true;
 }

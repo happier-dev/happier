@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 
@@ -31,5 +32,32 @@ describe('useActiveServerSnapshot', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(hook.getCurrent()).toEqual(currentSnapshot);
+    });
+
+    it('updates when the runtime mutates the same snapshot object before notifying subscribers', async () => {
+        const currentSnapshot = { serverId: 'server-a', serverUrl: 'http://api.example.test', generation: 1 };
+        let activeServerListener: (() => void) | null = null;
+        getActiveServerSnapshotMock.mockImplementation(() => currentSnapshot);
+        subscribeActiveServerMock.mockImplementation((listener: () => void) => {
+            activeServerListener = listener;
+            return () => {};
+        });
+
+        const { useActiveServerSnapshot } = await import('./useActiveServerSnapshot');
+        const hook = await renderHook(() => {
+            const snapshot = useActiveServerSnapshot();
+            return { serverUrl: snapshot.serverUrl };
+        });
+
+        expect(hook.getCurrent().serverUrl).toBe('http://api.example.test');
+
+        currentSnapshot.serverUrl = 'http://api.other.test';
+        currentSnapshot.generation = 2;
+        await act(async () => {
+            activeServerListener?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(hook.getCurrent().serverUrl).toBe('http://api.other.test');
     });
 });

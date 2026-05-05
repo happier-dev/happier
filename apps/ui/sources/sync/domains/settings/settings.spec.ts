@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildBackendTargetKey, DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    DEFAULT_ACTIONS_SETTINGS_V1,
+    DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
+} from '@happier-dev/protocol';
 import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
 import { buildProviderUniverseBackendTargetKey } from '@/agents/providers/registry/providerUniverse';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -384,6 +388,11 @@ describe('settings', () => {
             expect((parsed as any).scmIncludeCoAuthoredBy).toBe(false);
         });
 
+        it('accepts pull-only source-control remote confirmation policy', () => {
+            const parsed = settingsParse({ scmRemoteConfirmPolicy: 'pull_only' } as any);
+            expect((parsed as any).scmRemoteConfirmPolicy).toBe('pull_only');
+        });
+
         it('defaults actions settings', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).actionsSettingsV1).toEqual(DEFAULT_ACTIONS_SETTINGS_V1);
@@ -413,12 +422,12 @@ describe('settings', () => {
             });
         });
 
-        it('normalizes legacy session_control_cli action surface overrides to cli', () => {
+        it('normalizes legacy cli action surface overrides to cli', () => {
             const parsed = settingsParse({
                 actionsSettingsV1: {
                     v: 1,
                     actions: {
-                        'review.start': { disabledSurfaces: ['session_control_cli'] },
+                        'review.start': { disabledSurfaces: ['cli'] },
                     },
                 },
             } as any);
@@ -929,6 +938,7 @@ describe('settings', () => {
                     readyIncludeMessageText: true,
                 },
             ]);
+            expect((settingsDefaults as any).attentionDeliveryPolicyV1).toEqual(DEFAULT_ATTENTION_DELIVERY_POLICY_V1);
             expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
             expect((settingsDefaults as any).attachmentsUploadsWorkspaceRelativeDir).toBe('.happier/uploads');
             expect((settingsDefaults as any).attachmentsUploadsVcsIgnoreStrategy).toBe('git_info_exclude');

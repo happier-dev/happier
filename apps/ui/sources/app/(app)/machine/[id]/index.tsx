@@ -6,9 +6,17 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWithAction';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
-import { useSessions, useMachine, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import {
+    storage,
+    useMachine,
+    useMachineListByServerId,
+    useSessions,
+    useSetting,
+    useSettingMutable,
+    useSettings,
+} from '@/sync/domains/state/storage';
 import { Ionicons, Octicons } from '@expo/vector-icons';
-import type { MachineMetadata, Session } from '@/sync/domains/state/storageTypes';
+import type { Machine, MachineMetadata, Session } from '@/sync/domains/state/storageTypes';
 import {
     machineSpawnNewSession,
     machineStopDaemon,
@@ -134,6 +142,29 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
+function resolveMachineServerIdFromList(params: Readonly<{
+    activeServerId: string;
+    machineId: string | undefined;
+    machineListByServerId: Readonly<Record<string, readonly Pick<Machine, 'id'>[] | null | undefined>>;
+}>): string {
+    const machineId = String(params.machineId ?? '').trim();
+    if (!machineId) return '';
+
+    const activeServerMachines = params.machineListByServerId[params.activeServerId];
+    if (Array.isArray(activeServerMachines) && activeServerMachines.some((machine) => machine.id === machineId)) {
+        return params.activeServerId;
+    }
+
+    for (const [serverId, machines] of Object.entries(params.machineListByServerId)) {
+        if (!Array.isArray(machines)) continue;
+        if (machines.some((machine) => machine.id === machineId)) {
+            return serverId;
+        }
+    }
+
+    return '';
+}
+
 export default function MachineDetailScreen() {
     const { theme } = useUnistyles();
     const { id: machineId, serverId: serverIdParam } = useLocalSearchParams<{ id: string; serverId?: string }>();
@@ -169,11 +200,19 @@ export default function MachineDetailScreen() {
     const windowsRemoteSessionLaunchModeDefault = useSetting('sessionWindowsRemoteSessionLaunchMode');
     const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
     const settings = useSettings();
+    const machineListByServerId = useMachineListByServerId();
     const activeServerId = getActiveServerId();
+    const requestedServerId = typeof serverIdParam === 'string' ? serverIdParam.trim() : '';
+    const machineListServerId = useMemo(() => resolveMachineServerIdFromList({
+        activeServerId,
+        machineId,
+        machineListByServerId,
+    }), [activeServerId, machineId, machineListByServerId]);
+    const machineServerId = requestedServerId || machineListServerId || activeServerId;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: machineId ?? null,
-        serverId: activeServerId,
-        enabled: Boolean(machineId && activeServerId),
+        serverId: machineServerId,
+        enabled: Boolean(machineId && machineServerId),
         staleMs: 60_000,
     });
     const preferredBackendTarget = React.useMemo(() => {
@@ -199,7 +238,6 @@ export default function MachineDetailScreen() {
     const [showFinishedRuns, setShowFinishedRuns] = useState(false);
     const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
 
-    const requestedServerId = typeof serverIdParam === 'string' ? serverIdParam.trim() : '';
     React.useEffect(() => {
         if (!requestedServerId) return;
         const currentServerId = getActiveServerId();
@@ -255,7 +293,7 @@ export default function MachineDetailScreen() {
 
     const { state: detectedCapabilities, refresh: refreshDetectedCapabilities } = useMachineCapabilitiesCache({
         machineId: machineId ?? null,
-        serverId: activeServerId,
+        serverId: machineServerId,
         cacheKeySalt: machine?.daemonStateVersion ?? 0,
         enabled: Boolean(machineId && isOnline && !isServerSwitching),
         request: CAPABILITIES_REQUEST_MACHINE_DETAILS,
@@ -279,7 +317,7 @@ export default function MachineDetailScreen() {
 
     const tmuxOverride = machineId ? terminalTmuxByMachineId?.[machineId] : undefined;
     const tmuxOverrideEnabled = Boolean(tmuxOverride);
-    const machineDoctorSnapshotServerId = requestedServerId || activeServerId;
+    const machineDoctorSnapshotServerId = machineServerId;
     const machineDoctorSnapshotSwitchReady = Boolean(
         machineId
         && !isServerSwitching
@@ -446,7 +484,7 @@ export default function MachineDetailScreen() {
         const runStopDaemon = async () => {
             setIsStoppingDaemon(true);
             try {
-                const result = await machineStopDaemon(machineId!, { serverId: activeServerId });
+                const result = await machineStopDaemon(machineId!, { serverId: machineServerId });
                 Modal.alert(t('machine.daemonStoppedTitle'), result.message);
                 // Refresh to get updated metadata
                 await sync.refreshMachines();
@@ -499,7 +537,7 @@ export default function MachineDetailScreen() {
             }
             if (machineId && isOnline && !isServerSwitching) {
                 setExecutionRunsState((prev) => ({ status: 'loading', runs: prev.runs }));
-                const res = await machineExecutionRunsList(machineId, { serverId: activeServerId });
+                const res = await machineExecutionRunsList(machineId, { serverId: machineServerId });
                 if (res.ok) {
                     setExecutionRunsState({ status: 'loaded', runs: res.runs });
                 } else {
@@ -519,7 +557,7 @@ export default function MachineDetailScreen() {
         let cancelled = false;
         setExecutionRunsState((prev) => ({ status: 'loading', runs: prev.runs }));
         fireAndForget((async () => {
-            const res = await machineExecutionRunsList(machineId, { serverId: activeServerId });
+            const res = await machineExecutionRunsList(machineId, { serverId: machineServerId });
             if (cancelled) return;
             if (res.ok) {
                 setExecutionRunsState({ status: 'loaded', runs: res.runs });
@@ -531,7 +569,7 @@ export default function MachineDetailScreen() {
         return () => {
             cancelled = true;
         };
-    }, [activeServerId, isOnline, isServerSwitching, machineId]);
+    }, [isOnline, isServerSwitching, machineId, machineServerId]);
 
     const refreshCapabilities = useCallback(async () => {
         if (!machineId) return;
@@ -688,6 +726,7 @@ export default function MachineDetailScreen() {
             });
             const result = await machineSpawnNewSession({
                 machineId: machineId!,
+                ...(machineServerId ? { serverId: machineServerId } : {}),
                 directory: absolutePath,
                 approvedNewDirectoryCreation,
                 backendTarget: preferredBackendTarget,
@@ -1272,7 +1311,7 @@ export default function MachineDetailScreen() {
                                             if (!canStop) return;
                                             setStoppingRunId(run.runId);
                                             const stopSessionProcess = async () => {
-                                                const stopResult = await machineStopSession(machineId, run.happySessionId, { serverId: activeServerId });
+                                                const stopResult = await machineStopSession(machineId, run.happySessionId, { serverId: machineServerId });
                                                 if (stopResult.ok) return;
 
                                                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForRpcFailure({
@@ -1292,7 +1331,7 @@ export default function MachineDetailScreen() {
                                                 const res = await sessionExecutionRunStop(
                                                     run.happySessionId,
                                                     { runId: run.runId },
-                                                    { serverId: activeServerId },
+                                                    { serverId: machineServerId },
                                                 );
                                                 if ((res as any)?.ok === false) {
                                                     const confirmed = await Modal.confirm(
@@ -1322,7 +1361,7 @@ export default function MachineDetailScreen() {
                                                 }
                                             } finally {
                                                 setStoppingRunId(null);
-                                                const refreshed = await machineExecutionRunsList(machineId, { serverId: activeServerId });
+                                                const refreshed = await machineExecutionRunsList(machineId, { serverId: machineServerId });
                                                 if (refreshed.ok) {
                                                     setExecutionRunsState({ status: 'loaded', runs: refreshed.runs });
                                                 }

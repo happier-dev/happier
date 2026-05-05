@@ -11,10 +11,13 @@ export async function fetchAndApplyAutomations(params: {
     loadedAutomationRunIds?: readonly string[];
     setAutomationRuns?: (automationId: string, runs: AutomationRun[]) => void;
     runsLimit?: number;
+    shouldContinue?: () => boolean;
 }): Promise<void> {
+    const shouldContinue = params.shouldContinue ?? (() => true);
     if (!params.credentials) {
         return;
     }
+    if (!shouldContinue()) return;
 
     const { serverId } = getActiveServerSnapshot();
     const automationsEnabled = await isRuntimeFeatureEnabled({
@@ -25,8 +28,10 @@ export async function fetchAndApplyAutomations(params: {
     if (!automationsEnabled) {
         return;
     }
+    if (!shouldContinue()) return;
 
     const rows = await listAutomations(params.credentials);
+    if (!shouldContinue()) return;
     params.applyAutomations(rows);
 
     if (!params.setAutomationRuns) {
@@ -46,11 +51,13 @@ export async function fetchAndApplyAutomations(params: {
 
     const limit = params.runsLimit ?? 20;
     await Promise.all(idsToRefresh.map(async (automationId) => {
+        if (!shouldContinue()) return;
         const result = await listAutomationRuns({
             credentials: params.credentials!,
             automationId,
             limit,
         });
+        if (!shouldContinue()) return;
         params.setAutomationRuns?.(automationId, result.runs);
     }));
 }
@@ -60,10 +67,13 @@ export async function fetchAndApplyAutomationRuns(params: {
     automationId: string;
     limit?: number;
     setAutomationRuns: (automationId: string, runs: AutomationRun[]) => void;
+    shouldContinue?: () => boolean;
 }): Promise<{ nextCursor: string | null }> {
+    const shouldContinue = params.shouldContinue ?? (() => true);
     if (!params.credentials) {
         return { nextCursor: null };
     }
+    if (!shouldContinue()) return { nextCursor: null };
 
     const { serverId } = getActiveServerSnapshot();
     const automationsEnabled = await isRuntimeFeatureEnabled({
@@ -74,12 +84,14 @@ export async function fetchAndApplyAutomationRuns(params: {
     if (!automationsEnabled) {
         return { nextCursor: null };
     }
+    if (!shouldContinue()) return { nextCursor: null };
 
     const result = await listAutomationRuns({
         credentials: params.credentials,
         automationId: params.automationId,
         limit: params.limit,
     });
+    if (!shouldContinue()) return { nextCursor: null };
     params.setAutomationRuns(params.automationId, result.runs);
     return { nextCursor: result.nextCursor };
 }

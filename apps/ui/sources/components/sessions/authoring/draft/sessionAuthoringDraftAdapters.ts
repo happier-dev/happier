@@ -81,6 +81,7 @@ function buildExistingSessionAuthoringDraftFromSnapshotData(params: Readonly<{
         terminal: params.snapshot.terminal,
         windowsRemoteSessionLaunchMode: null,
         windowsRemoteSessionConsole: null,
+        windowsTerminalWindowName: null,
         experimentalCodexAcp: null,
         codexBackendMode: params.snapshot.codexBackendMode,
         acpSessionModeId: null,
@@ -118,6 +119,7 @@ export function mergeExistingSessionAuthoringDraftInheritedFields(
         terminal: current.terminal ?? fallback.terminal,
         windowsRemoteSessionLaunchMode: current.windowsRemoteSessionLaunchMode ?? fallback.windowsRemoteSessionLaunchMode,
         windowsRemoteSessionConsole: current.windowsRemoteSessionConsole ?? fallback.windowsRemoteSessionConsole,
+        windowsTerminalWindowName: current.windowsTerminalWindowName ?? fallback.windowsTerminalWindowName,
         experimentalCodexAcp: null,
         codexBackendMode: current.codexBackendMode ?? fallback.codexBackendMode,
         acpSessionModeId: current.acpSessionModeId ?? fallback.acpSessionModeId,
@@ -248,9 +250,10 @@ function resolveConnectedServicesFromAgentOptionState(params: Readonly<{
 
 type NewSessionAuthoringDraftParams = Omit<
     SessionAuthoringDraft,
-    'targetType' | 'existingSessionId' | 'sessionEncryptionMode' | 'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant' | 'experimentalCodexAcp'
+    'targetType' | 'existingSessionId' | 'sessionEncryptionMode' | 'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant' | 'experimentalCodexAcp' | 'windowsTerminalWindowName'
 > & Readonly<{
     experimentalCodexAcp?: boolean | null;
+    windowsTerminalWindowName?: SessionAuthoringDraft['windowsTerminalWindowName'];
 }>;
 
 export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftParams): SessionAuthoringDraft {
@@ -280,6 +283,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         terminal: params.terminal ?? null,
         windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: params.windowsRemoteSessionConsole ?? null,
+        windowsTerminalWindowName: normalizeOptionalString(params.windowsTerminalWindowName),
         experimentalCodexAcp: null,
         codexBackendMode,
         acpSessionModeId: normalizeOptionalString(params.acpSessionModeId),
@@ -312,6 +316,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     terminal?: SessionAuthoringDraft['terminal'];
     windowsRemoteSessionLaunchMode?: SessionAuthoringDraft['windowsRemoteSessionLaunchMode'];
     windowsRemoteSessionConsole?: SessionAuthoringDraft['windowsRemoteSessionConsole'];
+    windowsTerminalWindowName?: SessionAuthoringDraft['windowsTerminalWindowName'];
     experimentalCodexAcp?: boolean | null;
     codexBackendMode?: SessionAuthoringDraft['codexBackendMode'];
     acpSessionModeId?: SessionAuthoringDraft['acpSessionModeId'];
@@ -342,6 +347,7 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         terminal: params.terminal ?? null,
         windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: params.windowsRemoteSessionConsole ?? null,
+        windowsTerminalWindowName: params.windowsTerminalWindowName ?? null,
         experimentalCodexAcp: params.experimentalCodexAcp ?? null,
         codexBackendMode: params.codexBackendMode ?? null,
         acpSessionModeId: params.acpSessionModeId ?? null,
@@ -411,6 +417,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         terminal: null,
         windowsRemoteSessionLaunchMode: null,
         windowsRemoteSessionConsole: null,
+        windowsTerminalWindowName: null,
         experimentalCodexAcp: null,
         codexBackendMode: normalizeCodexBackendMode(source.source.codexBackendMode),
         acpSessionModeId: source.source.acpSessionModeId ?? null,
@@ -533,6 +540,7 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
         terminal: normalizeSessionAuthoringTerminal(params.template.terminal),
         windowsRemoteSessionLaunchMode: params.template.windowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: params.template.windowsRemoteSessionConsole ?? null,
+        windowsTerminalWindowName: normalizeOptionalString(params.template.windowsTerminalWindowName),
         experimentalCodexAcp: null,
         codexBackendMode,
         acpSessionModeId: normalizeOptionalString(params.template.agentModeId),
@@ -644,6 +652,7 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
         ...(draft.terminal !== undefined && draft.terminal !== null ? { terminal: draft.terminal } : {}),
         ...(draft.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: draft.windowsRemoteSessionLaunchMode } : {}),
         ...(draft.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: draft.windowsRemoteSessionConsole } : {}),
+        ...(normalizeOptionalString(draft.windowsTerminalWindowName) ? { windowsTerminalWindowName: draft.windowsTerminalWindowName!.trim() } : {}),
         ...(codexBackendMode ? { codexBackendMode } : {}),
         ...(normalizeOptionalString(draft.acpSessionModeId) ? { agentModeId: draft.acpSessionModeId!.trim() } : {}),
         ...(draft.targetType === 'existing_session' && normalizeOptionalString(draft.existingSessionId)
@@ -716,6 +725,9 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
             : {}),
         ...(params.draft.windowsRemoteSessionConsole
             ? { windowsRemoteSessionConsole: params.draft.windowsRemoteSessionConsole }
+            : {}),
+        ...(normalizeOptionalString(params.draft.windowsTerminalWindowName)
+            ? { windowsTerminalWindowName: params.draft.windowsTerminalWindowName!.trim() }
             : {}),
         ...(params.draft.connectedServices !== undefined && params.draft.connectedServices !== null
             ? { connectedServices: params.draft.connectedServices }

@@ -1,8 +1,18 @@
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
 import {
+    DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_SIZE_PX,
+    DESKTOP_SIDEBAR_CHROME_BRAND_ROW_MIN_HEIGHT_PX,
     DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
     DESKTOP_SIDEBAR_CHROME_HORIZONTAL_PADDING_PX,
+    DESKTOP_SIDEBAR_CHROME_ROW_GAP_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_ICON_GAP_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_OPACITY,
+    DESKTOP_SIDEBAR_CHROME_TOP_PADDING_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_BUTTON_SIZE_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_OPACITY,
+    DESKTOP_SIDEBAR_CHROME_WINDOW_CONTROLS_GAP_PX,
     DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX,
     DESKTOP_WINDOW_CONTROLS_SLOT_MIN_WIDTH_PX,
 } from './desktopChromeMetrics';
@@ -12,29 +22,46 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         flexDirection: 'column',
         alignItems: 'stretch',
         paddingHorizontal: DESKTOP_SIDEBAR_CHROME_HORIZONTAL_PADDING_PX,
-        paddingTop: DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
-        paddingBottom: DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
+        paddingTop: DESKTOP_SIDEBAR_CHROME_TOP_PADDING_PX,
+        paddingBottom: DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX / 2,
         backgroundColor: theme.colors.groupped.background,
         position: 'relative',
         zIndex: 100,
         overflow: 'visible',
-        gap: DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
+        gap: DESKTOP_SIDEBAR_CHROME_ROW_GAP_PX,
     },
     windowControlsRow: {
         minHeight: DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX,
-        alignItems: 'flex-start',
-        justifyContent: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        gap: DESKTOP_SIDEBAR_CHROME_WINDOW_CONTROLS_GAP_PX,
+        position: 'relative',
+        width: '100%',
+    },
+    utilityRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: DESKTOP_SIDEBAR_CHROME_TOP_ICON_GAP_PX,
+        marginLeft: 'auto',
+        position: 'relative',
+        zIndex: 1,
     },
     windowControlsHost: {
         flexShrink: 0,
         minWidth: DESKTOP_WINDOW_CONTROLS_SLOT_MIN_WIDTH_PX,
         alignItems: 'flex-start',
         justifyContent: 'center',
+        position: 'relative',
+        zIndex: 1,
     },
     contentRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
+    },
+    compactContentRow: {
+        minHeight: DESKTOP_SIDEBAR_CHROME_BRAND_ROW_MIN_HEIGHT_PX,
     },
     brandGroup: {
         flexGrow: 1,
@@ -44,6 +71,13 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
+    },
+    brandButton: {
+        width: 32,
+        minHeight: DESKTOP_SIDEBAR_CHROME_BRAND_ROW_MIN_HEIGHT_PX,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
     },
     updateIndicatorHost: {
         flexShrink: 0,
@@ -66,13 +100,6 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         ...StyleSheet.absoluteFillObject,
         borderRadius: DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX / 2,
     },
-    logoContainer: {
-        width: 32,
-    },
-    logo: {
-        height: 24,
-        width: 24,
-    },
     titleContainerLeft: {
         flexGrow: 1,
         flexShrink: 1,
@@ -83,11 +110,6 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         overflow: 'visible',
     },
-    titleText: {
-        fontSize: 16,
-        color: theme.colors.header.tint,
-        ...Typography.default('semiBold'),
-    },
     titleRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -95,6 +117,17 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
         maxWidth: '100%',
+    },
+    brandLogo: {
+        width: DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_SIZE_PX,
+        height: DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_SIZE_PX,
+    },
+    titleText: {
+        flexShrink: 1,
+        fontSize: 18,
+        lineHeight: 24,
+        color: theme.colors.header.tint,
+        ...Typography.default('semiBold'),
     },
     statusControlWrapper: {
         alignSelf: 'stretch',
@@ -120,6 +153,7 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
     },
     rightContainer: {
         flexShrink: 0,
+        marginLeft: 'auto',
         alignItems: 'center',
         flexDirection: 'row',
         gap: 4,
@@ -129,6 +163,29 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         height: 32,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    trailingIconButton: {
+        width: 24,
+        height: 32,
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+    },
+    topIconButton: {
+        width: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX,
+        height: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_OPACITY,
+    },
+    topSettingsIconButton: {
+        width: DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_BUTTON_SIZE_PX,
+        height: DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_BUTTON_SIZE_PX,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_OPACITY,
+    },
+    leftSidebarCollapseIcon: {
+        transform: [{ scaleX: -1 }],
     },
     notificationButton: {
         position: 'relative',

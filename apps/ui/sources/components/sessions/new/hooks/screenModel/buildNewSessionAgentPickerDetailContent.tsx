@@ -5,7 +5,9 @@ import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
+import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { FavoriteModelTogglePayload } from './newSessionFavoriteModelsPickerOption';
 
 export type NewSessionAgentPickerSelection = Readonly<{
     modelId: string;
@@ -21,6 +23,8 @@ export function buildNewSessionAgentPickerDetailContent(params: Readonly<{
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
     selection: NewSessionAgentPickerSelection;
+    favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
+    onToggleFavoriteModel?: (model: FavoriteModelTogglePayload) => void;
     onSelectionChange: (selection: NewSessionAgentPickerSelection) => void;
 }>): React.ReactElement {
     const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
@@ -39,6 +43,8 @@ export function buildNewSessionAgentPickerDetailContent(params: Readonly<{
             selectedModelId={params.selection.modelId}
             selectedSessionModeId={params.selection.sessionModeId}
             selectedConfigOverrides={params.selection.configOverrides}
+            favoriteModelSelections={params.favoriteModelSelections ?? []}
+            onToggleFavoriteModel={params.onToggleFavoriteModel}
             onSelectionChange={params.onSelectionChange}
         />
     );

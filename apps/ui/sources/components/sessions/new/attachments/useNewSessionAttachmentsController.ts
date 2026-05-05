@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { createReviewCommentsToggleActionChip } from '@/components/sessions/agentInput/definitions/createReviewCommentsToggleActionChip';
+import { createReviewCommentsActionChip } from '@/components/sessions/agentInput/definitions/createReviewCommentsActionChip';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
@@ -15,14 +15,19 @@ import { blurActiveElementOnWeb, deferOnWeb } from '@/utils/platform/deferOnWeb'
 import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import type { CreatedSessionFollowUpContext } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { buildReviewCommentsOutboundMessage } from '@/sync/domains/input/reviewComments/buildReviewCommentsOutboundMessage';
+import {
+    filterReviewCommentDraftsIncludedInPrompt,
+} from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
+import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
-import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 import {
     clearNewSessionAttachmentDrafts,
     readNewSessionAttachmentDrafts,
     writeNewSessionAttachmentDrafts,
 } from './newSessionAttachmentDraftStore';
+import { resolveNewSessionReviewCommentsScope } from './resolveNewSessionReviewCommentsScope';
 
 type HandleCreateSession = (
     opts?: Readonly<{
@@ -39,6 +44,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     selectedProfileId: string | null;
     targetServerId?: string | null;
     selectedMachineId?: string | null;
+    selectedMachineHomeDir?: string | null;
     selectedPath?: string | null;
     baseActionChips?: readonly AgentInputExtraActionChip[];
 }>): Readonly<{
@@ -79,35 +85,22 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         clearDrafts,
         getDraftsSnapshot,
     } = attachmentDraftManager;
-    const normalizedSelectedMachineId = React.useMemo(() => String(params.selectedMachineId ?? '').trim(), [params.selectedMachineId]);
-    const normalizedSelectedPath = React.useMemo(() => String(params.selectedPath ?? '').trim(), [params.selectedPath]);
-    const normalizedTargetServerId = React.useMemo(() => String(params.targetServerId ?? '').trim(), [params.targetServerId]);
     const discoverableReviewCommentsScope = React.useMemo<WorkspaceScopeBase | null>(() => {
-        if (normalizedTargetServerId.length === 0 || normalizedSelectedMachineId.length === 0 || normalizedSelectedPath.length === 0) {
-            return null;
-        }
-        return {
-            serverId: normalizedTargetServerId,
-            machineId: normalizedSelectedMachineId,
-            rootPath: normalizedSelectedPath,
-        };
-    }, [normalizedSelectedMachineId, normalizedSelectedPath, normalizedTargetServerId]);
+        return resolveNewSessionReviewCommentsScope({
+            targetServerId: params.targetServerId,
+            selectedMachineId: params.selectedMachineId,
+            selectedMachineHomeDir: params.selectedMachineHomeDir,
+            selectedPath: params.selectedPath,
+        });
+    }, [params.selectedMachineHomeDir, params.selectedMachineId, params.selectedPath, params.targetServerId]);
     const discoverableReviewCommentDrafts = useWorkspaceReviewCommentsDrafts(discoverableReviewCommentsScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(discoverableReviewCommentsScope);
-    const discoverableReviewCommentsScopeKey = React.useMemo(() => {
-        if (!discoverableReviewCommentsScope) return null;
-        try {
-            return buildWorkspaceCacheKey(discoverableReviewCommentsScope);
-        } catch {
-            return null;
-        }
-    }, [discoverableReviewCommentsScope]);
-    const [disabledReviewCommentsScopeKey, setDisabledReviewCommentsScopeKey] = React.useState<string | null>(null);
     const hasDiscoverableReviewCommentDrafts = reviewCommentsFeatureEnabled && discoverableReviewCommentDrafts.length > 0;
-    const reviewCommentsEnabledForCurrentPath = hasDiscoverableReviewCommentDrafts
-        && discoverableReviewCommentsScopeKey !== disabledReviewCommentsScopeKey;
-    const reviewCommentDrafts = reviewCommentsEnabledForCurrentPath ? discoverableReviewCommentDrafts : [];
-    const hasReviewCommentDrafts = reviewCommentDrafts.length > 0;
+    const includedReviewCommentDrafts = React.useMemo(
+        () => filterReviewCommentDraftsIncludedInPrompt(discoverableReviewCommentDrafts),
+        [discoverableReviewCommentDrafts],
+    );
+    const hasReviewCommentDrafts = hasDiscoverableReviewCommentDrafts && includedReviewCommentDrafts.length > 0;
 
     React.useEffect(() => {
         if (!normalizedFlowId) return;
@@ -125,18 +118,32 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         }
     }, [clearDrafts, normalizedFlowId]);
 
-    const clearReviewCommentsForFlow = React.useCallback(() => {
-        reviewDraftHandlers.clearReviewCommentDrafts();
+    const setReviewCommentDraftIncluded = React.useCallback((draftId: string, included: boolean) => {
+        const draft = discoverableReviewCommentDrafts.find((candidate) => candidate.id === draftId);
+        if (!draft) return;
+        reviewDraftHandlers.onUpsertReviewCommentDraft({
+            ...draft,
+            includeInPrompt: included,
+        });
+    }, [discoverableReviewCommentDrafts, reviewDraftHandlers]);
+
+    const updateReviewCommentDraft = React.useCallback((draft: ReviewCommentDraft) => {
+        reviewDraftHandlers.onUpsertReviewCommentDraft(draft);
     }, [reviewDraftHandlers]);
 
-    const toggleReviewCommentsForCurrentPath = React.useCallback(() => {
-        if (!discoverableReviewCommentsScopeKey) return;
-        setDisabledReviewCommentsScopeKey((current) => (
-            current === discoverableReviewCommentsScopeKey
-                ? null
-                : discoverableReviewCommentsScopeKey
-        ));
-    }, [discoverableReviewCommentsScopeKey]);
+    const deleteReviewCommentDraft = React.useCallback((draftId: string) => {
+        reviewDraftHandlers.onDeleteReviewCommentDraft(draftId);
+    }, [reviewDraftHandlers]);
+
+    const clearReviewCommentsForFlow = React.useCallback(() => {
+        for (const draft of includedReviewCommentDrafts) {
+            reviewDraftHandlers.onDeleteReviewCommentDraft(draft.id);
+        }
+    }, [includedReviewCommentDrafts, reviewDraftHandlers]);
+
+    const discardReviewCommentDrafts = React.useCallback(() => {
+        reviewDraftHandlers.clearReviewCommentDrafts();
+    }, [reviewDraftHandlers]);
 
     const extraActionChips = React.useMemo(() => {
         const chips: AgentInputExtraActionChip[] = [];
@@ -150,10 +157,12 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         }
 
         if (hasDiscoverableReviewCommentDrafts) {
-            const reviewCommentsChip = createReviewCommentsToggleActionChip({
+            const reviewCommentsChip = createReviewCommentsActionChip({
                 reviewCommentDrafts: discoverableReviewCommentDrafts,
-                enabled: reviewCommentsEnabledForCurrentPath,
-                onToggle: toggleReviewCommentsForCurrentPath,
+                onSetDraftIncluded: setReviewCommentDraftIncluded,
+                onUpdateDraft: updateReviewCommentDraft,
+                onDeleteDraft: deleteReviewCommentDraft,
+                onClearDrafts: discardReviewCommentDrafts,
             });
             if (reviewCommentsChip) {
                 chips.push(reviewCommentsChip);
@@ -168,8 +177,10 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         hasDiscoverableReviewCommentDrafts,
         params.baseActionChips,
         params.isCreating,
-        reviewCommentsEnabledForCurrentPath,
-        toggleReviewCommentsForCurrentPath,
+        setReviewCommentDraftIncluded,
+        updateReviewCommentDraft,
+        deleteReviewCommentDraft,
+        discardReviewCommentDrafts,
     ]);
 
     const handleSend = React.useCallback(() => {
@@ -221,11 +232,12 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                 const outbound = hasReviewCommentDrafts
                     ? buildReviewCommentsOutboundMessage({
                         sessionId,
-                        drafts: reviewCommentDrafts,
+                        drafts: discoverableReviewCommentDrafts,
                         additionalMessage: attachmentsBlock
                             ? (trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock)
                             : trimmed,
                         displayTextSuffix: attachmentsBlock || null,
+                        metaOverrides: attachmentsMetaOverrides,
                     })
                     : {
                         text: trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock,
@@ -275,7 +287,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         params.selectedProfileId,
         params.sessionPrompt,
         params.targetServerId,
-        reviewCommentDrafts,
+        discoverableReviewCommentDrafts,
     ]);
 
     return {

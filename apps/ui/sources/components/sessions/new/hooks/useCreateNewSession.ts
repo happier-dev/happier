@@ -63,6 +63,37 @@ import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draf
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { readRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
 
+function getActiveNewSessionDraftScope() {
+    return storage.getState().profileScope ?? null;
+}
+
+function getActiveSessionLocalStateScope() {
+    return storage.getState().sessionLocalStateScope ?? storage.getState().profileScope ?? null;
+}
+
+function clearActiveNewSessionDraft(): void {
+    const scope = getActiveNewSessionDraftScope();
+    if (scope) {
+        clearNewSessionDraft(scope);
+        return;
+    }
+    clearNewSessionDraft();
+}
+
+function loadActiveSessionDrafts(): Record<string, string> {
+    const scope = getActiveSessionLocalStateScope();
+    return scope ? loadSessionDrafts(scope) : loadSessionDrafts();
+}
+
+function saveActiveSessionDrafts(drafts: Record<string, string>): void {
+    const scope = getActiveSessionLocalStateScope();
+    if (scope) {
+        saveSessionDrafts(drafts, scope);
+        return;
+    }
+    saveSessionDrafts(drafts);
+}
+
 type MutableSettingsDelta = {
     -readonly [TKey in keyof Settings]?: Settings[TKey];
 };
@@ -192,7 +223,12 @@ export function useCreateNewSession(params: Readonly<{
                 : snapshot.serverId;
             rollbackServerId = resolvedTargetServerId;
 
-            const updatedPaths = [{ machineId: current.selectedMachineId, path: effectiveSelectedPath }, ...current.recentMachinePaths.filter((rp) => rp.machineId !== current.selectedMachineId)].slice(0, 10);
+            const updatedPaths = [
+                { machineId: current.selectedMachineId, path: effectiveSelectedPath },
+                ...current.recentMachinePaths.filter((rp) => (
+                    rp.machineId !== current.selectedMachineId || rp.path !== effectiveSelectedPath
+                )),
+            ].slice(0, 10);
             const profilesActive = current.useProfiles;
             const canonicalAgentId = resolveNewSessionCompatAgentType({
                 backendTarget: current.backendTarget ?? null,
@@ -342,6 +378,9 @@ export function useCreateNewSession(params: Readonly<{
                 settings: current.settings,
                 sessionOverride: current.windowsRemoteSessionLaunchModeOverride ?? undefined,
             }).mode;
+            const windowsTerminalWindowName = typeof current.settings.sessionWindowsTerminalWindowName === 'string'
+                ? current.settings.sessionWindowsTerminalWindowName.trim()
+                : '';
             const normalizedSessionPrompt = current.sessionPrompt.trim();
             const spawnSessionExtras = buildSpawnSessionExtrasFromUiState({
                 agentId: canonicalAgentId,
@@ -368,6 +407,7 @@ export function useCreateNewSession(params: Readonly<{
                 terminal: terminal ?? null,
                 windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode ?? null,
                 windowsRemoteSessionConsole: null,
+                windowsTerminalWindowName: windowsTerminalWindowName || null,
                 codexBackendMode: typeof spawnSessionExtras.codexBackendMode === 'string'
                     ? spawnSessionExtras.codexBackendMode as CodexBackendMode
                     : null,
@@ -408,7 +448,7 @@ export function useCreateNewSession(params: Readonly<{
                 if (automationEditId.length > 0) {
                     await sync.updateAutomation(automationEditId, normalizedAutomationInput);
                     current.disableDraftPersistence?.();
-                    clearNewSessionDraft();
+                    clearActiveNewSessionDraft();
                     await sync.refreshAutomations();
                     current.router.replace(`/automations/${automationEditId}` as any);
                     return;
@@ -420,7 +460,7 @@ export function useCreateNewSession(params: Readonly<{
                     assignments: [{ machineId: current.selectedMachineId, enabled: true, priority: 100 }],
                 });
                 current.disableDraftPersistence?.();
-                clearNewSessionDraft();
+                clearActiveNewSessionDraft();
                 await sync.refreshAutomations();
                 current.router.replace('/automations' as any);
                 return;
@@ -552,8 +592,8 @@ export function useCreateNewSession(params: Readonly<{
                         return;
                     }
 
-                    saveSessionDrafts({
-                        ...loadSessionDrafts(),
+                    saveActiveSessionDrafts({
+                        ...loadActiveSessionDrafts(),
                         [createdSessionId]: normalizedDraft,
                     });
                 };
@@ -680,7 +720,7 @@ export function useCreateNewSession(params: Readonly<{
 
                     if (createdSessionHydrated) {
                         current.disableDraftPersistence?.();
-                        clearNewSessionDraft();
+                        clearActiveNewSessionDraft();
                     }
 
                     Modal.alert(
@@ -694,7 +734,7 @@ export function useCreateNewSession(params: Readonly<{
                     }
                 } else {
                     current.disableDraftPersistence?.();
-                    clearNewSessionDraft();
+                    clearActiveNewSessionDraft();
                 }
 
                 const recoveryDataId = postSpawnFollowUpError ? buildRecoveryDataIdFromError(postSpawnFollowUpError) : null;

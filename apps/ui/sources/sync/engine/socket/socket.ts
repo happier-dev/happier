@@ -4,6 +4,7 @@ import type { NormalizedMessage } from '@/sync/typesRaw';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
@@ -15,8 +16,14 @@ import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/rep
 import { deriveNewAgentRequests } from '@/sync/domains/permissions/deriveNewAgentRequests';
 import { notifyActivityAgentRequest } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
+import {
+    createSessionApplyCoalescer,
+    type SessionApplyCoalescerSession,
+} from '@/sync/engine/sessions/sessionApplyCoalescer';
 import { createSessionMessageApplyCoalescer } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import {
     buildUpdatedSessionListRenderablePatchFromSocketUpdate,
     buildUpdatedSessionFromSocketUpdate,
@@ -61,6 +68,58 @@ type SocketMessageApplyHandlers = Readonly<{
 }>;
 
 let socketMessageApplyHandlers: SocketMessageApplyHandlers | null = null;
+let socketSessionApplyHandlers: { applySessions: ApplySessions } | null = null;
+const socketSessionApplyTuning = loadSyncTuning();
+
+const socketSessionApplyCoalescer = createSessionApplyCoalescer({
+    getConfig: () => ({
+        enabled: socketSessionApplyTuning.sessionSocketApplyCoalescingEnabled,
+        windowMs: socketSessionApplyTuning.sessionSocketApplyCoalescingWindowMs,
+        maxBatchSize: socketSessionApplyTuning.sessionSocketApplyCoalescingMaxBatchSize,
+    }),
+    applyBatch: (sessions) => {
+        socketSessionApplyHandlers?.applySessions(sessions);
+    },
+});
+
+function setSocketSessionApplyHandler(applySessions: ApplySessions): void {
+    if (socketSessionApplyHandlers && socketSessionApplyHandlers.applySessions !== applySessions) {
+        socketSessionApplyCoalescer.flushAll();
+    }
+    socketSessionApplyHandlers = { applySessions };
+}
+
+function normalizeSocketSession(session: SessionApplyCoalescerSession): Session {
+    return {
+        ...session,
+        presence: session.presence ?? 'online',
+    };
+}
+
+function getSocketSessionApplyBase(sessionId: string): Session | undefined {
+    const queued = socketSessionApplyCoalescer.getQueuedSession(sessionId);
+    if (queued) return normalizeSocketSession(queued);
+    return storage.getState().sessions[sessionId];
+}
+
+function enqueueSocketSessionApplyGuarded(
+    applySessions: ApplySessions,
+    sessions: SessionApplyCoalescerSession[],
+    shouldContinue: () => boolean,
+): void {
+    setSocketSessionApplyHandler(applySessions);
+    socketSessionApplyCoalescer.enqueue(sessions, { shouldContinue });
+}
+
+function flushQueuedSocketSessionApplies(applySessions: ApplySessions, sessionIds: readonly string[]): void {
+    setSocketSessionApplyHandler(applySessions);
+    socketSessionApplyCoalescer.flushSessionIds(sessionIds);
+}
+
+function applySessionsAfterFlushingQueued(applySessions: ApplySessions, sessions: SessionApplyCoalescerSession[]): void {
+    flushQueuedSocketSessionApplies(applySessions, sessions.map((session) => session.id));
+    applySessions(sessions);
+}
 
 const socketMessageApplyCoalescer = createSessionMessageApplyCoalescer({
     getConfig: () => {
@@ -103,6 +162,9 @@ const socketMessageApplyCoalescer = createSessionMessageApplyCoalescer({
 export async function handleSocketUpdate(params: {
     update: unknown;
     encryption: Encryption;
+    settingsScope?: AccountSettingsScope | null;
+    sourceServerId?: string | null;
+    shouldContinue?: () => boolean;
     artifactDataKeys: Map<string, Uint8Array>;
     applySessions: ApplySessions;
     fetchSessions: () => void;
@@ -129,6 +191,9 @@ export async function handleSocketUpdate(params: {
     const {
         update,
         encryption,
+        settingsScope,
+        sourceServerId,
+        shouldContinue = () => true,
         artifactDataKeys,
         applySessions,
         fetchSessions,
@@ -155,10 +220,14 @@ export async function handleSocketUpdate(params: {
 
     const updateData = parseUpdateContainer(update);
     if (!updateData) return;
+    if (!shouldContinue()) return;
 
     await handleUpdateContainer({
         updateData,
         encryption,
+        settingsScope,
+        sourceServerId,
+        shouldContinue,
         artifactDataKeys,
         applySessions,
         fetchSessions,
@@ -187,6 +256,9 @@ export async function handleSocketUpdate(params: {
 export async function handleUpdateContainer(params: {
     updateData: ApiUpdateContainer;
     encryption: Encryption;
+    settingsScope?: AccountSettingsScope | null;
+    sourceServerId?: string | null;
+    shouldContinue?: () => boolean;
     artifactDataKeys: Map<string, Uint8Array>;
     applySessions: ApplySessions;
     fetchSessions: () => void;
@@ -213,6 +285,9 @@ export async function handleUpdateContainer(params: {
     const {
         updateData,
         encryption,
+        settingsScope,
+        sourceServerId,
+        shouldContinue = () => true,
         artifactDataKeys,
         applySessions,
         fetchSessions,
@@ -237,6 +312,8 @@ export async function handleUpdateContainer(params: {
         log,
     } = params;
 
+    if (!shouldContinue()) return;
+
     if (updateData.body.t === 'new-message') {
         const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
             Math.max(
@@ -252,18 +329,35 @@ export async function handleUpdateContainer(params: {
         await handleNewMessageSocketUpdate({
             updateData,
             getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
-            getSession: (sessionId) => storage.getState().sessions[sessionId],
-            applySessions: (sessions) => applySessions(sessions),
-            fetchSessions,
-            applyMessages,
-            enqueueMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages),
+            getSession: getSocketSessionApplyBase,
+            applySessions: (sessions) => {
+                if (!shouldContinue()) return;
+                applySessionsAfterFlushingQueued(applySessions, sessions);
+            },
+            fetchSessions: () => {
+                if (!shouldContinue()) return;
+                fetchSessions();
+            },
+            applyMessages: (sessionId, messages) => {
+                if (!shouldContinue()) return;
+                applyMessages(sessionId, messages);
+            },
+            enqueueMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages, {
+                deferLeadingBatch: !isSessionSurfaceVisible(sessionId),
+                shouldContinue,
+            }),
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
             isSessionMessagesLoaded,
             getSessionMaterializedMaxSeq: getSessionMaterializedMaxSeqForGapDetection,
             markSessionMaterializedMaxSeq,
             onMessageGapDetected,
-            onTaskLifecycleEvent,
+            onTaskLifecycleEvent: onTaskLifecycleEvent
+                ? (sessionId, event) => {
+                    if (!shouldContinue()) return;
+                    onTaskLifecycleEvent(sessionId, event);
+                }
+                : undefined,
         });
     } else if (updateData.body.t === 'message-updated') {
         const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
@@ -277,10 +371,19 @@ export async function handleUpdateContainer(params: {
         await handleMessageUpdatedSocketUpdate({
             updateData,
             getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
-            getSession: (sessionId) => storage.getState().sessions[sessionId],
-            applySessions: (sessions) => applySessions(sessions),
-            fetchSessions,
-            applyMessages,
+            getSession: getSocketSessionApplyBase,
+            applySessions: (sessions) => {
+                if (!shouldContinue()) return;
+                applySessionsAfterFlushingQueued(applySessions, sessions);
+            },
+            fetchSessions: () => {
+                if (!shouldContinue()) return;
+                fetchSessions();
+            },
+            applyMessages: (sessionId, messages) => {
+                if (!shouldContinue()) return;
+                applyMessages(sessionId, messages);
+            },
             onNormalizedMessagesApplied: ingestWorkspaceMutationMessages,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
@@ -288,13 +391,21 @@ export async function handleUpdateContainer(params: {
             getSessionMaterializedMaxSeq: getSessionMaterializedMaxSeqForGapDetection,
             markSessionMaterializedMaxSeq,
             onMessageGapDetected,
-            onTaskLifecycleEvent,
+            onTaskLifecycleEvent: onTaskLifecycleEvent
+                ? (sessionId, event) => {
+                    if (!shouldContinue()) return;
+                    onTaskLifecycleEvent(sessionId, event);
+                }
+                : undefined,
         });
     } else if (updateData.body.t === 'new-session') {
         log.log('🆕 New session update received');
+        if (!shouldContinue()) return;
         invalidateSessions();
     } else if (updateData.body.t === 'delete-session') {
         log.log('🗑️ Delete session update received');
+        socketSessionApplyCoalescer.dropSessionIds([updateData.body.sid]);
+        socketMessageApplyCoalescer.dropSessionIds([updateData.body.sid]);
         handleDeleteSessionSocketUpdate({
             sessionId: updateData.body.sid,
             deleteSession: (sessionId) => storage.getState().deleteSession(sessionId),
@@ -306,7 +417,7 @@ export async function handleUpdateContainer(params: {
     } else if (updateData.body.t === 'pending-changed') {
         const sessionId = updateData.body.sid;
         const state = storage.getState();
-        const session = state.sessions[sessionId];
+        const session = getSocketSessionApplyBase(sessionId);
         if (!session) {
             const cachedRenderable = state.sessionListRenderables[sessionId];
             if (cachedRenderable) {
@@ -323,21 +434,23 @@ export async function handleUpdateContainer(params: {
             }
 
             // If we don't have the session locally yet, sessions sync will pick it up later.
+            if (!shouldContinue()) return;
             invalidateSessions();
             return;
         }
 
-        applySessions([{
+        enqueueSocketSessionApplyGuarded(applySessions, [{
             ...session,
             pendingCount: updateData.body.pendingCount,
             pendingVersion: updateData.body.pendingVersion,
-        }]);
+        }], shouldContinue);
     } else if (updateData.body.t === 'update-session') {
         const state = storage.getState();
-        const session = state.sessions[updateData.body.id];
+        const session = getSocketSessionApplyBase(updateData.body.id);
         if (!session) {
             const cachedRenderable = state.sessionListRenderables[updateData.body.id];
             if (!cachedRenderable) {
+                if (!shouldContinue()) return;
                 invalidateSessions();
                 return;
             }
@@ -349,6 +462,7 @@ export async function handleUpdateContainer(params: {
                 updateCreatedAt: updateData.createdAt,
                 sessionEncryption: encryption.getSessionEncryption(updateData.body.id),
             });
+            if (!shouldContinue()) return;
             storage.getState().applySessionListRenderablePatches([
                 { sessionId: updateData.body.id, patch: renderablePatch },
             ]);
@@ -372,7 +486,8 @@ export async function handleUpdateContainer(params: {
             sessionEncryption,
         });
 
-        applySessions([nextSession]);
+        if (!shouldContinue()) return;
+        enqueueSocketSessionApplyGuarded(applySessions, [nextSession], shouldContinue);
 
         // Agent state updates can be very frequent and are not a reliable proxy for SCM changes.
         // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
@@ -400,6 +515,7 @@ export async function handleUpdateContainer(params: {
             const isNowControlledByUser = agentState?.controlledByUser;
             if (didControlReturnToMobile(wasControlledByUser, isNowControlledByUser)) {
                 log.log(`🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);
+                if (!shouldContinue()) return;
                 onSessionVisible(updateData.body.id);
             }
         }
@@ -412,8 +528,21 @@ export async function handleUpdateContainer(params: {
             updateCreatedAt: updateData.createdAt,
             currentProfile,
             encryption,
-            applyProfile: (profile) => storage.getState().applyProfile(profile),
-            applySettings: (settings, version) => storage.getState().applySettings(settings, version),
+            settingsScope,
+            applyProfile: (profile) => {
+                if (!shouldContinue()) return;
+                if (settingsScope) {
+                    storage.getState().applyProfileForScope(settingsScope, profile);
+                    return;
+                }
+                storage.getState().applyProfile(profile);
+            },
+            applySettings: (settings, version) => {
+                if (!shouldContinue()) return;
+                storage.getState().applySettings(settings, version);
+            },
+            applySettingsForScope: (scope, settings, version) =>
+                shouldContinue() ? storage.getState().applySettingsForScope(scope, settings, version) : undefined,
             getLocalSettings: () => storage.getState().settings,
             log,
         });
@@ -436,7 +565,9 @@ export async function handleUpdateContainer(params: {
                 console.error(`Failed to decrypt machine dataEncryptionKey for ${machineId}; falling back to legacy machine encryption.`, error);
             }
         }
+        if (!shouldContinue()) return;
         await encryption.initializeMachines(new Map([[machineId, decryptedDataKey]]));
+        if (!shouldContinue()) return;
 
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
         // even if machine-activity ephemerals arrive before a full machines refresh.
@@ -452,7 +583,7 @@ export async function handleUpdateContainer(params: {
             metadataVersion: machineUpdate.metadataVersion,
             daemonState: null,
             daemonStateVersion: machineUpdate.daemonStateVersion,
-        }]);
+        }], false, { sourceServerId });
 
         // Hydrate machine details + encryption keys via the existing machines sync pipeline.
         invalidateMachines();
@@ -472,10 +603,11 @@ export async function handleUpdateContainer(params: {
             invalidateMachines();
             return;
         }
+        if (!shouldContinue()) return;
 
         // Update storage via applyMachines, which may rebuild the active-server session list index if
         // the machine update affects project-group headers (but should stay stable for activity-only changes).
-        storage.getState().applyMachines([updatedMachine]);
+        storage.getState().applyMachines([updatedMachine], false, { sourceServerId });
         if (!encryption.getMachineEncryption(machineId)) {
             invalidateMachines();
         }
@@ -639,15 +771,18 @@ export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeral
     }
 
     if (sessions.length > 0) {
-        applySessions(sessions);
+        applySessionsAfterFlushingQueued(applySessions, sessions);
     }
 }
 
 export function flushMachineActivityUpdates(params: {
     updates: Map<string, MachineActivityUpdate>;
-    applyMachines: (machines: Machine[]) => void;
+    applyMachines: (machines: Machine[], options?: { sourceServerId?: string | null }) => void;
+    sourceServerId?: string | null;
+    shouldContinue?: () => boolean;
 }): void {
-    const { updates, applyMachines } = params;
+    const { updates, applyMachines, sourceServerId, shouldContinue = () => true } = params;
+    if (!shouldContinue()) return;
     const machines: Machine[] = [];
 
     for (const [, updateData] of updates) {
@@ -669,12 +804,14 @@ export function flushMachineActivityUpdates(params: {
     }
 
     if (machines.length > 0) {
-        applyMachines(machines);
+        if (!shouldContinue()) return;
+        applyMachines(machines, { sourceServerId });
     }
 }
 
 export function handleEphemeralSocketUpdate(params: {
     update: unknown;
+    shouldContinue?: () => boolean;
     addActivityUpdate: (update: ApiEphemeralActivityUpdate) => void;
     addMachineActivityUpdate: (update: MachineActivityUpdate) => void;
     getSessionEncryption: Encryption['getSessionEncryption'];
@@ -684,6 +821,7 @@ export function handleEphemeralSocketUpdate(params: {
 }): Promise<void> {
     const {
         update,
+        shouldContinue = () => true,
         addActivityUpdate,
         addMachineActivityUpdate,
         getSessionEncryption,
@@ -694,23 +832,41 @@ export function handleEphemeralSocketUpdate(params: {
 
     const updateData = parseEphemeralUpdate(update);
     if (!updateData) return Promise.resolve();
+    if (!shouldContinue()) return Promise.resolve();
 
     // Process activity updates through smart debounce accumulator
     if (updateData.type === 'activity') {
+        if (!shouldContinue()) return Promise.resolve();
         addActivityUpdate(updateData);
     } else if (updateData.type === 'machine-activity') {
         // Handle machine activity updates through batching accumulator
+        if (!shouldContinue()) return Promise.resolve();
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
     } else if (updateData.type === 'execution-run-updated') {
+        if (!shouldContinue()) return Promise.resolve();
         notifyExecutionRunActivity(updateData.sessionId);
     } else if (updateData.type === 'direct-session-transcript-delta') {
+        if (!shouldContinue()) return Promise.resolve();
         return Promise.resolve(updateDirectSessionTranscript?.(updateData as DirectSessionTranscriptUpdatedEphemeralUpdate));
     } else if (updateData.type === 'transcript-stream-segment') {
+        const currentApplyHandlers = socketMessageApplyHandlers;
+        socketMessageApplyHandlers = {
+            applyMessages,
+            ...(currentApplyHandlers?.onNormalizedMessagesApplied
+                ? { onNormalizedMessagesApplied: currentApplyHandlers.onNormalizedMessagesApplied }
+                : {}),
+            ...(currentApplyHandlers?.markSessionMaterializedMaxSeq
+                ? { markSessionMaterializedMaxSeq: currentApplyHandlers.markSessionMaterializedMaxSeq }
+                : {}),
+        };
         return handleTranscriptStreamSegmentEphemeralUpdate({
             update: updateData,
             getSessionEncryption,
             getSession,
-            applyMessages,
+            applyMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages, {
+                deferLeadingBatch: !isSessionSurfaceVisible(sessionId),
+                shouldContinue,
+            }),
         });
     }
 

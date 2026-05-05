@@ -631,6 +631,12 @@ export const Item = React.memo<ItemProps>((props) => {
 
     const interactiveAccessibilityRole = isWeb ? undefined : (accessibilityRole ?? 'button');
     const interactiveTabIndex = isWeb && !disabled && !loading ? 0 : undefined;
+    const interactiveAccessibilityState = (selected !== undefined || disabled || loading)
+        ? {
+            ...(selected !== undefined ? { selected } : {}),
+            ...(disabled || loading ? { disabled: true } : {}),
+        }
+        : undefined;
     const webDisabledProps = isWeb && (disabled || loading)
         ? ({
             'data-disabled': 'true',
@@ -669,6 +675,8 @@ export const Item = React.memo<ItemProps>((props) => {
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
                 accessibilityRole={interactiveAccessibilityRole}
+                accessibilityState={interactiveAccessibilityState}
+                aria-selected={selected !== undefined ? selected : undefined}
                 tabIndex={interactiveTabIndex as 0 | undefined}
                 disabled={disabled || loading}
                 style={({ pressed }) => resolveInteractiveRowStyle(pressed)}

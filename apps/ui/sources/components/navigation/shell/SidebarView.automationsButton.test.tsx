@@ -10,6 +10,8 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const routerBackSpy = vi.hoisted(() => vi.fn());
+const historyForwardSpy = vi.hoisted(() => vi.fn());
 
 const automationsSupportState = vi.hoisted(() => ({
     enabled: true,
@@ -30,6 +32,10 @@ const socketStatusState = vi.hoisted(() => ({
 
 const syncErrorState = vi.hoisted(() => ({
     value: null as null | { message: string; retryable?: boolean; kind?: string; at?: number },
+}));
+
+const localSettingsState = vi.hoisted(() => ({
+    setSidebarCollapsed: vi.fn(),
 }));
 
 const desktopWindowBridgeState = vi.hoisted(() => ({
@@ -68,7 +74,7 @@ installNavigationShellCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const routerMock = createExpoRouterMock({
-            router: { push: routerPushSpy },
+            router: { push: routerPushSpy, back: routerBackSpy },
         });
         return routerMock.module;
     },
@@ -78,6 +84,12 @@ installNavigationShellCommonModuleMocks({
             useSocketStatus: () => ({ status: socketStatusState.status, lastError: socketStatusState.lastError }),
             useFriendRequests: () => friendRequestsState.items,
             useSetting: () => false,
+            useLocalSettingMutable: (key: string) => {
+                if (key === 'sidebarCollapsed') {
+                    return [false, localSettingsState.setSidebarCollapsed] as const;
+                }
+                return [null, vi.fn()] as const;
+            },
             useSyncError: () => syncErrorState.value as any,
             useRealtimeStatus: () => 'disconnected',
         });
@@ -282,6 +294,9 @@ function requireTestInstance(node: ReactTestInstance | null, label: string): Rea
 describe('SidebarView header automations button', () => {
     beforeEach(() => {
         routerPushSpy.mockReset();
+        routerBackSpy.mockReset();
+        historyForwardSpy.mockReset();
+        vi.stubGlobal('history', { forward: historyForwardSpy });
         automationsSupportState.enabled = true;
         featureEnabledState.voice = false;
         friendRequestsState.items = [];
@@ -289,6 +304,7 @@ describe('SidebarView header automations button', () => {
         socketStatusState.status = 'connected';
         socketStatusState.lastError = null;
         syncErrorState.value = null;
+        localSettingsState.setSidebarCollapsed.mockReset();
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
         desktopWindowBridgeState.getDesktopWindowState.mockReset();
         desktopWindowBridgeState.listenDesktopWindowState.mockReset();
@@ -395,6 +411,42 @@ describe('SidebarView header automations button', () => {
         expect(desktopWindowBridgeState.getDesktopWindowChromePolicy).not.toHaveBeenCalled();
     });
 
+    it('collapses the sidebar from the desktop chrome control row', async () => {
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(
+            <SidebarView
+                sidebarWidthPx={600}
+                desktopWindowControls={<View testID="injected-desktop-window-controls" />}
+            />,
+        );
+
+        await act(async () => {
+            await pressTestInstanceAsync(screen.findByTestId('sidebar-collapse-button'));
+        });
+
+        expect(localSettingsState.setSidebarCollapsed).toHaveBeenCalledWith(true);
+    });
+
+    it('wires desktop chrome back and next controls to navigation history', async () => {
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(
+            <SidebarView
+                sidebarWidthPx={600}
+                desktopWindowControls={<View testID="injected-desktop-window-controls" />}
+            />,
+        );
+
+        await act(async () => {
+            await pressTestInstanceAsync(screen.findByTestId('sidebar-back-button'));
+        });
+        await act(async () => {
+            await pressTestInstanceAsync(screen.findByTestId('sidebar-forward-button'));
+        });
+
+        expect(routerBackSpy).toHaveBeenCalledTimes(1);
+        expect(historyForwardSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('shows friend request counts on the friends button and only a dot on inbox', async () => {
         friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];
         inboxState.hasContent = true;
@@ -467,6 +519,13 @@ describe('SidebarView header automations button', () => {
         expect(screen.findAllByTestId('nav-projects').length).toBeGreaterThan(0);
         expect(screen.findAllByTestId('nav-settings').length).toBeGreaterThan(0);
         expect(screen.findAllByTestId('nav-new-session').length).toBeGreaterThan(0);
+
+        const settingsButton = requireTestInstance(
+            screen.findByTestId('nav-settings'),
+            'settings header button',
+        );
+        const settingsIcon = settingsButton.findByType('Ionicons' as any);
+        expect(settingsIcon.props.size).toBe(24);
     });
 
     it('folds header icons into an overflow menu when the sidebar is narrow', async () => {

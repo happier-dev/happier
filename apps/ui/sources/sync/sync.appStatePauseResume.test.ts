@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
 
@@ -36,6 +36,31 @@ const tauriDesktopState = vi.hoisted(() => ({ value: false }));
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
+}));
+
+const jsThreadLagTelemetrySummary = vi.hoisted(() => ({
+    count: 1,
+    p50Ms: 5,
+    p99Ms: 5,
+    maxMs: 5,
+    thresholdExceededCount: 0,
+    lastSampleAtMs: 10,
+}));
+
+const jsThreadLagTelemetryRuntime = vi.hoisted(() => ({
+    start: vi.fn(() => true),
+    stop: vi.fn(),
+    reset: vi.fn(),
+    isRunning: vi.fn(() => true),
+    recordSample: vi.fn(),
+    snapshot: vi.fn(() => jsThreadLagTelemetrySummary),
+    flushSummary: vi.fn(() => jsThreadLagTelemetrySummary),
+}));
+
+const createJsThreadLagTelemetryMock = vi.hoisted(() => vi.fn(() => jsThreadLagTelemetryRuntime));
+
+vi.mock('@/sync/runtime/performance/jsThreadLagTelemetry', () => ({
+    createJsThreadLagTelemetry: createJsThreadLagTelemetryMock,
 }));
 
 vi.mock('react-native', async () => {
@@ -84,6 +109,18 @@ describe('sync AppState pause/resume', () => {
         tauriDesktopState.value = false;
         apiSocketDisconnect.mockClear();
         apiSocketConnect.mockClear();
+        createJsThreadLagTelemetryMock.mockClear();
+        jsThreadLagTelemetryRuntime.start.mockClear();
+        jsThreadLagTelemetryRuntime.stop.mockClear();
+        jsThreadLagTelemetryRuntime.reset.mockClear();
+        jsThreadLagTelemetryRuntime.isRunning.mockClear();
+        jsThreadLagTelemetryRuntime.recordSample.mockClear();
+        jsThreadLagTelemetryRuntime.snapshot.mockClear();
+        jsThreadLagTelemetryRuntime.flushSummary.mockClear();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
     });
 
     it('pauses on background and resumes on active (disconnect/connect socket + invalidate endpoint)', async () => {
@@ -128,6 +165,75 @@ describe('sync AppState pause/resume', () => {
         expect(apiSocketConnect).toHaveBeenCalledTimes(1);
         expect(invalidate).toHaveBeenCalledTimes(1);
         expect(pauseController.isPaused()).toBe(false);
+    });
+
+    it('quiesces native crypto worker dispatch on background and resumes it on active', async () => {
+        const { Encryption } = await import('./encryption/encryption');
+        const markQuiescentSpy = vi.spyOn(Encryption, 'markNativeCryptoWorkerQueueQuiescent');
+        const markActiveSpy = vi
+            .spyOn(Encryption, 'markNativeCryptoWorkerQueueActive')
+            .mockResolvedValue();
+        const { sync } = await import('./sync');
+
+        try {
+            const handler = Array.from(appStateHandlers)[0];
+            expect(handler).toBeTruthy();
+
+            handler!('background');
+
+            expect(markQuiescentSpy).toHaveBeenCalledTimes(1);
+            expect(markQuiescentSpy).toHaveBeenCalledWith({
+                telemetryEnabled: false,
+            });
+
+            handler!('active');
+
+            expect(markActiveSpy).toHaveBeenCalledTimes(1);
+            expect(markActiveSpy).toHaveBeenCalledWith({
+                telemetryEnabled: false,
+                capabilityStalenessMs: 300_000,
+                revalidateCapabilities: undefined,
+            });
+            expect(sync).toBeTruthy();
+        } finally {
+            markActiveSpy.mockRestore();
+            markQuiescentSpy.mockRestore();
+        }
+    });
+
+    it('ties JS-thread lag telemetry to the sync performance lifecycle', async () => {
+        const existingWindow = (globalThis as unknown as { window?: object }).window ?? {};
+        const localStorage = {
+            getItem: (key: string) => {
+                if (key !== 'HAPPIER_SYNC_TUNING_JSON') return null;
+                return JSON.stringify({
+                    syncPerformanceTelemetryEnabled: true,
+                    jsThreadLagTelemetrySampleIntervalMs: 7,
+                    jsThreadLagTelemetryThresholdMs: 9,
+                    jsThreadLagTelemetryMaxSamples: 11,
+                });
+            },
+            setItem: vi.fn(),
+            removeItem: vi.fn(),
+            clear: vi.fn(),
+        };
+        vi.stubGlobal('window', { ...existingWindow, localStorage });
+
+        const { sync } = await import('./sync');
+
+        expect(createJsThreadLagTelemetryMock).toHaveBeenCalledWith(expect.objectContaining({
+            sampleIntervalMs: 7,
+            thresholdMs: 9,
+            maxSamples: 11,
+        }));
+        expect(jsThreadLagTelemetryRuntime.start).toHaveBeenCalledTimes(1);
+
+        sync.disconnectServer();
+
+        expect(jsThreadLagTelemetryRuntime.snapshot).toHaveBeenCalledTimes(1);
+        expect(jsThreadLagTelemetryRuntime.stop).toHaveBeenCalledTimes(1);
+        expect(jsThreadLagTelemetryRuntime.flushSummary).toHaveBeenCalledTimes(1);
+        expect(jsThreadLagTelemetryRuntime.reset).toHaveBeenCalledTimes(1);
     });
 
     it('seeds initial web visibility hidden as backgrounded (pauses immediately on startup)', async () => {
@@ -204,6 +310,27 @@ describe('sync AppState pause/resume', () => {
         const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
         expect(pauseController.isPaused()).toBe(false);
         expect(isServerReachabilityNetworkAllowed()).toBe(true);
+    });
+
+    it('resumes on web startup when the browser reports the page was discarded', async () => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const documentStub = {
+            visibilityState: 'visible',
+            wasDiscarded: true,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+
+        try {
+            await import('./sync');
+
+            expect(apiSocketConnect).toHaveBeenCalledTimes(1);
+        } finally {
+            globalWithDocument.document = originalDocument;
+        }
     });
 
     it('pauses on web visibility hidden and resumes on visible', async () => {

@@ -12,15 +12,17 @@ const shared = vi.hoisted(() => ({
         themePreference: 'adaptive',
         uiFontScale: 1,
         uiItemDensity: 'comfortable',
-        mobileWorkspaceExperienceV1: 'classic',
         uiMultiPanePanelsEnabled: true,
         detailsPaneTabsBehavior: 'preview',
-        editorFocusModeEnabled: false,
         settingsNavSidebarEnabled: true,
         avatarStyle: 'gradient',
         showFlavorIcons: true,
         preferredLanguage: null,
     } as Record<string, unknown>,
+    setAdaptiveThemes: vi.fn(),
+    setTheme: vi.fn(),
+    setRootViewBackgroundColor: vi.fn(),
+    setStatusBarStyle: vi.fn(),
 }));
 
 type MutableSettingHook = (key: string) => [unknown, (next: unknown) => void];
@@ -51,9 +53,9 @@ installSessionSettingsEntryModuleMocks({
                 },
             },
             runtime: {
-                setAdaptiveThemes: vi.fn(),
-                setTheme: vi.fn(),
-                setRootViewBackgroundColor: vi.fn(),
+                setAdaptiveThemes: shared.setAdaptiveThemes,
+                setTheme: shared.setTheme,
+                setRootViewBackgroundColor: shared.setRootViewBackgroundColor,
             },
         });
     },
@@ -80,6 +82,7 @@ installSessionSettingsEntryModuleMocks({
 });
 
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
+vi.mock('expo-status-bar', () => ({ setStatusBarStyle: shared.setStatusBarStyle }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
 vi.mock('@/theme', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/theme')>();
@@ -105,11 +108,32 @@ vi.mock('@/theme', async (importOriginal) => {
 afterEach(() => {
     standardCleanup();
     resetSessionSettingsEntryState();
+    shared.settingsState.themePreference = 'adaptive';
     shared.settingsState.uiItemDensity = 'comfortable';
-    shared.settingsState.mobileWorkspaceExperienceV1 = 'classic';
+    shared.setAdaptiveThemes.mockClear();
+    shared.setTheme.mockClear();
+    shared.setRootViewBackgroundColor.mockClear();
+    shared.setStatusBarStyle.mockClear();
 });
 
 describe('Appearance settings item density', () => {
+    it('applies status bar style immediately when switching to dark mode', async () => {
+        shared.settingsState.themePreference = 'light';
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+
+        const themePreferenceRow = screen.findRow('settings-appearance-themePreference-cycle');
+        expect(themePreferenceRow).toBeTruthy();
+
+        await act(async () => {
+            themePreferenceRow!.props.onPress();
+        });
+
+        expect(shared.settingsState.themePreference).toBe('dark');
+        expect(shared.setTheme).toHaveBeenCalledWith('dark');
+        expect(shared.setStatusBarStyle).toHaveBeenCalledWith('light', true);
+    });
+
     it('renders the item density dropdown and updates the local setting', async () => {
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
@@ -145,22 +169,12 @@ describe('Appearance settings item density', () => {
         expect(shared.settingsState.settingsNavSidebarEnabled).toBe(false);
     });
 
-    it('renders the mobile workspace experience dropdown and updates the local setting', async () => {
+    it('does not surface the mobile workspace experience setting from appearance settings', async () => {
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
 
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
         const workspaceModeDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.mobileWorkspaceExperience');
-        expect(workspaceModeDropdown).toBeTruthy();
-        expect(workspaceModeDropdown?.props?.selectedId).toBe('classic');
-
-        const itemIds = workspaceModeDropdown?.props?.items?.map((item: any) => item.id) ?? [];
-        expect(itemIds).toEqual(['classic', 'cockpit']);
-
-        await act(async () => {
-            workspaceModeDropdown!.props.onSelect('cockpit');
-        });
-
-        expect(shared.settingsState.mobileWorkspaceExperienceV1).toBe('cockpit');
+        expect(workspaceModeDropdown).toBeUndefined();
     });
 });

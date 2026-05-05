@@ -9,10 +9,13 @@ export async function syncPurchases(params: {
     // RevenueCat types are not exported consistently across platforms; keep this loose.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     applyPurchases: (customerInfo: any) => void;
+    shouldContinue?: () => boolean;
 }): Promise<void> {
     const { serverID, revenueCatInitialized, setRevenueCatInitialized, applyPurchases } = params;
+    const shouldContinue = params.shouldContinue ?? (() => true);
 
     try {
+        if (!shouldContinue()) return;
         // Initialize RevenueCat if not already done
         if (!revenueCatInitialized) {
             // Get the appropriate API key based on platform
@@ -42,14 +45,17 @@ export async function syncPurchases(params: {
                 useAmazon: false,
             });
 
+            if (!shouldContinue()) return;
             setRevenueCatInitialized(true);
         }
 
         // Sync purchases
         await RevenueCat.syncPurchases();
+        if (!shouldContinue()) return;
 
         // Fetch customer info
         const customerInfo = await RevenueCat.getCustomerInfo();
+        if (!shouldContinue()) return;
 
         // Apply to storage (storage handles the transformation)
         applyPurchases(customerInfo);
@@ -64,10 +70,15 @@ export async function purchaseProduct(params: {
     productId: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     applyPurchases: (customerInfo: any) => void;
+    shouldContinue?: () => boolean;
 }): Promise<{ success: boolean; error?: string }> {
     const { revenueCatInitialized, productId, applyPurchases } = params;
+    const shouldContinue = params.shouldContinue ?? (() => true);
 
     try {
+        if (!shouldContinue()) {
+            return { success: false, error: 'Purchase scope changed' };
+        }
         // Check if RevenueCat is initialized
         if (!revenueCatInitialized) {
             return { success: false, error: 'RevenueCat not initialized' };
@@ -75,6 +86,9 @@ export async function purchaseProduct(params: {
 
         // Fetch the product
         const products = await RevenueCat.getProducts([productId]);
+        if (!shouldContinue()) {
+            return { success: false, error: 'Purchase scope changed' };
+        }
         if (products.length === 0) {
             return { success: false, error: `Product '${productId}' not found` };
         }
@@ -82,6 +96,9 @@ export async function purchaseProduct(params: {
         // Purchase the product
         const product = products[0];
         const { customerInfo } = await RevenueCat.purchaseStoreProduct(product);
+        if (!shouldContinue()) {
+            return { success: false, error: 'Purchase scope changed' };
+        }
 
         // Update local purchases data
         applyPurchases(customerInfo);
@@ -133,6 +150,7 @@ export async function presentPaywall(params: {
     trackPaywallRestored: () => void;
     trackPaywallError: (error: string) => void;
     syncPurchases: () => Promise<void>;
+    shouldContinue?: () => boolean;
 }): Promise<{ success: boolean; purchased?: boolean; error?: string }> {
     const {
         revenueCatInitialized,
@@ -143,8 +161,12 @@ export async function presentPaywall(params: {
         trackPaywallError,
         syncPurchases,
     } = params;
+    const shouldContinue = params.shouldContinue ?? (() => true);
 
     try {
+        if (!shouldContinue()) {
+            return { success: false, error: 'Paywall scope changed' };
+        }
         // Check if RevenueCat is initialized
         if (!revenueCatInitialized) {
             const error = 'RevenueCat not initialized';
@@ -157,17 +179,26 @@ export async function presentPaywall(params: {
 
         // Present the paywall
         const result = await RevenueCat.presentPaywall();
+        if (!shouldContinue()) {
+            return { success: false, error: 'Paywall scope changed' };
+        }
 
         // Handle the result
         switch (result) {
             case PaywallResult.PURCHASED:
                 trackPaywallPurchased();
                 // Refresh customer info after purchase
+                if (!shouldContinue()) {
+                    return { success: false, error: 'Paywall scope changed' };
+                }
                 await syncPurchases();
                 return { success: true, purchased: true };
             case PaywallResult.RESTORED:
                 trackPaywallRestored();
                 // Refresh customer info after restore
+                if (!shouldContinue()) {
+                    return { success: false, error: 'Paywall scope changed' };
+                }
                 await syncPurchases();
                 return { success: true, purchased: true };
             case PaywallResult.CANCELLED:

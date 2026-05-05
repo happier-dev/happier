@@ -32,9 +32,8 @@ installSessionDetailsPanelCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                // Boundary mock: SessionDetailsPanel only reads editor focus mode in this suite.
+                // Boundary mock: this suite does not exercise persisted local settings.
                 useLocalSetting: ((key: string) => {
-                    if (key === 'editorFocusModeEnabled') return false;
                     return null;
                 }) as any,
                 // Boundary mock: the suite only needs a stable boolean mutable local setting tuple.

@@ -13,8 +13,9 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { usePaneFocusMode } from '@/components/appShell/panes/focusMode/usePaneFocusMode';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { useAllMachines, useLocalSetting, useLocalSettingMutable, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useAllMachines, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
@@ -95,9 +96,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     const requestClose = props.onRequestClose ?? pane.closeDetails;
     const effectiveRootPath = props.activeRootPath ?? props.workspaceRef.rootPath;
     const displayPath = props.displayPathOverride ?? props.workspaceRef.rootPath;
-
-    const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
-    const [, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
+    const paneFocusMode = usePaneFocusMode(props.scopeId);
     const allMachines = useAllMachines();
 
     const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
@@ -360,17 +359,18 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 ) : null}
                 {props.showFocusModeToggle !== false && Platform.OS === 'web' ? (
                     <Pressable
-                        onPress={() => setEditorFocusModeEnabled(!editorFocusModeEnabled)}
+                        onPress={paneFocusMode.toggle}
                         style={iconButtonStyle}
                         accessibilityRole="button"
+                        disabled={!paneFocusMode.canEnter}
                         accessibilityLabel={
-                            editorFocusModeEnabled
+                            paneFocusMode.active
                                 ? t('session.detailsPanel.exitFocusModeA11y')
                                 : t('session.detailsPanel.enterFocusModeA11y')
                         }
                     >
                         <Ionicons
-                            name={editorFocusModeEnabled ? 'contract-outline' : 'expand-outline'}
+                            name={paneFocusMode.active ? 'contract-outline' : 'expand-outline'}
                             size={18}
                             color={theme.colors.textSecondary}
                         />
@@ -389,17 +389,18 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             </>
         );
     }, [
-        editorFocusModeEnabled,
         iconButtonStyle,
         hasWorkspaceReviewCommentDrafts,
         pane,
+        paneFocusMode.active,
+        paneFocusMode.canEnter,
+        paneFocusMode.toggle,
         props.onRequestClose,
         props.renderHeaderActionsPrefix,
         props.workspaceRef.machineId,
         props.workspaceRef.serverId,
         requestClose,
         router,
-        setEditorFocusModeEnabled,
         theme.colors.textSecondary,
         deviceType,
         effectiveRootPath,

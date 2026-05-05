@@ -74,10 +74,6 @@ vi.mock('./WorkspaceSourceControlView', () => ({
     WorkspaceSourceControlView: () => React.createElement('WorkspaceSourceControlViewStub'),
 }));
 
-vi.mock('./WorkspaceRightPanelGitUpdateTab', () => ({
-    WorkspaceRightPanelGitUpdateTab: () => React.createElement('WorkspaceRightPanelGitUpdateTabStub'),
-}));
-
 describe('WorkspaceRightPanelGitView (history)', () => {
     it('loads commit history via machine RPC when the history sub-tab is selected', async () => {
         machineScmLogListSpy.mockClear();

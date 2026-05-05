@@ -66,6 +66,9 @@ type ManagedConcurrentServer = {
     reachabilityState: ManagedConnectionState;
     detachSocketTransportListeners: Array<() => void>;
     encryption: Encryption | null;
+    sessionDataKeys: Map<string, Uint8Array>;
+    sessionDataKeyEnvelopes: Map<string, string>;
+    machineDataKeys: Map<string, Uint8Array>;
     refreshQueued: boolean;
     refreshInFlight: Promise<void> | null;
     refreshTimer: ReturnType<typeof setTimeout> | null;
@@ -506,8 +509,6 @@ function clearConcurrentMachineListCache(serverIdRaw: string): void {
 async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<void> {
     const encryption = await getOrCreateEncryption(entry);
     const request = createServerRequest(entry.serverUrl, entry.credentials.token);
-    const sessionDataKeys = new Map<string, Uint8Array>();
-    const machineDataKeys = new Map<string, Uint8Array>();
     let sessions: Session[] = [];
     let machines: Machine[] = [];
 
@@ -515,7 +516,8 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         serverId: entry.id,
         credentials: entry.credentials,
         encryption,
-        sessionDataKeys,
+        sessionDataKeys: entry.sessionDataKeys,
+        sessionDataKeyEnvelopes: entry.sessionDataKeyEnvelopes,
         request,
         getExistingSession: () => null,
         applySessions: (nextSessions) => {
@@ -528,7 +530,7 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
     await fetchAndApplyMachines({
         credentials: entry.credentials,
         encryption,
-        machineDataKeys,
+        machineDataKeys: entry.machineDataKeys,
         request,
         throwOnError: false,
         applyMachines: (nextMachines) => {
@@ -649,6 +651,9 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
         },
         detachSocketTransportListeners: [],
         encryption: null,
+        sessionDataKeys: new Map<string, Uint8Array>(),
+        sessionDataKeyEnvelopes: new Map<string, string>(),
+        machineDataKeys: new Map<string, Uint8Array>(),
         refreshQueued: false,
         refreshInFlight: null,
         refreshTimer: null,

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { access, mkdtemp, readFile, readdir } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ export const DEFAULT_WIDGET_TARGET_NAME = 'ExpoWidgetsTarget';
 export const DEFAULT_XCODEBUILD_MAX_BUFFER_BYTES = 128 * 1024 * 1024;
 export const DEFAULT_DERIVED_DATA_ROOT_PREFIX = 'ios-widgets-simulator-build-smoke-';
 export const DEFAULT_SIMCTL_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+export const DEFAULT_XCODEBUILD_TIMEOUT_MS = 10 * 60 * 1000;
 
 async function assertReadablePath(filePath) {
     await access(filePath, fsConstants.R_OK);
@@ -235,15 +236,18 @@ export async function assertExpoWidgetsSimulatorBuildSmoke({
     derivedDataRoot,
     xcodebuildTimeoutMs = process.env.HAPPIER_EXPO_WIDGETS_XCODEBUILD_TIMEOUT_MS
         ? Number(process.env.HAPPIER_EXPO_WIDGETS_XCODEBUILD_TIMEOUT_MS)
-        : undefined,
+        : DEFAULT_XCODEBUILD_TIMEOUT_MS,
     spawnSyncImpl = spawnSync,
 } = {}) {
     const scriptsDir = dirname(fileURLToPath(import.meta.url));
     const packageRoot = cwd ?? dirname(scriptsDir);
     const resolvedIosDir = iosDir ?? join(packageRoot, 'ios');
+    const defaultDerivedDataParent = join(packageRoot, '.project', 'tmp');
     const resolvedDerivedDataRoot =
         derivedDataRoot ??
-        (await mkdtemp(join(packageRoot, '.project', 'tmp', DEFAULT_DERIVED_DATA_ROOT_PREFIX)));
+        (await mkdir(defaultDerivedDataParent, { recursive: true }).then(() =>
+            mkdtemp(join(defaultDerivedDataParent, DEFAULT_DERIVED_DATA_ROOT_PREFIX)),
+        ));
 
     const resolvedWorkspace = await resolveGeneratedWorkspace({
         iosDir: resolvedIosDir,

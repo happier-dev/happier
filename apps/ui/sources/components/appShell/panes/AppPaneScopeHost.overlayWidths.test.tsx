@@ -13,7 +13,6 @@ installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: 2000, height: 900 }),
     getLocalSetting: (key) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
-        if (key === 'editorFocusModeEnabled') return false;
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 2000;
         // A user-resized overlay preference above the global docked max.

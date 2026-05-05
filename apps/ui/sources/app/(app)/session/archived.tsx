@@ -11,17 +11,21 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { useAllSessions, useSetting } from '@/sync/domains/state/storage';
+import { useAllSessions, useSessionListRowStateByServerId, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { sessionUnarchiveWithServerScope } from '@/sync/ops';
+import { sync } from '@/sync/sync';
+
+type ArchivedScreenSession = Session | (SessionListRenderableSession & { serverId?: string });
 
 type ArchivedSessionsSectionKind = 'archived' | 'hidden';
 
 type ArchivedSessionsSection = Readonly<{
     title: string;
     kind: ArchivedSessionsSectionKind;
-    data: Session[];
+    data: ArchivedScreenSession[];
 }>;
 
 const styles = StyleSheet.create((theme) => ({
@@ -111,18 +115,18 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-function canManageArchive(session: Session): boolean {
+function canManageArchive(session: ArchivedScreenSession): boolean {
     // Owner sessions have no accessLevel set; shared sessions require admin.
     return !session.accessLevel || session.accessLevel === 'admin';
 }
 
-function getPinnedSessionKey(session: Session): string {
+function getPinnedSessionKey(session: ArchivedScreenSession): string {
     const serverId = String(session.serverId ?? '').trim();
     const sessionId = String(session.id ?? '').trim();
     return serverId && sessionId ? `${serverId}:${sessionId}` : '';
 }
 
-function isHiddenInactiveSession(session: Session, pinnedSessionKeysV1: ReadonlyArray<string>): boolean {
+function isHiddenInactiveSession(session: ArchivedScreenSession, pinnedSessionKeysV1: ReadonlyArray<string>): boolean {
     if (session.archivedAt != null) return false;
     if (session.active === true) return false;
     if ('keepVisibleWhenInactive' in session && (session as { keepVisibleWhenInactive?: boolean }).keepVisibleWhenInactive === true) return false;
@@ -135,20 +139,47 @@ export default function ArchivedSessionsScreen() {
     const { theme } = useUnistyles();
     const navigateToSession = useNavigateToSession();
     const allSessions = useAllSessions();
+    const sessionListRowStateByServerId = useSessionListRowStateByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
     const pinnedSessionKeysV1 = (useSetting('pinnedSessionKeysV1') ?? []) as ReadonlyArray<string>;
 
+    React.useEffect(() => {
+        void sync.fetchArchivedSessions().catch(() => undefined);
+    }, []);
+
+    const cachedArchivedSessions = React.useMemo(() => {
+        const byId = new Map<string, ArchivedScreenSession>();
+        for (const [serverId, rowsBySessionId] of Object.entries(sessionListRowStateByServerId ?? {})) {
+            if (!rowsBySessionId || typeof rowsBySessionId !== 'object') continue;
+            for (const row of Object.values(rowsBySessionId)) {
+                if (!row || row.archivedAt == null) continue;
+                byId.set(row.id, {
+                    ...row,
+                    serverId,
+                });
+            }
+        }
+        return Array.from(byId.values());
+    }, [sessionListRowStateByServerId]);
+
     const archivedSessions = React.useMemo(() => {
-        return allSessions
-            .filter((s) => s.archivedAt != null)
-            .slice()
+        const byId = new Map<string, ArchivedScreenSession>();
+        for (const session of cachedArchivedSessions) {
+            byId.set(session.id, session);
+        }
+        for (const session of allSessions) {
+            if (session.archivedAt != null) {
+                byId.set(session.id, session);
+            }
+        }
+        return Array.from(byId.values())
             .sort((a, b) => {
                 const aAt = typeof a.archivedAt === 'number' ? a.archivedAt : 0;
                 const bAt = typeof b.archivedAt === 'number' ? b.archivedAt : 0;
                 if (bAt !== aAt) return bAt - aAt;
                 return b.updatedAt - a.updatedAt;
             });
-    }, [allSessions]);
+    }, [allSessions, cachedArchivedSessions]);
 
     const hiddenInactiveSessions = React.useMemo(() => {
         if (!hideInactiveSessions) {
@@ -179,7 +210,7 @@ export default function ArchivedSessionsScreen() {
         return out;
     }, [archivedSessions, hiddenInactiveSessions]);
 
-    const handleUnarchive = React.useCallback((session: Session) => {
+    const handleUnarchive = React.useCallback((session: ArchivedScreenSession) => {
         Modal.alert(
             t('sessionInfo.unarchiveSession'),
             t('sessionInfo.unarchiveSessionConfirm'),
@@ -189,7 +220,7 @@ export default function ArchivedSessionsScreen() {
                     text: t('sessionInfo.unarchiveSession'),
                     style: 'default',
                     onPress: async () => {
-                        const result = await sessionUnarchiveWithServerScope(session.id, { serverId: null });
+                        const result = await sessionUnarchiveWithServerScope(session.id, { serverId: session.serverId ?? null });
                         if (!result.success) {
                             Modal.alert(t('common.error'), result.message || t('sessionInfo.failedToUnarchiveSession'));
                         }
@@ -200,7 +231,7 @@ export default function ArchivedSessionsScreen() {
     }, []);
 
     const renderSessionCard = React.useCallback(
-        (item: Session, index: number, section: ArchivedSessionsSection) => {
+        (item: ArchivedScreenSession, index: number, section: ArchivedSessionsSection) => {
             const sessionName = getSessionName(item);
             const sessionSubtitle = getSessionSubtitle(item);
             const avatarId = getSessionAvatarId(item);

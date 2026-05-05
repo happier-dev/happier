@@ -10,6 +10,7 @@ export const SETTINGS_ROUTES = {
     appearance: '/settings/appearance',
     language: '/settings/language',
     features: '/settings/features',
+    pets: '/settings/pets',
     providers: '/settings/providers',
     subAgent: '/settings/sub-agent',
     profiles: '/settings/profiles',

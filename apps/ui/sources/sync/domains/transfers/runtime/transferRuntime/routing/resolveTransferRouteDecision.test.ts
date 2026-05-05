@@ -27,6 +27,7 @@ describe('resolveTransferRouteDecision', () => {
         expect(resolveTransferRouteDecision({
             serverFeatures,
             directPeerRoute: { status: 'viable', checkedAt: 10, expiresAt: 20 },
+            directPeerRouteKinds: ['tailscale_serve_direct'],
             machineRpcDirectRoute: { status: 'viable', checkedAt: 11, expiresAt: 21 },
         })).toEqual({
             kind: 'selected',
@@ -37,7 +38,49 @@ describe('resolveTransferRouteDecision', () => {
                 directPeerEnabled: true,
                 serverRelayEnabled: true,
                 directPeerRoute: { status: 'viable', checkedAt: 10, expiresAt: 20 },
+                directPeerRouteKinds: ['tailscale_serve_direct'],
                 machineRpcDirectRoute: { status: 'viable', checkedAt: 11, expiresAt: 21 },
+            },
+        });
+    });
+
+    it('does not select direct peer when no final direct route kind is advertised', async () => {
+        const { resolveTransferRouteDecision } = await import('./resolveTransferRouteDecision');
+
+        const serverFeatures = FeaturesResponseSchema.parse({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: {
+                            enabled: true,
+                        },
+                        serverRouted: {
+                            enabled: true,
+                        },
+                    },
+                },
+            },
+            capabilities: {},
+        });
+
+        expect(resolveTransferRouteDecision({
+            serverFeatures,
+            directPeerRoute: { status: 'viable', checkedAt: 10, expiresAt: 20 },
+            directPeerRouteKinds: [],
+            machineRpcDirectRoute: { status: 'unknown' },
+        })).toEqual({
+            kind: 'selected',
+            preferredRouteKind: 'server_relay_stream',
+            preferScopedMachineRpc: true,
+            availability: {
+                machineTransferEnabled: true,
+                directPeerEnabled: true,
+                serverRelayEnabled: true,
+                directPeerRoute: { status: 'viable', checkedAt: 10, expiresAt: 20 },
+                directPeerRouteKinds: [],
+                machineRpcDirectRoute: { status: 'unknown' },
             },
         });
     });
@@ -66,6 +109,7 @@ describe('resolveTransferRouteDecision', () => {
         expect(resolveTransferRouteDecision({
             serverFeatures,
             directPeerRoute: { status: 'unavailable', checkedAt: 10, expiresAt: 20, failureReason: 'direct_peer_unavailable' },
+            directPeerRouteKinds: [],
             machineRpcDirectRoute: { status: 'unavailable', checkedAt: 11, expiresAt: 21, failureReason: 'machine_rpc_direct_unavailable' },
         })).toEqual({
             kind: 'selected',
@@ -76,6 +120,7 @@ describe('resolveTransferRouteDecision', () => {
                 directPeerEnabled: false,
                 serverRelayEnabled: true,
                 directPeerRoute: { status: 'unavailable', checkedAt: 10, expiresAt: 20, failureReason: 'direct_peer_unavailable' },
+                directPeerRouteKinds: [],
                 machineRpcDirectRoute: { status: 'unavailable', checkedAt: 11, expiresAt: 21, failureReason: 'machine_rpc_direct_unavailable' },
             },
         });
@@ -103,6 +148,7 @@ describe('resolveTransferRouteDecision', () => {
                 capabilities: {},
             }),
             directPeerRoute: { status: 'unknown' },
+            directPeerRouteKinds: [],
             machineRpcDirectRoute: { status: 'unknown' },
         })).toEqual({
             kind: 'unavailable',
@@ -113,6 +159,7 @@ describe('resolveTransferRouteDecision', () => {
                 directPeerEnabled: false,
                 serverRelayEnabled: false,
                 directPeerRoute: { status: 'unknown' },
+                directPeerRouteKinds: [],
                 machineRpcDirectRoute: { status: 'unknown' },
             },
         });

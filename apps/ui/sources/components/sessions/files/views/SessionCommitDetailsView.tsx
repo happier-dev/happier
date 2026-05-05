@@ -38,7 +38,7 @@ import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabil
 import { useViewableItemIndices } from '@/components/ui/scroll/useViewableItemIndices';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
-import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
 export type SessionCommitDetailsViewProps = Readonly<{
     sessionId: string;
@@ -58,7 +58,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
     const constrainWidth = presentation === 'screen';
 
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
-    const reviewScope = React.useMemo(() => resolveWorkspaceScopeForSession(sessionId), [sessionId]);
+    const reviewScope = useWorkspaceScopeForSession(sessionId);
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true && Boolean(reviewScope);
     const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
     const inFlightScmOperation = useSessionProjectScmInFlightOperation(sessionId);

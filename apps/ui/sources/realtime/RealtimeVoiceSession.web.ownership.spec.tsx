@@ -18,8 +18,9 @@ const handleProviderComponentUnmounted = vi.fn();
 const registerConversationHandle = vi.fn();
 const setActiveConversationHandle = vi.fn();
 const registerTransportVoiceSession = vi.fn();
+const disposeConversationHandle = vi.fn();
 
-let lastConversationOptions: any = null;
+let lastConversationCallbacks: any = null;
 
 installRealtimeCommonModuleMocks({
     storage: async () => {
@@ -27,15 +28,17 @@ installRealtimeCommonModuleMocks({
     },
 });
 
-vi.mock('@elevenlabs/react', () => ({
-    useConversation: (options: any) => {
-        lastConversationOptions = options;
+vi.mock('@/voice/adapters/realtimeElevenLabs/createElevenLabsConversationHandle', () => ({
+    createElevenLabsConversationHandle: (options: any) => {
+        lastConversationCallbacks = options.callbacks;
         return {
             startSession: vi.fn(async () => 'conv_1'),
             endSession: vi.fn(async () => {}),
             getId: vi.fn(() => 'conv_1'),
+            setMicMuted: vi.fn(),
             sendUserMessage: vi.fn(),
             sendContextualUpdate: vi.fn(),
+            dispose: () => disposeConversationHandle(),
         };
     },
 }));
@@ -70,7 +73,7 @@ describe('RealtimeVoiceSession.web ownership delegation', () => {
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
-        lastConversationOptions = null;
+        lastConversationCallbacks = null;
     });
 
     afterEach(() => {
@@ -91,15 +94,15 @@ describe('RealtimeVoiceSession.web ownership delegation', () => {
 
         expect(registerTransportVoiceSession).toHaveBeenCalledTimes(1);
         expect(registerConversationHandle).toHaveBeenCalled();
-        expect(lastConversationOptions).toBeTruthy();
+        expect(lastConversationCallbacks).toBeTruthy();
 
         const payload = { type: 'agent_response', agent_response_event: { agent_response: 'hello' } };
         await act(async () => {
-            lastConversationOptions.onConnect();
-            lastConversationOptions.onMessage(payload);
-            lastConversationOptions.onError('provider-down');
-            lastConversationOptions.onModeChange({ mode: 'speaking' });
-            lastConversationOptions.onDisconnect();
+            lastConversationCallbacks.onConnect();
+            lastConversationCallbacks.onMessage(payload);
+            lastConversationCallbacks.onError('provider-down');
+            lastConversationCallbacks.onModeChange({ mode: 'speaking' });
+            lastConversationCallbacks.onDisconnect();
         });
 
         expect(handleProviderConnected).toHaveBeenCalledTimes(1);
@@ -133,5 +136,9 @@ describe('RealtimeVoiceSession.web ownership delegation', () => {
         expect(nativeSource).not.toContain("from './RealtimeSession'");
         expect(webSource).not.toContain("from './RealtimeSession'");
         expect(webSource).not.toContain('realtimeVoiceTranscriptBridge');
+        expect(nativeSource).not.toContain('useConversation');
+        expect(webSource).not.toContain('useConversation');
+        expect(nativeSource).not.toContain('ElevenLabsProvider');
+        expect(webSource).not.toContain('ElevenLabsProvider');
     });
 });

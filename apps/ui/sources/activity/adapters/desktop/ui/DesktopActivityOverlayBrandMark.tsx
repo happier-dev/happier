@@ -3,20 +3,31 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Svg, { Path } from 'react-native-svg';
 
+import { resolveDesktopOverlayMatchedGeometryStyle } from '../motion/useDesktopOverlayMatchedGeometry';
 import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
+import { useDesktopActivityOverlayMotionProgress } from './DesktopActivityOverlayMotionFrame';
 
 export function DesktopActivityOverlayBrandMark(props: Readonly<{
     visualMode: DesktopActivityOverlayVisualMode;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const openProgress = useDesktopActivityOverlayMotionProgress();
     const markFill = props.visualMode === 'notch_integrated'
         ? theme.colors.accent.orange
         : theme.colors.overlay.text;
     const smileCutout = theme.colors.overlay.scrimStrong;
 
+    const matchedGeometryStyle = resolveDesktopOverlayMatchedGeometryStyle({
+        progress: openProgress,
+        collapsed: { x: 0, y: 0, scale: 1 },
+        expanded: props.visualMode === 'notch_integrated'
+            ? { x: 0, y: 1, scale: 1.04 }
+            : { x: 0, y: 0, scale: 1.02 },
+    });
+
     return (
-        <View testID={props.testID} style={styles.root}>
+        <View testID={props.testID} style={[styles.root, matchedGeometryStyle]}>
             <Svg width="100%" height="100%" viewBox="0 0 24 24" fill="none">
                 <Path
                     fill={markFill}

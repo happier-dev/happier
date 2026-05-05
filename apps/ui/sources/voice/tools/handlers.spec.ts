@@ -1423,13 +1423,13 @@ describe('voice tool handlers', () => {
     expect(parsed.recentMessages).toBeUndefined();
   });
 
-  it('respects actionsSettingsV1 disabledSurfaces for voice_tool surface', async () => {
-    // Configure settings to disable session.message.send for voice_tool surface
+  it('respects actionsSettingsV1 disabledSurfaces for voice surface', async () => {
+    // Configure settings to disable session.message.send for voice surface
     state.settings.actionsSettingsV1 = {
       v: 1,
       actions: {
         'session.message.send': {
-          disabledSurfaces: ['voice_tool'],
+          disabledSurfaces: ['voice'],
         },
       },
     };
@@ -1440,7 +1440,7 @@ describe('voice tool handlers', () => {
     const result = await tools.sendSessionMessage({ message: 'hi' });
     const parsed = JSON.parse(result);
 
-    // Should fail because action is disabled for voice_tool surface
+    // Should fail because action is disabled for voice surface
     expect(parsed.ok).toBe(false);
     expect(parsed.errorCode).toBe('action_disabled');
     expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();

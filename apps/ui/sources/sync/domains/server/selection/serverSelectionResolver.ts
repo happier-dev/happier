@@ -160,13 +160,20 @@ export function resolveActiveServerSelection(params: Readonly<{
         new Set(params.availableServerIds.map((id) => normalizeId(id)).filter(Boolean)),
     );
     const availableSet = new Set(availableServerIds);
+    const normalizedActiveServerId = normalizeId(params.activeServerId);
+    const activeServerIdIsAvailable = availableSet.has(normalizedActiveServerId);
     const fallbackServerId = resolveFallbackServerId(params.activeServerId, availableServerIds);
     const groups = normalizeGroupProfiles(params.settings.serverSelectionGroups, availableSet);
     const groupById = new Map(groups.map((group) => [group.id, group]));
 
     const explicitKind = normalizeTargetKind(params.settings.serverSelectionActiveTargetKind);
     const explicitId = normalizeId(params.settings.serverSelectionActiveTargetId);
-    if (explicitKind === 'server' && explicitId && availableSet.has(explicitId)) {
+    if (
+        explicitKind === 'server'
+        && explicitId
+        && availableSet.has(explicitId)
+        && (!activeServerIdIsAvailable || explicitId === normalizedActiveServerId)
+    ) {
         return {
             activeTarget: toServerTarget(explicitId),
             activeServerId: explicitId,

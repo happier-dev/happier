@@ -27,6 +27,8 @@ const setSessionListGroupOrderV1 = vi.fn();
 
 let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
+let workspaceRefsV1: any[] = [];
+const setWorkspaceRefsV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const mockMachinesState = vi.hoisted(() => ({ current: [] as any[] }));
 const flatListMock = createCapturingFlatListMock({ renderItems: true });
@@ -132,6 +134,7 @@ installSessionShellCommonModuleMocks({
                     if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
                     if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
                     if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+                    if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     return [null, vi.fn()];
                 },
                 useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
@@ -375,9 +378,11 @@ describe('SessionsList pinning + per-group ordering', () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
+        workspaceRefsV1 = [];
         setPinnedSessionKeysV1.mockClear();
         setSessionListGroupOrderV1.mockClear();
         setSessionTagsV1.mockClear();
+        setWorkspaceRefsV1.mockClear();
         routerPushSpy.mockReset();
         mockAllowedServerIds = ['server_a'];
         capturedRootFlatListProps = null;
@@ -649,5 +654,55 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         expect(row1.props.subtitleOverride).toBe('Rebound workstation · /home/u/live-a');
         expect(row2.props.subtitleOverride).toBe('rebound-2.local · /home/u/live-b');
+    });
+
+    it('uses renamed workspace labels for inactive date-grouped row subtitles', async () => {
+        workspaceRefsV1 = [
+            {
+                id: 'workspace-ref-live-1',
+                serverId: 'server_a',
+                machineId: 'machine-live-1',
+                rootPath: '/home/u/live-a',
+                label: 'Renamed Workspace',
+                createdAtMs: 1,
+                lastOpenedAtMs: null,
+            },
+        ];
+
+        const sess = {
+            ...sessionA,
+            id: 'sess_renamed_workspace',
+            active: false,
+            presence: 'offline',
+            metadata: { machineId: 'machine-stale', host: 'Old workstation', path: '/home/u/stale-a', homeDir: '/home/u' },
+        } as any;
+
+        readMachineTargetForSessionMock.mockImplementation((sessionId: string) => {
+            if (sessionId === 'sess_renamed_workspace') {
+                return { machineId: 'machine-live-1', basePath: '/home/u/live-a' };
+            }
+            return null;
+        });
+
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: 'Today',
+                headerKind: 'date',
+                groupKey,
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            { type: 'session', session: sess, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
+        ];
+
+        const screen = await renderSessionsList();
+        const row = expectPresent(
+            findSessionItem(screen, 'sess_renamed_workspace'),
+            'expected renamed workspace session row',
+        );
+
+        expect(row.props.subtitleOverride).toBe('Renamed Workspace');
+        expect(row.props.subtitleEllipsizeMode).toBe('tail');
     });
 });

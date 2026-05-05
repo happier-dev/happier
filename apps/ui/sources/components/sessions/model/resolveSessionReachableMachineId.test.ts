@@ -60,6 +60,19 @@ describe('resolveSessionReachableMachineId', () => {
         })).toBe('m-new');
     });
 
+    it('matches equivalent host variants when resolving a reachable replacement', () => {
+        const machines = [
+            makeMachine({ id: 'm-old', active: false, activeAt: 10, host: 'MBP.local' }),
+            makeMachine({ id: 'm-new', active: true, activeAt: 100, host: 'mbp' }),
+        ];
+
+        expect(resolveSessionReachableMachineId({
+            machineId: 'm-old',
+            hostHint: 'MBP.local',
+            machines,
+        })).toBe('m-new');
+    });
+
     it('resolves host-scoped ids to the best matching machine', () => {
         const machines = [
             makeMachine({ id: 'm-a', active: true, activeAt: 50, host: 'dev-host' }),

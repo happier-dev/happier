@@ -39,4 +39,13 @@ describe('resolveBestMachineDisplayRenderableForHost', () => {
         const best = resolveBestMachineDisplayRenderableForHost(machines, host);
         expect(best?.id).toBe('b');
     });
+
+    it('matches equivalent host variants after normalization', () => {
+        const machines = {
+            a: makeMachineDisplay({ id: 'a', metadataVersion: 1, metadata: { host: 'EXAMPLE-HOST.local' } }),
+        };
+
+        const best = resolveBestMachineDisplayRenderableForHost(machines, 'example-host');
+        expect(best?.id).toBe('a');
+    });
 });

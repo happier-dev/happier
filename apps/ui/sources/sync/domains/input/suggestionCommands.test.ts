@@ -40,7 +40,7 @@ describe('suggestionCommands', () => {
             settings: {
                 experiments: true,
                 featureToggles: { 'execution.runs': true },
-                actionsSettingsV1: { v: 1, actions: { 'review.start': { disabledSurfaces: ['ui_slash_command'] } } },
+                actionsSettingsV1: { v: 1, actions: { 'review.start': { disabledSurfaces: ['ui'] } } },
             },
         } as any);
         const { getAllCommands } = await import('./suggestionCommands');

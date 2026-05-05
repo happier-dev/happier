@@ -11,7 +11,11 @@ import {
   DEFAULT_GENERATED_WIDGET_NAMES,
 } from './validateExpoWidgetsGeneratedProject.mjs';
 
-async function createGeneratedIosFixture({ appScheme = 'Happierdev' } = {}) {
+async function createGeneratedIosFixture({
+  appScheme = 'Happierdev',
+  appBundleIdentifier = 'dev.happier.app.dev.internal',
+  widgetBundleIdentifier = `${appBundleIdentifier}.${DEFAULT_GENERATED_TARGET_NAME}`,
+} = {}) {
   const rootDir = await mkdtemp(join(tmpdir(), 'expo-widgets-generated-project-'));
   const iosDir = join(rootDir, 'ios');
   const xcodeprojDir = join(iosDir, `${appScheme}.xcodeproj`);
@@ -36,9 +40,11 @@ async function createGeneratedIosFixture({ appScheme = 'Happierdev' } = {}) {
   await writeFile(
     join(xcodeprojDir, 'project.pbxproj'),
     [
+      `name = ${appScheme};`,
       `name = ${DEFAULT_GENERATED_TARGET_NAME};`,
       `"${DEFAULT_GENERATED_TARGET_NAME}.appex"`,
-      'PRODUCT_BUNDLE_IDENTIFIER = "dev.happier.app.dev.internal.ExpoWidgetsTarget";',
+      `PRODUCT_BUNDLE_IDENTIFIER = "${appBundleIdentifier}";`,
+      `PRODUCT_BUNDLE_IDENTIFIER = "${widgetBundleIdentifier}";`,
       ...DEFAULT_GENERATED_WIDGET_NAMES.map((name) => `${name}.swift`),
     ].join('\n'),
     'utf8',
@@ -104,6 +110,27 @@ test('assertExpoWidgetsGeneratedProject returns the canonical generated target s
   assert.deepEqual(summary.widgetNames, DEFAULT_GENERATED_WIDGET_NAMES);
   assert.equal(summary.xcodeprojPath, xcodeprojDir);
   assert.equal(summary.usedXcodebuildValidation, true);
+});
+
+test('assertExpoWidgetsGeneratedProject rejects a widget bundle identifier outside the app prefix', async () => {
+  const { iosDir } = await createGeneratedIosFixture({
+    appBundleIdentifier: 'dev.happier.app.dev.next-dev.devclient',
+    widgetBundleIdentifier: 'dev.happier.app.dev.internal.devclient.ExpoWidgetsTarget',
+  });
+
+  await assert.rejects(
+    () =>
+      assertExpoWidgetsGeneratedProject({
+        iosDir,
+        spawnSyncImpl: () => ({
+          status: 0,
+          stdout: `Targets:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\nSchemes:\n    Happierdev\n    ${DEFAULT_GENERATED_TARGET_NAME}\n`,
+          stderr: '',
+          error: undefined,
+        }),
+      }),
+    /prefixed with the parent app bundle identifier/i,
+  );
 });
 
 test('assertExpoWidgetsGeneratedProject rejects missing Podfile widget target integration', async () => {

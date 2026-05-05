@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
@@ -40,7 +40,7 @@ export function useProjectRouteActions(params: Readonly<{
 }>) {
     const router = useRouter();
     const deviceType = useDeviceType();
-    const mobileWorkspaceExperience = useLocalSetting('mobileWorkspaceExperienceV1');
+    const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
     const workspaceRefId = params.workspaceRef?.id ?? null;
     const workspaceRootPath = params.workspaceRef?.rootPath ?? null;
     const openDetailsTab = params.pane?.openDetailsTab;

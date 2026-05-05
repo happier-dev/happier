@@ -2,7 +2,15 @@ import * as React from 'react';
 
 import { Platform } from 'react-native';
 
-import { storage, useLocalSettings } from '@/sync/domains/state/storage';
+import {
+    isPushNotificationBundledSoundId,
+    resolveExpoNotificationSoundName,
+    resolvePushNotificationAndroidChannelId,
+} from '@happier-dev/protocol';
+import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
+import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { storage, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -13,35 +21,61 @@ import { sendExpoLocalNotification } from '../channels/sendExpoLocalNotification
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
 import { subscribeActivityLocalNotifications, type ActivityLocalNotificationEvent } from './activityLocalNotificationBus';
 
-function shouldNotifyForEvent(
-    localSettings: Readonly<Record<string, unknown>>,
+function resolveLocalNotificationEventKind(event: ActivityLocalNotificationEvent): ActivityAttentionDeliveryEventKind {
+    if (event.kind === 'ready') return 'ready';
+    return event.requestKind === 'permission' ? 'permission_request' : 'user_action_request';
+}
+
+function resolveExpoLocalNotificationSound(
     event: ActivityLocalNotificationEvent,
-): boolean {
-    if (localSettings.localNotificationsEnabled === false) {
-        return false;
+    deliveryPlan: ReturnType<typeof resolveActivityAttentionDeliveryPlan>,
+): Readonly<{ sound: string | null; channelId?: string }> {
+    const kind = resolveLocalNotificationEventKind(event);
+    const androidKind = kind === 'permission_request'
+        ? 'permission'
+        : kind === 'user_action_request'
+            ? 'user_action'
+            : 'ready';
+
+    if (deliveryPlan.delivery === 'silent' || deliveryPlan.sound.kind === 'none') {
+        return {
+            sound: null,
+            channelId: Platform.OS === 'android'
+                ? resolvePushNotificationAndroidChannelId({ kind: androidKind, soundId: 'none' })
+                : undefined,
+        };
+    }
+    if (deliveryPlan.sound.kind === 'system_default') {
+        return { sound: 'default' };
     }
 
-    if (event.kind === 'ready') {
-        return localSettings.localNotificationsShowReady !== false;
-    }
-
-    if (event.requestKind === 'permission') {
-        return localSettings.localNotificationsShowPendingPermissionRequests !== false;
-    }
-
-    return localSettings.localNotificationsShowPendingUserActionRequests !== false;
+    const soundId = deliveryPlan.sound.id ?? 'default';
+    const sound = resolveExpoNotificationSoundName(soundId) ?? null;
+    return {
+        sound,
+        channelId:
+            Platform.OS === 'android' && isPushNotificationBundledSoundId(soundId)
+                ? resolvePushNotificationAndroidChannelId({ kind: androidKind, soundId })
+                : undefined,
+    };
 }
 
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
     const localSettings = useLocalSettings();
+    const accountSettings = useSettings();
+    const parsedLocalSettings = React.useMemo(() => localSettingsParse(localSettings), [localSettings]);
 
     React.useEffect(() => {
         return subscribeActivityLocalNotifications((event) => {
-            if (!shouldNotifyForEvent(localSettings, event)) {
-                return;
-            }
-
-            if (isSessionSurfaceVisible(event.sessionId)) {
+            const deliveryPlan = resolveActivityAttentionDeliveryPlan({
+                accountSettings,
+                localSettings: parsedLocalSettings,
+                event: resolveLocalNotificationEventKind(event),
+                channel: 'local_notification',
+                sameSessionVisible: isSessionSurfaceVisible(event.sessionId),
+                now: new Date(),
+            });
+            if (deliveryPlan.delivery === 'suppress') {
                 return;
             }
 
@@ -50,7 +84,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 event,
                 session,
                 serverUrl: getActiveServerUrl(),
-                includeReadyMessageText: localSettings.localNotificationsShowReadyMessageText !== false,
+                includeReadyMessageText: deliveryPlan.previewBehavior === 'include_preview',
             });
 
             if (isTauriDesktop()) {
@@ -63,14 +97,20 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
 
             if (Platform.OS === 'web') return;
 
-            fireAndForget(sendExpoLocalNotification({
+            const resolvedSound = resolveExpoLocalNotificationSound(event, deliveryPlan);
+            const expoNotificationParams: Parameters<typeof sendExpoLocalNotification>[0] = {
                 title: notification.title,
                 body: notification.body,
                 data: notification.data,
                 categoryIdentifier: notification.expo.categoryIdentifier,
-            }), { tag: 'ActivityLocalNotificationRuntime.sendExpoLocalNotification' });
+                sound: resolvedSound.sound,
+                channelId: resolvedSound.channelId,
+            };
+            fireAndForget(sendExpoLocalNotification(expoNotificationParams), {
+                tag: 'ActivityLocalNotificationRuntime.sendExpoLocalNotification',
+            });
         });
-    }, [localSettings]);
+    }, [accountSettings, parsedLocalSettings]);
 
     return null;
 }

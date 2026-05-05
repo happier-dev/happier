@@ -117,7 +117,7 @@ describe('TranscriptRollbackActionButton', () => {
             },
             {
                 defaultSessionId: 'session-1',
-                surface: 'ui_button',
+                surface: 'ui',
             },
         );
         expect(getTranscriptModalMockRef().current).not.toBeNull();
@@ -197,7 +197,7 @@ describe('TranscriptRollbackActionButton', () => {
             },
             {
                 defaultSessionId: 'session-1',
-                surface: 'ui_button',
+                surface: 'ui',
             },
         );
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('session-1', 'edit this prompt');

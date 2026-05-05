@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -34,7 +35,7 @@ vi.mock('@/components/workspaces/files/file/FileHeader', () => ({
 }));
 
 vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
-    FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props),
+    FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props, props.rightElement ?? null),
 }));
 
 vi.mock('@/components/workspaces/files/file/FileContentPanel', () => ({
@@ -248,9 +249,10 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
     });
 
     it('renders a workspace-scoped download action when preview is too large (no sessionId required)', async () => {
+        const { t } = await import('@/text');
         refreshSpy.mockResolvedValueOnce({
             status: 'ready' as const,
-            error: 'files.fileTooLargeToPreview',
+            error: t('files.fileTooLargeToPreview'),
             diffContent: null,
             fileContent: null,
             fileWriteSupported: true,
@@ -267,6 +269,11 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             />,
         );
 
+        await act(async () => {});
+
+        expect(screen.findAllByType('FileErrorState')).toHaveLength(0);
+        expect(screen.findAllByType('FileActionToolbar')).toHaveLength(1);
+        expect(screen.findAllByTestId('file-preview-unavailable-banner')).toHaveLength(1);
         expect(screen.findAllByType('WorkspaceFileDownloadButton')).toHaveLength(1);
     });
 });

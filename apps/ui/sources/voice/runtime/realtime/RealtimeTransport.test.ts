@@ -241,6 +241,23 @@ describe('RealtimeTransport provider event ownership', () => {
         expect(clearRealtimeModeDebounce).toHaveBeenCalledTimes(1);
     });
 
+    it('mirrors disconnected snapshots as idle even if a stale speaking mode is present', async () => {
+        const { RealtimeTransport } = await import('./RealtimeTransport');
+        const transport = new RealtimeTransport();
+
+        transport.publishSessionSnapshot({
+            adapterId: 'realtime_elevenlabs',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'speaking',
+            canStop: false,
+        });
+
+        expect(setRealtimeStatus).toHaveBeenLastCalledWith('disconnected');
+        expect(setRealtimeMode).toHaveBeenLastCalledWith('idle', true);
+        expect(clearRealtimeModeDebounce).toHaveBeenCalledTimes(1);
+    });
+
     it('surfaces unexpected provider disconnects as machine transport_disconnect errors', async () => {
         const { realtimeTransport } = await import('./RealtimeTransport');
 

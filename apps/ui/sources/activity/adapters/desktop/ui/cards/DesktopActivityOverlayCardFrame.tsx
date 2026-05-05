@@ -86,13 +86,13 @@ const styles = StyleSheet.create({
     eyebrow: {
         fontSize: 10,
         fontWeight: '700',
-        letterSpacing: 0.12,
+        letterSpacing: 0,
         textTransform: 'uppercase',
     },
     title: {
         fontSize: 13,
         fontWeight: '700',
-        letterSpacing: 0.08,
+        letterSpacing: 0,
     },
     body: {
         fontSize: 11,
@@ -108,7 +108,7 @@ const styles = StyleSheet.create({
     badgeText: {
         fontSize: 9,
         fontWeight: '700',
-        letterSpacing: 0.12,
+        letterSpacing: 0,
         textTransform: 'uppercase',
     },
 });

@@ -62,6 +62,7 @@ function createDesktopOverlayWindowStatePayload(hostMode: 'floating' | 'notch_in
             compactStyle: 'pill',
             showSessionCount: true,
             showPreviewText: false,
+            quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
             placementMode: 'custom',
             anchor: 'bottom_right',
             offsetX: 24,

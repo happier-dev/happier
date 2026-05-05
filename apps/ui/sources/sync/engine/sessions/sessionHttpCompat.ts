@@ -6,9 +6,25 @@ import {
 } from '@happier-dev/protocol';
 
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
+import {
+    syncPerformanceTelemetry,
+    type SyncPerformanceTelemetryFields,
+} from '@/sync/runtime/syncPerformanceTelemetry';
 import { HappyError } from '@/utils/errors/errors';
 
 type SessionRequest = (path: string, init: RequestInit) => Promise<Response>;
+type ReadJsonSafeOptions = Readonly<{
+    telemetryNamePrefix?: string;
+    fields?: SyncPerformanceTelemetryFields;
+    onResponseChars?: (responseChars: number) => void;
+}>;
+
+const V2_SESSIONS_SERVER_TIMING_FIELD_BY_NAME: Readonly<Record<string, string>> = {
+    happier_v2_sessions_cursor: 'serverTimingCursorMs',
+    happier_v2_sessions_query: 'serverTimingQueryMs',
+    happier_v2_sessions_page: 'serverTimingPageMs',
+    happier_v2_sessions_total: 'serverTimingTotalMs',
+};
 
 function buildSessionRequestHeaders(token: string): HeadersInit {
     return {
@@ -17,9 +33,29 @@ function buildSessionRequestHeaders(token: string): HeadersInit {
     };
 }
 
-async function readJsonSafe(response: Response): Promise<unknown> {
+async function readJsonSafe(response: Response, options?: ReadJsonSafeOptions): Promise<unknown> {
     try {
-        return await response.json();
+        if (!options?.telemetryNamePrefix) {
+            return await response.json();
+        }
+
+        const bodyFields: Record<string, unknown> = { ...(options.fields ?? {}) };
+        const text = await syncPerformanceTelemetry.measureAsync(
+            `${options.telemetryNamePrefix}.responseBody`,
+            bodyFields,
+            async () => {
+                const responseText = await response.text();
+                const responseChars = responseText.length;
+                bodyFields.responseChars = responseChars;
+                options.onResponseChars?.(responseChars);
+                return responseText;
+            },
+        );
+        return syncPerformanceTelemetry.measure(
+            `${options.telemetryNamePrefix}.responseJson`,
+            bodyFields,
+            () => JSON.parse(text),
+        );
     } catch {
         return null;
     }
@@ -49,6 +85,31 @@ function readOptionalString(value: unknown): string | undefined {
 function readNullableString(value: unknown): string | null | undefined {
     if (value == null) return null;
     return typeof value === 'string' ? value : undefined;
+}
+
+function parseServerTimingDurationMs(value: string): number | null {
+    const match = /(?:^|;)\s*dur=([0-9]+(?:\.[0-9]+)?)/.exec(value);
+    if (!match?.[1]) return null;
+    const durationMs = Number(match[1]);
+    return Number.isFinite(durationMs) ? durationMs : null;
+}
+
+function readV2SessionsServerTimingFields(response: Response): Record<string, number> {
+    const header = response.headers.get('Server-Timing') ?? response.headers.get('server-timing') ?? '';
+    if (!header) return {};
+
+    const fields: Record<string, number> = {};
+    for (const metric of header.split(',')) {
+        const trimmedMetric = metric.trim();
+        if (!trimmedMetric) continue;
+        const metricName = trimmedMetric.split(';', 1)[0]?.trim() ?? '';
+        const fieldName = V2_SESSIONS_SERVER_TIMING_FIELD_BY_NAME[metricName];
+        if (!fieldName) continue;
+        const durationMs = parseServerTimingDurationMs(trimmedMetric);
+        if (durationMs == null) continue;
+        fields[fieldName] = durationMs;
+    }
+    return fields;
 }
 
 function coerceStringPayload(value: unknown): string | null {
@@ -126,7 +187,15 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
     };
 }
 
-function parseCompatSessionListResponse(raw: unknown): V2SessionListResponse | null {
+function parseCompatSessionListResponse(raw: unknown, telemetryFields?: SyncPerformanceTelemetryFields): V2SessionListResponse | null {
+    return syncPerformanceTelemetry.measure(
+        'sync.sessions.snapshot.fetchPage.responseSchema',
+        telemetryFields,
+        () => parseCompatSessionListResponseValue(raw),
+    );
+}
+
+function parseCompatSessionListResponseValue(raw: unknown): V2SessionListResponse | null {
     const parsed = V2SessionListResponseSchema.safeParse(raw);
     if (parsed.success) {
         return parsed.data;
@@ -213,9 +282,11 @@ export function looksLikeCurrentV2SessionNotFound404(body: unknown): boolean {
 export async function fetchSessionListPageCompat(params: Readonly<{
     request: SessionRequest;
     token: string;
+    sessionListPath?: string;
     cursor?: string | null;
     limit: number;
     allowLegacyV1Fallback?: boolean;
+    telemetryFields?: SyncPerformanceTelemetryFields;
 }>): Promise<{
     sessions: V2SessionListResponse['sessions'];
     nextCursor: string | null;
@@ -223,7 +294,10 @@ export async function fetchSessionListPageCompat(params: Readonly<{
     source: 'v2' | 'v1';
 }> {
     const allowLegacyV1Fallback = params.allowLegacyV1Fallback !== false;
-    const url = new URL('/v2/sessions', 'http://placeholder.local');
+    const sessionListPath = typeof params.sessionListPath === 'string' && params.sessionListPath.trim().length > 0
+        ? params.sessionListPath.trim()
+        : '/v2/sessions';
+    const url = new URL(sessionListPath, 'http://placeholder.local');
     url.searchParams.set('limit', String(params.limit));
     if (params.cursor) {
         url.searchParams.set('cursor', params.cursor);
@@ -232,10 +306,24 @@ export async function fetchSessionListPageCompat(params: Readonly<{
     const v2Response = await params.request(url.pathname + url.search, {
         headers: buildSessionRequestHeaders(params.token),
     });
-    const v2Body = await readJsonSafe(v2Response);
+    const v2TelemetryFields = {
+        ...(params.telemetryFields ?? {}),
+        ...readV2SessionsServerTimingFields(v2Response),
+    };
+    let v2ResponseChars: number | undefined;
+    const v2Body = await readJsonSafe(v2Response, {
+        telemetryNamePrefix: 'sync.sessions.snapshot.fetchPage',
+        fields: v2TelemetryFields,
+        onResponseChars: (responseChars) => {
+            v2ResponseChars = responseChars;
+        },
+    });
+    const v2ParseFields = typeof v2ResponseChars === 'number'
+        ? { ...v2TelemetryFields, responseChars: v2ResponseChars }
+        : v2TelemetryFields;
 
     if (v2Response.ok) {
-        const parsed = parseCompatSessionListResponse(v2Body);
+        const parsed = parseCompatSessionListResponse(v2Body, v2ParseFields);
         if (parsed) {
             return {
                 sessions: parsed.sessions,
@@ -262,8 +350,18 @@ export async function fetchSessionListPageCompat(params: Readonly<{
         throwSessionListHttpError(legacyResponse.status, '/v1/sessions');
     }
 
-    const legacyBody = await readJsonSafe(legacyResponse);
-    const parsedLegacy = parseCompatSessionListResponse(legacyBody);
+    let legacyResponseChars: number | undefined;
+    const legacyBody = await readJsonSafe(legacyResponse, {
+        telemetryNamePrefix: 'sync.sessions.snapshot.fetchPage',
+        fields: params.telemetryFields,
+        onResponseChars: (responseChars) => {
+            legacyResponseChars = responseChars;
+        },
+    });
+    const legacyParseFields = typeof legacyResponseChars === 'number'
+        ? { ...(params.telemetryFields ?? {}), responseChars: legacyResponseChars }
+        : params.telemetryFields;
+    const parsedLegacy = parseCompatSessionListResponse(legacyBody, legacyParseFields);
     if (!parsedLegacy) {
         throw new Error('Invalid /v1/sessions response');
     }

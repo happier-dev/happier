@@ -62,6 +62,96 @@ describe('ScmCommitComposerCard', () => {
         expect(onDraftMessageChange).toHaveBeenCalledWith('feat: improve UX');
     });
 
+    it('normalizes JSON fenced generated commit message suggestions before applying them', async () => {
+        const onDraftMessageChange = vi.fn();
+        const onGenerate = vi.fn(async () => ({
+            ok: true as const,
+            message: [
+                '```json',
+                '{',
+                '  "title": "fix(scm): refresh after commit",',
+                '  "body": "Keep the repository snapshot current.",',
+                '  "message": "fix(scm): refresh after commit\\n\\nKeep the repository snapshot current.",',
+                '  "confidence": 0.8',
+                '}',
+                '```',
+            ].join('\n'),
+        }));
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+
+        const screen = (await renderScreen(
+            <ScmCommitComposerCard
+                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0' } }}
+                commitActionLabel="Commit"
+                draftMessage=""
+                onDraftMessageChange={onDraftMessageChange}
+                busy={false}
+                status={null}
+                commitAllowed
+                commitBlockedMessage={null}
+                onCommitFromMessage={() => {}}
+                commitMessageGeneratorEnabled
+                onGenerateCommitMessageSuggestion={onGenerate}
+            />
+        )).tree;
+
+        await pressTestInstanceAsync(screen.findByProps({ accessibilityLabel: 'files.commitMessageEditor.generate' }));
+
+        expect(onDraftMessageChange).toHaveBeenCalledWith('fix(scm): refresh after commit\n\nKeep the repository snapshot current.');
+    });
+
+    it('shows commit progress inside the submit button instead of rendering status text while busy', async () => {
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+
+        const screen = (await renderScreen(
+            <ScmCommitComposerCard
+                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0', button: { primary: { tint: '#fff' } } } }}
+                commitActionLabel="Commit"
+                draftMessage="fix: refresh"
+                onDraftMessageChange={() => {}}
+                busy
+                status="Refreshing repository status..."
+                commitAllowed
+                commitBlockedMessage={null}
+                onCommitFromMessage={() => {}}
+            />
+        )).tree;
+
+        expect(screen.findAllByType('ActivityIndicator' as never)).toHaveLength(1);
+        expect(screen.findAllByProps({ children: 'Refreshing repository status...' })).toHaveLength(0);
+    });
+
+    it('renders a commit-adjacent push button when the shared push shortcut is available', async () => {
+        const onPush = vi.fn();
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+
+        const screen = (await renderScreen(
+            <ScmCommitComposerCard
+                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0' } }}
+                commitActionLabel="Commit"
+                draftMessage="feat: add remote"
+                onDraftMessageChange={() => {}}
+                busy={false}
+                status={null}
+                commitAllowed
+                commitBlockedMessage={null}
+                onCommitFromMessage={() => {}}
+                pushShortcut={{
+                    label: 'Push to origin/main',
+                    disabled: false,
+                    busy: false,
+                    onPress: onPush,
+                }}
+            />
+        )).tree;
+
+        const pushButton = screen.findByProps({ testID: 'scm-commit-adjacent-push' });
+        expect(pushButton).toBeTruthy();
+
+        await pressTestInstanceAsync(pushButton);
+        expect(onPush).toHaveBeenCalledTimes(1);
+    });
+
     it('does not render a generate button when the generator is disabled', async () => {
         const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
 

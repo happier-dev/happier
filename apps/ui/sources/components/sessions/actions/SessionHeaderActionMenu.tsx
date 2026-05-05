@@ -43,6 +43,12 @@ import {
 } from '@/sync/domains/session/directSessions/directSessionFollowMetadata';
 import { sync } from '@/sync/sync';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
+import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
+import {
+  createSessionReadStateDropdownItem,
+  resolveSessionReadStateFromActionId,
+} from '@/components/sessions/actions/sessionReadStateActionItems';
+import { sessionSetManualReadStateWithServerScope } from '@/sync/ops';
 
 function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>, fallbackSubtitle: string | undefined): string | undefined {
   if (handoffAvailability.available) {
@@ -142,8 +148,8 @@ export function SessionHeaderActionMenu(props: Readonly<{
       : false;
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
-      .filter((spec) => spec.surfaces.ui_button === true)
-      .filter((spec) => isActionEnabledInState({ settings } as any, spec.id, { surface: 'ui_button', placement: 'session_action_menu' } as any))
+      .filter((spec) => spec.surfaces.ui === true)
+      .filter((spec) => isActionEnabledInState({ settings } as any, spec.id, { surface: 'ui', placement: 'session_action_menu' } as any))
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
       .filter((spec) => spec.id !== 'session.fork' || canForkConversation({ session: props.session, replayEnabled: sessionReplayEnabled }) === true)
       .map((spec) => ({
@@ -171,6 +177,16 @@ export function SessionHeaderActionMenu(props: Readonly<{
       out.push(...props.extraItems);
     }
 
+    if (props.session.archivedAt == null) {
+      const readStateItem = createSessionReadStateDropdownItem(
+        resolveSessionReadStateAction(props.session),
+        theme.colors.header.tint,
+      );
+      if (readStateItem) {
+        out.push(readStateItem);
+      }
+    }
+
     if (showTeleportAction) {
       out.push({
         id: 'voice.teleport',
@@ -191,6 +207,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
     directSessionLink,
     directSessionFollowPolicy,
     supportsDirectSessionBackgroundFollow,
+    theme.colors.header.tint,
   ]);
 
   if (actions.length === 0) return null;
@@ -241,12 +258,33 @@ export function SessionHeaderActionMenu(props: Readonly<{
           });
           return;
         }
+        const manualReadState = resolveSessionReadStateFromActionId(actionId);
+        if (manualReadState) {
+          fireAndForget((async () => {
+            const result = await sessionSetManualReadStateWithServerScope(
+              props.sessionId,
+              manualReadState,
+              { serverId: sessionServerId ?? null },
+            );
+            if (!result.success) {
+              Modal.alert(
+                t('common.error'),
+                result.message || t(
+                  manualReadState === 'read'
+                    ? 'sessionInfo.failedToMarkSessionRead'
+                    : 'sessionInfo.failedToMarkSessionUnread',
+                ),
+              );
+            }
+          })(), { tag: 'SessionHeaderActionMenu.execute.sessionReadState' });
+          return;
+        }
         if (actionId === 'session.fork') {
           fireAndForget((async () => {
             const res = await executeSessionForkAction({
               execute: executor.execute as any,
               sessionId: props.sessionId,
-              context: { defaultSessionId: props.sessionId, surface: 'ui_button', placement: 'session_action_menu' } as any,
+              context: { defaultSessionId: props.sessionId, surface: 'ui', placement: 'session_action_menu' } as any,
             });
             if (!res.ok) {
               Modal.alert(t('common.error'), String(res.error ?? t('errors.failedToForkSession')));

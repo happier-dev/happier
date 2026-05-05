@@ -1,10 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const platformState = vi.hoisted(() => ({
+    os: 'web' as 'web' | 'ios' | 'android' | 'node',
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const reactNative = await createReactNativeWebMock();
+    return {
+        ...reactNative,
+        Platform: {
+            ...reactNative.Platform,
+            get OS() {
+                return platformState.os;
+            },
+        },
+    };
+});
+
 import { safeRouterBack } from './safeRouterBack';
 
 describe('safeRouterBack', () => {
     beforeEach(() => {
         vi.useRealTimers();
+        platformState.os = 'web';
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/start', pathname: '/start' },
             writable: true,
@@ -59,6 +78,33 @@ describe('safeRouterBack', () => {
         expect(replaceSpy).toHaveBeenCalledWith('/fallback');
     });
 
+    it('does not replace with the URL fallback on native when location is stale', () => {
+        vi.useFakeTimers();
+        platformState.os = 'ios';
+
+        const startHref = (globalThis as any).location.href as string;
+        const backSpy = vi.fn();
+        const replaceSpy = vi.fn();
+
+        safeRouterBack({
+            router: {
+                back: backSpy,
+                replace: replaceSpy,
+            },
+            navigation: {
+                canGoBack: () => true,
+            },
+            fallbackHref: '/fallback',
+        });
+
+        expect(backSpy).toHaveBeenCalled();
+        expect((globalThis as any).location.href).toBe(startHref);
+
+        vi.runAllTimers();
+
+        expect(replaceSpy).not.toHaveBeenCalled();
+    });
+
     it('does not replace when back changes the URL before the fallback timer fires', () => {
         vi.useFakeTimers();
 
@@ -109,8 +155,6 @@ describe('safeRouterBack', () => {
     });
 
     it('prefers navigation.goBack over router.back when the local navigator can handle back', () => {
-        vi.useFakeTimers();
-
         const backSpy = vi.fn();
         const replaceSpy = vi.fn();
         const navigationGoBackSpy = vi.fn();
@@ -134,9 +178,35 @@ describe('safeRouterBack', () => {
         expect(navigationGoBackSpy).toHaveBeenCalledTimes(1);
         expect(backSpy).not.toHaveBeenCalled();
         expect(replaceSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not schedule the web URL fallback after navigation.goBack succeeds locally', () => {
+        vi.useFakeTimers();
+
+        const backSpy = vi.fn();
+        const replaceSpy = vi.fn();
+        const navigationGoBackSpy = vi.fn();
+
+        safeRouterBack({
+            router: {
+                back: backSpy,
+                replace: replaceSpy,
+            },
+            navigation: {
+                canGoBack: () => true,
+                goBack: navigationGoBackSpy,
+                getState: () => ({
+                    index: 1,
+                    routes: [{ key: 'previous-route' }, { key: 'current-route' }],
+                }),
+            },
+            fallbackHref: '/fallback',
+        });
 
         vi.runAllTimers();
 
+        expect(navigationGoBackSpy).toHaveBeenCalledTimes(1);
+        expect(backSpy).not.toHaveBeenCalled();
         expect(replaceSpy).not.toHaveBeenCalled();
     });
 });

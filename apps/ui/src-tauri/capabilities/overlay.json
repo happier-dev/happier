@@ -6,6 +6,13 @@
     "activity_overlay"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "allow-desktop-show-main-window",
+    "allow-desktop-activity-overlay-get-window-state",
+    "allow-desktop-activity-overlay-set-expanded",
+    "allow-desktop-activity-overlay-set-input-locked",
+    "allow-desktop-activity-overlay-apply-drag-delta",
+    "allow-desktop-activity-overlay-release-drag-velocity",
+    "allow-desktop-activity-overlay-emit-interaction"
   ]
 }

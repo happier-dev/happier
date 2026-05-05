@@ -16,6 +16,7 @@ import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } fr
 interface ChatHeaderViewProps {
     title: string;
     subtitle?: string;
+    subtitleEllipsizeMode?: 'head' | 'tail';
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     onAvatarPress?: () => void;
@@ -26,11 +27,13 @@ interface ChatHeaderViewProps {
     isConnected?: boolean;
     flavor?: string | null;
     constrainWidth?: boolean;
+    includeTopInset?: boolean;
 }
 
 export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     title,
     subtitle,
+    subtitleEllipsizeMode = 'tail',
     badges,
     onBackPress,
     onAvatarPress,
@@ -39,6 +42,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     isConnected = true,
     flavor,
     constrainWidth = true,
+    includeTopInset = true,
 }) => {
     const { theme } = useUnistyles();
     const navigation = useNavigation();
@@ -47,6 +51,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     const backButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-back');
     const avatarButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-avatar');
+    const shouldUseWebSubtitleStartEllipsis = subtitleEllipsizeMode === 'head' && Platform.OS === 'web';
 
     const handleBackPress = () => {
         if (onBackPress) {
@@ -57,7 +62,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     };
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.header.background }]}>
+        <View style={[styles.container, { paddingTop: includeTopInset ? insets.top : 0, backgroundColor: theme.colors.header.background }]}>
             <View style={[styles.contentWrapper, constrainWidth ? null : { alignItems: 'stretch' }]}>
                 <View style={[styles.content, { height: headerHeight }, constrainWidth ? null : { maxWidth: '100%' }]}>
                 <Pressable
@@ -122,9 +127,10 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                     {subtitle && (
                         <Text
                             numberOfLines={1}
-                            ellipsizeMode="tail"
+                            ellipsizeMode={shouldUseWebSubtitleStartEllipsis ? undefined : subtitleEllipsizeMode}
                             style={[
                                 styles.subtitle,
+                                shouldUseWebSubtitleStartEllipsis ? styles.subtitleHeadWeb : null,
                                 {
                                     color: theme.colors.header.tint,
                                     opacity: 0.7,
@@ -132,7 +138,9 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                                 }
                             ]}
                         >
-                            {subtitle}
+                            {shouldUseWebSubtitleStartEllipsis ? (
+                                <Text style={styles.subtitleHeadTextWeb}>{subtitle}</Text>
+                            ) : subtitle}
                         </Text>
                     )}
                 </View>
@@ -212,6 +220,14 @@ const styles = StyleSheet.create(() => ({
         fontWeight: '400',
         lineHeight: 14,
         marginTop: 1,
+    },
+    subtitleHeadWeb: {
+        writingDirection: 'rtl' as const,
+        textAlign: 'left' as const,
+    },
+    subtitleHeadTextWeb: {
+        writingDirection: 'ltr' as const,
+        unicodeBidi: 'isolate' as const,
     },
     badge: {
         borderWidth: 1,

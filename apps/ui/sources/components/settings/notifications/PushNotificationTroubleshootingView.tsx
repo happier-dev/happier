@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Linking, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Notifications from 'expo-notifications';
-import Constants from 'expo-constants';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -13,128 +12,29 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useSettings } from '@/sync/domains/state/storage';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
-import {
-    DEFAULT_NOTIFICATIONS_SETTINGS_V1,
-    NotificationsSettingsV1Schema,
-    type NotificationsSettingsV1,
-} from '@happier-dev/protocol';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { accountSettingsParse } from '@happier-dev/protocol';
 import { deletePushToken, fetchPushTokens, type PushToken } from '@/sync/api/session/apiPush';
 import { registerPushTokenIfAvailable } from '@/sync/engine/account/syncAccount';
-import { loadLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
-
-type PushPermissionStatus = 'unsupported' | 'granted' | 'denied' | 'undetermined';
-type PushPermissionInfo = Readonly<{
-    status: PushPermissionStatus;
-    granted: boolean;
-    canAskAgain: boolean;
-}>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function formatPushTokenFingerprint(token: string): string {
-    const raw = token.replace(/^ExponentPushToken\[/, '').replace(/\]$/, '');
-    if (raw.length <= 10) return raw;
-    return `${raw.slice(0, 5)}…${raw.slice(-5)}`;
-}
-
-function formatPushTimestamp(timestamp: number): string {
-    return new Date(timestamp).toLocaleString();
-}
-
-function resolveExpoProjectId(): string | null {
-    const constants = Constants as unknown;
-    if (!isRecord(constants)) return null;
-
-    const expoConfig = isRecord(constants.expoConfig) ? constants.expoConfig : null;
-    const extra = expoConfig && isRecord(expoConfig.extra) ? expoConfig.extra : null;
-    const easExtra = extra && isRecord(extra.eas) ? extra.eas : null;
-    const projectIdFromExpoConfig = easExtra?.projectId;
-
-    const easConfig = isRecord(constants.easConfig) ? constants.easConfig : null;
-    const projectIdFromEasConfig = easConfig?.projectId;
-
-    const candidate =
-        typeof projectIdFromExpoConfig === 'string'
-            ? projectIdFromExpoConfig
-            : typeof projectIdFromEasConfig === 'string'
-                ? projectIdFromEasConfig
-                : null;
-    const trimmed = candidate?.trim() ?? '';
-    return trimmed ? trimmed : null;
-}
-
-async function getPushPermissionInfo(): Promise<PushPermissionInfo> {
-    if (Platform.OS === 'web') {
-        return { status: 'unsupported', granted: false, canAskAgain: false };
-    }
-
-    try {
-        const result = await Notifications.getPermissionsAsync();
-        const status: PushPermissionStatus =
-            result.status === 'granted' || result.status === 'denied' || result.status === 'undetermined'
-                ? result.status
-                : 'undetermined';
-        return {
-            status,
-            granted: result.granted === true || status === 'granted',
-            canAskAgain: result.canAskAgain === true,
-        };
-    } catch {
-        return { status: 'undetermined', granted: false, canAskAgain: false };
-    }
-}
-
-async function getCurrentExpoPushToken(): Promise<string | null> {
-    if (Platform.OS === 'web') return null;
-
-    const projectId = resolveExpoProjectId();
-    try {
-        const res = projectId
-            ? await Notifications.getExpoPushTokenAsync({ projectId })
-            : await Notifications.getExpoPushTokenAsync();
-        const token = typeof res.data === 'string' ? res.data.trim() : '';
-        const cached = loadLastRegisteredExpoPushToken()?.trim() ?? '';
-        return token || cached || null;
-    } catch {
-        const cached = loadLastRegisteredExpoPushToken()?.trim() ?? '';
-        return cached || null;
-    }
-}
-
-function resolvePermissionDetail(permission: PushPermissionInfo | null): string {
-    if (!permission) return t('settingsNotifications.pushTroubleshooting.permission.loading');
-    if (permission.status === 'unsupported') return t('settingsNotifications.pushTroubleshooting.permission.unsupported');
-    if (permission.granted) return t('settingsNotifications.pushTroubleshooting.permission.allowed');
-    if (permission.status === 'denied') return t('settingsNotifications.pushTroubleshooting.permission.denied');
-    return t('settingsNotifications.pushTroubleshooting.permission.notRequested');
-}
-
-function resolvePermissionSubtitle(permission: PushPermissionInfo | null): string {
-    if (!permission) return t('settingsNotifications.pushTroubleshooting.permission.loadingSubtitle');
-    if (permission.status === 'unsupported') return t('settingsNotifications.pushTroubleshooting.permission.unsupportedSubtitle');
-    if (permission.granted) return t('settingsNotifications.pushTroubleshooting.permission.allowedSubtitle');
-    if (permission.canAskAgain) return t('settingsNotifications.pushTroubleshooting.permission.canAskAgainSubtitle');
-    return t('settingsNotifications.pushTroubleshooting.permission.openSettingsSubtitle');
-}
+import {
+    formatPushTimestamp,
+    formatPushTokenFingerprint,
+    getCurrentExpoPushToken,
+    getPushPermissionInfo,
+    resolvePermissionDetail,
+    resolvePermissionSubtitle,
+    type PushPermissionInfo,
+} from './pushNotificationTroubleshootingRuntime';
 
 export const PushNotificationTroubleshootingView = React.memo(function PushNotificationTroubleshootingView() {
     const { theme } = useUnistyles();
     const auth = useAuth();
     const settings = useSettings();
-    const notificationsRaw = isRecord(settings) ? settings.notificationsSettingsV1 : undefined;
-    const notifications: NotificationsSettingsV1 = React.useMemo(() => {
-        try {
-            return NotificationsSettingsV1Schema.parse(notificationsRaw);
-        } catch {
-            return DEFAULT_NOTIFICATIONS_SETTINGS_V1;
-        }
-    }, [notificationsRaw]);
+    const attentionPolicy = React.useMemo(() => {
+        return accountSettingsParse(settings).attentionDeliveryPolicyV1;
+    }, [settings]);
 
-    const [activeServer, setActiveServer] = React.useState(() => getActiveServerSnapshot());
-    React.useEffect(() => subscribeActiveServer(setActiveServer), []);
+    const activeServer = useActiveServerSnapshot();
 
     const [permission, setPermission] = React.useState<PushPermissionInfo | null>(null);
     const [currentToken, setCurrentToken] = React.useState<string | null>(null);
@@ -150,7 +50,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
         };
     }, []);
 
-    const pushEnabled = notifications.pushEnabled !== false;
+    const pushEnabled = attentionPolicy.channels.expo_push.enabled !== false;
 
     const loadTroubleshootingState = React.useCallback(async (opts?: { showErrors?: boolean }) => {
         const showErrors = opts?.showErrors === true;

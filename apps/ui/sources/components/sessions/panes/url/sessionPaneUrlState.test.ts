@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { applySessionPaneUrlState, deriveSessionPaneUrlStateFromScopeState, parseSessionPaneUrlState, reconcileSessionPaneScopeFromUrlState, serializeSessionPaneUrlState } from './sessionPaneUrlState';
+import { applySessionPaneUrlState, buildActiveDetailsRouteParams, deriveSessionPaneUrlStateFromScopeState, parseSessionPaneUrlState, reconcileSessionPaneScopeFromUrlState, serializeSessionPaneUrlState } from './sessionPaneUrlState';
 
 describe('sessionPaneUrlState', () => {
     describe('parseSessionPaneUrlState', () => {
@@ -41,6 +41,18 @@ describe('sessionPaneUrlState', () => {
         it('parses commit details target', () => {
             expect(parseSessionPaneUrlState({ details: 'commit', sha: '0338a0f' })).toEqual({
                 details: { kind: 'commit', sha: '0338a0f' },
+            });
+        });
+
+        it('parses SCM review details target', () => {
+            expect(parseSessionPaneUrlState({ details: 'scmReview' })).toEqual({
+                details: { kind: 'scmReview' },
+            });
+        });
+
+        it('parses SCM stash details target', () => {
+            expect(parseSessionPaneUrlState({ details: 'scmStash' })).toEqual({
+                details: { kind: 'scmStash' },
             });
         });
 
@@ -176,6 +188,52 @@ describe('sessionPaneUrlState', () => {
             );
         });
 
+        it('opens the SCM review details tab when requested in url state', () => {
+            const pane = {
+                openRight: vi.fn(),
+                setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                setBottomTab: vi.fn(),
+                openDetailsTab: vi.fn(),
+            };
+
+            applySessionPaneUrlState(pane as any, {
+                details: { kind: 'scmReview' },
+            });
+
+            expect(pane.openDetailsTab).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    key: 'scmReview:working',
+                    kind: 'scmReview',
+                    resource: { kind: 'scmReview', scope: 'working' },
+                }),
+                { intent: 'pinned' },
+            );
+        });
+
+        it('opens the SCM stash details tab when requested in url state', () => {
+            const pane = {
+                openRight: vi.fn(),
+                setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                setBottomTab: vi.fn(),
+                openDetailsTab: vi.fn(),
+            };
+
+            applySessionPaneUrlState(pane as any, {
+                details: { kind: 'scmStash' },
+            });
+
+            expect(pane.openDetailsTab).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    key: 'scmStash',
+                    kind: 'scmStash',
+                    resource: { kind: 'scmStash' },
+                }),
+                { intent: 'pinned' },
+            );
+        });
+
         it('ignores unsafe file paths in url state', () => {
             const pane = {
                 openRight: vi.fn(),
@@ -238,6 +296,26 @@ describe('sessionPaneUrlState', () => {
                 right: 'git',
                 details: 'commit',
                 sha: '0338a0f',
+            });
+        });
+
+        it('serializes SCM review details state', () => {
+            expect(
+                serializeSessionPaneUrlState({
+                    details: { kind: 'scmReview' },
+                })
+            ).toEqual({
+                details: 'scmReview',
+            });
+        });
+
+        it('serializes SCM stash details state', () => {
+            expect(
+                serializeSessionPaneUrlState({
+                    details: { kind: 'scmStash' },
+                })
+            ).toEqual({
+                details: 'scmStash',
             });
         });
 
@@ -347,6 +425,56 @@ describe('sessionPaneUrlState', () => {
             });
         });
 
+        it('derives an active SCM review details tab', () => {
+            expect(
+                deriveSessionPaneUrlStateFromScopeState({
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: true,
+                        tabs: [
+                            {
+                                key: 'scmReview:working',
+                                kind: 'scmReview',
+                                title: 'Review',
+                                resource: { kind: 'scmReview', scope: 'working' },
+                                isPinned: true,
+                                isPreview: false,
+                            },
+                        ],
+                        activeTabKey: 'scmReview:working',
+                    },
+                } as any)
+            ).toEqual({
+                details: { kind: 'scmReview' },
+            });
+        });
+
+        it('derives an active SCM stash details tab', () => {
+            expect(
+                deriveSessionPaneUrlStateFromScopeState({
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: true,
+                        tabs: [
+                            {
+                                key: 'scmStash',
+                                kind: 'scmStash',
+                                title: 'Stashed changes',
+                                resource: { kind: 'scmStash' },
+                                isPinned: true,
+                                isPreview: false,
+                            },
+                        ],
+                        activeTabKey: 'scmStash',
+                    },
+                } as any)
+            ).toEqual({
+                details: { kind: 'scmStash' },
+            });
+        });
+
         it('keeps legacy singleton terminal details tabs routable during migration', () => {
             expect(
                 deriveSessionPaneUrlStateFromScopeState({
@@ -369,6 +497,32 @@ describe('sessionPaneUrlState', () => {
                 } as any)
             ).toEqual({
                 details: { kind: 'terminal' },
+            });
+        });
+    });
+
+    describe('buildActiveDetailsRouteParams', () => {
+        it('serializes an active SCM review details tab into route params', () => {
+            expect(buildActiveDetailsRouteParams([
+                {
+                    key: 'scmReview:working',
+                    kind: 'scmReview',
+                    resource: { kind: 'scmReview', scope: 'working' },
+                },
+            ], 'scmReview:working')).toEqual({
+                details: 'scmReview',
+            });
+        });
+
+        it('serializes an active SCM stash details tab into route params', () => {
+            expect(buildActiveDetailsRouteParams([
+                {
+                    key: 'scmStash',
+                    kind: 'scmStash',
+                    resource: { kind: 'scmStash' },
+                },
+            ], 'scmStash')).toEqual({
+                details: 'scmStash',
             });
         });
     });

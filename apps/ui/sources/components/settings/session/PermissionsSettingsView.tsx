@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
@@ -39,6 +40,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
     const [permissionPromptSurface, setPermissionPromptSurface] = useSettingMutable('permissionPromptSurface');
     const [defaultTranscriptStorageMode, setDefaultTranscriptStorageMode] = useSettingMutable('newSessionDefaultPersistenceModeV1');
     const [defaultTranscriptStorageModeByTargetKey, setDefaultTranscriptStorageModeByTargetKey] = useSettingMutable('newSessionDefaultPersistenceModeByTargetKeyV1');
+    const [rememberLastProjectSessionSelections, setRememberLastProjectSessionSelections] = useSettingMutable('rememberLastProjectSessionSelections');
 
     const getDefaultPermission = React.useCallback((agent: AgentId): PermissionMode => {
         const targetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: agent });
@@ -139,6 +141,29 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
+            <ItemGroup
+                title={t('settingsSession.sessionCreation.title')}
+                footer={t('settingsSession.sessionCreation.footer')}
+            >
+                <Item
+                    title={t('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle')}
+                    subtitle={t(
+                        rememberLastProjectSessionSelections !== false
+                            ? 'settingsSession.sessionCreation.rememberLastProjectSelectionsEnabledSubtitle'
+                            : 'settingsSession.sessionCreation.rememberLastProjectSelectionsDisabledSubtitle',
+                    )}
+                    icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={rememberLastProjectSessionSelections !== false}
+                            onValueChange={setRememberLastProjectSessionSelections}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setRememberLastProjectSessionSelections(rememberLastProjectSessionSelections === false)}
+                />
+            </ItemGroup>
+
             <ItemGroup
                 title={t('settingsSession.defaultPermissions.applyPermissionChangesTitle')}
                 footer={t('settingsSession.permissions.applyChangesFooter')}

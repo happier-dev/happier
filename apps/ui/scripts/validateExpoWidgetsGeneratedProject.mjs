@@ -64,6 +64,44 @@ function assertXcodebuildOutput(output, targetName) {
   );
 }
 
+function collectProductBundleIdentifiers(pbxprojRaw) {
+  return [...pbxprojRaw.matchAll(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?(?<bundleIdentifier>[^";\n]+)"?;/g)]
+    .map((match) => match.groups?.bundleIdentifier?.trim() ?? '')
+    .filter(Boolean);
+}
+
+function resolveWidgetBundleIdentifier(pbxprojRaw, targetName) {
+  const bundleIdentifiers = collectProductBundleIdentifiers(pbxprojRaw);
+  const widgetBundleIdentifiers = bundleIdentifiers.filter((bundleIdentifier) =>
+    bundleIdentifier.endsWith(`.${targetName}`),
+  );
+  const appBundleIdentifiers = bundleIdentifiers.filter((bundleIdentifier) =>
+    !bundleIdentifier.endsWith(`.${targetName}`),
+  );
+
+  if (widgetBundleIdentifiers.length === 0) {
+    throw new Error(`Generated Xcode project is missing the widget target PRODUCT_BUNDLE_IDENTIFIER for '${targetName}'.`);
+  }
+
+  const prefixedWidgetBundleIdentifier = widgetBundleIdentifiers.find((widgetBundleIdentifier) =>
+    appBundleIdentifiers.some((appBundleIdentifier) =>
+      widgetBundleIdentifier.startsWith(`${appBundleIdentifier}.`),
+    ),
+  );
+
+  if (!prefixedWidgetBundleIdentifier) {
+    throw new Error(
+      [
+        `Generated widget target bundle identifier must be prefixed with the parent app bundle identifier.`,
+        `widgetBundleIdentifier=${widgetBundleIdentifiers.join(',')}`,
+        `appBundleIdentifiers=${appBundleIdentifiers.join(',') || 'none'}`,
+      ].join('\n'),
+    );
+  }
+
+  return prefixedWidgetBundleIdentifier;
+}
+
 export async function assertExpoWidgetsGeneratedProject({
   cwd,
   iosDir,
@@ -117,10 +155,7 @@ export async function assertExpoWidgetsGeneratedProject({
     );
   }
 
-  const bundleIdentifierMatch = pbxprojRaw.match(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?(?<bundleIdentifier>[^";\n]+)"?;/);
-  if (!bundleIdentifierMatch?.groups?.bundleIdentifier) {
-    throw new Error('Generated Xcode project is missing the widget target PRODUCT_BUNDLE_IDENTIFIER.');
-  }
+  const bundleIdentifier = resolveWidgetBundleIdentifier(pbxprojRaw, targetName);
 
   const xcodebuildResult = spawnSyncImpl(
     'xcodebuild',
@@ -147,7 +182,7 @@ export async function assertExpoWidgetsGeneratedProject({
 
   return {
     targetName,
-    bundleIdentifier: bundleIdentifierMatch.groups.bundleIdentifier,
+    bundleIdentifier,
     widgetNames: [...requiredWidgetNames],
     xcodeprojPath: paths.xcodeprojPath,
     usedXcodebuildValidation,

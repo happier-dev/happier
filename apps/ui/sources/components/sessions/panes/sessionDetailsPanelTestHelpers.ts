@@ -9,6 +9,7 @@ type SessionDetailsPanelStorageModuleFactory = (
 type InstallSessionDetailsPanelCommonModuleMocksOptions = Readonly<{
     icons?: SessionDetailsPanelModuleFactory;
     reactNative?: SessionDetailsPanelModuleFactory;
+    router?: SessionDetailsPanelModuleFactory | false;
     storage?: SessionDetailsPanelStorageModuleFactory;
     text?: SessionDetailsPanelModuleFactory;
     unistyles?: SessionDetailsPanelModuleFactory;
@@ -18,6 +19,7 @@ const sessionDetailsPanelModuleState = vi.hoisted(() => ({
     options: {
         icons: undefined as SessionDetailsPanelModuleFactory | undefined,
         reactNative: undefined as SessionDetailsPanelModuleFactory | undefined,
+        router: undefined as SessionDetailsPanelModuleFactory | false | undefined,
         storage: undefined as SessionDetailsPanelStorageModuleFactory | undefined,
         text: undefined as SessionDetailsPanelModuleFactory | undefined,
         unistyles: undefined as SessionDetailsPanelModuleFactory | undefined,
@@ -30,6 +32,7 @@ export function installSessionDetailsPanelCommonModuleMocks(
     sessionDetailsPanelModuleState.options = {
         icons: options.icons,
         reactNative: options.reactNative,
+        router: options.router,
         storage: options.storage,
         text: options.text,
         unistyles: options.unistyles,
@@ -63,6 +66,20 @@ export function installSessionDetailsPanelCommonModuleMocks(
 
         const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
         return createExpoVectorIconsMock();
+    });
+
+    vi.mock('expo-router', async () => {
+        const activeOptions = sessionDetailsPanelModuleState.options;
+        if (activeOptions.router === false) {
+            const original = await vi.importActual('expo-router');
+            return original;
+        }
+        if (activeOptions.router) {
+            return await activeOptions.router();
+        }
+
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock().module;
     });
 
     vi.mock('@/text', async () => {

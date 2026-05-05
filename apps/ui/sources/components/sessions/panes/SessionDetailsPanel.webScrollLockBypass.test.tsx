@@ -104,7 +104,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
     useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
         return null;
     },
     useLocalSettingMutable: () => [false, vi.fn()],

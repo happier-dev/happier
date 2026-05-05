@@ -269,7 +269,7 @@ describe('ActionsSettingsView approvals required surfaces', () => {
         });
     });
 
-    it('shows approvalRequiredSurfaces toggle for slash_command targets and stores ui_slash_command', async () => {
+    it('shows approvalRequiredSurfaces toggle for slash_command targets and stores ui', async () => {
         capture.reset();
         capture.actionId = 'review.start';
         capture.targetId = 'slash_command';
@@ -294,7 +294,7 @@ describe('ActionsSettingsView approvals required surfaces', () => {
                     enabledPlacements: [],
                     disabledSurfaces: [],
                     disabledPlacements: [],
-                    approvalRequiredSurfaces: ['ui_slash_command'],
+                    approvalRequiredSurfaces: ['ui'],
                 },
                 'session.title.set': {
                     enabledPlacements: [],

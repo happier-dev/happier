@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHelpers';
 
 
@@ -10,10 +11,17 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { applySettings, happierVoiceSupportState } = vi.hoisted(() => ({
-    applySettings: vi.fn(),
-    happierVoiceSupportState: { current: false as boolean | null },
-}));
+const { applySettings, happierVoiceSupportState, mockLocalSettings } = await vi.hoisted(async () => {
+    const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+    return {
+        applySettings: vi.fn(),
+        happierVoiceSupportState: { current: false as boolean | null },
+        mockLocalSettings: {
+            ...localSettingsDefaults,
+            activityBadgesEnabled: false,
+        } satisfies LocalSettings,
+    };
+});
 
 const mockSettings = {
     voice: {
@@ -66,7 +74,13 @@ installRootLayoutRouteCommonModuleMocks({
             useProfile: () => ({ linkedProviders: [], username: null }),
             useAllSessions: () => [],
             useFriendRequests: () => [],
-            useLocalSettings: () => ({ activityBadgesEnabled: false }),
+            useLocalSettings: () => mockLocalSettings,
+            useLocalSetting: (<K extends keyof LocalSettings>(key: K): LocalSettings[K] =>
+                mockLocalSettings[key]) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
+            useLocalSettingMutable: (<K extends keyof LocalSettings>(key: K): [LocalSettings[K], (value: LocalSettings[K]) => void] => [
+                mockLocalSettings[key],
+                vi.fn(),
+            ]) as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
             useSettings: () => mockSettings,
             useSetting: (key: keyof typeof mockSettings) => mockSettings[key],
         });
@@ -89,8 +103,20 @@ vi.mock('@/components/navigation/Header', () => ({
     createHeader: () => null,
 }));
 
+vi.mock('@/components/pets/runtime/PetAppShellCompanionMount', () => ({
+    PetAppShellCompanionMount: () => React.createElement('PetAppShellCompanionMount', {
+        testID: 'pet-app-shell-companion-mount',
+    }),
+}));
+
 vi.mock('@/sync/domains/state/storageStore', () => {
-    const storage = (selector: (state: { profile: { linkedProviders: []; username: null } }) => unknown) => selector({ profile: { linkedProviders: [], username: null } });
+    const storage = (
+        selector: (state: { profile: { linkedProviders: []; username: null }; localSettings: LocalSettings }) => unknown,
+    ) =>
+        selector({
+            profile: { linkedProviders: [], username: null },
+            localSettings: mockLocalSettings,
+        });
     return { storage, getStorage: () => storage };
 });
 
@@ -103,6 +129,14 @@ vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
 }));
 
 describe('RootLayout voice gating', () => {
+    it('mounts the in-window pet companion surface for ordinary web clients', async () => {
+        const RootLayout = (await import('@/app/(app)/_layout')).default;
+
+        const screen = await renderScreen(React.createElement(RootLayout));
+
+        expect(screen.findByTestId('pet-app-shell-companion-mount')).not.toBeNull();
+    });
+
     it('disables Happier voice mode when server reports voice unsupported', async () => {
         happierVoiceSupportState.current = false;
         applySettings.mockClear();

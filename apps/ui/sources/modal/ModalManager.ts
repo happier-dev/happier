@@ -2,11 +2,25 @@ import { Platform, Alert } from 'react-native';
 import { t } from '@/text';
 import { AlertButton, ModalConfig, CustomModalConfig, IModal, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps } from './types';
 
+type ModalProviderFunctions = Readonly<{
+    showModal: (config: Omit<ModalConfig, 'id'>) => string;
+    hideModal: (id: string) => void;
+    hideAllModals: () => void;
+    updateCustomModalProps: (id: string, props: Record<string, unknown>) => void;
+}>;
+
+type ModalProviderRegistration = Readonly<{
+    id: number;
+    functions: ModalProviderFunctions;
+}>;
+
 class ModalManagerClass implements IModal {
     private showModalFn: ((config: Omit<ModalConfig, 'id'>) => string) | null = null;
     private hideModalFn: ((id: string) => void) | null = null;
     private hideAllModalsFn: (() => void) | null = null;
     private updateCustomModalPropsFn: ((id: string, props: Record<string, unknown>) => void) | null = null;
+    private providerRegistrations: ModalProviderRegistration[] = [];
+    private nextProviderRegistrationId = 0;
     private confirmResolvers: Map<string, (value: boolean) => void> = new Map();
     private promptResolvers: Map<string, (value: string | null) => void> = new Map();
     private alertResolvers: Map<string, () => void> = new Map();
@@ -17,10 +31,52 @@ class ModalManagerClass implements IModal {
         hideAllModals: () => void,
         updateCustomModalProps: (id: string, props: Record<string, unknown>) => void = () => {},
     ) {
-        this.showModalFn = showModal;
-        this.hideModalFn = hideModal;
-        this.hideAllModalsFn = hideAllModals;
-        this.updateCustomModalPropsFn = updateCustomModalProps;
+        this.providerRegistrations = [{
+            id: this.createProviderRegistrationId(),
+            functions: {
+                showModal,
+                hideModal,
+                hideAllModals,
+                updateCustomModalProps,
+            },
+        }];
+        this.applyCurrentProviderRegistration();
+    }
+
+    registerProvider(functions: ModalProviderFunctions): () => void {
+        const id = this.createProviderRegistrationId();
+        this.providerRegistrations = [
+            ...this.providerRegistrations,
+            { id, functions },
+        ];
+        this.applyCurrentProviderRegistration();
+
+        let isRegistered = true;
+
+        return () => {
+            if (!isRegistered) {
+                return;
+            }
+
+            isRegistered = false;
+            this.providerRegistrations = this.providerRegistrations.filter((registration) => registration.id !== id);
+            this.applyCurrentProviderRegistration();
+        };
+    }
+
+    private createProviderRegistrationId(): number {
+        const id = this.nextProviderRegistrationId;
+        this.nextProviderRegistrationId += 1;
+        return id;
+    }
+
+    private applyCurrentProviderRegistration(): void {
+        const currentRegistration = this.providerRegistrations[this.providerRegistrations.length - 1];
+
+        this.showModalFn = currentRegistration?.functions.showModal ?? null;
+        this.hideModalFn = currentRegistration?.functions.hideModal ?? null;
+        this.hideAllModalsFn = currentRegistration?.functions.hideAllModals ?? null;
+        this.updateCustomModalPropsFn = currentRegistration?.functions.updateCustomModalProps ?? null;
     }
 
     alert(title: string, message?: string, buttons?: AlertButton[]): void {

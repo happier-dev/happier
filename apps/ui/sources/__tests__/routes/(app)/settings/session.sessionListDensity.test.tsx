@@ -8,8 +8,17 @@ import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState 
 
 const setSessionListDensity = vi.fn();
 const setSessionListOrderingMode = vi.fn();
+let translationPrefix = 'en';
 
 installSessionSettingsEntryModuleMocks({
+    textModule: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => `${translationPrefix}:${key}`,
+            translateLoose: (key: string) => `${translationPrefix}:${key}`,
+            getPreferredLanguage: () => translationPrefix,
+        });
+    },
     storageModule: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
@@ -56,18 +65,21 @@ afterEach(() => {
     setSessionListDensity.mockClear();
     setSessionListOrderingMode.mockClear();
     resetSessionSettingsEntryState();
+    translationPrefix = 'en';
 });
 
 describe('Session settings session list density', () => {
     it('defaults to the cozy density option and updates only the canonical density setting', async () => {
         setSessionListDensity.mockClear();
         const mod = await import('../../../../app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
+        const SessionSettingsScreen = (mod.default as unknown as {
+            type: React.ComponentType<Record<string, never>>;
+        }).type;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
-        const densityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.sessionListDensity.title');
-        const orderingDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.sessionList.orderingTitle');
+        const densityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.itemProps?.testID === 'settings-session-sessionListDensity-trigger');
+        const orderingDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.itemProps?.testID === 'settings-session-sessionListOrderingMode-trigger');
         expect(densityDropdown).toBeTruthy();
         expect(densityDropdown?.props?.selectedId).toBe('cozy');
         expect(orderingDropdown).toBeTruthy();
@@ -88,5 +100,58 @@ describe('Session settings session list density', () => {
         });
 
         expect(setSessionListOrderingMode).toHaveBeenCalledWith('updated');
+    });
+
+    it('refreshes the density, ordering, and grouping dropdown labels when the language changes and the screen rerenders', async () => {
+        translationPrefix = 'en';
+        const mod = await import('../../../../app/(app)/settings/session');
+        const SessionSettingsScreen = (mod.default as unknown as {
+            type: React.ComponentType<Record<string, never>>;
+        }).type;
+
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
+        const readDropdowns = () => {
+            const dropdowns = screen.findAllByType('DropdownMenu' as any);
+            return {
+                density: dropdowns.find((node: any) => node.props?.itemTrigger?.itemProps?.testID === 'settings-session-sessionListDensity-trigger'),
+                ordering: dropdowns.find((node: any) => node.props?.itemTrigger?.itemProps?.testID === 'settings-session-sessionListOrderingMode-trigger'),
+                grouping: dropdowns.find((node: any) => String(node.props?.itemTrigger?.title).endsWith('settingsFeatures.sessionListActiveGrouping')),
+            };
+        };
+
+        expect(readDropdowns().density?.props?.items?.map((item: { title: string }) => item.title)).toEqual([
+            'en:settingsAppearance.sessionListDensity.detailed',
+            'en:settingsAppearance.sessionListDensity.cozy',
+            'en:settingsAppearance.sessionListDensity.narrow',
+        ]);
+        expect(readDropdowns().ordering?.props?.items?.map((item: { title: string }) => item.title)).toEqual([
+            'en:settingsSession.sessionList.orderingOptions.custom',
+            'en:settingsSession.sessionList.orderingOptions.created',
+            'en:settingsSession.sessionList.orderingOptions.updated',
+        ]);
+        expect(readDropdowns().grouping?.props?.items?.map((item: { title: string }) => item.title)).toEqual([
+            'en:settingsFeatures.sessionListGrouping.projectTitle',
+            'en:settingsFeatures.sessionListGrouping.dateTitle',
+        ]);
+
+        translationPrefix = 'fr';
+        await act(async () => {
+            await screen.update(React.createElement(SessionSettingsScreen));
+        });
+
+        expect(readDropdowns().density?.props?.items?.map((item: { title: string }) => item.title)).toEqual([
+            'fr:settingsAppearance.sessionListDensity.detailed',
+            'fr:settingsAppearance.sessionListDensity.cozy',
+            'fr:settingsAppearance.sessionListDensity.narrow',
+        ]);
+        expect(readDropdowns().ordering?.props?.items?.map((item: { title: string }) => item.title)).toEqual([
+            'fr:settingsSession.sessionList.orderingOptions.custom',
+            'fr:settingsSession.sessionList.orderingOptions.created',
+            'fr:settingsSession.sessionList.orderingOptions.updated',
+        ]);
+        expect(readDropdowns().grouping?.props?.items?.map((item: { title: string }) => item.title)).toEqual([
+            'fr:settingsFeatures.sessionListGrouping.projectTitle',
+            'fr:settingsFeatures.sessionListGrouping.dateTitle',
+        ]);
     });
 });

@@ -49,6 +49,17 @@ describe('SourceControlRemoteActionsRail', () => {
         expect(onFetch).toHaveBeenCalledTimes(1);
     });
 
+    it('forwards stable action test ids', async () => {
+        const screen = await renderScreen(<SourceControlRemoteActionsRail
+                    theme={theme}
+                    actions={[
+                        { key: 'fetch', iconName: 'sync', label: 'Fetch', disabled: false, onPress: vi.fn(), testID: 'scm-update-remote-action-fetch' },
+                    ]}
+                />);
+
+        expect(screen.findByTestId('scm-update-remote-action-fetch')).toBeTruthy();
+    });
+
     it('accepts the publish upload icon without casts', async () => {
         const onPublish = vi.fn();
 

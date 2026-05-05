@@ -15,6 +15,7 @@ export type SessionListHeaderViewState =
         hasCustomLabel: boolean;
         legacyWorkspaceKey: string;
         scopeHint: WorkspaceScopeHint | null;
+        seedSessionId: string | null;
         workspaceRefId: string | null;
     }>
     | Readonly<{
@@ -43,6 +44,8 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
         const collapseKey = viewModel?.collapseKey ?? groupKey;
         const legacyWorkspaceKey = viewModel?.legacyWorkspaceKey ?? String(input.item.workspaceKey ?? '').trim();
         const scopeHint = viewModel?.scopeHint ?? input.item.workspaceScopeHint ?? null;
+        const rawSeedSessionId = viewModel?.seedSessionId ?? String(input.item.seedSessionId ?? '').trim();
+        const seedSessionId = rawSeedSessionId ? rawSeedSessionId : null;
         const workspaceRefId = viewModel?.workspaceRefId ?? null;
         const displayTitle = viewModel?.displayTitle ?? input.item.title;
         const hasCustomLabel = viewModel?.hasCustomLabel ?? false;
@@ -58,6 +61,7 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
             scopeHint?.serverId ?? null,
             scopeHint?.machineId ?? null,
             scopeHint?.rootPath ?? null,
+            seedSessionId,
         ]);
         const cached = PROJECT_HEADER_VIEW_STATE_CACHE.get(cacheKey);
         if (cached) {
@@ -72,6 +76,7 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
             hasCustomLabel,
             legacyWorkspaceKey,
             scopeHint,
+            seedSessionId,
             workspaceRefId,
         };
 

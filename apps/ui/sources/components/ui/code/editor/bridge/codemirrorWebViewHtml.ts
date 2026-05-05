@@ -1,12 +1,8 @@
 import { resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
+import type { CodeEditorTheme } from '../editorTheme';
 import { CODEMIRROR_WEBVIEW_BUNDLE_JS } from './codemirrorWebViewBundle.generated';
 
-export type CodeMirrorWebViewTheme = Readonly<{
-    backgroundColor: string;
-    textColor: string;
-    dividerColor: string;
-    isDark: boolean;
-}>;
+export type CodeMirrorWebViewTheme = Omit<CodeEditorTheme, 'monacoThemeName'>;
 
 export function buildCodeMirrorWebViewHtml(params: Readonly<{
     theme: CodeMirrorWebViewTheme;
@@ -44,13 +40,13 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             import('https://cdn.jsdelivr.net/npm/@codemirror/state@6.5.4/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/view@6.39.15/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/commands@6.10.2/+esm'),
-            import('https://cdn.jsdelivr.net/npm/@codemirror/history@0.19.2/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/language@6.12.1/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/autocomplete@6.20.0/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/lang-javascript@6.2.4/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/lang-python@6.2.1/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/lang-markdown@6.5.0/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/lang-json@6.0.2/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@lezer/highlight@1.2.3/+esm'),
           ]`;
 
     // Notes:
@@ -80,6 +76,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       .cm-gutters {
         border-right: 1px solid ${params.theme.dividerColor};
         background: ${params.theme.backgroundColor};
+        color: ${params.theme.lineNumberColor};
       }
     </style>
   </head>
@@ -267,6 +264,8 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
         let highlightSpecialChars;
         let syntaxHighlighting;
         let defaultHighlightStyle;
+        let HighlightStyle;
+        let tags;
         let langJavascript;
         let langPython;
         let langMarkdown;
@@ -293,10 +292,10 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           if (!bundle) throw new Error('CodeMirror bundle missing');
           ({ EditorState } = bundle);
           ({ EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, highlightActiveLine, highlightActiveLineGutter } = bundle);
-          ({ defaultKeymap } = bundle);
-          ({ history, historyKeymap } = bundle);
-          ({ indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle } = bundle);
+          ({ defaultKeymap, history, historyKeymap } = bundle);
+          ({ indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } = bundle);
           ({ closeBrackets, closeBracketsKeymap } = bundle);
+          ({ tags } = bundle);
           langJavascript = bundle.langs?.javascript;
           langPython = bundle.langs?.python;
           langMarkdown = bundle.langs?.markdown;
@@ -321,18 +320,34 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           [
             { EditorState },
             { EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, highlightActiveLine, highlightActiveLineGutter },
-            { defaultKeymap },
-            { history, historyKeymap },
-            { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle },
+            { defaultKeymap, history, historyKeymap },
+            { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle, HighlightStyle },
             { closeBrackets, closeBracketsKeymap },
             langJavascript,
             langPython,
             langMarkdown,
             langJson,
+            { tags },
           ] = await Promise.all(${cdnModuleImports});
         }
 
         const root = document.getElementById('root');
+        const theme = DEFAULT_CONFIG.theme;
+        const syntax = theme.syntax || {};
+        const syntaxHighlightStyle = HighlightStyle && tags
+          ? HighlightStyle.define([
+              { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: syntax.commentColor },
+              { tag: [tags.string, tags.docString, tags.character, tags.attributeValue, tags.regexp, tags.escape, tags.url], color: syntax.stringColor },
+              { tag: [tags.number, tags.integer, tags.float, tags.bool, tags.atom, tags.null], color: syntax.numberColor },
+              { tag: [tags.keyword, tags.self, tags.modifier, tags.operatorKeyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword], color: syntax.keywordColor },
+              { tag: [tags.operator, tags.derefOperator, tags.arithmeticOperator, tags.logicOperator, tags.bitwiseOperator, tags.compareOperator, tags.updateOperator, tags.definitionOperator, tags.typeOperator, tags.controlOperator], color: syntax.keywordColor },
+              { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.definition(tags.variableName), tags.definition(tags.propertyName), tags.labelName], color: syntax.functionColor },
+              { tag: [tags.typeName, tags.className, tags.tagName, tags.attributeName, tags.propertyName, tags.namespace, tags.macroName], color: syntax.functionColor },
+              { tag: [tags.heading, tags.heading1, tags.heading2, tags.heading3, tags.heading4, tags.heading5, tags.heading6], color: syntax.keywordColor },
+              { tag: [tags.punctuation, tags.separator, tags.bracket, tags.angleBracket, tags.squareBracket, tags.paren, tags.brace], color: syntax.defaultColor },
+              { tag: tags.invalid, color: syntax.keywordColor },
+            ])
+          : defaultHighlightStyle;
         const baseExtensions = [
           keymap.of([
             ...defaultKeymap,
@@ -347,17 +362,41 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           drawSelection(),
           highlightActiveLine(),
           highlightActiveLineGutter(),
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          syntaxHighlighting(syntaxHighlightStyle, { fallback: true }),
         ];
 
-        const theme = DEFAULT_CONFIG.theme;
         const themeExt = EditorView.theme({
           '&': {
             backgroundColor: theme.backgroundColor,
             color: theme.textColor,
           },
+          '.cm-scroller': {
+            backgroundColor: theme.backgroundColor,
+          },
           '.cm-content': {
+            color: syntax.defaultColor,
             caretColor: theme.textColor,
+          },
+          '.cm-cursor, .cm-dropCursor': {
+            borderLeftColor: theme.textColor,
+          },
+          '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+            backgroundColor: theme.selectionColor,
+          },
+          '.cm-gutters': {
+            backgroundColor: theme.backgroundColor,
+            borderRight: '1px solid ' + theme.dividerColor,
+            color: theme.lineNumberColor,
+          },
+          '.cm-lineNumbers .cm-gutterElement': {
+            color: theme.lineNumberColor,
+          },
+          '.cm-activeLine': {
+            backgroundColor: theme.activeLineColor,
+          },
+          '.cm-activeLineGutter': {
+            backgroundColor: theme.activeLineColor,
+            color: theme.textColor,
           },
         }, { dark: Boolean(theme.isDark) });
 

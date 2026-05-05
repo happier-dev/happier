@@ -9,7 +9,7 @@
  * between agent UI behavior graphs and the core registry maps.
  *
  * In the fully packetized state, this file is emitted by:
- * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`
+ * - `scripts/migrations/plugins/generateBundledPluginEntries.ts`
  */
 
 import type { CanonicalAgentId } from './registryCore';

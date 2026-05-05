@@ -74,7 +74,22 @@ export function isWebTranscriptScrollable(metrics: WebTranscriptScrollMetrics, m
 }
 
 export function getWebTranscriptDistanceFromBottom(metrics: WebTranscriptScrollMetrics): number {
-    return Math.max(0, Math.trunc(metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop));
+    return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop);
+}
+
+export function resolveWebTranscriptMaxScrollTop(metrics: WebTranscriptScrollMetrics): number {
+    return Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+}
+
+export function isWebTranscriptAtVisualBottom(
+    metrics: WebTranscriptScrollMetrics,
+    tolerancePx = 0,
+): boolean {
+    const tolerance =
+        typeof tolerancePx === 'number' && Number.isFinite(tolerancePx)
+            ? Math.max(0, tolerancePx)
+            : 0;
+    return getWebTranscriptDistanceFromBottom(metrics) <= tolerance;
 }
 
 export function restoreWebTranscriptPrependAnchor(metrics: WebTranscriptScrollMetrics): boolean {

@@ -39,6 +39,12 @@ type CachedDoctorSnapshot = Readonly<{
                 running?: boolean;
             };
         };
+        serviceHealth?: {
+            backgroundService?: {
+                installed?: boolean;
+                running?: boolean;
+            };
+        };
     };
 }> | null;
 
@@ -681,6 +687,71 @@ describe('useRelayDriftBanner', () => {
 
         const resolvedBanner = banner as RelayDriftBanner | null;
         expect(resolvedBanner).not.toBeNull();
+
+        await renderer.act(async () => {
+            await resolvedBanner?.onPress();
+        });
+
+        expect(startMock).toHaveBeenCalledWith(buildLocalDaemonServiceSystemTaskSpec('daemon.service.restart.v1'));
+    });
+
+    it('uses doctor service health when daemon status does not include readiness', async () => {
+        const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+
+        const startMock = vi.fn(async (spec: unknown) => {
+            SystemTaskSpecSchema.parse(spec);
+            return 'task_restart';
+        });
+
+        state.runner = createSystemTaskRunner({
+            mode: 'dev',
+            bridge: {
+                start: startMock,
+                async subscribe() {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+        state.cachedDoctorSnapshot = {
+            cachedAt: 1,
+            snapshot: {
+                capturedAt: '2026-03-29T00:00:00.000Z',
+                server: {
+                    activeServerId: 'server-a',
+                    serverUrl: 'https://relay.example.test',
+                    publicServerUrl: 'https://relay.example.test',
+                    webappUrl: 'https://relay.example.test',
+                },
+                accountId: 'acct_1',
+                settings: {
+                    activeServerId: 'server-a',
+                    servers: [],
+                    knownAccountIds: ['acct_1'],
+                },
+                serviceHealth: {
+                    backgroundService: {
+                        installed: true,
+                        running: false,
+                    },
+                },
+            },
+        };
+
+        let banner: RelayDriftBanner | null = null;
+        function Probe() {
+            banner = useRelayDriftBanner();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        const resolvedBanner = banner as RelayDriftBanner | null;
+        expect(resolvedBanner).not.toBeNull();
+        expect(resolvedBanner?.actionLabel).toBe('sessionGettingStarted.title.startDaemon');
 
         await renderer.act(async () => {
             await resolvedBanner?.onPress();

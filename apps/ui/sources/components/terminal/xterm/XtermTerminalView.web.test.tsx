@@ -16,6 +16,7 @@ const attachCustomKeyEventHandlerSpy = vi.fn();
 const onDataSpy = vi.fn();
 const disposeSpy = vi.fn();
 let renderServiceRendererValue: unknown = {};
+const terminalConstructorOptions: Record<string, unknown>[] = [];
 
 class MockTerminal {
     cols = 80;
@@ -28,6 +29,11 @@ class MockTerminal {
             },
         },
     };
+
+    constructor(options: Record<string, unknown> = {}) {
+        this.options = options;
+        terminalConstructorOptions.push(options);
+    }
 
     loadAddon = loadAddonSpy;
     open = openSpy;
@@ -92,6 +98,7 @@ describe('XtermTerminalView.web', () => {
         onDataSpy.mockReset();
         disposeSpy.mockReset();
         renderServiceRendererValue = {};
+        terminalConstructorOptions.length = 0;
         originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
         HTMLElement.prototype.getBoundingClientRect = vi.fn(() => ({
             x: 0,
@@ -174,5 +181,25 @@ describe('XtermTerminalView.web', () => {
         });
 
         expect(fitSpy).not.toHaveBeenCalled();
+    });
+
+    it('opts out of xterm screen reader DOM mode in the web surface', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={() => {}}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+
+        expect(terminalConstructorOptions[0]).toEqual(
+            expect.objectContaining({ screenReaderMode: false }),
+        );
     });
 });

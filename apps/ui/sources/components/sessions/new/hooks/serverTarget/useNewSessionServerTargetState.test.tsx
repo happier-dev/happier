@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { renderScreen } from '@/dev/testkit';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,18 +21,28 @@ type ProbeProps = Readonly<{
     request: Readonly<{
         spawnServerIdParam?: string | null;
     }>;
+    settings?: Partial<Settings>;
     onState: (value: ReturnType<typeof useNewSessionServerTargetState>) => void;
 }>;
 
+const defaultServerSelectionSettings = {
+    serverSelectionGroups: [
+        { id: 'grp-dev', name: 'Dev', serverIds: ['server-b', 'server-c'], presentation: 'grouped' },
+    ],
+    serverSelectionActiveTargetKind: 'group',
+    serverSelectionActiveTargetId: 'grp-dev',
+} satisfies Partial<Settings>;
+
+function buildSettings(overrides: Partial<Settings> = defaultServerSelectionSettings): Settings {
+    return {
+        ...settingsDefaults,
+        ...overrides,
+    };
+}
+
 function Probe(props: ProbeProps) {
     const state = useNewSessionServerTargetState({
-        settings: {
-            serverSelectionGroups: [
-                { id: 'grp-dev', name: 'Dev', serverIds: ['server-b', 'server-c'], presentation: 'grouped' },
-            ],
-            serverSelectionActiveTargetKind: 'group',
-            serverSelectionActiveTargetId: 'grp-dev',
-        } as any,
+        settings: buildSettings(props.settings),
         activeServerSnapshot: {
             serverId: 'server-a',
             serverUrl: 'https://a.example.test',
@@ -90,5 +101,31 @@ describe('useNewSessionServerTargetState', () => {
         expect(latest.targetServerId).toBe('server-b');
         expect(latest.targetServerName).toBe('Server B');
         expect(latest.showServerPickerChip).toBe(true);
+    });
+
+    it('honors an explicit server target without requiring the global active server to switch first', async () => {
+        const captured: Array<ReturnType<typeof useNewSessionServerTargetState>> = [];
+
+        await renderScreen(<Probe
+                    settings={{
+                        serverSelectionGroups: [
+                            { id: 'grp-dev', name: 'Dev', serverIds: ['server-b', 'server-c'], presentation: 'grouped' },
+                        ],
+                        serverSelectionActiveTargetKind: 'server',
+                        serverSelectionActiveTargetId: 'server-b',
+                    }}
+                    request={{
+                        spawnServerIdParam: 'server-b',
+                    }}
+                    onState={(state) => captured.push(state)}
+                />);
+
+        const latest = captured.at(-1)!;
+        expect(latest.selectedServerTarget?.kind).toBe('server');
+        expect(latest.selectedServerTarget?.id).toBe('server-b');
+        expect(latest.allowedTargetServerIds).toEqual(['server-b']);
+        expect(latest.targetServerId).toBe('server-b');
+        expect(latest.targetServerName).toBe('Server B');
+        expect(latest.showServerPickerChip).toBe(false);
     });
 });

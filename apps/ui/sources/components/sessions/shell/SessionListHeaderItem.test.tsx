@@ -19,6 +19,7 @@ describe('SessionListHeaderItem', () => {
             headerKind: 'project',
             groupKey: 'project:repo',
             workspaceKey: 'legacy_repo',
+            seedSessionId: 'seed-session',
             workspaceScopeHint: {
                 serverId: 'server_a',
                 machineId: 'machine_a',
@@ -42,6 +43,7 @@ describe('SessionListHeaderItem', () => {
                 machineId: 'machine_a',
                 rootPath: '/repo',
             },
+            seedSessionId: 'seed-session',
         } as const;
 
         const screen = await renderScreen(
@@ -85,6 +87,11 @@ describe('SessionListHeaderItem', () => {
         expect(secondProps.onRename).toBe(firstProps.onRename);
         expect(secondProps.onReset).toBe(firstProps.onReset);
         expect(secondProps.onToggleCollapse).toBe(firstProps.onToggleCollapse);
+
+        secondProps.onCreateSession();
+        expect(onCreateSessionFromWorkspaceScope).toHaveBeenCalledWith(item.workspaceScopeHint, {
+            seedSessionId: 'seed-session',
+        });
     });
 
     it('shows the ordering menu affordance on active and inactive section headers only', async () => {

@@ -54,7 +54,6 @@ installSessionDetailsPanelCommonModuleMocks({
             importOriginal,
             overrides: {
                 useLocalSetting: ((key: string) => {
-                    if (key === 'editorFocusModeEnabled') return false;
                     return null;
                 }) as any,
                 useLocalSettingMutable: (() => [false, vi.fn()]) as any,

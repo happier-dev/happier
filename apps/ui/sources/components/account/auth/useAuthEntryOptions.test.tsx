@@ -39,13 +39,15 @@ vi.mock('@/text', () => textMock);
 
 describe('useAuthEntryOptions', () => {
     let activeServerListener: ((snapshot: { serverUrl: string }) => void) | null = null;
+    let currentActiveServerSnapshot: { serverUrl: string };
 
     beforeEach(() => {
         getServerFeaturesSnapshotMock.mockReset();
         getActiveServerSnapshotMock.mockReset();
         subscribeActiveServerMock.mockReset();
         getAuthProviderMock.mockReset();
-        getActiveServerSnapshotMock.mockReturnValue({ serverUrl: 'http://api.example.test' });
+        currentActiveServerSnapshot = { serverUrl: 'http://api.example.test' };
+        getActiveServerSnapshotMock.mockImplementation(() => currentActiveServerSnapshot);
         activeServerListener = null;
         subscribeActiveServerMock.mockImplementation((listener: (snapshot: { serverUrl: string }) => void) => {
             activeServerListener = listener;
@@ -154,6 +156,7 @@ describe('useAuthEntryOptions', () => {
         expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(1);
 
         await act(async () => {
+            currentActiveServerSnapshot = { serverUrl: 'http://api.other.test' };
             activeServerListener?.({ serverUrl: 'http://api.other.test' });
         });
         await flushHookEffects({ cycles: 2, turns: 2 });

@@ -9,6 +9,39 @@ use build_support::{resolve_sidecar_update_action, SidecarSnapshot, SidecarUpdat
 use flate2;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use tauri_build::{AppManifest, Attributes};
+
+const APP_TAURI_COMMANDS: &[&str] = &[
+    "desktop_fetch_update",
+    "desktop_install_update",
+    "desktop_pick_ssh_identity_file",
+    "desktop_get_autostart_enabled",
+    "desktop_set_autostart_enabled",
+    "desktop_set_tray_state",
+    "start_system_task",
+    "cancel_system_task",
+    "get_system_task_snapshot",
+    "system_tasks_open_log_path",
+    "respond_system_task_prompt",
+    "desktop_get_window_chrome_policy",
+    "desktop_get_window_state",
+    "desktop_minimize_window",
+    "desktop_toggle_window_maximize",
+    "desktop_close_window",
+    "desktop_show_main_window",
+    "desktop_start_window_dragging",
+    "desktop_set_window_mode",
+    "desktop_read_stack_boot_credentials",
+    "desktop_activity_overlay_sync",
+    "desktop_activity_overlay_get_window_state",
+    "desktop_activity_overlay_set_expanded",
+    "desktop_activity_overlay_set_input_locked",
+    "desktop_activity_overlay_apply_drag_delta",
+    "desktop_activity_overlay_release_drag_velocity",
+    "desktop_activity_overlay_reset_position",
+    "desktop_activity_overlay_emit_interaction",
+    "desktop_activity_overlay_emit_interaction_result",
+];
 
 fn is_truthy_env(name: &str) -> bool {
     env::var(name)
@@ -38,7 +71,10 @@ fn main() {
     } else {
         build_hsetup_sidecar().expect("failed to build bundled hsetup sidecar");
     }
-    tauri_build::build()
+    tauri_build::try_build(
+        Attributes::new().app_manifest(AppManifest::new().commands(APP_TAURI_COMMANDS)),
+    )
+    .expect("failed to build tauri app ACLs")
 }
 
 fn ensure_hsetup_sidecar_stub() -> Result<(), String> {

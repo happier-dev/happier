@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { normalizeOptionalParam } from '@/profileRouteParams';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 
@@ -25,6 +25,7 @@ function normalizePathParam(raw: unknown): string {
 export function useNewSessionMachinePathState(params: Readonly<{
     machines: ReadonlyArray<Machine>;
     recentMachinePaths: unknown;
+    sessions?: ReadonlyArray<Session | string> | null | undefined;
     machineIdParam: unknown;
     pathParam: unknown;
     persistedMachineId?: unknown;
@@ -62,12 +63,12 @@ export function useNewSessionMachinePathState(params: Readonly<{
         const recent = getRecentPathsForMachine({
             machineId,
             recentMachinePaths,
-            sessions: null,
+            sessions: params.sessions,
         });
         if (recent.length > 0) return recent[0]!;
         const machine = params.machines.find((m) => m.id === machineId);
         return machine?.metadata?.homeDir ?? '';
-    }, [params.machines, recentMachinePaths]);
+    }, [params.machines, params.sessions, recentMachinePaths]);
 
     const getPersistedPathForMachine = React.useCallback((machineId: string | null): string => {
         if (!machineId) return '';

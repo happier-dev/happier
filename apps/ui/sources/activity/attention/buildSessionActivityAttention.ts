@@ -5,6 +5,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { getSessionName, getSessionStatus, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 
 import type { SessionActivityAttention } from './activityAttentionTypes';
+import { isRecentActivityCompletion } from './activityCompletionTiming';
 
 function resolveAttentionPriority(state: SessionActivityAttention['attentionState']): number {
     switch (state) {
@@ -31,11 +32,18 @@ export function buildSessionActivityAttention(params: Readonly<{
 }>): SessionActivityAttention {
     const status = getSessionStatus(buildSessionListRenderableFromSession(params.session), params.nowMs);
     const reasons = deriveSessionAttentionFlags(params.session, params.sessionOptions);
-    const attentionState = deriveSessionListAttentionState({
+    const lastTurnCompletedAt = typeof params.session.lastTurnCompletedAt === 'number'
+        && Number.isFinite(params.session.lastTurnCompletedAt)
+        ? params.session.lastTurnCompletedAt
+        : null;
+    const derivedAttentionState = deriveSessionListAttentionState({
         hasUnreadMessages: reasons.hasUnread,
         pendingCount: params.session.pendingCount ?? 0,
         sessionState: status.state,
     });
+    const attentionState = isRecentActivityCompletion(lastTurnCompletedAt, params.nowMs ?? Date.now())
+        ? 'pending'
+        : derivedAttentionState;
 
     return {
         session: params.session,
@@ -45,6 +53,7 @@ export function buildSessionActivityAttention(params: Readonly<{
         attentionState,
         hasAttention: attentionState !== 'quiet',
         priority: resolveAttentionPriority(attentionState),
+        lastTurnCompletedAt,
         reasons: {
             hasUnread: reasons.hasUnread,
             hasPendingPermissionRequests: reasons.hasPendingPermissionRequests,

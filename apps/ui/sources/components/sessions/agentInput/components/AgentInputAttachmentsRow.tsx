@@ -15,7 +15,11 @@ import { Modal } from '@/modal';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { t } from '@/text';
 
-import type { AgentInputAttachment, AgentInputAttachmentUploadProgress } from '../agentInputContracts';
+import type {
+    AgentInputAttachment,
+    AgentInputAttachmentUploadProgress,
+    AgentInputComposerAttachmentBadge,
+} from '../agentInputContracts';
 
 type ComposerAttachmentImagePreviewItem = Extract<AttachmentImagePreviewModalImage, Readonly<{ kind: 'direct' }>>;
 
@@ -119,6 +123,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachmentsRow(props: Readonly<{
     attachments: readonly AgentInputAttachment[];
+    composerBadges?: readonly AgentInputComposerAttachmentBadge[];
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -128,7 +133,9 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
         [props.attachments],
     );
 
-    if (props.attachments.length === 0) {
+    const composerBadges = props.composerBadges ?? [];
+
+    if (props.attachments.length === 0 && composerBadges.length === 0) {
         return null;
     }
 
@@ -139,6 +146,61 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.rowContent}
             >
+                {composerBadges.map((badge) => {
+                    const icon = badge.icon?.(theme.colors.textSecondary) ?? (
+                        <Ionicons name="document-outline" size={14} color={theme.colors.textSecondary} />
+                    );
+                    const content = (
+                        <>
+                            {icon}
+                            <Text
+                                numberOfLines={1}
+                                style={styles.attachmentChipText}
+                            >
+                                {badge.label}
+                            </Text>
+                            {badge.onRemove ? (
+                                <Pressable
+                                    accessibilityLabel={badge.removeAccessibilityLabel ?? t('common.remove')}
+                                    accessibilityRole="button"
+                                    hitSlop={8}
+                                    onPress={(event) => {
+                                        event?.stopPropagation?.();
+                                        hapticsLight();
+                                        badge.onRemove?.();
+                                    }}
+                                    testID={badge.testID ? `${badge.testID}-remove` : undefined}
+                                >
+                                    <Ionicons name="close" size={14} color={theme.colors.textSecondary} />
+                                </Pressable>
+                            ) : null}
+                        </>
+                    );
+
+                    if (badge.onPress) {
+                        return (
+                            <Pressable
+                                key={badge.key}
+                                accessibilityLabel={badge.accessibilityLabel ?? badge.label}
+                                accessibilityRole="button"
+                                onPress={() => {
+                                    hapticsLight();
+                                    badge.onPress?.();
+                                }}
+                                style={styles.attachmentChip}
+                                testID={badge.testID}
+                            >
+                                {content}
+                            </Pressable>
+                        );
+                    }
+
+                    return (
+                        <View key={badge.key} style={styles.attachmentChip} testID={badge.testID}>
+                            {content}
+                        </View>
+                    );
+                })}
                 {props.attachments.map((att) => {
                     const removingDisabled = att.status === 'uploading';
                     const percent = att.status === 'uploading' ? resolveUploadProgressPercent(att.uploadProgress) : null;

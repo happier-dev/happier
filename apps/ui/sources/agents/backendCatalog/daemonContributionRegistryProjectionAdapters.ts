@@ -1,8 +1,8 @@
 import type {
-    ExtensionProjectedActionV2,
-    ExtensionProjectedResourceV2,
-    ExtensionProjectedUiDescriptorV2,
-    ExtensionProjectionV2,
+    PluginProjectedActionV2,
+    PluginProjectedResourceV2,
+    PluginProjectedUiDescriptorV2,
+    PluginProjectionV2,
 } from '@happier-dev/protocol';
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
 
@@ -21,6 +21,7 @@ export type PluginProjectionSurface =
     | 'settings'
     | 'setup'
     | 'status'
+    | 'agentSettings'
     | 'providerSettings'
     | 'backendSettings';
 
@@ -107,13 +108,14 @@ export type PluginProjectionEntry = Readonly<{
     settingsSections: readonly PluginProjectionSection[];
     setupSections: readonly PluginProjectionSection[];
     statusSections: readonly PluginProjectionSection[];
+    agentSettingsSections: readonly PluginProjectionSection[];
     providerSettingsSections: readonly PluginProjectionSection[];
     backendSettingsSections: readonly PluginProjectionSection[];
 }>;
 
 export type DaemonContributionRegistryProjection =
     | DaemonContributionRegistryProjectionV1Like
-    | ExtensionProjectionV2;
+    | PluginProjectionV2;
 
 export type DaemonContributionRegistryProjectionV1Like = Readonly<{
     v: 1;
@@ -201,6 +203,7 @@ function createDescriptorSurfaceMaps(): Record<PluginProjectionSurface, Map<stri
         settings: new Map<string, PluginProjectionSection[]>(),
         setup: new Map<string, PluginProjectionSection[]>(),
         status: new Map<string, PluginProjectionSection[]>(),
+        agentSettings: new Map<string, PluginProjectionSection[]>(),
         providerSettings: new Map<string, PluginProjectionSection[]>(),
         backendSettings: new Map<string, PluginProjectionSection[]>(),
     };
@@ -232,6 +235,7 @@ function collectPluginIdsFromSurfaceMaps(
         ...surfaceMaps.settings.keys(),
         ...surfaceMaps.setup.keys(),
         ...surfaceMaps.status.keys(),
+        ...surfaceMaps.agentSettings.keys(),
         ...surfaceMaps.providerSettings.keys(),
         ...surfaceMaps.backendSettings.keys(),
     ];
@@ -243,6 +247,8 @@ function normalizeV1DescriptorSurface(surface: string | null): PluginProjectionS
         return 'status';
     case 'setup':
         return 'setup';
+    case 'agentSettings':
+        return 'agentSettings';
     case 'providerSettings':
         return 'providerSettings';
     case 'backendSettings':
@@ -252,9 +258,9 @@ function normalizeV1DescriptorSurface(surface: string | null): PluginProjectionS
     }
 }
 
-function isExtensionProjectionV2(
+function isPluginProjectionV2(
     projection: DaemonContributionRegistryProjection,
-): projection is ExtensionProjectionV2 {
+): projection is PluginProjectionV2 {
     return projection.v === 2;
 }
 
@@ -262,7 +268,7 @@ function isProjectedAgentId(value: unknown): value is AgentId {
     return typeof value === 'string' && (AGENT_IDS as readonly string[]).includes(value);
 }
 
-function mapV2Action(action: ExtensionProjectedActionV2): PluginProjectionAction {
+function mapV2Action(action: PluginProjectedActionV2): PluginProjectionAction {
     return {
         id: action.id,
         title: action.title,
@@ -275,7 +281,7 @@ function mapV2Action(action: ExtensionProjectedActionV2): PluginProjectionAction
     };
 }
 
-function mapV2Resource(resource: ExtensionProjectedResourceV2): PluginProjectionResource {
+function mapV2Resource(resource: PluginProjectedResourceV2): PluginProjectionResource {
     return {
         id: resource.id,
         resourceKind: resource.resourceKind,
@@ -285,7 +291,7 @@ function mapV2Resource(resource: ExtensionProjectedResourceV2): PluginProjection
     };
 }
 
-function mapV2DescriptorSection(descriptor: ExtensionProjectedUiDescriptorV2): PluginProjectionSection {
+function mapV2DescriptorSection(descriptor: PluginProjectedUiDescriptorV2): PluginProjectionSection {
     const featureGate = descriptor.featureGate === undefined ? undefined : descriptor.featureGate;
     const helpUrl = descriptor.helpUrl === undefined ? undefined : descriptor.helpUrl;
     return {
@@ -417,6 +423,7 @@ function buildV1PluginProjectionById(
             settingsSections: readDescriptorSections(surfaceMaps, 'settings', pluginId),
             setupSections: readDescriptorSections(surfaceMaps, 'setup', pluginId),
             statusSections: readDescriptorSections(surfaceMaps, 'status', pluginId),
+            agentSettingsSections: readDescriptorSections(surfaceMaps, 'agentSettings', pluginId),
             providerSettingsSections: readDescriptorSections(surfaceMaps, 'providerSettings', pluginId),
             backendSettingsSections: readDescriptorSections(surfaceMaps, 'backendSettings', pluginId),
         };
@@ -426,7 +433,7 @@ function buildV1PluginProjectionById(
 }
 
 function buildV2PluginProjectionById(
-    projection: ExtensionProjectionV2,
+    projection: PluginProjectionV2,
 ): Readonly<Record<string, PluginProjectionEntry>> {
     const actionsByPluginId = new Map<string, PluginProjectionAction[]>();
     for (const action of Object.values(projection.actionsById)) {
@@ -483,6 +490,7 @@ function buildV2PluginProjectionById(
             settingsSections: readDescriptorSections(surfaceMaps, 'settings', pluginId),
             setupSections: readDescriptorSections(surfaceMaps, 'setup', pluginId),
             statusSections: readDescriptorSections(surfaceMaps, 'status', pluginId),
+            agentSettingsSections: readDescriptorSections(surfaceMaps, 'agentSettings', pluginId),
             providerSettingsSections: readDescriptorSections(surfaceMaps, 'providerSettings', pluginId),
             backendSettingsSections: readDescriptorSections(surfaceMaps, 'backendSettings', pluginId),
         };
@@ -491,7 +499,7 @@ function buildV2PluginProjectionById(
 }
 
 function readV2RegistryDiagnostics(
-    projection: ExtensionProjectionV2,
+    projection: PluginProjectionV2,
 ): readonly PluginProjectionDiagnostic[] {
     return projection.diagnostics.flatMap((diagnostic) => {
         if (diagnostic.pluginId) return [];
@@ -545,10 +553,10 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
     return {
         mergedProviderProjectionById,
         mergedBackendProjectionById,
-        pluginProjectionById: isExtensionProjectionV2(projection)
+        pluginProjectionById: isPluginProjectionV2(projection)
             ? buildV2PluginProjectionById(projection)
             : buildV1PluginProjectionById(projection),
-        registryDiagnostics: isExtensionProjectionV2(projection)
+        registryDiagnostics: isPluginProjectionV2(projection)
             ? readV2RegistryDiagnostics(projection)
             : [],
     };

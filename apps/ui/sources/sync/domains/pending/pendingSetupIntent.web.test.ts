@@ -24,6 +24,11 @@ async function importFreshWeb() {
     return await import('./pendingSetupIntent.web');
 }
 
+async function activateServer(serverUrl: string) {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
+}
+
 describe('pendingSetupIntent.web', () => {
     beforeEach(() => {
         vi.stubGlobal('localStorage', createLocalStorage());
@@ -38,6 +43,7 @@ describe('pendingSetupIntent.web', () => {
 
     it('round-trips a pending setup intent payload on web', async () => {
         const { setPendingSetupIntent, getPendingSetupIntent } = await importFreshWeb();
+        await activateServer('https://relay.example.test');
 
         setPendingSetupIntent({
             branch: 'thisComputer',
@@ -54,6 +60,7 @@ describe('pendingSetupIntent.web', () => {
 
     it('round-trips a remote relay-host intent on web', async () => {
         const { setPendingSetupIntent, getPendingSetupIntent } = await importFreshWeb();
+        await activateServer('https://relay.example.test');
 
         setPendingSetupIntent({
             branch: 'remoteMachine',
@@ -80,6 +87,7 @@ describe('pendingSetupIntent.web', () => {
             createdAtMs: Date.now(),
         });
         globalThis.localStorage.setItem('mmkv.pending-setup-intent\\record', record);
+        await activateServer('https://relay.example.test');
 
         const { getPendingSetupIntent } = await importFreshWeb();
 

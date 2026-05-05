@@ -10,6 +10,7 @@ import { renderScreen } from '@/dev/testkit';
 const createWorktreeForMachinePathMock = vi.hoisted(() => vi.fn());
 const readCachedBranchesForMachinePathMock = vi.hoisted(() => vi.fn());
 const fetchBranchesForMachinePathMock = vi.hoisted(() => vi.fn());
+const machineScmRemotePublishMock = vi.hoisted(() => vi.fn(async (_machineId: string, _request: unknown) => ({ success: true })));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -91,7 +92,7 @@ vi.mock('@/scm/repository/repoScmWorktreeService', () => ({
 vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmBranchCheckout: vi.fn(async () => ({ success: true })),
     machineScmBranchCreate: vi.fn(async () => ({ success: true })),
-    machineScmRemotePublish: vi.fn(async () => ({ success: true })),
+    machineScmRemotePublish: (machineId: string, request: unknown) => machineScmRemotePublishMock(machineId, request),
 }));
 
 function buildSnapshot() {
@@ -142,11 +143,23 @@ async function openWorktreesTab(screen: Awaited<ReturnType<typeof renderScreen>>
     });
 }
 
+async function openBranchMenu(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const trigger = screen.tree.findByProps({ testID: 'scm-branch-menu-trigger' });
+    await act(async () => {
+        trigger.props.onPress();
+    });
+}
+
+function flattenResultItems(results: { props: { categories?: Array<{ items: Array<{ id: string }> }> } }) {
+    return (results.props.categories ?? []).flatMap((category) => category.items);
+}
+
 describe('WorkspaceSourceControlBranchMenu worktrees', () => {
     beforeEach(() => {
         createWorktreeForMachinePathMock.mockReset();
         readCachedBranchesForMachinePathMock.mockReset();
         fetchBranchesForMachinePathMock.mockReset();
+        machineScmRemotePublishMock.mockClear();
         readCachedBranchesForMachinePathMock.mockReturnValue([]);
         fetchBranchesForMachinePathMock.mockResolvedValue([]);
     });
@@ -221,4 +234,39 @@ describe('WorkspaceSourceControlBranchMenu worktrees', () => {
         expect(onRefreshSnapshot).toHaveBeenCalled();
         expect(onSelectRootPath).toHaveBeenCalledWith('/repo/.worktrees/feature-auth');
     });
+
+    it('does not expose publish for an untracked branch when no remote is configured', async () => {
+        const { WorkspaceSourceControlBranchMenu } = await import('./WorkspaceSourceControlBranchMenu');
+        const snapshot = {
+            ...buildSnapshot(),
+            repo: {
+                ...buildSnapshot().repo,
+                remotes: [],
+            },
+            capabilities: {
+                ...buildSnapshot().capabilities,
+                writeRemotePublish: true,
+            },
+        };
+
+        const screen = await renderScreen(
+            <WorkspaceSourceControlBranchMenu
+                machineId="machine-1"
+                rootPath="/repo"
+                currentBranch="main"
+                snapshot={snapshot as any}
+                onRefreshSnapshot={vi.fn(async () => {})}
+            />,
+        );
+
+        await openBranchMenu(screen);
+
+        const results = screen.tree.findByType('SelectableMenuResults' as never);
+        const publishItem = flattenResultItems(results as { props: { categories?: Array<{ items: Array<{ id: string }> }> } })
+            .find((item) => item.id === 'publish');
+
+        expect(publishItem).toBeUndefined();
+        expect(machineScmRemotePublishMock).not.toHaveBeenCalled();
+    });
+
 });

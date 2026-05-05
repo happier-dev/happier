@@ -14,6 +14,9 @@ const machineCollectBugReportDiagnosticsMock = vi.hoisted(() => vi.fn());
 const activeServerIdRef = vi.hoisted(() => ({ current: 'server-a' }));
 const routerParamsRef = vi.hoisted(() => ({ current: { id: 'machine-1' } as Record<string, string> }));
 const setActiveServerAndSwitchMock = vi.hoisted(() => vi.fn(async () => true));
+const machineListByServerIdRef = vi.hoisted(() => ({
+    current: {} as Record<string, Array<{ id: string }>>,
+}));
 
 installMachineDetailsCommonModuleMocks({
     router: async () => {
@@ -43,6 +46,7 @@ installMachineDetailsCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSessions: () => [],
+            useMachineListByServerId: () => machineListByServerIdRef.current,
             useMachine: () => ({
                 id: 'machine-1',
                 active: true,
@@ -122,6 +126,7 @@ describe('MachineDetailScreen runtime inventory', () => {
         machineCollectBugReportDiagnosticsMock.mockReset();
         activeServerIdRef.current = 'server-a';
         routerParamsRef.current = { id: 'machine-1' };
+        machineListByServerIdRef.current = {};
         setActiveServerAndSwitchMock.mockReset();
         setActiveServerAndSwitchMock.mockResolvedValue(true);
         clearCachedMachineDoctorSnapshot({ serverId: 'server-a', machineId: 'machine-1' });
@@ -255,6 +260,70 @@ describe('MachineDetailScreen runtime inventory', () => {
         expect(text).toContain('machine.runtimeInventoryServices');
         expect(text).toContain('machine.backgroundServiceModes.defaultFollowing');
         expect(text).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
+    });
+
+    it('uses the machine list server id for runtime inventory when the route has no serverId param', async () => {
+        machineListByServerIdRef.current = {
+            'server-b': [{ id: 'machine-1' }],
+        };
+        machineCollectBugReportDiagnosticsMock.mockImplementation(async (_machineId: string, options?: { serverId?: string | null }) => {
+            if (options?.serverId !== 'server-b') {
+                return null;
+            }
+
+            return {
+                doctorSnapshot: {
+                    capturedAt: '2026-04-07T10:11:14.000Z',
+                    server: {
+                        activeServerId: 'server-b',
+                        serverUrl: 'https://server-b.example.test',
+                        publicServerUrl: 'https://server-b.example.test',
+                        webappUrl: 'https://server-b.example.test',
+                    },
+                    accountId: 'acct_b',
+                    settings: {
+                        activeServerId: 'server-b',
+                        servers: [],
+                        knownAccountIds: ['acct_b'],
+                    },
+                    daemonStatus: {
+                        server: {
+                            activeServerId: 'server-b',
+                            serverUrl: 'https://server-b.example.test',
+                            localServerUrl: 'http://127.0.0.1:3005',
+                            publicServerUrl: 'https://server-b.example.test',
+                            webappUrl: 'https://server-b.example.test',
+                            comparableKey: 'https://server-b.example.test',
+                        },
+                        daemon: {
+                            running: true,
+                            pid: 4321,
+                            httpPort: 3005,
+                            startedWithCliVersion: '1.2.0',
+                            startedWithPublicReleaseChannel: 'stable',
+                        },
+                        service: { installed: true, running: true },
+                        auth: {
+                            authenticated: true,
+                            machineRegistered: true,
+                            machineId: 'machine-1',
+                            needsAuth: false,
+                            accountId: 'acct_b',
+                        },
+                    },
+                },
+            };
+        });
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(machineCollectBugReportDiagnosticsMock).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+            serverId: 'server-b',
+        }));
+        expect(screen.getTextContent()).toContain('machine.runtimeInventory');
     });
 
     it('does not prefetch the runtime inventory until the requested server becomes active', async () => {

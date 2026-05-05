@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import expoConstantsStub from './expoConstantsStub';
 import expoModulesCoreStub from './expoModulesCoreStub';
+import * as posthogReactNativeStub from './posthogReactNativeStub';
 import * as reactNativeRootStub from './reactNativeStub';
 import reactNativeInternalProxy from './reactNativeInternalStub';
 import reactNativeVirtualizedListsStub from './reactNativeVirtualizedListsStub';
@@ -83,6 +84,9 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
                 if (request.startsWith('react-native/')) return reactNativeInternalProxy;
                 if (request === 'expo-constants' || request.startsWith('expo-constants/')) return expoConstantsStub;
                 if (request === 'expo-modules-core' || request.startsWith('expo-modules-core/')) return expoModulesCoreStub;
+                if (request === 'posthog-react-native' || request.startsWith('posthog-react-native/')) {
+                    return posthogReactNativeStub;
+                }
                 if (request === '@react-native/virtualized-lists' || request.startsWith('@react-native/virtualized-lists/')) {
                     return reactNativeVirtualizedListsStub;
                 }

@@ -21,6 +21,7 @@ import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellC
 export type SessionViewHeaderProps = Readonly<{
     title: string;
     subtitle?: string;
+    subtitleEllipsizeMode?: 'head' | 'tail';
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     onAvatarPress?: () => void;
@@ -57,6 +58,8 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     actionIconColor: string;
     headerTintColor: string;
     statusErrorColor: string;
+    workspaceSubtitle?: string | null;
+    workspaceSubtitleEllipsizeMode?: 'head' | 'tail';
 }>;
 
 const LOADING_HEADER_PROPS: SessionViewHeaderProps = {
@@ -90,6 +93,7 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     sessionMachineId: string | null | undefined;
     title: string;
     subtitle: string | undefined;
+    subtitleEllipsizeMode: 'head' | 'tail' | undefined;
     avatarId: string | undefined;
     sessionInfoHref: string;
     sessionRunsHref: string;
@@ -117,6 +121,7 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
         input.sessionMachineId ?? '',
         input.title,
         input.subtitle ?? '',
+        input.subtitleEllipsizeMode ?? '',
         input.avatarId ?? '',
         input.sessionInfoHref,
         input.sessionRunsHref,
@@ -153,7 +158,14 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const shouldFoldHeaderIconActions = input.windowWidth < 520;
     const badgeLabel = input.sessionAutomationsEnabledCount > 99 ? '99+' : String(input.sessionAutomationsEnabledCount);
     const title = getSessionName(session);
-    const subtitle = session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined;
+    const fallbackSubtitle = session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined;
+    const workspaceSubtitle = typeof input.workspaceSubtitle === 'string' && input.workspaceSubtitle.length > 0
+        ? input.workspaceSubtitle
+        : undefined;
+    const subtitle = workspaceSubtitle ?? fallbackSubtitle;
+    const subtitleEllipsizeMode = subtitle
+        ? input.workspaceSubtitleEllipsizeMode ?? 'head' as const
+        : undefined;
     const avatarId = getSessionAvatarId(session);
     const isConnected = session.presence === 'online';
     const flavor = session.metadata?.flavor || null;
@@ -173,6 +185,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         sessionMachineId: session.metadata?.machineId ?? null,
         title,
         subtitle,
+        subtitleEllipsizeMode,
         avatarId,
         sessionInfoHref: input.sessionInfoHref,
         sessionRunsHref: input.sessionRunsHref,
@@ -219,6 +232,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const next: SessionViewHeaderProps = {
         title,
         subtitle,
+        subtitleEllipsizeMode,
         avatarId,
         onAvatarPress: () => input.navigateWithBlurOnWeb(() => input.router.navigate(input.sessionInfoHref as any, {
             dangerouslySingular() {

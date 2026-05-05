@@ -60,6 +60,11 @@ export default function ResumePickerScreen() {
         const dataId = typeof params.dataId === 'string' ? params.dataId.trim() : '';
         return dataId ? peekTempData<NewSessionData>(dataId) : null;
     }, [params.dataId]);
+    const hasUsableRouteState = Boolean(
+        (typeof params.dataId === 'string' && params.dataId.trim().length > 0)
+        || (typeof params.machineId === 'string' && params.machineId.trim().length > 0)
+        || (typeof params.currentResumeId === 'string' && params.currentResumeId.trim().length > 0),
+    );
     const effectiveMachineId = React.useMemo(() => {
         const directParam = typeof params.machineId === 'string' ? params.machineId.trim() : '';
         if (directParam) return directParam;
@@ -204,6 +209,11 @@ export default function ResumePickerScreen() {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
     }, [currentRouteParams, navigation, roundTripBackendParams, router, params.dataId, params.machineId, params.spawnServerId]);
+
+    React.useEffect(() => {
+        if (hasUsableRouteState) return;
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [hasUsableRouteState, navigation, router]);
 
     const headerTitle = t('newSession.resume.pickerTitle');
     const headerBackTitle = t('common.cancel');

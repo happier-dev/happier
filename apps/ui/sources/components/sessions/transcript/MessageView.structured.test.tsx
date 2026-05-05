@@ -331,6 +331,50 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(screen.findAllByTestId('message-attachments-row')).toHaveLength(0);
     });
 
+    it('renders attachments for structured review-comment messages that carry attachment metadata', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: 'review prompt\n\n[attachments block]',
+            displayText: 'Review comments (1)\n\n[attachments block]',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+                happierAttachments: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'note.txt', path: '.happier/uploads/messages/m1/note.txt', mimeType: 'text/plain', sizeBytes: 10, sha256: 'h1' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
+        expect(screen.findByTestId('message-attachments-row')).not.toBeNull();
+    });
+
     it('normalizes wrapped voice agent turn text before rendering it in the hidden voice transcript', async () => {
         const { MessageView } = await import('./MessageView');
 

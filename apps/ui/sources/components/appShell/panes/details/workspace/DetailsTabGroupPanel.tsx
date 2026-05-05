@@ -160,6 +160,7 @@ export type DetailsTabGroupPanelProps = Readonly<{
     }> & DetailsTabStripTestIds;
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
     renderTabContent: (tab: DetailsTabState) => React.ReactNode;
+    renderHeaderLeadingActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
 }>;
@@ -202,6 +203,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 : {})}
         >
             <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
+                {props.renderHeaderLeadingActions ? props.renderHeaderLeadingActions() : null}
                 {!forceEmptyState ? (
                     <DetailsTabStrip
                         pane={props.pane}

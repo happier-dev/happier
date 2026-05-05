@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -60,5 +61,36 @@ describe('WorkspaceScmBranchPopover', () => {
 
         const scrollView = screen.tree.findByProps({ testID: 'workspace-scm-branch-popover-scroll' } as never);
         expect(scrollView).toBeTruthy();
+    });
+
+    it('routes the create branch row to the create callback', async () => {
+        const { WorkspaceScmBranchPopover } = await import('./WorkspaceScmBranchPopover');
+        const onCreateBranch = vi.fn();
+        const onSelectItem = vi.fn();
+
+        const screen = await renderScreen(
+            <WorkspaceScmBranchPopover
+                open
+                onOpenChange={vi.fn()}
+                currentBranch="main"
+                branchItems={[]}
+                worktreeItems={[]}
+                onSelectItem={onSelectItem}
+                onCreateBranch={onCreateBranch}
+            />,
+        );
+
+        const search = screen.tree.findByProps({ testID: 'workspace-scm-branch-popover-search' } as never);
+        act(() => {
+            search.props.onChangeText('feature/new');
+        });
+
+        const createRow = screen.tree.findByProps({ testID: 'dropdown-option-__create__' } as never);
+        act(() => {
+            createRow.props.onPress();
+        });
+
+        expect(onCreateBranch).toHaveBeenCalledWith('feature/new');
+        expect(onSelectItem).not.toHaveBeenCalled();
     });
 });

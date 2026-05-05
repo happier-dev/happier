@@ -23,6 +23,11 @@ const safePathSpy = vi.fn((value: string) => value === 'src/new-file.ts' || valu
 const onOpenFileSpy = vi.fn();
 const onOpenFilePinnedSpy = vi.fn();
 
+const latestWorkspaceRepositoryTreeListProps = vi.hoisted(() => ({
+    current: null as any,
+    rootLoading: false,
+}));
+
 const workspaceScmControllerState = vi.hoisted(() => ({
     snapshot: {
         repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
@@ -165,7 +170,13 @@ vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForRev
 }));
 
 vi.mock('./WorkspaceRepositoryTreeList', () => ({
-    WorkspaceRepositoryTreeList: () => React.createElement('View', { testID: 'workspace-repository-tree-list-stub' }),
+    WorkspaceRepositoryTreeList: (props: any) => {
+        latestWorkspaceRepositoryTreeListProps.current = props;
+        React.useEffect(() => {
+            props?.onRootLoadingChange?.(latestWorkspaceRepositoryTreeListProps.rootLoading);
+        }, [props]);
+        return React.createElement('View', { testID: 'workspace-repository-tree-list-stub' });
+    },
 }));
 
 vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
@@ -191,6 +202,8 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
         clearWorkspaceRepositoryDirectoryEntriesSpy.mockClear();
         startUploadsSpy.mockClear();
         latestTransferOptions = null;
+        latestWorkspaceRepositoryTreeListProps.current = null;
+        latestWorkspaceRepositoryTreeListProps.rootLoading = false;
         transferHookState.uploadState = { status: 'idle' } as any;
         transferHookState.downloadState = { status: 'idle' } as any;
     });
@@ -232,6 +245,40 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
 
         expect(screen.findAllByTestId('workspace-repository-tree-list-stub')).toHaveLength(0);
         expect(screen.findAllByTestId('changed-files-tree-list-stub')).toHaveLength(1);
+    });
+
+    it('keeps refresh visible and uses it as the tree refresh loading indicator', async () => {
+        latestWorkspaceRepositoryTreeListProps.rootLoading = true;
+        const screen = await renderView();
+
+        expect(latestWorkspaceRepositoryTreeListProps.current).toBeTruthy();
+        expect(typeof latestWorkspaceRepositoryTreeListProps.current?.onRootLoadingChange).toBe('function');
+        await act(async () => {
+            latestWorkspaceRepositoryTreeListProps.current?.onRootLoadingChange?.(true);
+            await settle();
+        });
+
+        const toolbar = screen.findByTestId('repository-tree-toolbar');
+        expect(toolbar).toBeTruthy();
+        await act(async () => {
+            toolbar?.props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 42, x: 0, y: 0 } } });
+        });
+
+        expect(screen.findAllByTestId('workspace-repository-tree-refresh').length).toBeGreaterThanOrEqual(1);
+        const overflowMenu = screen.findAllByType('ItemRowActions' as any)[0] ?? null;
+        expect(overflowMenu?.props.actions.some((item: any) => item.id === 'workspace-repository-tree-refresh') ?? false).toBe(false);
+        expect(screen.findByTestId('workspace-repository-tree-refresh-loading')).toBeTruthy();
+    });
+
+    it('hides collapse-all when no folders are expanded', async () => {
+        const screen = await renderView({
+            expandedPaths: [],
+            onExpandedPathsChange: vi.fn(),
+        });
+
+        expect(screen.findAllByTestId('workspace-repository-tree-collapse-all')).toHaveLength(0);
+        const overflowMenu = screen.findAllByType('ItemRowActions' as any)[0] ?? null;
+        expect(overflowMenu?.props.actions.some((item: any) => item.id === 'workspace-repository-tree-collapse-all') ?? false).toBe(false);
     });
 
     it('creates a file under the workspace root via workspaceWriteFile', async () => {

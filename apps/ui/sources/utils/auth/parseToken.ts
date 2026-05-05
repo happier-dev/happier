@@ -10,10 +10,10 @@ export function parseToken(token: string) {
 
     try {
         const sub = JSON.parse(decodeUTF8(decodeBase64(payload))).sub;
-        if (typeof sub !== 'string') {
+        if (typeof sub !== 'string' || sub.trim().length === 0) {
             throw new Error('Invalid token: missing or invalid sub claim');
         }
-        return sub;
+        return sub.trim();
     } catch (error) {
         if (error instanceof Error && error.message.includes('Invalid token')) {
             throw error; // Re-throw our validation errors

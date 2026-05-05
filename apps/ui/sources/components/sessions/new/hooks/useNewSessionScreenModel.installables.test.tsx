@@ -12,6 +12,7 @@ import {
     renderHook,
     renderScreen,
 } from '@/dev/testkit';
+import { storage as storageStore } from '@/sync/domains/state/storageStore';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
@@ -617,6 +618,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         settingsState.lastUsedPermissionMode = 'default';
         settingsState.sessionDefaultPermissionModeByTargetKey = {};
         settingsState.backendEnabledByTargetKey = {};
+        storageStore.getState().activateProfileScope({ serverId: 's_active', accountId: 'acct_active' });
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [],

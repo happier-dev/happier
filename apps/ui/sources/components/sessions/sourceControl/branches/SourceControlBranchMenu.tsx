@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { Modal } from '@/modal';
 import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
 import { resolveSessionPathWithinWorktree } from '@/scm/repository/resolveSessionPathWithinWorktree';
@@ -51,13 +50,6 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const canReadBranches = snapshot?.capabilities?.readBranches === true;
     const canCheckout = snapshot?.capabilities?.writeBranchCheckout === true && writeEnabled && !disabled;
     const canCreate = snapshot?.capabilities?.writeBranchCreate === true && writeEnabled && !disabled;
-    const { canPublish, publishBranch } = usePublishBranchAction({
-        sessionId: props.sessionId,
-        snapshot,
-        writeEnabled,
-        disabled,
-    });
-
     const [open, setOpen] = React.useState(false);
     const [includeRemotes, setIncludeRemotes] = React.useState(false);
 
@@ -116,7 +108,6 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             canCheckout,
             canCreateWorktrees,
             canLaunchWorktreeSession,
-            canPublish,
             canReadBranches,
             currentBranch,
             includeRemotes,
@@ -130,7 +121,6 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         canCheckout,
         canCreateWorktrees,
         canLaunchWorktreeSession,
-        canPublish,
         canReadBranches,
         currentBranch,
         includeRemotes,
@@ -316,7 +306,6 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             machineTarget: machineTarget ? { machineId: machineTarget.machineId, basePath: machineTarget.basePath } : null,
             openNewSessionForDirectory,
             pruneWorktrees,
-            publishBranch,
             removeWorktree,
             router,
             setIncludeRemotes,
@@ -331,7 +320,6 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         machineTarget?.machineId,
         openNewSessionForDirectory,
         pruneWorktrees,
-        publishBranch,
         removeWorktree,
         router,
         switchBranch,

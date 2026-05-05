@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -296,7 +296,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
       Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
       return;
     }
-    router.push(`/(app)/settings/prompts/skills/${imported.artifactId}`);
+    router.push(`/settings/prompts/skills/${imported.artifactId}`);
   }, [configuredSources, machineId, router]);
 
   const openItemDetails = React.useCallback((item: PromptRegistryItemSummaryV1) => {
@@ -317,7 +317,6 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: t('promptLibrary.registries') }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ItemList>
           <ItemGroup title={t('promptLibrary.registriesContext')}>

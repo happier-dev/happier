@@ -6,6 +6,7 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { clearTempData, peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,6 +16,7 @@ let mockServerId: string | undefined;
 let mockSession: any = null;
 let isDataReady = true;
 let sessionHydrated = true;
+let sessionIsConnected = true;
 const allSessionsState = vi.hoisted(() => ({
     current: [] as any[],
 }));
@@ -36,7 +38,15 @@ type CreateDefaultActionExecutorConfig = Readonly<{
 }>;
 const createDefaultActionExecutorSpy = vi.fn((_config: CreateDefaultActionExecutorConfig) => ({}));
 const sessionStopSpy = vi.fn(async () => ({ success: true }));
-const sessionArchiveSpy = vi.fn(async () => ({ success: true, archivedAt: 1 }));
+type ArchiveSpyResult = Readonly<{
+    success: boolean;
+    archivedAt?: number | null;
+    message?: string;
+    code?: string;
+}>;
+const sessionArchiveSpy = vi.fn(async (): Promise<ArchiveSpyResult> => ({ success: true, archivedAt: 1 }));
+const sessionDeleteSpy = vi.fn(async () => ({ success: true }));
+const sessionSetManualReadStateSpy = vi.fn(async () => ({ success: true, readState: 'unread', lastViewedSessionSeq: 0, didChange: true }));
 const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
 const applySessionListRenderablePatchesSpy = vi.fn();
@@ -75,6 +85,7 @@ let serverFeaturesSnapshot: any = {
 let mockAgentCore: any = {
     displayNameKey: 'agentInput.agent.claude',
     resume: {},
+    permissions: { modeGroup: 'codexLike' },
     ui: { agentPickerIconName: 'code-slash-outline' },
 };
 const AnimatedValue = vi.hoisted(
@@ -88,6 +99,9 @@ const AnimatedValue = vi.hoisted(
                 return 1;
             }
         },
+);
+const useHappyActionMock = vi.hoisted(() =>
+    vi.fn((fn: any): readonly [boolean, any] => [false, fn] as const),
 );
 const mockResolveAgentIdFromFlavor = vi.fn<(flavor: string | null | undefined) => string | undefined>(() => 'claude');
 const useSessionSpy = vi.fn<(sessionId: string) => any>(() => mockSession);
@@ -202,11 +216,12 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
 }));
 vi.mock('@/components/ui/media/CodeView', () => ({ CodeView: 'CodeView' }));
 vi.mock('@/components/sessions/info/SessionRetentionNotice', () => ({ SessionRetentionNotice: 'SessionRetentionNotice' }));
-vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: any) => [false, fn] }));
+vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: any) => useHappyActionMock(fn) }));
 vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: sessionArchiveSpy,
-    sessionDelete: vi.fn(),
+    sessionDelete: sessionDeleteSpy,
     sessionRename: vi.fn(),
+    sessionSetManualReadStateWithServerScope: sessionSetManualReadStateSpy,
     sessionStop: sessionStopSpy,
     sessionStopWithServerScope: sessionStopSpy,
 }));
@@ -280,7 +295,7 @@ vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'name',
     useSessionStatus: () => ({
-        isConnected: true,
+        isConnected: sessionIsConnected,
         statusText: 'Connected',
         statusColor: 'green',
         statusDotColor: 'green',
@@ -305,6 +320,7 @@ describe('/session/[id]/info', () => {
         mockSession = null;
         isDataReady = true;
         sessionHydrated = true;
+        sessionIsConnected = true;
         routerPushSpy.mockReset();
         routerBackSpy.mockReset();
         safeRouterBackSpy.mockReset();
@@ -312,6 +328,8 @@ describe('/session/[id]/info', () => {
         readMachineTargetForSessionSpy.mockReturnValue(null);
         sessionStopSpy.mockClear();
         sessionArchiveSpy.mockClear();
+        sessionDeleteSpy.mockClear();
+        sessionSetManualReadStateSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockClear();
@@ -358,18 +376,23 @@ describe('/session/[id]/info', () => {
         mockAgentCore = {
             displayNameKey: 'agentInput.agent.claude',
             resume: {},
+            permissions: { modeGroup: 'codexLike' },
             ui: { agentPickerIconName: 'code-slash-outline' },
         };
         useSessionSpy.mockClear();
         mockResolveAgentIdFromFlavor.mockReset();
         mockResolveAgentIdFromFlavor.mockReturnValue('claude');
         vi.clearAllMocks();
+        useHappyActionMock.mockReset();
+        useHappyActionMock.mockImplementation((fn: any) => [false, fn] as const);
         useSessionExecutionRunsSupportedSpy.mockReturnValue(false);
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        clearTempData();
     });
 
     afterEach(() => {
+        clearTempData();
         standardCleanup();
     });
 
@@ -575,6 +598,59 @@ describe('/session/[id]/info', () => {
         const screen = await renderInfoScreen();
         const handoffItems = screen.findAllByType('Item' as any).filter((node: any) => node.props?.title === 'Hand off session');
         expect(handoffItems).toHaveLength(0);
+    });
+
+    it('shows manual mark-unread in quick actions for read sessions and uses scoped server mutations', async () => {
+        mockSession = {
+            id: 'session-read-state',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            metadata: {
+                machineId: 'machine_source',
+                flavor: 'claude',
+            },
+        };
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cached');
+
+        const screen = await renderInfoScreen();
+        const item = screen.findByProps({ testID: 'session-info-mark-unread' });
+        expect(item).toBeTruthy();
+
+        await act(async () => {
+            item.props.onPress();
+        });
+
+        expect(sessionSetManualReadStateSpy).toHaveBeenCalledWith(
+            'session-read-state',
+            'unread',
+            { serverId: 'server-cached' },
+        );
+    });
+
+    it('hides manual read-state quick actions for archived sessions', async () => {
+        mockSession = {
+            id: 'session-read-state-archived',
+            active: false,
+            accessLevel: null,
+            archivedAt: 123,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            metadata: {
+                machineId: 'machine_source',
+                flavor: 'claude',
+            },
+        };
+
+        const screen = await renderInfoScreen();
+
+        expect(screen.findAllByProps({ testID: 'session-info-mark-unread' })).toHaveLength(0);
+        expect(screen.findAllByProps({ testID: 'session-info-mark-read' })).toHaveLength(0);
     });
 
     it('fails closed and hides the handoff quick action when server-routed transfer is the only transport the selected server advertises', async () => {
@@ -900,7 +976,73 @@ describe('/session/[id]/info', () => {
 
         screen.pressByTestId('sessionInfo.viewMachine');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/machine/machine-target');
+        expect(routerPushSpy).toHaveBeenCalledWith('/machine/machine-target?serverId=server-1');
+    });
+
+    it('opens a new session seeded from the current session configuration', async () => {
+        mockResolveAgentIdFromFlavor.mockReturnValue('codex');
+        readMachineTargetForSessionSpy.mockReturnValue({
+            machineId: 'machine-target',
+            basePath: '/workspace/repo',
+        });
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            encryptionMode: 'plain',
+            metadata: {
+                machineId: 'machine-source',
+                path: '/workspace/source',
+                homeDir: '/workspace',
+                host: 'source.local',
+                flavor: 'codex',
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                profileId: 'profile-1',
+                transcriptStorage: 'direct',
+                codexBackendMode: 'appServer',
+                sessionModeOverrideV1: {
+                    v: 1,
+                    updatedAt: 100,
+                    modeId: 'plan',
+                },
+            },
+            permissionMode: 'acceptEdits',
+            permissionModeUpdatedAt: 101,
+            modelMode: 'gpt-5',
+            modelModeUpdatedAt: 102,
+        };
+
+        const screen = await renderInfoScreen();
+        screen.pressByTestId('session-info-new-session-same-setup');
+
+        const pushArg = routerPushSpy.mock.calls[0]?.[0] as any;
+        expect(pushArg).toEqual({
+            pathname: '/new',
+            params: {
+                dataId: expect.any(String),
+                machineId: 'machine-target',
+                directory: '/workspace/repo',
+                spawnServerId: 'server-1',
+            },
+        });
+        const tempData = peekTempData<NewSessionData>(pushArg.params.dataId);
+        expect(tempData).toEqual(expect.objectContaining({
+            prompt: '',
+            replacePersistedDraftSelections: true,
+            machineId: 'machine-target',
+            directory: '/workspace/repo',
+            agentType: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            selectedProfileId: 'profile-1',
+            transcriptStorage: 'direct',
+            permissionMode: 'safe-yolo',
+            modelMode: 'gpt-5',
+            codexBackendMode: 'appServer',
+            acpSessionModeId: 'plan',
+        }));
     });
 
     it('always shows the View session log action even when developer mode is disabled', async () => {
@@ -950,14 +1092,20 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.stopSession');
+        await screen.pressByTestIdAsync('sessionInfo.stopSession');
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await actions[1].onPress();
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.stopSession',
+            'sessionInfo.stopSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.stopSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
 
         expect(sessionStopSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
-        expect(modalConfirmSpy).not.toHaveBeenCalled();
         expect(sessionArchiveSpy).not.toHaveBeenCalled();
         expect(routerBackSpy).not.toHaveBeenCalled();
         expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
@@ -969,6 +1117,35 @@ describe('/session/[id]/info', () => {
             router: expect.any(Object),
             fallbackHref: '/',
         });
+    });
+
+    it('stops and retries archiving when an inactive session is still active server-side', async () => {
+        mockServerId = 'server-b';
+        sessionArchiveSpy
+            .mockResolvedValueOnce({
+                success: false,
+                message: 'Cannot archive an active session',
+                code: 'session_active',
+            })
+            .mockResolvedValueOnce({ success: true, archivedAt: 1 });
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            archivedAt: null,
+        };
+
+        const screen = await renderInfoScreen();
+        await screen.pressByTestIdAsync('sessionInfo.archiveSession');
+
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(sessionArchiveSpy).toHaveBeenCalledTimes(2);
+        expect(sessionStopSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
+        expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
     });
 
     it('stops with the cached owning server id when route scope and preferred scope are unavailable', async () => {
@@ -989,12 +1166,32 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.stopSession');
+        await screen.pressByTestIdAsync('sessionInfo.stopSession');
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await actions[1].onPress();
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
+        expect(sessionStopSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-cache-info' });
+    });
 
+    it('stops with the cached owning server id before a stale route server id', async () => {
+        mockServerId = 'server-stale-route';
+        hideInactiveSessions = true;
+        pinnedSessionKeysV1 = [];
+        resolvedServerId = 'server-preferred';
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache-info');
+        mockSession = {
+            id: 'session-1',
+            active: true,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+        await screen.pressByTestIdAsync('sessionInfo.stopSession');
+
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
         expect(sessionStopSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-cache-info' });
     });
 
@@ -1015,14 +1212,11 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.stopSession');
+        await screen.pressByTestIdAsync('sessionInfo.stopSession');
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await actions[1].onPress();
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
 
         expect(sessionStopSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
-        expect(modalConfirmSpy).not.toHaveBeenCalled();
         expect(sessionArchiveSpy).not.toHaveBeenCalled();
         expect(routerBackSpy).not.toHaveBeenCalled();
         expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
@@ -1050,13 +1244,69 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.archiveSession');
+        await screen.pressByTestIdAsync('sessionInfo.archiveSession');
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await actions[1].onPress();
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.archiveSession',
+            'sessionInfo.archiveSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.archiveSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
 
         expect(sessionArchiveSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(1, {
+            router: expect.any(Object),
+            fallbackHref: '/session/session-1?serverId=server-b',
+        });
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(2, {
+            router: expect.any(Object),
+            fallbackHref: '/',
+        });
+    });
+
+    it('deletes a session and exits via the safe back helper', async () => {
+        mockServerId = 'server-b';
+        sessionIsConnected = false;
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            archivedAt: null,
+        };
+
+        const screen = await renderInfoScreen();
+        screen.pressByTestId('sessionInfo.deleteSession');
+
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'sessionInfo.deleteSession',
+            'sessionInfo.deleteSessionWarning',
+            expect.arrayContaining([
+                expect.objectContaining({ text: 'common.cancel', style: 'cancel' }),
+                expect.objectContaining({ text: 'sessionInfo.deleteSession', style: 'destructive' }),
+            ]),
+        );
+
+        const alertButtons = modalAlertSpy.mock.calls[0]?.[2];
+        const deleteButton = alertButtons?.find((button: { text?: string }) => button.text === 'sessionInfo.deleteSession');
+        if (!deleteButton?.onPress) {
+            throw new Error('expected delete confirmation button to expose onPress');
+        }
+
+        await act(async () => {
+            await deleteButton.onPress();
+        });
+
+        expect(sessionDeleteSpy).toHaveBeenCalledWith('session-1');
         expect(routerBackSpy).not.toHaveBeenCalled();
         expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
         expect(safeRouterBackSpy).toHaveBeenNthCalledWith(1, {
@@ -1082,14 +1332,31 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.archiveSession');
+        await screen.pressByTestIdAsync('sessionInfo.archiveSession');
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await actions[1].onPress();
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
 
         expect(sessionStopSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
         expect(sessionArchiveSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
         expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows loading on the stop and archive rows while their mutations are running', async () => {
+        useHappyActionMock.mockImplementation((fn: any) => [true, fn] as const);
+        mockSession = {
+            id: 'session-1',
+            active: true,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            archivedAt: null,
+        };
+
+        const screen = await renderInfoScreen();
+
+        expect(screen.findByTestId('sessionInfo.stopSession')?.props.loading).toBe(true);
+        expect(screen.findByTestId('sessionInfo.archiveSession')?.props.loading).toBe(true);
     });
 });

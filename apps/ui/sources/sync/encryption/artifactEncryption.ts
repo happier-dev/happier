@@ -2,6 +2,7 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes';
 import { AES256Encryption } from './encryptor';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
 
 const ARTIFACT_HEADER_DEFAULT_VERSION = 1;
 const ARTIFACT_HEADER_MAX_VERSION = 1;
@@ -48,8 +49,14 @@ export class ArtifactEncryption {
      * Encrypt artifact header
      */
     async encryptHeader(header: ArtifactHeader): Promise<string> {
-        const encrypted = await this.encryptor.encrypt([header]);
-        return encodeBase64(encrypted[0], 'base64');
+        return syncPerformanceTelemetry.measureAsync(
+            'sync.encryption.artifact.encryptHeader',
+            { items: 1 },
+            async () => {
+                const encrypted = await this.encryptor.encrypt([header]);
+                return encodeBase64(encrypted[0], 'base64');
+            },
+        );
     }
     
     /**
@@ -58,7 +65,11 @@ export class ArtifactEncryption {
     async decryptHeader(encryptedHeader: string): Promise<ArtifactHeader | null> {
         try {
             const encryptedData = decodeBase64(encryptedHeader, 'base64');
-            const decrypted = await this.encryptor.decrypt([encryptedData]);
+            const decrypted = await syncPerformanceTelemetry.measureAsync(
+                'sync.encryption.artifact.decryptHeader',
+                { items: 1 },
+                async () => this.encryptor.decrypt([encryptedData]),
+            );
             if (!decrypted[0]) {
                 return null;
             }
@@ -97,8 +108,14 @@ export class ArtifactEncryption {
      * Encrypt artifact body
      */
     async encryptBody(body: ArtifactBody): Promise<string> {
-        const encrypted = await this.encryptor.encrypt([body]);
-        return encodeBase64(encrypted[0], 'base64');
+        return syncPerformanceTelemetry.measureAsync(
+            'sync.encryption.artifact.encryptBody',
+            { items: 1 },
+            async () => {
+                const encrypted = await this.encryptor.encrypt([body]);
+                return encodeBase64(encrypted[0], 'base64');
+            },
+        );
     }
     
     /**
@@ -107,7 +124,11 @@ export class ArtifactEncryption {
     async decryptBody(encryptedBody: string): Promise<ArtifactBody | null> {
         try {
             const encryptedData = decodeBase64(encryptedBody, 'base64');
-            const decrypted = await this.encryptor.decrypt([encryptedData]);
+            const decrypted = await syncPerformanceTelemetry.measureAsync(
+                'sync.encryption.artifact.decryptBody',
+                { items: 1 },
+                async () => this.encryptor.decrypt([encryptedData]),
+            );
             if (!decrypted[0]) {
                 return null;
             }

@@ -212,6 +212,7 @@ describe('/settings/desktop route', () => {
                 compactStyle: 'pill',
                 showSessionCount: true,
                 showPreviewText: false,
+                quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
                 placementMode: 'anchored',
                 anchor: 'top_center',
                 offsetX: 0,

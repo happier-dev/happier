@@ -64,6 +64,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             dropIndicatorEdge={props.dropIndicatorEdge}
             session={session}
             subtitleOverride={rowViewModel.subtitleOverride}
+            subtitleEllipsizeMode={rowViewModel.subtitleEllipsizeMode}
             serverId={props.item.serverId}
             serverName={props.item.serverName}
             currentUserId={props.currentUserId}

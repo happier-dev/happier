@@ -1,4 +1,5 @@
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import { isLineContentHash } from '@/utils/text/lineContentHash';
 
 type ExpoLocalSearchParams = Record<string, string | string[] | undefined>;
 
@@ -35,6 +36,9 @@ export function buildSessionFileDeepLink(params: {
         if (typeof anchor.oldLine === 'number') parts.push(`oldLine=${encodeURIComponent(String(anchor.oldLine))}`);
         if (typeof anchor.newLine === 'number') parts.push(`newLine=${encodeURIComponent(String(anchor.newLine))}`);
     }
+    if (anchor.lineHash) {
+        parts.push(`lineHash=${encodeURIComponent(anchor.lineHash)}`);
+    }
 
     return `${base}&${parts.join('&')}`;
 }
@@ -50,9 +54,11 @@ export function parseSessionFileDeepLinkAnchor(params: ExpoLocalSearchParams): {
     if (!anchorKind || !startLine || startLine <= 0) return null;
 
     const source: ReviewCommentSource = sourceRaw;
+    const lineHashRaw = firstString(params.lineHash);
+    const lineHash = isLineContentHash(lineHashRaw) ? lineHashRaw : undefined;
 
     if (anchorKind === 'fileLine') {
-        return { source, anchor: { kind: 'fileLine', startLine } };
+        return { source, anchor: { kind: 'fileLine', startLine, lineHash } };
     }
 
     if (anchorKind === 'diffLine') {
@@ -68,10 +74,10 @@ export function parseSessionFileDeepLinkAnchor(params: ExpoLocalSearchParams): {
                 side: sideRaw,
                 oldLine,
                 newLine,
+                lineHash,
             },
         };
     }
 
     return null;
 }
-

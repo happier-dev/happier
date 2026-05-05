@@ -18,7 +18,7 @@ describe('executeSessionHandoffAction', () => {
       execute: execute as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(result).toEqual({ ok: true, handoffId: 'handoff_1' });
@@ -48,7 +48,7 @@ describe('executeSessionHandoffAction', () => {
         includeIgnoredMode: 'include_selected',
         ignoredIncludeGlobs: ['dist/**'],
       },
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(execute).toHaveBeenCalledWith(
@@ -82,7 +82,7 @@ describe('executeSessionHandoffAction', () => {
       execute: execute as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(result).toEqual({ ok: false, error: 'unsupported_action:session.handoff' });
@@ -104,7 +104,7 @@ describe('executeSessionHandoffAction', () => {
       execute: execute as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
-      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'sess_1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(result).toEqual({ ok: false, error: 'failed_to_start_session_handoff' });

@@ -11,7 +11,7 @@ import { storage, useSession, useIsDataReady, useLocalSetting, useSetting } from
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
-import { sessionArchiveWithServerScope, sessionDelete, sessionRename, sessionStopWithServerScope } from '@/sync/ops';
+import { sessionArchiveWithServerScope, sessionDelete, sessionRename, sessionSetManualReadStateWithServerScope, sessionStopWithServerScope } from '@/sync/ops';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
@@ -22,7 +22,7 @@ import { Session } from '@/sync/domains/state/storageTypes';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { HappyError } from '@/utils/errors/errors';
-import { clearSessionVisibleWhenInactive, stopSessionAndMaybeArchive } from '@/components/sessions/sessionStopArchiveFlow';
+import { clearSessionVisibleWhenInactive, isSessionActiveArchiveResult, stopSessionAndMaybeArchive } from '@/components/sessions/sessionStopArchiveFlow';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
@@ -59,6 +59,10 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
+import { createSessionReadStateInfoItemProps } from '@/components/sessions/actions/sessionReadStateActionItems';
+import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
+import { storeTempData } from '@/utils/sessions/tempDataStore';
 
 
 // Animated status dot component
@@ -192,7 +196,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         return isActionEnabledInState(
             storage.getState() as any,
             'session.fork' as any,
-            { surface: 'ui_button', placement: 'session_info' } as any,
+            { surface: 'ui', placement: 'session_info' } as any,
         );
     }, [actionsSettingsV1]);
 
@@ -204,7 +208,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         return isActionEnabledInState(
             storage.getState() as any,
             'session.handoff' as any,
-            { surface: 'ui_button', placement: 'session_info' } as any,
+            { surface: 'ui', placement: 'session_info' } as any,
         );
     }, [actionsSettingsV1]);
     const reachableMachineTarget = useSessionReachableMachineTarget(session.id);
@@ -219,6 +223,8 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         runtimeAvailability,
     });
     const handoffSupported = handoffAvailability.available;
+    const newSessionSeedMachineId = reachableMachineId ?? session.metadata?.machineId ?? null;
+    const newSessionSeedDirectory = reachableMachineTarget?.basePath ?? session.metadata?.path ?? null;
 
     const vendorResumeLabelKey = core.resume.uiVendorResumeIdLabelKey;
     const vendorResumeCopiedKey = core.resume.uiVendorResumeIdCopiedKey;
@@ -285,6 +291,23 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         }
     }, [session]);
 
+    const handleNewSessionSameSetup = useCallback(() => {
+        const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
+            session,
+            machineId: newSessionSeedMachineId,
+            directoryOverride: newSessionSeedDirectory,
+        }));
+        router.push({
+            pathname: '/new',
+            params: {
+                dataId,
+                ...(newSessionSeedMachineId ? { machineId: newSessionSeedMachineId } : {}),
+                ...(newSessionSeedDirectory ? { directory: newSessionSeedDirectory } : {}),
+                ...(sessionServerId ? { spawnServerId: sessionServerId } : {}),
+            },
+        } as any);
+    }, [newSessionSeedDirectory, newSessionSeedMachineId, router, session, sessionServerId]);
+
     const handleCopySessionLogPath = useCallback(async () => {
         if (!sessionLogPath) return;
         try {
@@ -309,13 +332,42 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
     const canArchiveSession = canManageSharing && !isArchivedSession;
-    const resolvedServerId = resolveServerIdForSessionIdFromLocalCache(session.id) ?? sessionServerId;
-    const scopedMutationServerId = routeScope.serverId ?? sessionServerId ?? resolvedServerId ?? null;
+    const cachedSessionServerId = resolveServerIdForSessionIdFromLocalCache(session.id);
+    const resolvedServerId = cachedSessionServerId ?? sessionServerId;
+    const scopedMutationServerId = cachedSessionServerId ?? routeScope.serverId ?? sessionServerId ?? null;
     const isPinnedSession = Boolean(
         resolvedServerId &&
         Array.isArray(pinnedSessionKeysV1) &&
         pinnedSessionKeysV1.includes(`${resolvedServerId}:${session.id}`),
     );
+    const readStateAction = React.useMemo(() => {
+        if (isArchivedSession) return { kind: 'none' as const, visible: false as const };
+        return resolveSessionReadStateAction(session);
+    }, [isArchivedSession, session]);
+    const readStateInfoItem = React.useMemo(
+        () => createSessionReadStateInfoItemProps(readStateAction, theme.colors.accent.blue),
+        [readStateAction, theme.colors.accent.blue],
+    );
+
+    const handleReadStateAction = useCallback(async () => {
+        if (!readStateAction.visible) return;
+        const result = await sessionSetManualReadStateWithServerScope(
+            session.id,
+            readStateAction.targetState,
+            { serverId: scopedMutationServerId },
+        );
+        if (!result.success) {
+            Modal.alert(
+                t('common.error'),
+                result.message || t(
+                    readStateAction.targetState === 'read'
+                        ? 'sessionInfo.failedToMarkSessionRead'
+                        : 'sessionInfo.failedToMarkSessionUnread',
+                ),
+            );
+        }
+    }, [readStateAction, scopedMutationServerId, session.id]);
+    const [updatingReadState, performReadStateAction] = useHappyAction(handleReadStateAction);
 
     const handleStopAndMaybeArchive = useCallback(async () => {
         await stopSessionAndMaybeArchive({
@@ -332,23 +384,22 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [handleExitAfterSessionMutation, hideInactiveSessions, isPinnedSession, scopedMutationServerId, session.id]);
     const [stoppingSession, performStop] = useHappyAction(handleStopAndMaybeArchive);
 
-    const handleStopSession = useCallback(() => {
-        Modal.alert(
+    const handleStopSession = useCallback(async () => {
+        const confirmed = await Modal.confirm(
             t('sessionInfo.stopSession'),
             t('sessionInfo.stopSessionConfirm'),
-            [
-                { text: t('common.cancel'), style: 'cancel' },
-                {
-                    text: t('sessionInfo.stopSession'),
-                    style: 'destructive',
-                    onPress: performStop
-                }
-            ]
+            {
+                cancelText: t('common.cancel'),
+                confirmText: t('sessionInfo.stopSession'),
+                destructive: true,
+            },
         );
+        if (!confirmed) return;
+        await performStop();
     }, [performStop]);
 
     const handleArchive = useCallback(async () => {
-        if (session.active) {
+        const stopThenArchiveSession = async () => {
             await stopSessionAndMaybeArchive({
                 sessionId: session.id,
                 hideInactiveSessions,
@@ -360,11 +411,19 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
             });
             handleExitAfterSessionMutation();
+        };
+
+        if (session.active) {
+            await stopThenArchiveSession();
             return;
         }
 
         const result = await sessionArchiveWithServerScope(session.id, { serverId: scopedMutationServerId });
         if (!result.success) {
+            if (isSessionActiveArchiveResult(result)) {
+                await stopThenArchiveSession();
+                return;
+            }
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }
         clearSessionVisibleWhenInactive(session.id);
@@ -376,7 +435,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         const res = await executeSessionForkAction({
             execute: executor.execute as any,
             sessionId: session.id,
-            context: { defaultSessionId: session.id, surface: 'ui_button', placement: 'session_info' } as any,
+            context: { defaultSessionId: session.id, surface: 'ui', placement: 'session_info' } as any,
         });
         if (!res.ok) {
             throw new HappyError(res.error || t('errors.failedToForkSession'), false);
@@ -398,19 +457,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 
     const [handingOffSession, performHandoff] = useHappyAction(handleHandoffAction);
 
-    const handleArchiveSession = useCallback(() => {
-        Modal.alert(
+    const handleArchiveSession = useCallback(async () => {
+        const confirmed = await Modal.confirm(
             t('sessionInfo.archiveSession'),
             t('sessionInfo.archiveSessionConfirm'),
-            [
-                { text: t('common.cancel'), style: 'cancel' },
-                {
-                    text: t('sessionInfo.archiveSession'),
-                    style: 'destructive',
-                    onPress: performArchive
-                }
-            ]
+            {
+                cancelText: t('common.cancel'),
+                confirmText: t('sessionInfo.archiveSession'),
+                destructive: true,
+            },
         );
+        if (!confirmed) return;
+        await performArchive();
     }, [performArchive]);
 
     // Use HappyAction for deletion - it handles errors automatically
@@ -419,7 +477,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToDeleteSession'), false);
         }
-        // Success - no alert needed, UI will update to show deleted state
+        handleExitAfterSessionMutation();
     });
 
     const handleDeleteSession = useCallback(() => {
@@ -578,6 +636,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         icon={<Ionicons name="pencil-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={handleRenameSession}
                     />
+                    <Item
+                        testID="session-info-new-session-same-setup"
+                        title={t('sessionInfo.newSessionSameSetup')}
+                        subtitle={t('sessionInfo.newSessionSameSetupSubtitle')}
+                        icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
+                        onPress={handleNewSessionSameSetup}
+                    />
                     {!session.accessLevel && forkActionEnabled && forkSupported && (
                         <Item
                             testID="session-info-fork-session"
@@ -597,6 +662,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             loading={handingOffSession}
                         />
                     )}
+                    {readStateInfoItem ? (
+                        <Item
+                            {...readStateInfoItem}
+                            onPress={performReadStateAction}
+                            loading={updatingReadState}
+                        />
+                    ) : null}
                     {executionRunsEnabled && sessionExecutionRunsSupported ? (
                         <Item
                             title={t('runs.title')}
@@ -641,7 +713,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                                 </Text>
                             }
                             icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => router.push(`/machine/${reachableMachineId}`)}
+                            onPress={() => {
+                                const encodedMachineId = encodeURIComponent(reachableMachineId);
+                                const normalizedServerId = String(sessionServerId ?? '').trim();
+                                const href = normalizedServerId
+                                    ? `/machine/${encodedMachineId}?serverId=${encodeURIComponent(normalizedServerId)}`
+                                    : `/machine/${encodedMachineId}`;
+                                router.push(href);
+                            }}
                         />
                     )}
                     {canManageSharing && sharingSupported && (
@@ -658,6 +737,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             subtitle={t('sessionInfo.stopSessionSubtitle')}
                             icon={<Ionicons name="stop-circle-outline" size={29} color={theme.colors.warningCritical} />}
                             onPress={handleStopSession}
+                            loading={stoppingSession}
                         />
                     )}
                     {canArchiveSession && (
@@ -666,6 +746,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             subtitle={t('sessionInfo.archiveSessionSubtitle')}
                             icon={<Ionicons name="archive-outline" size={29} color={theme.colors.warningCritical} />}
                             onPress={handleArchiveSession}
+                            loading={archivingSession}
                         />
                     )}
                     {!sessionStatus.isConnected && !session.active && (

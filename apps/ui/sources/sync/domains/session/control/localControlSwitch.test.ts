@@ -11,13 +11,13 @@ describe('localControlSwitch', () => {
     expect(shouldRequestRemoteControlAfterPendingEnqueue(null)).toBe(false);
   });
 
-  it('requests remote control after pending enqueue when session is controlled by user', () => {
+  it('does not request remote control as a hidden side effect after pending enqueue', () => {
     expect(
       shouldRequestRemoteControlAfterPendingEnqueue({
         presence: 'online',
         agentState: { controlledByUser: true },
       } as Session),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('does not request remote control when the CLI auth state is logged out', () => {
@@ -81,14 +81,15 @@ describe('localControlSwitch', () => {
     ).toBe(true);
   });
 
-  it('renders the chat timeline when shared local control can be attached even with no messages yet', () => {
+  it('does not render an empty chat timeline just to expose remote-to-local attachment UI', () => {
+    // Remote -> local takeover is intentionally terminal-driven. Do not add a
+    // footer-only transcript render path for an app-side "Switch to local" button.
     expect(
       shouldRenderChatTimelineForSession({
         committedMessagesCount: 0,
         pendingMessagesCount: 0,
         controlledByUser: false,
-        showLocalControlFooter: true,
-      } as any),
-    ).toBe(true);
+      }),
+    ).toBe(false);
   });
 });

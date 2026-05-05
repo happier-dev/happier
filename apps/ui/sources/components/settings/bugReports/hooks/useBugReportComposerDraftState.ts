@@ -68,9 +68,10 @@ export function useBugReportComposerDraftState(input: Readonly<{
   const [whatChangedRecently, setWhatChangedRecently] = React.useState('');
   const [frequency, setFrequency] = React.useState<BugReportFrequency>('often');
   const [severity, setSeverity] = React.useState<BugReportSeverity>('medium');
-  const [deploymentType, setDeploymentType] = React.useState<BugReportDeploymentType>(
+  const [deploymentType, setDeploymentTypeState] = React.useState<BugReportDeploymentType>(
     inferDeploymentType(input.serverUrlDefault),
   );
+  const [deploymentTypeEdited, setDeploymentTypeEdited] = React.useState(false);
 
   const [appVersion, setAppVersion] = React.useState(Constants.expoConfig?.version ?? 'unknown');
   const [platformValue, setPlatformValue] = React.useState<string>(Platform.OS);
@@ -78,10 +79,30 @@ export function useBugReportComposerDraftState(input: Readonly<{
     typeof Platform.Version === 'string' ? Platform.Version : String(Platform.Version ?? ''),
   );
   const [deviceModel, setDeviceModel] = React.useState(Constants.deviceName ?? '');
-  const [serverUrl, setServerUrl] = React.useState(input.serverUrlDefault);
+  const [serverUrl, setServerUrlState] = React.useState(input.serverUrlDefault);
+  const [serverUrlEdited, setServerUrlEdited] = React.useState(false);
   const [serverVersion, setServerVersion] = React.useState('');
 
   const [acceptedPrivacyNotice, setAcceptedPrivacyNotice] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!serverUrlEdited) {
+      setServerUrlState(input.serverUrlDefault);
+    }
+    if (!deploymentTypeEdited) {
+      setDeploymentTypeState(inferDeploymentType(input.serverUrlDefault));
+    }
+  }, [deploymentTypeEdited, input.serverUrlDefault, serverUrlEdited]);
+
+  const setServerUrl = React.useCallback((value: string) => {
+    setServerUrlEdited(true);
+    setServerUrlState(value);
+  }, []);
+
+  const setDeploymentType = React.useCallback((value: BugReportDeploymentType) => {
+    setDeploymentTypeEdited(true);
+    setDeploymentTypeState(value);
+  }, []);
 
   const buildDraftInput = React.useCallback((draft: Readonly<{
     includeDiagnostics: boolean;
@@ -166,4 +187,3 @@ export function useBugReportComposerDraftState(input: Readonly<{
     buildDraftInput,
   };
 }
-

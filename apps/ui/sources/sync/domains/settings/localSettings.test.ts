@@ -71,11 +71,54 @@ describe('localSettingsParse', () => {
         expect(parsed.desktopOverlayShowSessionCount).toBe(true);
         expect(parsed.desktopOverlayShowPreviewText).toBe(false);
         expect(parsed.desktopOverlayCompactStyle).toBe('pill');
+        expect(parsed.attentionDeviceOverridesV1).toMatchObject({
+            v: 1,
+            enabled: true,
+            foregroundBehavior: 'account',
+            localNotifications: {
+                enabled: true,
+                events: {
+                    ready: true,
+                    permission_request: true,
+                    user_action_request: true,
+                },
+                previewBehavior: 'account',
+            },
+            badge: {
+                enabled: true,
+                includeUnread: true,
+                includePendingPermissionRequests: true,
+                includePendingUserActionRequests: true,
+                includeQueuedUserInput: true,
+            },
+            quietHoursOverride: {
+                mode: 'account',
+            },
+            desktopOverlay: {
+                hoverExpandDelay: 'normal',
+                compactCollapsedMode: false,
+                collapsedCarouselEnabled: true,
+                physicalNotchMode: 'automatic',
+                autoDismissDelayMs: 10_000,
+                quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
+            },
+            liveActivities: {
+                registerRemoteUpdateTargets: true,
+                allowBackgroundWakeFallback: false,
+                privacyMode: 'account',
+                showFreshnessDiagnostics: false,
+                remoteUpdateModeOverride: 'account',
+            },
+            terminalSmartSuppression: {
+                enabled: true,
+            },
+        });
         expect(typeof (parsed as any).sidebarWidthPx).toBe('number');
         expect(typeof (parsed as any).sidebarWidthBasisPx).toBe('number');
         expect((parsed as any).bottomPaneHeightPx).toBe(320);
         expect((parsed as any).bottomPaneHeightBasisPx).toBe(900);
         expect((parsed as any).embeddedTerminalDockLocation).toBe('bottom');
+        expect(parsed).not.toHaveProperty('mobileWorkspaceExperienceV1');
     });
 
     it('returns defaults for non-object input', () => {
@@ -226,6 +269,132 @@ describe('localSettingsParse', () => {
         expect(parsed.desktopOverlayCompactStyle).toBe('panel');
     });
 
+    it('accepts explicit attention device overrides and preserves a disabled quiet-hours override', () => {
+        const parsed = localSettingsParse({
+            attentionDeviceOverridesV1: {
+                v: 1,
+                enabled: true,
+                foregroundBehavior: 'silent',
+                localNotifications: {
+                    enabled: false,
+                    events: {
+                        ready: false,
+                        permission_request: true,
+                        user_action_request: false,
+                    },
+                    previewBehavior: 'status_only',
+                },
+                quietHoursOverride: {
+                    mode: 'disabled',
+                },
+                desktopOverlay: {
+                    hoverExpandDelay: 'slow',
+                    compactCollapsedMode: true,
+                    collapsedCarouselEnabled: false,
+                    physicalNotchMode: 'force_virtual',
+                    autoDismissDelayMs: 12_000,
+                    quickReplyPhrases: ['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Thanks', 'Ignored'],
+                },
+                liveActivities: {
+                    registerRemoteUpdateTargets: false,
+                    allowBackgroundWakeFallback: true,
+                    privacyMode: 'status_only',
+                    showFreshnessDiagnostics: true,
+                    remoteUpdateModeOverride: 'local_only',
+                },
+                terminalSmartSuppression: {
+                    enabled: false,
+                },
+            },
+        });
+
+        expect(parsed.attentionDeviceOverridesV1).toMatchObject({
+            foregroundBehavior: 'silent',
+            localNotifications: {
+                enabled: false,
+                events: {
+                    ready: false,
+                    permission_request: true,
+                    user_action_request: false,
+                },
+                previewBehavior: 'status_only',
+            },
+            quietHoursOverride: {
+                mode: 'disabled',
+            },
+            desktopOverlay: {
+                hoverExpandDelay: 'slow',
+                compactCollapsedMode: true,
+                collapsedCarouselEnabled: false,
+                physicalNotchMode: 'force_virtual',
+                autoDismissDelayMs: 12_000,
+                quickReplyPhrases: ['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Thanks'],
+            },
+            liveActivities: {
+                registerRemoteUpdateTargets: false,
+                allowBackgroundWakeFallback: true,
+                privacyMode: 'status_only',
+                showFreshnessDiagnostics: true,
+                remoteUpdateModeOverride: 'local_only',
+            },
+            terminalSmartSuppression: {
+                enabled: false,
+            },
+        });
+    });
+
+    it('backfills attention device overrides from legacy local notification and surface settings', () => {
+        const parsed = localSettingsParse({
+            localNotificationsEnabled: false,
+            localNotificationsShowReady: false,
+            localNotificationsShowReadyMessageText: false,
+            localNotificationsShowPendingPermissionRequests: true,
+            localNotificationsShowPendingUserActionRequests: false,
+            localNotificationsForegroundBehavior: 'silent',
+            activityBadgesEnabled: false,
+            activityBadgeShowUnread: false,
+            activityBadgeShowPendingPermissionRequests: true,
+            activityBadgeShowPendingUserActionRequests: false,
+            activityBadgeShowQueuedUserInput: false,
+            desktopOverlayAutoHideDelayMs: 30_000,
+            liveActivitiesShowPreviewText: false,
+            liveActivitiesAllowActionButtons: false,
+            widgetsEnabled: false,
+            widgetsShowPreviewText: false,
+            activitySurfacePrivacyMode: 'include_preview',
+        });
+
+        expect(parsed.attentionDeviceOverridesV1).toMatchObject({
+            foregroundBehavior: 'silent',
+            localNotifications: {
+                enabled: false,
+                events: {
+                    ready: false,
+                    permission_request: true,
+                    user_action_request: false,
+                },
+                previewBehavior: 'status_only',
+            },
+            badge: {
+                enabled: false,
+                includeUnread: false,
+                includePendingPermissionRequests: true,
+                includePendingUserActionRequests: false,
+                includeQueuedUserInput: false,
+            },
+            desktopOverlay: {
+                autoDismissDelayMs: 30_000,
+            },
+            liveActivities: {
+                privacyMode: 'status_only',
+            },
+            widgets: {
+                enabled: false,
+                privacyMode: 'status_only',
+            },
+        });
+    });
+
     it('migrates the legacy shortcut_only desktop overlay expanded behavior before validation', () => {
         const parsed = localSettingsParse({
             desktopOverlayExpandedBehavior: 'shortcut_only',
@@ -252,5 +421,36 @@ describe('localSettingsParse', () => {
         expect(applied.widgetsShowMachinePath).toBe(false);
         expect(applied.homeScreenWidgetsShowMachinePath).toBe(false);
         expect(applied.desktopOverlayExpandedBehavior).toBe('click');
+    });
+
+    it('keeps attention device overrides in sync when applying legacy local setting deltas', () => {
+        const applied = applyLocalSettings(localSettingsDefaults, {
+            localNotificationsEnabled: false,
+            localNotificationsShowReady: false,
+            localNotificationsForegroundBehavior: 'off',
+            desktopOverlayAutoHideDelayMs: 25_000,
+        });
+
+        expect(applied.attentionDeviceOverridesV1).toMatchObject({
+            foregroundBehavior: 'off',
+            localNotifications: {
+                enabled: false,
+                events: {
+                    ready: false,
+                },
+            },
+            desktopOverlay: {
+                autoDismissDelayMs: 25_000,
+            },
+        });
+    });
+
+    it('drops the deprecated persisted editor focus mode flag while parsing and applying settings', () => {
+        const parsed = localSettingsParse({ editorFocusModeEnabled: true });
+        expect(parsed).not.toHaveProperty('editorFocusModeEnabled');
+
+        const staleDelta: Record<'editorFocusModeEnabled', boolean> = { editorFocusModeEnabled: true };
+        const applied = applyLocalSettings(localSettingsDefaults, staleDelta);
+        expect(applied).not.toHaveProperty('editorFocusModeEnabled');
     });
 });

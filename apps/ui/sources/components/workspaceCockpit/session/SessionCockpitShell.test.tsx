@@ -7,13 +7,27 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import {
+    clearPendingMobileSurfaceTransition,
+    resolvePendingMobileSurfaceTransitionStackOptions,
+} from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let localSettingsMock: Record<string, unknown> = {};
 const routerPushSpy = vi.fn();
+const pathState = vi.hoisted(() => ({
+    pathname: '/session/s_1',
+}));
+const safeAreaInsetsMock = vi.hoisted(() => ({
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+}));
 
 const expoRouterMock = createExpoRouterMock({
+    pathname: () => pathState.pathname,
     router: {
         push: routerPushSpy,
     },
@@ -34,8 +48,16 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 vi.mock('expo-router', () => expoRouterMock.module);
 
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => safeAreaInsetsMock,
+}));
+
 vi.mock('@/components/sessions/shell/SessionView', () => ({
-    SessionView: (props: Record<string, unknown>) => React.createElement('SessionView', props),
+    SessionView: (props: Record<string, unknown> & { contentOverride?: React.ReactNode }) => React.createElement(
+        'SessionView',
+        props,
+        props.contentOverride ?? null,
+    ),
 }));
 
 vi.mock('@/components/sessions/panes/SessionDetailsPanel', () => ({
@@ -62,11 +84,27 @@ function PaneScopeProbe(props: Readonly<{ scopeId: string }>) {
     });
 }
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('SessionCockpitShell', () => {
     beforeEach(() => {
         standardCleanup();
         localSettingsMock = {};
+        safeAreaInsetsMock.top = 0;
+        safeAreaInsetsMock.bottom = 0;
+        safeAreaInsetsMock.left = 0;
+        safeAreaInsetsMock.right = 0;
+        pathState.pathname = '/session/s_1';
         routerPushSpy.mockClear();
+        clearPendingMobileSurfaceTransition();
     });
 
     it('closes an already-open right pane when the chat surface becomes active', async () => {
@@ -78,6 +116,72 @@ describe('SessionCockpitShell', () => {
                         isOpen: false,
                         tabs: [],
                         activeTabKey: null,
+                        tabState: {},
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+            sessionLastMobileSurfaceBySessionId: null,
+        };
+
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitShell
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface="chat"
+                    routeServerId="server-b"
+                    terminalTabAvailable
+                />
+                <PaneScopeProbe scopeId="session:s_1" />
+            </AppPaneProvider>,
+        );
+
+        await act(async () => {
+            await screen.update(
+                <AppPaneProvider>
+                    <SessionCockpitShell
+                        sessionId="s_1"
+                        scopeId="session:s_1"
+                        surface="chat"
+                        routeServerId="server-b"
+                        terminalTabAvailable
+                    />
+                    <PaneScopeProbe scopeId="session:s_1" />
+                </AppPaneProvider>,
+            );
+        });
+
+        const probe = screen.tree.findByType('PaneScopeProbe' as never);
+        expect(probe.props.scopeState?.right).toEqual(expect.objectContaining({
+            isOpen: false,
+            activeTabId: 'terminal',
+        }));
+        const sessionView = screen.tree.findByType('SessionView' as never);
+        expect(sessionView.props.id).toBe('s_1');
+        expect(sessionView.props.routeServerId).toBe('server-b');
+        expect(sessionView.props.chatBottomSpacing).toBe('none');
+    });
+
+    it('closes the details presentation when returning to chat from an opened details surface', async () => {
+        localSettingsMock = {
+            appPaneScopesV1: {
+                'session:s_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: true,
+                        tabs: [
+                            {
+                                key: 'scmReview:working',
+                                kind: 'scmReview',
+                                title: 'Review',
+                                isPinned: true,
+                                isPreview: false,
+                                resource: { kind: 'scmReview' },
+                            },
+                        ],
+                        activeTabKey: 'scmReview:working',
                         tabState: {},
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
@@ -114,11 +218,11 @@ describe('SessionCockpitShell', () => {
         });
 
         const probe = screen.tree.findByType('PaneScopeProbe' as never);
-        expect(probe.props.scopeState?.right).toEqual(expect.objectContaining({
+        expect(probe.props.scopeState?.details).toEqual(expect.objectContaining({
             isOpen: false,
-            activeTabId: 'terminal',
+            activeTabKey: 'scmReview:working',
         }));
-        expect(screen.tree.findByType('SessionView' as never).props.id).toBe('s_1');
+        expect(probe.props.scopeState?.details?.tabs).toHaveLength(1);
     });
 
     it('renders a stable terminal screen wrapper when the terminal surface is active', async () => {
@@ -145,108 +249,23 @@ describe('SessionCockpitShell', () => {
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="terminal"
+                    routeServerId="server-b"
                     terminalTabAvailable
                 />
             </AppPaneProvider>,
         );
 
+        const sessionView = screen.tree.findByType('SessionView' as never);
+        expect(sessionView.props.id).toBe('s_1');
+        expect(sessionView.props.routeServerId).toBe('server-b');
+        expect(sessionView.props.contentOverride).toBeTruthy();
         expect(screen.tree.findByProps({ testID: 'session-terminal-screen' } as never)).toBeTruthy();
         expect(screen.tree.findByType('SessionTerminalSurface' as never).props.sessionId).toBe('s_1');
     });
 
-    it('navigates to the details route when a browse surface file opens in cockpit mode', async () => {
-        localSettingsMock = {
-            appPaneScopesV1: {
-                'session:s_1': {
-                    right: { isOpen: false, activeTabId: null, tabState: {} },
-                    details: {
-                        isOpen: false,
-                        tabs: [],
-                        activeTabKey: null,
-                        tabState: {},
-                    },
-                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
-                },
-            },
-            sessionLastMobileSurfaceBySessionId: null,
-        };
-
-        const { SessionCockpitShell } = await import('./SessionCockpitShell');
-        const screen = await renderScreen(
-            <AppPaneProvider>
-                <SessionCockpitShell
-                    sessionId="s_1"
-                    scopeId="session:s_1"
-                    surface="browse"
-                    terminalTabAvailable
-                />
-            </AppPaneProvider>,
-        );
-
-        const browseSurface = screen.tree.findByType('SessionBrowseFilesSurface' as never);
-
-        await act(async () => {
-            browseSurface.props.onOpenFile('src/example.ts');
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        });
-
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/session/[id]/details',
-            params: {
-                id: 's_1',
-                details: 'file',
-                path: 'src/example.ts',
-            },
-        });
-    });
-
-    it('navigates to the details route when a git surface commit opens in cockpit mode', async () => {
-        localSettingsMock = {
-            appPaneScopesV1: {
-                'session:s_1': {
-                    right: { isOpen: false, activeTabId: null, tabState: {} },
-                    details: {
-                        isOpen: false,
-                        tabs: [],
-                        activeTabKey: null,
-                        tabState: {},
-                    },
-                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
-                },
-            },
-            sessionLastMobileSurfaceBySessionId: null,
-        };
-
-        const { SessionCockpitShell } = await import('./SessionCockpitShell');
-        const screen = await renderScreen(
-            <AppPaneProvider>
-                <SessionCockpitShell
-                    sessionId="s_1"
-                    scopeId="session:s_1"
-                    surface="git"
-                    terminalTabAvailable
-                />
-            </AppPaneProvider>,
-        );
-
-        const gitSurface = screen.tree.findByType('SessionGitSurface' as never);
-
-        await act(async () => {
-            gitSurface.props.onOpenCommit('abc1234 extra');
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        });
-
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/session/[id]/details',
-            params: {
-                id: 's_1',
-                details: 'commit',
-                sha: 'abc1234',
-            },
-        });
-    });
-
-    it('navigates to the details route when a terminal surface opens a new details tab in cockpit mode', async () => {
+    it('delegates route-owned safe-area padding to the shared session chrome', async () => {
+        safeAreaInsetsMock.top = 24;
+        safeAreaInsetsMock.bottom = 12;
         localSettingsMock = {
             appPaneScopesV1: {
                 'session:s_1': {
@@ -270,6 +289,268 @@ describe('SessionCockpitShell', () => {
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="terminal"
+                    safeAreaPadding={false}
+                    terminalTabAvailable
+                />
+            </AppPaneProvider>,
+        );
+
+        const sessionView = screen.tree.findByType('SessionView' as never);
+        expect(sessionView.props.safeAreaTopMode).toBe('internal');
+        expect(sessionView.props.headerSafeAreaTopMode).toBe('internal');
+
+        const terminalScreen = screen.tree.findByProps({ testID: 'session-terminal-screen' } as never);
+        expect(flattenStyle(terminalScreen.props.style)).toMatchObject({
+            paddingTop: 0,
+            paddingBottom: 0,
+        });
+    });
+
+    it('uses screen presentation for fallback details when the route owns safe-area padding', async () => {
+        localSettingsMock = {
+            appPaneScopesV1: {
+                'session:s_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                        tabState: {},
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+            sessionLastMobileSurfaceBySessionId: null,
+        };
+
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitShell
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface="tabs"
+                    safeAreaPadding={false}
+                    terminalTabAvailable
+                />
+            </AppPaneProvider>,
+        );
+
+        const detailsPanel = screen.tree.findByType('SessionDetailsPanel' as never);
+        expect(detailsPanel.props.presentation).toBe('screen');
+        expect(detailsPanel.props.showHeaderActions).toBe(false);
+    });
+
+    it('navigates to the details route when a browse surface file opens in cockpit mode', async () => {
+        pathState.pathname = '/session/s_1/files';
+        localSettingsMock = {
+            appPaneScopesV1: {
+                'session:s_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                        tabState: {},
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+            sessionLastMobileSurfaceBySessionId: null,
+        };
+
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitShell
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface="browse"
+                    routeServerId="server-b"
+                    terminalTabAvailable
+                />
+            </AppPaneProvider>,
+        );
+
+        const browseSurface = screen.tree.findByType('SessionBrowseFilesSurface' as never);
+
+        await act(async () => {
+            browseSurface.props.onOpenFile('src/example.ts');
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s_1/details?serverId=server-b&details=file&path=src%2Fexample.ts&sourceSurface=browse');
+        expect(resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: 'session/[id]/details',
+        })).toEqual({
+            animation: 'slide_from_right',
+        });
+    });
+
+    it('navigates to the details route when a git surface commit opens in cockpit mode', async () => {
+        pathState.pathname = '/session/s_1/git';
+        localSettingsMock = {
+            appPaneScopesV1: {
+                'session:s_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                        tabState: {},
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+            sessionLastMobileSurfaceBySessionId: null,
+        };
+
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitShell
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface="git"
+                    routeServerId="server-b"
+                    terminalTabAvailable
+                />
+            </AppPaneProvider>,
+        );
+
+        const gitSurface = screen.tree.findByType('SessionGitSurface' as never);
+
+        await act(async () => {
+            gitSurface.props.onOpenCommit('abc1234 extra');
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s_1/details?serverId=server-b&details=commit&sha=abc1234&sourceSurface=git');
+        expect(resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: 'session/[id]/details',
+        })).toEqual({
+            animation: 'slide_from_right',
+        });
+    });
+
+    it('navigates to the details route when a git surface review opens in cockpit mode', async () => {
+        pathState.pathname = '/session/s_1/git';
+        localSettingsMock = {
+            appPaneScopesV1: {
+                'session:s_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                        tabState: {},
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+            sessionLastMobileSurfaceBySessionId: null,
+        };
+
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitShell
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface="git"
+                    routeServerId="server-b"
+                    terminalTabAvailable
+                />
+            </AppPaneProvider>,
+        );
+
+        const gitSurface = screen.tree.findByType('SessionGitSurface' as never);
+
+        await act(async () => {
+            gitSurface.props.onOpenReviewAllChanges();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s_1/details?serverId=server-b&details=scmReview&sourceSurface=git');
+        expect(resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: 'session/[id]/details',
+        })).toEqual({
+            animation: 'slide_from_right',
+        });
+    });
+
+    it('navigates to the details route when a git surface stash opens in cockpit mode', async () => {
+        pathState.pathname = '/session/s_1/git';
+        localSettingsMock = {
+            appPaneScopesV1: {
+                'session:s_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                        tabState: {},
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+            sessionLastMobileSurfaceBySessionId: null,
+        };
+
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitShell
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface="git"
+                    routeServerId="server-b"
+                    terminalTabAvailable
+                />
+            </AppPaneProvider>,
+        );
+
+        const gitSurface = screen.tree.findByType('SessionGitSurface' as never);
+
+        await act(async () => {
+            gitSurface.props.onOpenStashDetails();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s_1/details?serverId=server-b&details=scmStash&sourceSurface=git');
+        expect(resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: 'session/[id]/details',
+        })).toEqual({
+            animation: 'slide_from_right',
+        });
+    });
+
+    it('navigates to the details route when a terminal surface opens a new details tab in cockpit mode', async () => {
+        pathState.pathname = '/session/s_1/terminal';
+        localSettingsMock = {
+            appPaneScopesV1: {
+                'session:s_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                        tabState: {},
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            },
+            sessionLastMobileSurfaceBySessionId: null,
+        };
+
+        const { SessionCockpitShell } = await import('./SessionCockpitShell');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitShell
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface="terminal"
+                    routeServerId="server-b"
                     terminalTabAvailable
                 />
             </AppPaneProvider>,
@@ -282,13 +563,13 @@ describe('SessionCockpitShell', () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/session/[id]/details',
-            params: expect.objectContaining({
-                id: 's_1',
-                details: 'terminal',
-                terminalInstanceId: expect.any(String),
-            }),
+        expect(routerPushSpy).toHaveBeenCalledWith(
+            expect.stringMatching(/^\/session\/s_1\/details\?serverId=server-b&details=terminal(?:&terminalInstanceId=.+)?&sourceSurface=terminal$/),
+        );
+        expect(resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: 'session/[id]/details',
+        })).toEqual({
+            animation: 'slide_from_left',
         });
     });
 });

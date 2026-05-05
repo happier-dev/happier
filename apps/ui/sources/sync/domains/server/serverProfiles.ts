@@ -790,6 +790,13 @@ export function getTabActiveServerId(): string | null {
     return readTabActiveServerId();
 }
 
+export function clearTabActiveServerId(): void {
+    if (!readTabActiveServerId()) return;
+    const previousSnapshot = getActiveServerSnapshot();
+    writeTabActiveServerId(null);
+    emitActiveServerChanged(previousSnapshot, { force: true });
+}
+
 export function getDeviceDefaultServerId(): string {
     const state = readPersistedState();
     return resolvePrimaryActiveServerId(state.servers, state.activeServerId);

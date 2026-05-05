@@ -1,4 +1,4 @@
-import type { ExtensionProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol';
 
 export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
     v: 2,
@@ -38,6 +38,7 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
         },
     },
     actionsById: {},
+    familiesById: {},
     hooksById: {},
     toolsById: {},
     commandsById: {},
@@ -80,4 +81,4 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
             pluginId: 'acme.review',
         },
     ],
-} as const satisfies ExtensionProjectionV2;
+} as const satisfies PluginProjectionV2;

@@ -64,6 +64,8 @@ let syncErrorState: {
     at: number;
     serverId?: string;
 } | null = null;
+let inactiveSessionShouldShowInput = true;
+let sessionMachineReachable = true;
 let sessionState: any = {
     id: 's1',
     seq: 1,
@@ -146,6 +148,10 @@ installSessionShellCommonModuleMocks({
                 vi.fn<(value: LocalSettings[K]) => void>(),
             ],
             useSetting: <K extends keyof Settings>(key: K) => settingsDefaults[key],
+            useSettingMutable: <K extends keyof Settings>(key: K) => [
+                settingsDefaults[key],
+                vi.fn<(value: Settings[K]) => void>(),
+            ],
             useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
             useAutomations: () => [],
             useMachine: () => null,
@@ -169,7 +175,13 @@ vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
     ChatHeaderView: (props: any) => React.createElement(React.Fragment, null, props.rightElement ?? null),
 }));
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
-    AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
+    AgentContentView: (props: any) => React.createElement(
+        'AgentContentView',
+        props,
+        props.content ?? null,
+        props.placeholder ?? null,
+        props.input ?? null,
+    ),
 }));
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
@@ -210,13 +222,13 @@ vi.mock('@/hooks/session/useDraft', () => ({
     useDraft: () => ({ clearDraft: vi.fn() }),
 }));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
-    getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
+    getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: inactiveSessionShouldShowInput }),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
-    resolveSessionMachineReachability: () => true,
+    resolveSessionMachineReachability: () => sessionMachineReachable,
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+    useSessionMachineReachability: () => ({ machineReachable: sessionMachineReachable, machineOnline: sessionMachineReachable }),
     useSessionReachableMachineTarget: () => null,
 }));
 vi.mock('@/components/appShell/panes/useRegisterSessionPaneDriver', () => ({
@@ -262,6 +274,8 @@ describe('SessionView (data ready gating)', () => {
         routerPushSpy.mockClear();
         endpointConnectivityStatus = 'online';
         syncErrorState = null;
+        inactiveSessionShouldShowInput = true;
+        sessionMachineReachable = true;
         sessionState = {
             id: 's1',
             seq: 1,
@@ -287,12 +301,55 @@ describe('SessionView (data ready gating)', () => {
         expect(screen.findAllByTestId('session-header-action-menu-trigger')).toHaveLength(1);
     });
 
+    it('renders a content override inside the session header shell', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                {React.createElement(SessionView as React.ComponentType<any>, {
+                    id: 's1',
+                    contentOverride: React.createElement('View', { testID: 'session-content-override' }),
+                    chatBottomSpacing: 'none',
+                })}
+            </AppPaneProvider>,
+        );
+
+        expect(screen.findByTestId('session-content-override')).toBeTruthy();
+        expect(screen.findAllByTestId('session-composer-input')).toHaveLength(0);
+    });
+
     it('surfaces auth sync errors as a restore-account action instead of generic retry', async () => {
         syncErrorState = {
             message: 'Authentication required',
             retryable: false,
             kind: 'auth',
             at: 123,
+        };
+        const { SessionView } = await import('./SessionView');
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        expect(screen.findByTestId('session-auth-sync-error')).toBeTruthy();
+        expect(screen.findByTestId('session-auth-sync-error-restore')).toBeTruthy();
+    });
+
+    it('keeps auth recovery visible when inactive session state hides the composer', async () => {
+        syncErrorState = {
+            message: 'Authentication required',
+            retryable: false,
+            kind: 'auth',
+            at: 123,
+        };
+        inactiveSessionShouldShowInput = false;
+        sessionMachineReachable = false;
+        sessionState = {
+            ...sessionState,
+            active: false,
+            presence: 'offline',
         };
         const { SessionView } = await import('./SessionView');
 

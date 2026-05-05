@@ -59,6 +59,28 @@ function makeSnapshot(): ScmWorkingSnapshot {
     };
 }
 
+function makeProviderChangeSet(filePath: string): SessionChangeSet {
+    return {
+        sessionId: 's1',
+        turns: [],
+        files: [{
+            filePath,
+            changeKind: 'modified',
+            oldText: null,
+            newText: null,
+            source: 'provider_native',
+            confidence: 'exact',
+            provider: 'codex',
+            turns: ['turn_1'],
+        }],
+        rolledBackTurnIds: [],
+        confidenceSummary: {
+            source: 'provider_native',
+            confidence: 'exact',
+        },
+    };
+}
+
 describe('useChangedFilesData', () => {
     it('can skip attribution computation for repository-only surfaces', async () => {
         let latest: UseChangedFilesDataResult | null = null;
@@ -172,7 +194,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('keeps session view toggle available in limited mode when direct attribution exists', async () => {
+    it('does not expose session scope for commit selection operations in limited mode', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -206,9 +228,9 @@ describe('useChangedFilesData', () => {
         }
         const result: UseChangedFilesDataResult = latest;
         expect(result.attributionReliability).toBe('limited');
-        expect(result.showSessionViewToggle).toBe(true);
-        expect(result.sessionAttributedFiles).toHaveLength(1);
-        expect(result.sessionAttributedFiles[0]?.confidence).toBe('high');
+        expect(result.showSessionViewToggle).toBe(false);
+        expect(result.sessionAttributedFiles).toHaveLength(0);
+        expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual(['src/a.ts']);
         act(() => {
             root!.unmount();
         });
@@ -313,6 +335,74 @@ describe('useChangedFilesData', () => {
         expect(result.turnAttributedFiles).toHaveLength(1);
         expect(result.turnAttributedFiles[0]?.confidence).toBe('high');
         expect(result.turnRepositoryOnlyFiles).toHaveLength(0);
+        act(() => {
+            root!.unmount();
+        });
+    });
+
+    it('hides provider-backed scoped views when they cannot be projected onto repository changes', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+        const unprojectableChangeSet = makeProviderChangeSet('src/not-currently-changed.ts');
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1', 's2'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet: unprojectableChangeSet,
+                sessionChangeSet: unprojectableChangeSet,
+            });
+            return null;
+        }
+
+        let root: renderer.ReactTestRenderer;
+        root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnViewToggle).toBe(false);
+        expect(result.showSessionViewToggle).toBe(false);
+        expect(result.turnAttributedFiles).toHaveLength(0);
+        expect(result.sessionAttributedFiles).toHaveLength(0);
+        expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual(['src/a.ts']);
+        act(() => {
+            root!.unmount();
+        });
+    });
+
+    it('projects provider absolute paths under the repository root onto changed files', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1', 's2'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet: makeProviderChangeSet('/repo/src/a.ts'),
+                sessionChangeSet: makeProviderChangeSet('/repo/src/a.ts'),
+            });
+            return null;
+        }
+
+        let root: renderer.ReactTestRenderer;
+        root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnViewToggle).toBe(true);
+        expect(result.showSessionViewToggle).toBe(true);
+        expect(result.turnAttributedFiles.map((entry) => entry.file.fullPath)).toEqual(['src/a.ts']);
+        expect(result.sessionAttributedFiles.map((entry) => entry.file.fullPath)).toEqual(['src/a.ts']);
         act(() => {
             root!.unmount();
         });

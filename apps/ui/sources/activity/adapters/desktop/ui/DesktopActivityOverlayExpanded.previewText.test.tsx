@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
 import type { DesktopActivityOverlayUiModel } from './shared/desktopActivityOverlayUiModel';
 import {
@@ -9,6 +10,27 @@ import {
     resolveDesktopActivityOverlayCardInstanceTestID,
     resolveDesktopActivityOverlayCardKindTestID,
 } from './shared/desktopActivityOverlaySelectors.mjs';
+
+type ExpandedCard = NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number];
+type SessionOverviewCard = Extract<ExpandedCard, { kind: 'session_overview' }>;
+type PermissionRequestCard = Extract<ExpandedCard, { kind: 'permission_request' }>;
+type UserQuestionCard = Extract<ExpandedCard, { kind: 'user_question' }>;
+type CompletionStateCard = Extract<ExpandedCard, { kind: 'completion_state' }>;
+const reactDeferredValueMockState = vi.hoisted(() => ({
+    override: null as null | ((value: unknown) => unknown),
+}));
+
+vi.mock('react', async (importActual) => {
+    const actual = await importActual<typeof import('react')>();
+    return {
+        ...actual,
+        useDeferredValue: <Value,>(value: Value): Value => (
+            reactDeferredValueMockState.override
+                ? reactDeferredValueMockState.override(value) as Value
+                : actual.useDeferredValue(value)
+        ),
+    };
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -22,6 +44,7 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('Text', props, props.children),
+    TextInput: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('TextInput', props, props.children),
 }));
 
 vi.mock('@/text', async () => {
@@ -56,13 +79,12 @@ describe('DesktopActivityOverlayExpanded', () => {
         };
     }
 
-    function createSessionOverviewCard(
-        overrides: Partial<Extract<NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number], { kind: 'session_overview' }>> = {},
-    ): Extract<NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number], { kind: 'session_overview' }> {
+    function createSessionOverviewCard(overrides: Partial<SessionOverviewCard> = {}): SessionOverviewCard {
         return {
             id: 'session-overview-1',
             kind: 'session_overview',
             sessionId: 'session-1',
+            serverId: 'server-1',
             title: 'Primary session',
             subtitle: 'Agent on machine',
             statusText: 'Needs attention',
@@ -74,14 +96,13 @@ describe('DesktopActivityOverlayExpanded', () => {
         };
     }
 
-    function createPermissionRequestCard(
-        overrides: Partial<Extract<NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number], { kind: 'permission_request' }>> = {},
-    ): Extract<NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number], { kind: 'permission_request' }> {
+    function createPermissionRequestCard(overrides: Partial<PermissionRequestCard> = {}): PermissionRequestCard {
         return {
             id: 'permission-1',
             kind: 'permission_request',
             requestId: 'permission-1',
             sessionId: 'session-1',
+            serverId: 'server-1',
             title: 'Edit src/auth/middleware.ts',
             summary: 'The agent needs approval before editing this file.',
             toolLabel: 'Claude asks',
@@ -90,26 +111,27 @@ describe('DesktopActivityOverlayExpanded', () => {
             openActionIdentifier: 'open-session:session-1',
             allowActionIdentifier: 'approve-permission',
             denyActionIdentifier: 'deny-permission',
+            risk: 'low',
             actions: [
                 {
                     id: 'deny',
                     label: 'Deny',
                     actionIdentifier: 'deny-permission',
-                    data: { requestId: 'permission-1', sessionId: 'session-1', decision: 'deny' },
+                    data: { requestId: 'permission-1', sessionId: 'session-1', serverId: 'server-1', decision: 'deny' },
                     tone: 'danger',
                 },
                 {
                     id: 'allow',
                     label: 'Allow',
                     actionIdentifier: 'approve-permission',
-                    data: { requestId: 'permission-1', sessionId: 'session-1', decision: 'allow' },
+                    data: { requestId: 'permission-1', sessionId: 'session-1', serverId: 'server-1', decision: 'allow' },
                     tone: 'primary',
                 },
                 {
                     id: 'open',
                     label: 'Open',
                     actionIdentifier: 'open-session:session-1',
-                    data: { requestId: 'permission-1', sessionId: 'session-1' },
+                    data: { requestId: 'permission-1', sessionId: 'session-1', serverId: 'server-1' },
                     tone: 'secondary',
                 },
             ],
@@ -117,14 +139,13 @@ describe('DesktopActivityOverlayExpanded', () => {
         };
     }
 
-    function createUserQuestionCard(
-        overrides: Partial<Extract<NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number], { kind: 'user_question' }>> = {},
-    ): Extract<NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number], { kind: 'user_question' }> {
+    function createUserQuestionCard(overrides: Partial<UserQuestionCard> = {}): UserQuestionCard {
         return {
             id: 'question-1',
             kind: 'user_question',
             requestId: 'question-1',
             sessionId: 'session-1',
+            serverId: 'server-1',
             title: 'Which deployment target?',
             summary: 'Choose where the agent should deploy.',
             toolLabel: 'Claude asks',
@@ -136,7 +157,32 @@ describe('DesktopActivityOverlayExpanded', () => {
                     id: 'production',
                     label: 'Production',
                     actionIdentifier: 'answer-user-question',
-                    data: { requestId: 'question-1', sessionId: 'session-1', answers: ['production'] },
+                    data: { requestId: 'question-1', sessionId: 'session-1', serverId: 'server-1', answers: ['production'] },
+                    tone: 'primary',
+                },
+            ],
+            ...overrides,
+        };
+    }
+
+    function createCompletionStateCard(overrides: Partial<CompletionStateCard> = {}): CompletionStateCard {
+        return {
+            id: 'completion:session-1',
+            kind: 'completion_state',
+            sessionId: 'session-1',
+            serverId: 'server-1',
+            title: 'Turn complete',
+            summary: 'Review the final answer in the session.',
+            openActionIdentifier: 'open-session:session-1',
+            variant: 'turn_complete',
+            autoDismissMs: 15000,
+            sticky: false,
+            actions: [
+                {
+                    id: 'open:session-1',
+                    label: 'Open',
+                    actionIdentifier: 'open-session:session-1',
+                    data: { sessionId: 'session-1', serverId: 'server-1' },
                     tone: 'primary',
                 },
             ],
@@ -155,6 +201,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                 rows: [
                     {
                         sessionId: 'session-1',
+                        serverId: 'server-1',
                         title: 'Primary session',
                         subtitle: 'Agent on machine',
                         statusText: 'Needs attention',
@@ -178,9 +225,7 @@ describe('DesktopActivityOverlayExpanded', () => {
             <DesktopActivityOverlayExpanded
                 visualMode="floating_overlay"
                 model={createModel()}
-                onCollapse={() => {}}
                 onOpenSession={() => {}}
-                onOpenInbox={() => {}}
             />,
         );
 
@@ -194,9 +239,7 @@ describe('DesktopActivityOverlayExpanded', () => {
             <DesktopActivityOverlayExpanded
                 visualMode="notch_integrated"
                 model={createModel()}
-                onCollapse={() => {}}
                 onOpenSession={() => {}}
-                onOpenInbox={() => {}}
             />,
         );
 
@@ -215,9 +258,7 @@ describe('DesktopActivityOverlayExpanded', () => {
             <DesktopActivityOverlayExpanded
                 visualMode="notch_integrated"
                 model={createModel()}
-                onCollapse={() => {}}
                 onOpenSession={() => {}}
-                onOpenInbox={() => {}}
             />,
         );
 
@@ -252,15 +293,62 @@ describe('DesktopActivityOverlayExpanded', () => {
                         ],
                     },
                 })}
-                onCollapse={() => {}}
                 onOpenSession={() => {}}
-                onOpenInbox={() => {}}
             />,
         );
 
         expect(screen.getTextContent()).toContain('No active sessions');
         expect(screen.getTextContent()).toContain('will wake up when new activity arrives');
         expect(screen.findByTestId('desktop-activity-overlay-card-idle-idle')).toBeTruthy();
+    });
+
+    it('renders the current overlay card set without deferring to stale cards', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const staleCards: DesktopActivityOverlayUiModel['expanded']['cards'] = [
+            createSessionOverviewCard({
+                id: 'stale-session-card',
+                sessionId: 'stale-session',
+                title: 'Stale session row',
+            }),
+        ];
+        reactDeferredValueMockState.override = (value) => (
+            Array.isArray(value) ? staleCards : value
+        );
+
+        try {
+            const screen = await renderScreen(
+                <DesktopActivityOverlayExpanded
+                    visualMode="notch_integrated"
+                    model={createModel({
+                        collapsed: createCollapsedModel({
+                            title: 'No active sessions',
+                            statusText: null,
+                            defaultTarget: 'open-inbox',
+                            sessionCount: null,
+                            primaryCardKind: 'idle_state',
+                        }),
+                        expanded: {
+                            title: 'Sessions',
+                            rows: [],
+                            cards: [
+                                {
+                                    id: 'idle',
+                                    kind: 'idle_state',
+                                    title: 'No active sessions',
+                                },
+                            ],
+                        },
+                    })}
+                    onOpenSession={() => {}}
+                />,
+            );
+
+            expect(screen.findByTestId(resolveDesktopActivityOverlayCardKindTestID('idle_state'))).toBeTruthy();
+            expect(screen.getTextContent()).toContain('No active sessions');
+            expect(screen.getTextContent()).not.toContain('Stale session row');
+        } finally {
+            reactDeferredValueMockState.override = null;
+        }
     });
 
     it('renders direct permission card actions from the model and routes them through the card action handler', async () => {
@@ -284,9 +372,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                         cards: [createPermissionRequestCard()],
                     },
                 })}
-                onCollapse={() => {}}
                 onOpenSession={() => {}}
-                onOpenInbox={() => {}}
                 onAction={onAction}
             />,
         );
@@ -300,8 +386,67 @@ describe('DesktopActivityOverlayExpanded', () => {
 
         expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
             actionIdentifier: 'approve-permission',
-            data: { requestId: 'permission-1', sessionId: 'session-1', decision: 'allow' },
+            data: { requestId: 'permission-1', sessionId: 'session-1', serverId: 'server-1', decision: 'allow' },
         }));
+    });
+
+    it('renders low-risk always-allow permission actions and high-risk review-only actions', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="floating_overlay"
+                model={createModel({
+                    expanded: {
+                        title: 'Actions',
+                        rows: [],
+                        cards: [
+                            createPermissionRequestCard({
+                                requestId: 'permission-low',
+                                risk: 'low',
+                                toolLabel: 'Read',
+                                actions: [
+                                    {
+                                        id: 'always_allow',
+                                        label: 'Always allow Read',
+                                        actionIdentifier: 'approve-permission',
+                                        data: { requestId: 'permission-low', sessionId: 'session-1', serverId: 'server-1', decision: 'allow', persistence: 'always' },
+                                        tone: 'secondary',
+                                    },
+                                ],
+                            }),
+                            createPermissionRequestCard({
+                                requestId: 'permission-high',
+                                risk: 'high',
+                                toolLabel: 'Bash',
+                                actions: [
+                                    {
+                                        id: 'deny',
+                                        label: 'Deny',
+                                        actionIdentifier: 'deny-permission',
+                                        data: { requestId: 'permission-high', sessionId: 'session-1', serverId: 'server-1', decision: 'deny' },
+                                        tone: 'danger',
+                                    },
+                                    {
+                                        id: 'open',
+                                        label: 'Open',
+                                        actionIdentifier: 'open-session:session-1',
+                                        data: { requestId: 'permission-high', sessionId: 'session-1', serverId: 'server-1' },
+                                        tone: 'primary',
+                                    },
+                                ],
+                            }),
+                        ],
+                    },
+                })}
+                onOpenSession={() => {}}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('Always allow Read');
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-low', 'always_allow'))).toBeTruthy();
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-high', 'allow'))).toBeNull();
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-high', 'open'))).toBeTruthy();
     });
 
     it('renders direct user-question choices from the card model', async () => {
@@ -325,9 +470,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                         cards: [createUserQuestionCard()],
                     },
                 })}
-                onCollapse={() => {}}
                 onOpenSession={() => {}}
-                onOpenInbox={() => {}}
                 onAction={onAction}
             />,
         );
@@ -339,7 +482,193 @@ describe('DesktopActivityOverlayExpanded', () => {
 
         expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
             actionIdentifier: 'answer-user-question',
-            data: { requestId: 'question-1', sessionId: 'session-1', answers: ['production'] },
+            data: { requestId: 'question-1', sessionId: 'session-1', serverId: 'server-1', answers: ['production'] },
         }));
+    });
+
+    it('renders numbered user-question chips with inline other input', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const onAction = vi.fn();
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="floating_overlay"
+                model={createModel({
+                    expanded: {
+                        title: 'Actions',
+                        rows: [],
+                        cards: [createUserQuestionCard({
+                            actions: [
+                                {
+                                    id: 'option-1-production',
+                                    label: '1. Production',
+                                    actionIdentifier: 'answer-user-question',
+                                    data: { requestId: 'question-1', sessionId: 'session-1', serverId: 'server-1', answers: ['production'] },
+                                    tone: 'primary',
+                                },
+                                {
+                                    id: 'other',
+                                    label: 'Other',
+                                    actionIdentifier: 'session.user_action.answer',
+                                    data: { requestId: 'question-1', sessionId: 'session-1', serverId: 'server-1' },
+                                    tone: 'secondary',
+                                    inputKind: 'inline_text',
+                                },
+                            ],
+                        })],
+                    },
+                })}
+                onOpenSession={() => {}}
+                onAction={onAction}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('1. Production');
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('question-1', 'other'))).toBeTruthy();
+        expect(screen.findByTestId('desktop-activity-overlay-question-other-input-question-1')).toBeTruthy();
+
+        await act(async () => {
+            screen.changeTextByTestId('desktop-activity-overlay-question-other-input-question-1', 'Canary');
+        });
+        screen.pressByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('question-1', 'other'));
+
+        expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
+            actionIdentifier: 'session.user_action.answer',
+            data: expect.objectContaining({
+                requestId: 'question-1',
+                sessionId: 'session-1',
+                serverId: 'server-1',
+                answers: [{ question: 'Which deployment target?', answer: 'Canary' }],
+            }),
+        }));
+    });
+
+    it('renders completion-state card content without unsupported-kind crash', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const completionCard = createCompletionStateCard();
+        let screen!: Awaited<ReturnType<typeof renderScreen>>;
+        await expect((async () => {
+            screen = await renderScreen(
+                <DesktopActivityOverlayExpanded
+                    visualMode="floating_overlay"
+                    model={createModel({
+                        collapsed: createCollapsedModel({
+                            title: 'Turn complete',
+                            statusText: 'Ready to review',
+                            defaultTarget: 'open-session:session-1',
+                            sessionCount: 1,
+                            primaryCardKind: 'completion_state',
+                        }),
+                        expanded: {
+                            title: 'Actions',
+                            rows: [],
+                            cards: [completionCard],
+                        },
+                    })}
+                    onOpenSession={() => {}}
+                />,
+            );
+        })()).resolves.toBeUndefined();
+        expect(screen.getTextContent()).toContain('Turn complete');
+        expect(screen.getTextContent()).toContain('Review the final answer in the session.');
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardKindTestID('completion_state'))).toBeTruthy();
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardInstanceTestID(completionCard))).toBeTruthy();
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('session-1', 'open'))).toBeTruthy();
+    });
+
+    it('auto-dismisses non-sticky completion variants while keeping sticky variants', async () => {
+        vi.useFakeTimers();
+        const { act } = await import('react-test-renderer');
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="floating_overlay"
+                model={createModel({
+                    expanded: {
+                        title: 'Actions',
+                        rows: [],
+                        cards: [
+                            createCompletionStateCard({
+                                id: 'completion:turn',
+                                sessionId: 'turn',
+                                variant: 'turn_complete',
+                                autoDismissMs: 15000,
+                                sticky: false,
+                            }),
+                            createCompletionStateCard({
+                                id: 'completion:subagent',
+                                sessionId: 'subagent',
+                                variant: 'subagent_done',
+                                autoDismissMs: 0,
+                                sticky: true,
+                            }),
+                            createCompletionStateCard({
+                                id: 'completion:tool',
+                                sessionId: 'tool',
+                                variant: 'pending_tool',
+                                autoDismissMs: 0,
+                                sticky: true,
+                            }),
+                        ],
+                    },
+                })}
+                onOpenSession={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('desktop-activity-overlay-completion-turn')?.props['data-auto-dismiss-ms']).toBe(15000);
+        expect(screen.findByTestId('desktop-activity-overlay-completion-subagent')?.props['data-sticky']).toBe(true);
+        expect(screen.findByTestId('desktop-activity-overlay-completion-tool')?.props['data-variant']).toBe('pending_tool');
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(15000);
+        });
+
+        expect(screen.findByTestId('desktop-activity-overlay-completion-turn')).toBeNull();
+        expect(screen.findByTestId('desktop-activity-overlay-completion-subagent')).toBeTruthy();
+        expect(screen.findByTestId('desktop-activity-overlay-completion-tool')).toBeTruthy();
+    });
+
+    it('pauses completion auto-dismiss while the expanded island is hovered', async () => {
+        vi.useFakeTimers();
+        const { act } = await import('react-test-renderer');
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="floating_overlay"
+                model={createModel({
+                    expanded: {
+                        title: 'Actions',
+                        rows: [],
+                        cards: [createCompletionStateCard()],
+                    },
+                })}
+                onOpenSession={() => {}}
+                onHoverIn={() => {}}
+                onHoverOut={() => {}}
+            />,
+        );
+
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-expanded'), 'onHoverIn', {});
+        });
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(15000);
+        });
+
+        expect(screen.findByTestId('desktop-activity-overlay-completion-turn')).toBeTruthy();
+
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-expanded'), 'onHoverOut', {});
+        });
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(15000);
+        });
+
+        expect(screen.findByTestId('desktop-activity-overlay-completion-turn')).toBeNull();
     });
 });

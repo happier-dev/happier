@@ -27,12 +27,14 @@ describe('resolveTransferAvailability', () => {
         expect(resolveTransferAvailability({
             serverFeatures,
             directPeerRoute: { status: 'viable', checkedAt: 10, expiresAt: 20 },
+            directPeerRouteKinds: ['loopback_direct'],
             machineRpcDirectRoute: { status: 'unavailable', checkedAt: 11, expiresAt: 21, failureReason: 'machine_rpc_direct_unavailable' },
         })).toEqual({
             machineTransferEnabled: true,
             directPeerEnabled: true,
             serverRelayEnabled: true,
             directPeerRoute: { status: 'viable', checkedAt: 10, expiresAt: 20 },
+            directPeerRouteKinds: ['loopback_direct'],
             machineRpcDirectRoute: { status: 'unavailable', checkedAt: 11, expiresAt: 21, failureReason: 'machine_rpc_direct_unavailable' },
         });
     });
@@ -43,12 +45,14 @@ describe('resolveTransferAvailability', () => {
         expect(resolveTransferAvailability({
             serverFeatures: null,
             directPeerRoute: { status: 'unknown' },
+            directPeerRouteKinds: [],
             machineRpcDirectRoute: { status: 'unknown' },
         })).toEqual({
             machineTransferEnabled: false,
             directPeerEnabled: false,
             serverRelayEnabled: false,
             directPeerRoute: { status: 'unknown' },
+            directPeerRouteKinds: [],
             machineRpcDirectRoute: { status: 'unknown' },
         });
     });

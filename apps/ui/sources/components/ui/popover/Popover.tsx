@@ -327,7 +327,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const [computed, setComputed] = React.useState<PopoverRenderProps>(() => ({
         maxHeight: maxHeightCap,
         maxWidth: maxWidthCap,
-        placement: placement === 'auto' ? 'top' : placement,
+        placement: placement === 'auto' || placement === 'auto-vertical' ? 'top' : placement,
     }));
     const popoverMotionDirection = resolveOverlayMotionDirectionFromPlacement(computed.placement);
     const [anchorRectState, setAnchorRectState] = React.useState<WindowRect | null>(null);
@@ -576,6 +576,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
             const resolvedPlacement = resolvePlacement({
                 placement,
+                preferredMinAvailable: maxHeightCap,
                 available: {
                     top: availableTop,
                     bottom: availableBottom,

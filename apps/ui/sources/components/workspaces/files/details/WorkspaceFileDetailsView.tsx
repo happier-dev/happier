@@ -5,7 +5,6 @@ import { FileActionToolbar, type FileDiffMode } from '@/components/workspaces/fi
 import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/workspaces/files/file/FileScreenState';
 import { FileContentPanel } from '@/components/workspaces/files/file/FileContentPanel';
 import { FileEditorPanel } from '@/components/workspaces/files/file/editor/FileEditorPanel';
-import { FileHeader } from '@/components/workspaces/files/file/FileHeader';
 import { WorkspaceFileDownloadButton } from '@/components/workspaces/files/file/WorkspaceFileDownloadButton';
 import { WorkspaceAugmentedScmChangeDiscardButton } from '@/components/workspaces/files/details/sessionAugmentation/WorkspaceAugmentedScmChangeDiscardButton';
 
@@ -457,6 +456,36 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         if (typeof mime !== 'string' || mime.trim().length === 0) return null;
         return `data:${mime};base64,${base64}`;
     })();
+    const showDiscardAction = Boolean(
+        sessionId
+        && fileStatusForHeaderActions
+        && scmWriteEnabled
+        && (scmSnapshot?.capabilities?.writeDiscard === true),
+    );
+    const fileHeaderRightElement = showDownloadAction || showDiscardAction ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {showDownloadAction ? (
+                <WorkspaceFileDownloadButton
+                    testID="file-header-download"
+                    workspaceScope={scope}
+                    path={filePath}
+                    asZip={false}
+                />
+            ) : null}
+            {sessionId && fileStatusForHeaderActions && showDiscardAction ? (
+                <WorkspaceAugmentedScmChangeDiscardButton
+                    sessionId={sessionId}
+                    sessionPath={sessionPath}
+                    snapshot={scmSnapshot ?? null}
+                    scmWriteEnabled={scmWriteEnabled}
+                    commitStrategy={scmCommitStrategy}
+                    file={fileStatusForHeaderActions}
+                    surface="file"
+                    onAfterDiscard={refreshAll}
+                />
+            ) : null}
+        </View>
+    ) : null;
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
@@ -466,39 +495,11 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     ...(constrainWidth ? { maxWidth: layout.maxWidth, alignSelf: 'center' } : { maxWidth: '100%' }),
                 }}
             >
-                <FileHeader
+                <FileActionToolbar
                     theme={theme}
                     fileName={fileName}
                     filePathDir={filePathDir}
-                    rightElement={
-                        showDownloadAction || (sessionId && fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true)) ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                {showDownloadAction ? (
-                                    <WorkspaceFileDownloadButton
-                                        testID="file-header-download"
-                                        workspaceScope={scope}
-                                        path={filePath}
-                                        asZip={false}
-                                    />
-                                ) : null}
-                                {sessionId && fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true) ? (
-                                    <WorkspaceAugmentedScmChangeDiscardButton
-                                        sessionId={sessionId}
-                                        sessionPath={sessionPath}
-                                        snapshot={scmSnapshot ?? null}
-                                        scmWriteEnabled={scmWriteEnabled}
-                                        commitStrategy={scmCommitStrategy}
-                                        file={fileStatusForHeaderActions}
-                                        surface="file"
-                                        onAfterDiscard={refreshAll}
-                                    />
-                                ) : null}
-                            </View>
-                        ) : null
-                    }
-                />
-                <FileActionToolbar
-                    theme={theme}
+                    rightElement={fileHeaderRightElement}
                     displayMode={displayMode}
                     onDisplayMode={setDisplayMode}
                     showDiffToggle={resolveShowDiffToggle({ diffContent, hasPendingDelta, hasIncludedDelta, fileIsBinary: isBinaryFile })}

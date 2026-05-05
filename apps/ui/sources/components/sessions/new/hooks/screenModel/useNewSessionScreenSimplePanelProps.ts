@@ -80,6 +80,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         NewSessionSimplePanelProps,
         | 'connectionStatus'
         | 'machinePopover'
+        | 'selectedMachineHomeDir'
         | 'selectedPath'
         | 'pathPopover'
         | 'showResumePicker'

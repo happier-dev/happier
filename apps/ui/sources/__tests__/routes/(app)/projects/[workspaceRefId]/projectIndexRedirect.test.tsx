@@ -17,6 +17,7 @@ const routerMock = createExpoRouterMock({
 let deviceTypeMock: 'phone' | 'tablet' | 'desktop' = 'phone';
 let rightPaneStateMock: { isOpen: boolean; activeTabId: string | null } = { isOpen: true, activeTabId: 'git' };
 let localSettingsMock: Record<string, unknown> = {};
+let accountSettingsMock: Record<string, unknown> = {};
 const projectDetailScreenSpy = vi.hoisted(() => vi.fn());
 const projectCockpitShellSpy = vi.hoisted(() => vi.fn());
 const setLocalSettingSpies = vi.hoisted(() => ({
@@ -96,7 +97,13 @@ vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useLocalSetting: (key: string) => localSettingsMock[key],
+        useSetting: (key: string) => accountSettingsMock[key],
+        useLocalSetting: (key: string) => {
+            if (key === 'mobileWorkspaceExperienceV1') {
+                throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
+            }
+            return localSettingsMock[key];
+        },
         useLocalSettingMutable: (key: string) => [
             localSettingsMock[key],
             setLocalSettingSpies[key as keyof typeof setLocalSettingSpies] ?? vi.fn(),
@@ -109,6 +116,7 @@ describe('project index redirect', () => {
         deviceTypeMock = 'phone';
         rightPaneStateMock = { isOpen: true, activeTabId: 'git' };
         localSettingsMock = {};
+        accountSettingsMock = {};
         projectDetailScreenSpy.mockClear();
         projectCockpitShellSpy.mockClear();
         Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
@@ -138,8 +146,8 @@ describe('project index redirect', () => {
 
     it('renders the project cockpit shell on phone when the overview cockpit surface is enabled', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            mobileWorkspaceExperienceV1: 'cockpit',
             projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
         };
         routerMock.state.router.setParams({
@@ -159,8 +167,8 @@ describe('project index redirect', () => {
 
     it('canonicalizes an invalid persisted worktree before reopening a cockpit-only surface from the index route', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            mobileWorkspaceExperienceV1: 'cockpit',
             projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/deleted-worktree' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_deleted' },
@@ -184,6 +192,7 @@ describe('project index redirect', () => {
 
     it('defaults the phone redirect to files when no last project tab is remembered', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
@@ -199,6 +208,7 @@ describe('project index redirect', () => {
 
     it('ignores the retired persisted mobile project route state when url state is absent', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
         localSettingsMock = {
             projectLastMobileRouteByWorkspaceRefId: { wr_1: 'git' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/feature-auth' },
@@ -239,6 +249,7 @@ describe('project index redirect', () => {
 
     it('drops an invalid persisted worktree selection before redirecting phone routes', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
         localSettingsMock = {
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/deleted-worktree' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_deleted' },
@@ -258,6 +269,7 @@ describe('project index redirect', () => {
 
     it('repairs an invalid explicit worktreeId before redirecting phone routes', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'classic' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: 'gitwt_deleted',
@@ -287,8 +299,8 @@ describe('project index redirect', () => {
 
     it('preserves persisted cockpit-only surfaces before the workspace ref has loaded', async () => {
         workspaceRefMock = null;
+        accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            mobileWorkspaceExperienceV1: 'cockpit',
             projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
         };
         routerMock.state.router.setParams({

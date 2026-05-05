@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   createManagedChildLifecycle,
@@ -11,6 +12,10 @@ import {
   runManagedChildCommand,
 } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
+
+const require = createRequire(import.meta.url);
+const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
+const packageRoot = path.dirname(scriptsDir);
 
 function parsePositiveInt(raw) {
   const parsed = Number.parseInt(String(raw ?? '').trim(), 10);
@@ -188,13 +193,25 @@ export function createVitestShardRunPlan({ shardFiles, shardCount }) {
   return plan;
 }
 
-async function resolveVitestTestFiles({ configPath, nodeOptions, passthroughArgs }) {
+function resolveVitestNodeCommand() {
+  return {
+    command: process.execPath,
+    argsPrefix: [
+      require.resolve('vitest/vitest.mjs', {
+        paths: [packageRoot],
+      }),
+    ],
+  };
+}
+
+async function resolveVitestTestFiles({ vitestCommand, configPath, nodeOptions, passthroughArgs }) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'happier-ui-vitest-list-'));
   const jsonPath = path.join(tmpDir, 'vitest-files.json');
 
   const result = await runManagedChildCommand({
-    command: 'vitest',
+    command: vitestCommand.command,
     args: [
+      ...vitestCommand.argsPrefix,
       'list',
       '--config',
       configPath,
@@ -209,7 +226,6 @@ async function resolveVitestTestFiles({ configPath, nodeOptions, passthroughArgs
         NODE_OPTIONS: nodeOptions,
       },
       stdio: 'inherit',
-      shell: process.platform === 'win32',
     },
     cleanupPollMs: 25,
     signalCleanupGraceMs: 0,
@@ -239,10 +255,11 @@ async function resolveVitestTestFiles({ configPath, nodeOptions, passthroughArgs
   }
 }
 
-function spawnVitestRun({ configPath, nodeOptions, passthroughArgs, files }) {
+function spawnVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, files }) {
   return runManagedChildCommand({
-    command: 'vitest',
+    command: vitestCommand.command,
     args: [
+      ...vitestCommand.argsPrefix,
       'run',
       '--config',
       configPath,
@@ -256,7 +273,6 @@ function spawnVitestRun({ configPath, nodeOptions, passthroughArgs, files }) {
         NODE_OPTIONS: nodeOptions,
       },
       stdio: 'inherit',
-      shell: process.platform === 'win32',
     },
     cleanupPollMs: 25,
     signalCleanupGraceMs: 0,
@@ -265,10 +281,11 @@ function spawnVitestRun({ configPath, nodeOptions, passthroughArgs, files }) {
   });
 }
 
-function startVitestRun({ configPath, nodeOptions, passthroughArgs, files }) {
+function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, files }) {
   const child = spawn(
-    'vitest',
+    vitestCommand.command,
     [
+      ...vitestCommand.argsPrefix,
       'run',
       '--config',
       configPath,
@@ -283,7 +300,6 @@ function startVitestRun({ configPath, nodeOptions, passthroughArgs, files }) {
       },
       stdio: 'inherit',
       detached: process.platform !== 'win32',
-      shell: process.platform === 'win32',
     },
   );
 
@@ -393,8 +409,9 @@ async function main(argv) {
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
   const passthroughArgs = resolveVitestPassthroughArgs(argv);
   const runPassthroughArgs = stripTrailingPositionalFileFilters(passthroughArgs);
+  const vitestCommand = resolveVitestNodeCommand();
 
-  const allFiles = await resolveVitestTestFiles({ configPath, nodeOptions, passthroughArgs });
+  const allFiles = await resolveVitestTestFiles({ vitestCommand, configPath, nodeOptions, passthroughArgs });
   const shardFiles = partitionVitestFilesIntoShards(allFiles, shardCount);
   const plan = createVitestShardRunPlan({ shardFiles, shardCount });
 
@@ -404,6 +421,7 @@ async function main(argv) {
     if (shardConcurrency <= 1) {
       return {
         promise: spawnVitestRun({
+          vitestCommand,
           configPath,
           nodeOptions,
           passthroughArgs: runPassthroughArgs,
@@ -414,6 +432,7 @@ async function main(argv) {
     }
 
     return startVitestRun({
+      vitestCommand,
       configPath,
       nodeOptions,
       passthroughArgs: runPassthroughArgs,

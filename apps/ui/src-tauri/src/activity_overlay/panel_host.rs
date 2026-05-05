@@ -6,7 +6,7 @@ use super::host_window::{
 use super::placement::{OverlayPlacementRect, Rect};
 
 #[cfg(target_os = "macos")]
-use tauri::{Manager, Runtime, WebviewWindow};
+use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, StyleMask, WebviewWindowExt};
 
@@ -27,6 +27,7 @@ fn resolve_panel_level_override(
 ) -> Option<i64> {
     match settings.window_level_override {
         Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanel) => Some(27),
+        Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanelExpanded) => Some(101),
         None => None,
     }
 }
@@ -65,6 +66,25 @@ fn resolve_panel_style_mask(settings: DesktopActivityOverlayMacWindowHostSetting
 }
 
 #[cfg(target_os = "macos")]
+fn run_panel_task_on_main_thread<R: Runtime, T: Send + 'static>(
+    app: &AppHandle<R>,
+    task: impl FnOnce() -> T + Send + 'static,
+    completion_error: &'static str,
+) -> Result<T, String> {
+    if objc2::MainThreadMarker::new().is_some() {
+        return Ok(task());
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(task());
+    })
+    .map_err(|error| error.to_string())?;
+
+    rx.recv().map_err(|_| completion_error.to_string())
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn apply_macos_overlay_panel_host<R: Runtime>(
     window: &WebviewWindow<R>,
     settings: DesktopActivityOverlayMacWindowHostSettings,
@@ -73,29 +93,41 @@ pub(crate) fn apply_macos_overlay_panel_host<R: Runtime>(
         return Ok(());
     }
 
-    let label = window.label().to_string();
-    let panel = match window.app_handle().get_webview_panel(&label) {
-        Ok(panel) => panel,
-        Err(_) => window
-            .to_panel::<DesktopActivityOverlayPanel<R>>()
-            .map_err(|error| error.to_string())?,
-    };
+    let app = window.app_handle().clone();
+    let window = window.clone();
+    run_panel_task_on_main_thread(
+        &app,
+        move || {
+            let label = window.label().to_string();
+            let panel = match window.app_handle().get_webview_panel(&label) {
+                Ok(panel) => panel,
+                Err(_) => window
+                    .to_panel::<DesktopActivityOverlayPanel<R>>()
+                    .map_err(|error| error.to_string())?,
+            };
 
-    panel.set_has_shadow(settings.shadow);
-    panel.set_opaque(settings.opaque);
-    panel.set_transparent(true);
-    panel.set_hides_on_deactivate(false);
-    panel.set_movable_by_window_background(false);
-    panel.set_becomes_key_only_if_needed(settings.nonactivating_panel);
-    panel.set_floating_panel(settings.window_level_override.is_some());
-    panel.set_collection_behavior(resolve_panel_collection_behavior(settings).into());
-    panel.set_style_mask(resolve_panel_style_mask(settings).into());
+            panel.set_has_shadow(settings.shadow);
+            panel.set_opaque(settings.opaque);
+            panel.set_transparent(true);
+            panel.set_hides_on_deactivate(false);
+            panel.set_movable_by_window_background(settings.movable_by_window_background);
+            panel.set_becomes_key_only_if_needed(settings.nonactivating_panel);
+            panel.set_floating_panel(settings.window_level_override.is_some());
+            panel.set_collection_behavior(resolve_panel_collection_behavior(settings).into());
+            panel.set_style_mask(resolve_panel_style_mask(settings).into());
+            let ns_panel = panel.as_panel();
+            ns_panel.setMovable(settings.movable);
+            ns_panel.setAcceptsMouseMovedEvents(settings.accepts_mouse_moved_events);
+            ns_panel.setIgnoresMouseEvents(settings.ignores_mouse_events);
 
-    if let Some(level_override) = resolve_panel_level_override(settings) {
-        panel.set_level(level_override);
-    }
+            if let Some(level_override) = resolve_panel_level_override(settings) {
+                panel.set_level(level_override);
+            }
 
-    Ok(())
+            Ok(())
+        },
+        "Panel host application did not return",
+    )?
 }
 
 #[cfg(target_os = "macos")]
@@ -150,19 +182,19 @@ pub(crate) fn apply_macos_overlay_panel_position<R: Runtime>(
         return Err("Panel positioning requires a resolved display context".to_string());
     };
 
-    let panel = match window.app_handle().get_webview_panel(window.label()) {
-        Ok(panel) => panel,
-        Err(_) => window
-            .to_panel::<DesktopActivityOverlayPanel<R>>()
-            .map_err(|error| error.to_string())?,
-    };
     let top_left = resolve_macos_overlay_panel_top_left_point(placement, display_context);
     let content_rect = resolve_macos_overlay_panel_content_rect(top_left, width, height);
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    window
-        .app_handle()
-        .run_on_main_thread(move || {
+    let app = window.app_handle().clone();
+    let window = window.clone();
+    run_panel_task_on_main_thread(
+        &app,
+        move || {
+            let panel = match window.app_handle().get_webview_panel(window.label()) {
+                Ok(panel) => panel,
+                Err(_) => window
+                    .to_panel::<DesktopActivityOverlayPanel<R>>()
+                    .map_err(|error| error.to_string())?,
+            };
             let ns_panel = panel.as_panel();
             let style_mask = ns_panel.styleMask();
             let content_frame = objc2_foundation::NSRect::new(
@@ -178,12 +210,10 @@ pub(crate) fn apply_macos_overlay_panel_position<R: Runtime>(
                 )
             };
             ns_panel.setFrame_display(frame_rect, false);
-            let _ = tx.send(rect_from_ns_rect(ns_panel.frame()));
-        })
-        .map_err(|error| error.to_string())?;
-
-    rx.recv()
-        .map_err(|_| "Panel positioning did not return a native frame".to_string())
+            Ok(rect_from_ns_rect(ns_panel.frame()))
+        },
+        "Panel positioning did not return a native frame",
+    )?
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -218,6 +248,8 @@ mod tests {
             is_builtin_display: true,
             has_physical_notch: true,
             safe_area_top: 74.0,
+            physical_notch_size: None,
+            display_identity: None,
             screen_frame,
             visible_frame: screen_frame,
         }
@@ -227,12 +259,15 @@ mod tests {
     fn notch_integrated_panel_style_mask_is_borderless_and_nonactivating() {
         let style_mask = resolve_panel_style_mask(DesktopActivityOverlayMacWindowHostSettings {
             host_path: DesktopActivityOverlayMacHostPath::Panel,
-            prefer_accessory_activation_policy: true,
             visible_on_all_workspaces: true,
+            accepts_mouse_moved_events: true,
+            ignores_mouse_events: true,
             shadow: false,
             full_screen_auxiliary: true,
             stationary: true,
             ignores_cycle: true,
+            movable: false,
+            movable_by_window_background: false,
             nonactivating_panel: true,
             opaque: false,
             window_level_override: Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanel),

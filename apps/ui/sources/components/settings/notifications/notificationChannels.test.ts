@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
     BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-    DEFAULT_NOTIFICATIONS_SETTINGS_V1,
+    accountSettingsParse,
 } from '@happier-dev/protocol';
 
 import {
     addWebhookNotificationChannel,
-    buildNotificationSettingsDelta,
+    buildWebhookNotificationSettingsDelta,
     removeNotificationChannelById,
     updateNotificationChannelById,
 } from './notificationChannels';
@@ -132,12 +132,20 @@ describe('notificationChannels helpers', () => {
         expect(next).toEqual([]);
     });
 
-    it('builds a synced settings delta that keeps legacy expo settings mirrored', () => {
-        const delta = buildNotificationSettingsDelta({
-            notifications: {
-                ...DEFAULT_NOTIFICATIONS_SETTINGS_V1,
-                readyIncludeMessageText: false,
+    it('builds a synced settings delta without writing legacy notification toggles', () => {
+        const basePolicy = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                channels: {
+                    expo_push: {
+                        previewBehavior: 'status_only',
+                    },
+                },
             },
+        }).attentionDeliveryPolicyV1;
+
+        const delta = buildWebhookNotificationSettingsDelta({
+            basePolicy,
             webhookChannels: [
                 {
                     v: 1,
@@ -156,16 +164,7 @@ describe('notificationChannels helpers', () => {
             ],
         });
 
-        expect(delta).toEqual({
-            notificationsSettingsV1: {
-                v: 1,
-                pushEnabled: true,
-                ready: true,
-                readyIncludeMessageText: false,
-                permissionRequest: true,
-                userActionRequest: true,
-                foregroundBehavior: 'full',
-            },
+        expect(delta).toMatchObject({
             notificationChannelsV1: [
                 {
                     v: 1,
@@ -194,6 +193,74 @@ describe('notificationChannels helpers', () => {
                     readyIncludeMessageText: false,
                 },
             ],
+            attentionDeliveryPolicyV1: {
+                channels: {
+                    expo_push: {
+                        previewBehavior: 'status_only',
+                        events: {
+                            ready: { enabled: true },
+                            permission_request: { enabled: true },
+                            user_action_request: { enabled: true },
+                        },
+                    },
+                    webhook: {
+                        events: {
+                            ready: { enabled: true },
+                            permission_request: { enabled: false },
+                            user_action_request: { enabled: true },
+                        },
+                    },
+                },
+            },
         });
+        expect(delta).not.toHaveProperty('notificationsSettingsV1');
+    });
+
+    it('preserves unrelated canonical attention policy while mirroring legacy channel edits', () => {
+        const basePolicy = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                quietHours: {
+                    enabled: true,
+                    timezone: 'UTC',
+                    windows: [{ startLocalTime: '22:00', endLocalTime: '07:00' }],
+                },
+                sounds: {
+                    defaultSoundId: 'none',
+                },
+                foregroundBehavior: 'silent',
+                channels: {
+                    webhook: {
+                        quietHoursBehavior: 'suppress',
+                    },
+                },
+            },
+        }).attentionDeliveryPolicyV1;
+
+        const delta = buildWebhookNotificationSettingsDelta({
+            basePolicy,
+            webhookChannels: [
+                {
+                    v: 1,
+                    id: 'webhook-primary',
+                    kind: 'webhook',
+                    enabled: true,
+                    url: 'https://hooks.example.test/notify',
+                    signingSecret: null,
+                    topics: {
+                        ready: true,
+                        permissionRequest: true,
+                        userActionRequest: true,
+                    },
+                    readyIncludeMessageText: false,
+                },
+            ],
+        });
+
+        expect(delta.attentionDeliveryPolicyV1.quietHours).toEqual(basePolicy.quietHours);
+        expect(delta.attentionDeliveryPolicyV1.sounds).toEqual(basePolicy.sounds);
+        expect(delta.attentionDeliveryPolicyV1.foregroundBehavior).toBe('silent');
+        expect(delta.attentionDeliveryPolicyV1.channels.webhook.quietHoursBehavior).toBe('suppress');
+        expect(delta.attentionDeliveryPolicyV1.channels.webhook.events.permission_request.enabled).toBe(true);
     });
 });

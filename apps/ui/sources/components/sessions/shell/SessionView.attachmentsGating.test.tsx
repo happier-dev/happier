@@ -126,7 +126,6 @@ installSessionShellCommonModuleMocks({
       useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
       useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return false;
-        if (key === 'editorFocusModeEnabled') return false;
         if (key === 'acknowledgedCliVersions') return [];
         return null;
       },

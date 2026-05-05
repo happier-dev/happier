@@ -71,7 +71,6 @@ installSessionDetailsPanelCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useLocalSetting: (key: string) => {
-                if (key === 'editorFocusModeEnabled') return false;
                 return null;
             },
             useLocalSettingMutable: () => [false, vi.fn()],
@@ -93,6 +92,10 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
 
 vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
     SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
+}));
+
+vi.mock('@/components/ui/media/FileIcon', () => ({
+    FileIcon: 'FileIcon',
 }));
 
 const unpinDetailsTab = vi.fn();
@@ -201,6 +204,18 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
 
         expect(aIcon).toBeTruthy();
         expect(reviewIcon).toBeTruthy();
+    });
+
+    it('uses the concrete file icon in file detail tabs', async () => {
+        const screen = await renderSessionDetailsPanel();
+
+        const tab = screen.findByTestId('session-details-tab-file_a');
+        if (!tab) {
+            throw new Error('Unable to find file details tab');
+        }
+
+        expect(screen.findByTestId('session-details-tab-file-icon-file_a')).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(tab, 'Octicons', { name: 'file' })).toBeUndefined();
     });
 
     it('renders preview tab pin action as a pin icon (not pin-slash)', async () => {

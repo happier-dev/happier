@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 import { DesktopShellWindowControlsHost } from './DesktopShellWindowControlsHost';
+import { DesktopWindowControlsSlot } from './DesktopWindowControlsSlot';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,5 +27,19 @@ describe('DesktopShellWindowControlsHost', () => {
 
         expect(screen.findAllByTestId('desktop-window-controls-host')).toHaveLength(1);
         expect(screen.findAllByTestId('desktop-window-controls-slot')).toHaveLength(1);
+    });
+
+    it('does not wrap an already resolved window-controls slot in another slot', async () => {
+        const screen = await renderScreen(
+            <DesktopShellWindowControlsHost>
+                <DesktopWindowControlsSlot>
+                    <React.Fragment />
+                </DesktopWindowControlsSlot>
+            </DesktopShellWindowControlsHost>,
+        );
+
+        expect(screen.findAllByTestId('desktop-window-controls-host')).toHaveLength(1);
+        expect(screen.findAllByTestId('desktop-window-controls-slot')).toHaveLength(1);
+        expect(screen.findAllByTestId('desktop-window-drag-region')).toHaveLength(1);
     });
 });

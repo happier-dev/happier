@@ -38,10 +38,10 @@ function createEntrySource() {
     return `
 import { EditorState } from '@codemirror/state';
 import { EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
-import { defaultKeymap } from '@codemirror/commands';
-import { history, historyKeymap } from '@codemirror/history';
-import { StreamLanguage, indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { StreamLanguage, indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+import { tags } from '@lezer/highlight';
 
 import { javascript } from '@codemirror/lang-javascript';
 import { python } from '@codemirror/lang-python';
@@ -84,6 +84,8 @@ globalThis.HAPPIER_CODEMIRROR_WEBVIEW = {
   bracketMatching,
   syntaxHighlighting,
   defaultHighlightStyle,
+  HighlightStyle,
+  tags,
   closeBrackets,
   closeBracketsKeymap,
   langs: {

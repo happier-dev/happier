@@ -7,6 +7,7 @@ describe('buildSessionListReachabilitySummary', () => {
         const first = buildSessionListReachabilitySummary({
             listItems: [],
             machinesById: new Map(),
+            workspaceRefs: [],
             resolveSessionRenderable: () => null,
         });
         const second = buildSessionListReachabilitySummary({
@@ -19,6 +20,7 @@ describe('buildSessionListReachabilitySummary', () => {
                 },
             ] as any,
             machinesById: new Map(),
+            workspaceRefs: [],
             resolveSessionRenderable: () => null,
         });
 
@@ -62,6 +64,7 @@ describe('buildSessionListReachabilitySummary', () => {
                 ['machine-a', { id: 'machine-a', metadata: { host: 'machine-a.local' } }],
                 ['machine-b', { id: 'machine-b', metadata: { host: 'machine-b.local' } }],
             ]),
+            workspaceRefs: [],
             resolveSessionRenderable: (item: any) => sessionRenderablesById[item.sessionId] ?? null,
         } as const;
 
@@ -73,7 +76,8 @@ describe('buildSessionListReachabilitySummary', () => {
         expect(first.displayById.get('sess-a')).toEqual({
             machineId: 'machine-a',
             machineLabel: 'machine-a.local',
-            pathSubtitle: '/repo-a',
+            workspaceSubtitle: '/repo-a',
+            workspaceSubtitleEllipsizeMode: 'head',
         });
     });
 
@@ -94,14 +98,59 @@ describe('buildSessionListReachabilitySummary', () => {
                 },
             ] as any,
             machinesById: new Map(),
+            workspaceRefs: [],
             resolveSessionRenderable: (item: any) => sessionRenderablesById[item.sessionId] ?? null,
         });
 
         expect(summary.displayById.get('sess-path-only')).toEqual({
             machineId: null,
             machineLabel: '',
-            pathSubtitle: '/repo-only',
+            workspaceSubtitle: '/repo-only',
+            workspaceSubtitleEllipsizeMode: 'head',
         });
         expect(summary.hasMultipleMachines).toBe(false);
+    });
+
+    it('uses renamed workspace refs for date-grouped row subtitles', () => {
+        const sessionRenderablesById = {
+            'sess-renamed': {
+                metadata: {
+                    machineId: 'machine-stale',
+                    host: 'stale.local',
+                    path: '/home/user/stale-repo',
+                    homeDir: '/home/user',
+                },
+            },
+        } as any;
+        const summary = buildSessionListReachabilitySummary({
+            listItems: [
+                {
+                    type: 'session',
+                    sessionId: 'sess-renamed',
+                    serverId: 'server-a',
+                    groupKind: 'date',
+                },
+            ] as any,
+            machinesById: new Map(),
+            workspaceRefs: [
+                {
+                    id: 'workspace-ref-renamed',
+                    serverId: 'server-a',
+                    machineId: 'machine-stale',
+                    rootPath: '/home/user/stale-repo',
+                    label: 'Renamed Workspace',
+                    createdAtMs: 1,
+                    lastOpenedAtMs: null,
+                },
+            ],
+            resolveSessionRenderable: (item: any) => sessionRenderablesById[item.sessionId] ?? null,
+        });
+
+        expect(summary.displayById.get('sess-renamed')).toEqual({
+            machineId: 'machine-stale',
+            machineLabel: 'stale.local',
+            workspaceSubtitle: 'Renamed Workspace',
+            workspaceSubtitleEllipsizeMode: 'tail',
+        });
     });
 });

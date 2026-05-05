@@ -166,7 +166,7 @@ describe('SelectionTiles', () => {
         const screen = await renderScreen(<SelectionTiles
             selectionMode="multiple"
             options={[
-                { id: 'voice_tool', title: 'Voice tool', disabled: true, badge: 'Unavailable' },
+                { id: 'voice', title: 'Voice tool', disabled: true, badge: 'Unavailable' },
             ]}
             value={[]}
             onChange={onChange}
@@ -175,7 +175,7 @@ describe('SelectionTiles', () => {
         tree = screen.tree;
 
         await act(async () => {
-            await pressTestInstanceAsync(screen.findByTestId('disabled-select:voice_tool'), 'disabled-select:voice_tool');
+            await pressTestInstanceAsync(screen.findByTestId('disabled-select:voice'), 'disabled-select:voice');
         });
 
         expect(onChange).not.toHaveBeenCalled();

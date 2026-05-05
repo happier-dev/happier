@@ -12,6 +12,7 @@ import {
     parseSessionPaneUrlState,
 } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
+import { resolveSessionDetailsFallbackHref } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
 import { useFullscreenDetailsRouteController } from '@/components/workspaceCockpit/useFullscreenDetailsRouteController';
 import { useFullscreenDetailsRouteParamSync } from '@/components/workspaceCockpit/useFullscreenDetailsRouteParamSync';
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
@@ -21,12 +22,14 @@ import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServe
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
 
 type SessionDetailsRouteParamsShape = Readonly<{
     details?: string;
     path?: string;
     sha?: string;
     terminalInstanceId?: string;
+    sourceSurface?: string;
 }>;
 
 function createDetailsRouteParamsSignature(params: SessionDetailsRouteParamsShape): string {
@@ -35,6 +38,7 @@ function createDetailsRouteParamsSignature(params: SessionDetailsRouteParamsShap
         params.path ?? '',
         params.sha ?? '',
         params.terminalInstanceId ?? '',
+        params.sourceSurface ?? '',
     ].join('|');
 }
 
@@ -42,7 +46,15 @@ export default function SessionDetailsScreenRoute() {
     const router = useRouter();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
-    const params = useLocalSearchParams<{ id: string; serverId?: string; details?: string; path?: string; sha?: string }>();
+    const params = useLocalSearchParams<{
+        id: string;
+        serverId?: string;
+        details?: string;
+        path?: string;
+        sha?: string;
+        terminalInstanceId?: string;
+        sourceSurface?: string;
+    }>();
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const { id: sessionIdParam } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
@@ -68,9 +80,8 @@ export default function SessionDetailsScreenRoute() {
         details: typeof params.details === 'string' ? params.details : undefined,
         path: typeof params.path === 'string' ? params.path : undefined,
         sha: typeof params.sha === 'string' ? params.sha : undefined,
-        terminalInstanceId: typeof (params as { terminalInstanceId?: unknown }).terminalInstanceId === 'string'
-            ? (params as { terminalInstanceId?: string }).terminalInstanceId
-            : undefined,
+        terminalInstanceId: typeof params.terminalInstanceId === 'string' ? params.terminalInstanceId : undefined,
+        sourceSurface: typeof params.sourceSurface === 'string' ? params.sourceSurface : undefined,
     }), [params]);
     const selectedDetailsParams = React.useMemo<SessionDetailsRouteParamsShape>(() => {
         const next = buildActiveDetailsRouteParams(detailsSelection.tabs, detailsSelection.activeKey);
@@ -79,8 +90,9 @@ export default function SessionDetailsScreenRoute() {
             path: next.path,
             sha: next.sha,
             terminalInstanceId: next.terminalInstanceId,
+            sourceSurface: typeof params.sourceSurface === 'string' ? params.sourceSurface : undefined,
         };
-    }, [detailsSelection.activeKey, detailsSelection.tabs]);
+    }, [detailsSelection.activeKey, detailsSelection.tabs, params.sourceSurface]);
     const routeDetailsSignature = React.useMemo(
         () => createDetailsRouteParamsSignature(routeDetailsParams),
         [routeDetailsParams],
@@ -89,9 +101,15 @@ export default function SessionDetailsScreenRoute() {
         () => createDetailsRouteParamsSignature(selectedDetailsParams),
         [selectedDetailsParams],
     );
+    const fallbackDetailsHref = React.useMemo(() => resolveSessionDetailsFallbackHref({
+        sessionId,
+        serverId: routeScope.serverId,
+        sourceSurface: params.sourceSurface,
+        fallbackHref: routeScope.buildHref(sessionId),
+    }), [params.sourceSurface, routeScope, sessionId]);
     const returnToSession = React.useCallback(() => {
-        safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
-    }, [navigation, routeScope, router, sessionId]);
+        safeRouterBack({ router, navigation, fallbackHref: fallbackDetailsHref });
+    }, [fallbackDetailsHref, navigation, router]);
 
     useFullscreenDetailsRouteParamSync({
         resetKey: sessionId,
@@ -109,18 +127,29 @@ export default function SessionDetailsScreenRoute() {
             applySessionPaneUrlState(pane, routeDetailsState);
         }, [pane, routeDetailsState]),
         onWriteSelectedSelection: React.useCallback(() => {
-            router.setParams({
+            const nextParams: {
+                details?: string;
+                path?: string;
+                sha?: string;
+                terminalInstanceId?: string;
+                sourceSurface?: string;
+            } = {
                 details: selectedDetailsParams.details,
                 path: selectedDetailsParams.path,
                 sha: selectedDetailsParams.sha,
                 terminalInstanceId: selectedDetailsParams.terminalInstanceId,
-            });
+            };
+            if (selectedDetailsParams.sourceSurface) {
+                nextParams.sourceSurface = selectedDetailsParams.sourceSurface;
+            }
+            router.setParams(nextParams);
         }, [
             router,
             selectedDetailsParams.details,
             selectedDetailsParams.path,
             selectedDetailsParams.sha,
             selectedDetailsParams.terminalInstanceId,
+            selectedDetailsParams.sourceSurface,
         ]),
     });
 
@@ -148,18 +177,32 @@ export default function SessionDetailsScreenRoute() {
     }
 
     return (
-        <View testID={cockpitEnabled ? undefined : 'session-details-screen'} style={{ flex: 1 }}>
+        <SessionFullscreenPaneSafeAreaView
+            testID={cockpitEnabled ? 'session-cockpit-route-screen' : 'session-details-screen'}
+            includeTopInset={!cockpitEnabled}
+        >
             {sessionHydrated ? (
                 cockpitEnabled ? (
-                    <SessionCockpitShell sessionId={sessionId} scopeId={scopeId} surface="tabs" />
+                    <SessionCockpitShell
+                        sessionId={sessionId}
+                        scopeId={scopeId}
+                        surface="tabs"
+                        safeAreaPadding={false}
+                        routeServerId={routeScope.serverId}
+                    />
                 ) : (
-                    <SessionDetailsPanel sessionId={sessionId} scopeId={scopeId} onRequestClose={onRequestClose} />
+                    <SessionDetailsPanel
+                        sessionId={sessionId}
+                        scopeId={scopeId}
+                        presentation="screen"
+                        onRequestClose={onRequestClose}
+                    />
                 )
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator />
                 </View>
             )}
-        </View>
+        </SessionFullscreenPaneSafeAreaView>
     );
 }

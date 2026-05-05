@@ -537,6 +537,39 @@ describe('reducer', () => {
             expect(toolMessage?.tool?.completedAt).toBe(1500);
             expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
         });
+
+        it('does not cancel pending permission gates on ready events', () => {
+            const state = createReducer();
+
+            reducer(state, [], {
+                requests: {
+                    'tool-permission-1': {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'find . -type f | head' },
+                        createdAt: 1000,
+                    },
+                },
+                completedRequests: null,
+            });
+
+            reducer(state, [{
+                id: 'ready-after-permission',
+                localId: null,
+                createdAt: 1500,
+                role: 'event',
+                isSidechain: false,
+                content: { type: 'ready' },
+            }]);
+
+            const toolMessageId = state.toolIdToMessageId.get('tool-permission-1');
+            const toolMessage = toolMessageId ? state.messages.get(toolMessageId) : null;
+            expect(toolMessage?.tool?.state).toBe('running');
+            expect(toolMessage?.tool?.startedAt).toBeNull();
+            expect(toolMessage?.tool?.completedAt).toBeNull();
+            expect(toolMessage?.tool?.result).toBeUndefined();
+            expect(toolMessage?.tool?.permission?.status).toBe('pending');
+        });
     });
 
     describe('mixed message processing', () => {

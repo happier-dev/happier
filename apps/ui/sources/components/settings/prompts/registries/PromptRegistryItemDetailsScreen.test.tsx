@@ -272,7 +272,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
     expect(createPromptRegistrySkillArtifactFromFetchedItemMock).toHaveBeenCalledWith(expect.objectContaining({
       title: 'frontend-design',
     }));
-    expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+    expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-1');
   });
 
   it('installs the fetched registry item to an external skill target', async () => {
@@ -314,7 +314,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
     expect(installPromptRegistryItemMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
       previewOnly: false,
     }));
-    expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-2');
+    expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-2');
   });
 
   it('selects a scope-compatible install target before exporting', async () => {

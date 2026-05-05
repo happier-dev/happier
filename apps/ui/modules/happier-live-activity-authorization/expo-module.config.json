@@ -1,0 +1,7 @@
+{
+    "name": "HappierLiveActivityAuthorization",
+    "platforms": ["ios"],
+    "ios": {
+        "modules": ["HappierLiveActivityAuthorizationModule"]
+    }
+}

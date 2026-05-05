@@ -1,5 +1,7 @@
 import { parseMarkdownBlock } from "./parseMarkdownBlock"
 
+export type MarkdownTableAlignment = 'left' | 'center' | 'right' | 'default';
+
 export type MarkdownBlock = {
     type: 'text'
     content: MarkdownSpan[]
@@ -28,7 +30,8 @@ export type MarkdownBlock = {
 } | {
     type: 'table',
     headers: string[],
-    rows: string[][]
+    rows: string[][],
+    alignments: MarkdownTableAlignment[],
 }
 
 export type MarkdownSpan = {

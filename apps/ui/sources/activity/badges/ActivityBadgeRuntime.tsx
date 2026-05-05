@@ -4,55 +4,89 @@ import { Platform } from 'react-native';
 
 import { useChangelog } from '@/hooks/inbox/useChangelog';
 import { useUpdates } from '@/hooks/inbox/useUpdates';
-import { useAllSessions, useFriendRequests, useLocalSettings } from '@/sync/domains/state/storage';
+import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
+import { buildActivityOverviewFromSource } from '@/activity/source/buildActivityOverviewFromSource';
+import { useActivityAttentionSource } from '@/activity/source/useActivityAttentionSource';
+import { AttentionDeviceOverridesV1Schema } from '@/sync/domains/settings/attentionDeviceOverridesV1';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { useFriendRequests, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { buildActivityBadgeState } from './buildActivityBadgeState';
+import { buildActivityBadgeStateFromOverview } from './buildActivityBadgeState';
 import { applyExpoNativeBadgeState } from './channels/applyExpoNativeBadgeState';
 import { applyTauriBadgeState } from './channels/applyTauriBadgeState';
 
 export function ActivityBadgeRuntime(): React.ReactElement | null {
-    const sessions = useAllSessions();
+    const activitySource = useActivityAttentionSource();
     const friendRequests = useFriendRequests();
     const localSettings = useLocalSettings();
+    const accountSettings = useSettings();
     const { updateAvailable } = useUpdates();
     const { hasUnread: changelogHasUnread } = useChangelog();
+    const parsedLocalSettings = React.useMemo(() => localSettingsParse(localSettings), [localSettings]);
 
     const badgeState = React.useMemo(() => {
-        if (localSettings.activityBadgesEnabled === false) {
+        const now = new Date();
+        const readyPlan = resolveActivityAttentionDeliveryPlan({
+            accountSettings,
+            localSettings: parsedLocalSettings,
+            event: 'ready',
+            channel: 'badge',
+            now,
+        });
+        const permissionPlan = resolveActivityAttentionDeliveryPlan({
+            accountSettings,
+            localSettings: parsedLocalSettings,
+            event: 'permission_request',
+            channel: 'badge',
+            now,
+        });
+        const userActionPlan = resolveActivityAttentionDeliveryPlan({
+            accountSettings,
+            localSettings: parsedLocalSettings,
+            event: 'user_action_request',
+            channel: 'badge',
+            now,
+        });
+        if (
+            readyPlan.reason === 'channel_disabled'
+            && permissionPlan.reason === 'channel_disabled'
+            && userActionPlan.reason === 'channel_disabled'
+        ) {
             return { count: 0, showNonNumericDot: false };
         }
+        const deviceOverrides = AttentionDeviceOverridesV1Schema.parse(parsedLocalSettings.attentionDeviceOverridesV1);
 
-        return buildActivityBadgeState({
-            sessions,
+        const sessionOptions = {
+            showUnread: readyPlan.badgeBehavior.include,
+            showPendingPermissionRequests: permissionPlan.badgeBehavior.include,
+            showPendingUserActionRequests: userActionPlan.badgeBehavior.include,
+            showQueuedUserInput: deviceOverrides.badge.includeQueuedUserInput,
+        };
+        const overview = buildActivityOverviewFromSource({
+            source: activitySource,
+            nowMs: now.getTime(),
+            sessionOptions,
+        });
+
+        return buildActivityBadgeStateFromOverview({
+            overview,
             numericInboxCount:
-                localSettings.activityBadgeShowFriendRequestsInboxCount === false
+                !deviceOverrides.badge.includeFriendRequestsInboxCount
                     ? 0
                     : friendRequests.length,
             hasNonNumericInboxAttention:
-                localSettings.activityBadgeShowDesktopNonNumericDot !== false &&
+                deviceOverrides.badge.includeDesktopNonNumericDot &&
                 (updateAvailable || changelogHasUnread),
-            sessionOptions: {
-                showUnread: localSettings.activityBadgeShowUnread !== false,
-                showPendingPermissionRequests:
-                    localSettings.activityBadgeShowPendingPermissionRequests !== false,
-                showPendingUserActionRequests:
-                    localSettings.activityBadgeShowPendingUserActionRequests !== false,
-                showQueuedUserInput: localSettings.activityBadgeShowQueuedUserInput !== false,
-            },
+            sessionOptions,
         });
     }, [
+        accountSettings,
+        activitySource,
         changelogHasUnread,
         friendRequests.length,
-        localSettings.activityBadgeShowDesktopNonNumericDot,
-        localSettings.activityBadgeShowFriendRequestsInboxCount,
-        localSettings.activityBadgeShowPendingPermissionRequests,
-        localSettings.activityBadgeShowPendingUserActionRequests,
-        localSettings.activityBadgeShowQueuedUserInput,
-        localSettings.activityBadgeShowUnread,
-        localSettings.activityBadgesEnabled,
-        sessions,
+        parsedLocalSettings,
         updateAvailable,
     ]);
 

@@ -1,5 +1,6 @@
 import type { ActivitySurfaceSelectionSpec } from '@/activity/selection/activitySurfaceSelectionTypes';
 import { ACTIVITY_SURFACE_SELECTION_IDS } from '@/activity/selection/activitySurfaceSelectionTypes';
+import { DEFAULT_ACTIVITY_SURFACE_TIMING } from '@/activity/source/buildActivityOverviewFromSource';
 
 import type { DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 
@@ -19,6 +20,8 @@ export function resolveDesktopOverlaySelectionSpec(
         includeReady: usesActiveSessionCandidatePool ? true : policy.showWhenReady,
         includeThinking: usesActiveSessionCandidatePool ? true : policy.showWhenRunning,
         includeQuietActive: usesActiveSessionCandidatePool,
-        activeOnly: false,
+        activeOnly: usesActiveSessionCandidatePool,
+        dwellMs: DEFAULT_ACTIVITY_SURFACE_TIMING.desktopOverlay.dwellMs,
+        staleAfterMs: DEFAULT_ACTIVITY_SURFACE_TIMING.desktopOverlay.staleAfterMs,
     };
 }

@@ -62,7 +62,7 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', ()
 }));
 
 vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
-  FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props),
+  FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props, props.rightElement ?? null),
 }));
 
 vi.mock('@/components/workspaces/files/file/FileContentPanel', () => ({
@@ -278,7 +278,7 @@ describe('SessionFileDetailsView (preview too large)', () => {
 
     await act(async () => {});
 
-    expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
+    expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findAllByTestId('file-preview-unavailable-banner').length).toBe(1);
     expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
   });
@@ -293,7 +293,7 @@ describe('SessionFileDetailsView (preview too large)', () => {
 
     expect(refreshSpy).toHaveBeenCalled();
     expect(tree.findAllByType('FileErrorState' as any).length).toBe(0);
-    expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
+    expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findAllByTestId('file-preview-unavailable-banner').length).toBe(1);
     expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
 

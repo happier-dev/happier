@@ -33,6 +33,7 @@ export function AgentInputChipPickerOptionSelector(
 ) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
+  const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
 
   if (props.variant === "stacked") {
     return (
@@ -66,7 +67,7 @@ export function AgentInputChipPickerOptionSelector(
                 onPress={() => {
                   props.onFocusOption(option.id);
                 }}
-                checkColor={theme.colors.button.primary.background}
+                checkColor={selectedIndicatorColor}
               />
             ))}
           </View>

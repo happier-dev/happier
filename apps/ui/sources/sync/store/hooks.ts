@@ -31,6 +31,7 @@ import { deriveSessionAttentionFlags } from '../domains/session/attention/sessio
 import { normalizeSessionId } from '../domains/session/normalizeSessionId';
 import { buildMachineDisplayRenderableFromMachine } from '../domains/machines/machineDisplayRenderable';
 import { normalizeTrimmedString } from '../domains/session/listing/normalizeTrimmedString';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
@@ -38,7 +39,6 @@ import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTran
 import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
 import { resolveSessionListLookupSessionServerScopeFromState } from '../domains/session/listing/sessionListLookupState';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
-import { getActiveServerSnapshot, subscribeActiveServer } from '../domains/server/serverRuntime';
 import type { SessionsDomainSlice } from './types';
 
 export function useSessions() {
@@ -69,14 +69,7 @@ export function useSessionListRenderableWithServerScope(
 ): SessionListRenderableSession | null {
   const normalizedSessionId = normalizeSessionId(sessionId);
   const normalizedServerId = normalizeTrimmedString(serverId);
-  const [activeServerId, setActiveServerId] = React.useState(() => normalizeTrimmedString(getActiveServerSnapshot().serverId));
-
-  React.useEffect(() => {
-    setActiveServerId(normalizeTrimmedString(getActiveServerSnapshot().serverId));
-    return subscribeActiveServer((snapshot) => {
-      setActiveServerId(normalizeTrimmedString(snapshot.serverId));
-    });
-  }, []);
+  const activeServerId = normalizeTrimmedString(useActiveServerSnapshot().serverId);
 
   return getStorage()(useShallow((state) => {
     if (!normalizedSessionId) {
@@ -867,6 +860,10 @@ export function useIsDataReady(): boolean {
 
 export function useProfile() {
   return getStorage()(useShallow((state) => state.profile));
+}
+
+export function useActiveServerAccountScope() {
+  return getStorage()(useShallow((state) => state.profileScope ?? null));
 }
 
 export function useFriends() {

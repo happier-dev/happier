@@ -131,4 +131,54 @@ describe('syncFriends', () => {
         expect(paths).toContain('/v1/friends');
         expect(applyFriends).toHaveBeenCalledWith([]);
     });
+
+    it('drops fetched friends when the captured sync scope is stale before apply', async () => {
+        const { fetchAndApplyFriends } = await import('./syncFriends');
+
+        const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') {
+                return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+            }
+            if (url.pathname === '/v1/features') {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => createFeaturesResponse(true),
+                } as unknown as Response;
+            }
+            if (url.pathname === '/v1/friends') {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        friends: [{
+                            id: 'friend-a',
+                            firstName: 'Friend',
+                            lastName: null,
+                            avatar: null,
+                            username: 'friend-a',
+                            bio: null,
+                            badges: [],
+                            status: 'friend',
+                            publicKey: null,
+                            contentPublicKey: null,
+                            contentPublicKeySig: null,
+                        }],
+                    }),
+                } as unknown as Response;
+            }
+            throw new Error(`unexpected request: ${url.pathname}`);
+        });
+        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+
+        const applyFriends = vi.fn();
+        await fetchAndApplyFriends({
+            credentials,
+            applyFriends,
+            shouldContinue: () => false,
+        } as Parameters<typeof fetchAndApplyFriends>[0] & { shouldContinue: () => boolean });
+
+        expect(applyFriends).not.toHaveBeenCalled();
+    });
 });

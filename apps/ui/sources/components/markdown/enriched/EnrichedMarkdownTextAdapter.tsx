@@ -1,0 +1,138 @@
+import * as React from 'react';
+import { Platform, type StyleProp, type TextStyle } from 'react-native';
+import { EnrichedMarkdownText, type EnrichedMarkdownTextProps } from 'react-native-enriched-markdown';
+
+import { ENRICHED_MARKDOWN_MD4C_FLAGS } from './enrichedMarkdownConstants';
+import { openMarkdownLinkUrl } from './enrichedMarkdownLinkHandling';
+import { preloadEnrichedMarkdownRuntime } from './preloadEnrichedMarkdownRuntime';
+import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
+import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
+import type { MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
+import {
+    resolveStreamingTextRevealConfig,
+    type StreamingTextRevealPreset,
+} from '../streaming/streamingTextRevealConfig';
+import { useWebRevealStyleInsertion } from '../streaming/useWebRevealStyleInsertion';
+
+const ENRICHED_REVEAL_STYLE_ID = 'happier-streaming-enriched-markdown-reveal-style';
+const ENRICHED_REVEAL_DURATION_VAR = '--happier-streaming-enriched-markdown-duration';
+const ENRICHED_REVEAL_EASING_VAR = '--happier-streaming-enriched-markdown-easing';
+const ENRICHED_REVEAL_TRANSLATE_Y_VAR = '--happier-streaming-enriched-markdown-y';
+
+let enrichedRevealStyleInjected = false;
+
+function injectEnrichedRevealStyle(): void {
+    if (enrichedRevealStyleInjected || Platform.OS !== 'web') return;
+    if (typeof document === 'undefined') return;
+
+    enrichedRevealStyleInjected = true;
+    if (document.getElementById(ENRICHED_REVEAL_STYLE_ID)) return;
+
+    const style = document.createElement('style');
+    style.id = ENRICHED_REVEAL_STYLE_ID;
+    style.textContent = [
+        '@keyframes happierStreamingEnrichedMarkdownReveal {',
+        `  from { opacity: 0; transform: translateY(var(${ENRICHED_REVEAL_TRANSLATE_Y_VAR}, 2px)); }`,
+        '  to { opacity: 1; transform: translateY(0); }',
+        '}',
+        '[data-happier-enriched-markdown-reveal="text"] {',
+        '  animation-name: happierStreamingEnrichedMarkdownReveal;',
+        `  animation-duration: var(${ENRICHED_REVEAL_DURATION_VAR}, 150ms);`,
+        `  animation-timing-function: var(${ENRICHED_REVEAL_EASING_VAR}, ease-out);`,
+        '  animation-fill-mode: both;',
+        '  display: inline-block;',
+        '}',
+        '@media (prefers-reduced-motion: reduce) {',
+        '  [data-happier-enriched-markdown-reveal="text"] {',
+        '    animation: none !important;',
+        '    opacity: 1 !important;',
+        '    transform: none !important;',
+        '  }',
+        '}',
+    ].join('\n');
+    document.head.appendChild(style);
+}
+
+type EnrichedMarkdownTextAdapterProps = Readonly<{
+    markdown: string;
+    profile: MarkdownRenderingProfile;
+    selectable: boolean;
+    onLinkPress?: (url: string) => boolean | void;
+    textStyle?: StyleProp<TextStyle>;
+    streamingAnimated: boolean;
+    streamingRevealPreset?: StreamingTextRevealPreset;
+    testID?: string;
+}>;
+
+export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
+    const styleBundle = useEnrichedMarkdownStyle({
+        profile: props.profile,
+        textStyle: props.textStyle,
+    });
+
+    const handleLinkPress = React.useCallback((event: { url: string }) => {
+        if (props.onLinkPress?.(event.url) === true) return;
+        void openMarkdownLinkUrl(event.url);
+    }, [props.onLinkPress]);
+    const revealConfig = resolveStreamingTextRevealConfig({
+        animated: props.streamingAnimated,
+        preset: props.streamingRevealPreset,
+    });
+    const flavor = React.useMemo(() => resolveEnrichedMarkdownFlavor(props.markdown), [props.markdown]);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        void preloadEnrichedMarkdownRuntime();
+    }, []);
+
+    useWebRevealStyleInsertion({
+        enabled: revealConfig != null,
+        injectStyle: injectEnrichedRevealStyle,
+    });
+
+    const platformProps = React.useMemo<Record<string, unknown>>(() => {
+        if (Platform.OS === 'web') {
+            const webProps: Record<string, unknown> = {
+                'data-testid': props.testID,
+            };
+            if (props.streamingAnimated) {
+                webProps.streamingAnimation = true;
+            }
+            return webProps;
+        }
+
+        return {
+            testID: props.testID,
+            enableLinkPreview: false,
+            allowFontScaling: true,
+            streamingAnimation: props.streamingAnimated && flavor === 'commonmark',
+        };
+    }, [flavor, props.streamingAnimated, props.testID]);
+
+    const containerStyle = React.useMemo(() => {
+        if (Platform.OS !== 'web' || revealConfig == null) {
+            return styleBundle.containerStyle;
+        }
+
+        return ({
+            ...styleBundle.containerStyle,
+            [ENRICHED_REVEAL_DURATION_VAR]: `${revealConfig.durationMs}ms`,
+            [ENRICHED_REVEAL_EASING_VAR]: revealConfig.easing,
+            [ENRICHED_REVEAL_TRANSLATE_Y_VAR]: `${revealConfig.translateYPx}px`,
+        } as unknown) as EnrichedMarkdownTextProps['containerStyle'];
+    }, [revealConfig, styleBundle.containerStyle]);
+
+    return (
+        <EnrichedMarkdownText
+            {...platformProps}
+            markdown={props.markdown}
+            markdownStyle={styleBundle.markdownStyle}
+            containerStyle={containerStyle}
+            md4cFlags={ENRICHED_MARKDOWN_MD4C_FLAGS}
+            onLinkPress={handleLinkPress}
+            selectable={props.selectable}
+            allowTrailingMargin={false}
+            flavor={flavor}
+        />
+    );
+});

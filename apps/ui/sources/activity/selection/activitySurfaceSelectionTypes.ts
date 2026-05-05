@@ -23,6 +23,8 @@ export type ActivitySurfaceSelectionSpec = Readonly<{
     includeThinking: boolean;
     includeQuietActive: boolean;
     activeOnly: boolean;
+    dwellMs?: number;
+    staleAfterMs?: number;
 }>;
 
 export type ResolveActivitySurfaceSlotsParams = Readonly<{
@@ -30,6 +32,10 @@ export type ResolveActivitySurfaceSlotsParams = Readonly<{
     selection: ActivitySurfaceSelectionSpec;
     applyCap?: boolean;
     preferredPrimarySessionId?: string | null;
+    previousPrimarySessionId?: string | null;
+    previousPrimaryActivityInstanceKey?: string | null;
+    previousPrimaryChangedAtMs?: number | null;
+    nowMs?: number;
 }>;
 
 export type ActivitySurfaceSlots = Readonly<{
@@ -40,6 +46,7 @@ export type ActivitySurfaceSlots = Readonly<{
     primarySession: SessionActivityAttention | null;
     overflowCount: number;
     selectionReason: ActivitySurfaceSelectionReason;
+    sourceFingerprint: string | null;
 }>;
 
 export function createLiveActivitySelectionSpec(policy: ActivitySurfacePolicy): ActivitySurfaceSelectionSpec {

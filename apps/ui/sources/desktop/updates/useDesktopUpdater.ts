@@ -19,6 +19,43 @@ type UpdateMetadata = {
 } | null;
 
 const DISMISS_KEY = 'desktop_update_dismissed_version';
+const UPDATE_CHECKS_ENABLED_ENV = 'EXPO_PUBLIC_HAPPIER_DESKTOP_UPDATES_ENABLED';
+
+function parseOptionalBoolean(raw: string | undefined): boolean | null {
+    const normalized = String(raw ?? '').trim().toLowerCase();
+    if (!normalized) return null;
+    if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false;
+    return null;
+}
+
+function readDesktopUpdateChecksEnabledOverride(): boolean | null {
+    return parseOptionalBoolean(process.env[UPDATE_CHECKS_ENABLED_ENV]);
+}
+
+function isDevelopmentBundle(): boolean {
+    return (globalThis as { __DEV__?: unknown }).__DEV__ === true;
+}
+
+function shouldRunDesktopUpdateChecks(params: {
+    isDesktop: boolean;
+    isDevelopmentBundle: boolean;
+    enabledOverride: boolean | null;
+}): boolean {
+    if (!params.isDesktop) return false;
+    if (params.enabledOverride !== null) return params.enabledOverride;
+    return !params.isDevelopmentBundle;
+}
+
+function formatDesktopUpdaterErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message.trim().length > 0) {
+        return error.message;
+    }
+    if (typeof error === 'string' && error.trim().length > 0) {
+        return error.trim();
+    }
+    return 'Update failed';
+}
 
 function getDismissedVersion(): string | null {
     try {
@@ -49,17 +86,18 @@ export function useDesktopUpdater(): {
     // Capture the environment at mount time. In production the desktop/web context is stable, and
     // using a stable flag avoids test flakiness when other suites manipulate `window` concurrently.
     const isDesktop = React.useMemo(() => isTauriDesktop(), []);
-    const updatesEnabled = React.useMemo(() => process.env.NODE_ENV !== 'development', []);
+    const updateChecksEnabled = React.useMemo(() => shouldRunDesktopUpdateChecks({
+        isDesktop,
+        isDevelopmentBundle: isDevelopmentBundle(),
+        enabledOverride: readDesktopUpdateChecksEnabledOverride(),
+    }), [isDesktop]);
 
     const [status, setStatus] = React.useState<DesktopUpdaterStatus>('idle');
     const [availableVersion, setAvailableVersion] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
 
     const refresh = React.useCallback(async () => {
-        if (!isDesktop) {
-            return;
-        }
-        if (!updatesEnabled) {
+        if (!updateChecksEnabled) {
             return;
         }
 
@@ -86,7 +124,7 @@ export function useDesktopUpdater(): {
             setAvailableVersion(null);
             setStatus('idle');
         }
-    }, [isDesktop, updatesEnabled]);
+    }, [updateChecksEnabled]);
 
     React.useEffect(() => {
         void refresh();
@@ -100,7 +138,7 @@ export function useDesktopUpdater(): {
     }, [availableVersion]);
 
     const startInstall = React.useCallback(async () => {
-        if (!isDesktop) {
+        if (!updateChecksEnabled) {
             return;
         }
         if (!availableVersion) {
@@ -115,11 +153,12 @@ export function useDesktopUpdater(): {
                 setAvailableVersion(null);
                 setStatus('upToDate');
             }
-        } catch (e: any) {
-            setError(String(e?.message || e || 'Update failed'));
+        } catch (error: unknown) {
+            console.warn('Failed to install desktop update:', error);
+            setError(formatDesktopUpdaterErrorMessage(error));
             setStatus('error');
         }
-    }, [availableVersion, isDesktop]);
+    }, [availableVersion, updateChecksEnabled]);
 
     return {
         status,

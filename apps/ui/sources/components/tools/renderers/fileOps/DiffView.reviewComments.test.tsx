@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
@@ -15,6 +15,9 @@ const deleteSessionReviewCommentDraftSpy = vi.fn();
 const upsertWorkspaceReviewCommentDraftSpy = vi.fn();
 const deleteWorkspaceReviewCommentDraftSpy = vi.fn();
 let lastInlineRendererConfig: any = null;
+const workspaceScopeState = vi.hoisted(() => ({
+    current: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' } as any,
+}));
 
 installFileOpsRendererCommonModuleMocks({
     storage: async () => {
@@ -60,7 +63,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
-    resolveWorkspaceScopeForSession: () => ({ serverId: 'server-1', machineId: 'm1', rootPath: '/repo' }),
+    resolveWorkspaceScopeForSession: () => workspaceScopeState.current,
+    useWorkspaceScopeForSession: () => workspaceScopeState.current,
 }));
 
 vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
@@ -99,6 +103,10 @@ vi.mock('@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewComm
 }));
 
 describe('DiffView (review comments)', () => {
+    beforeEach(() => {
+        workspaceScopeState.current = { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' };
+    });
+
     it('passes a renderInlineUnifiedDiff override when review comments are enabled and sessionId is available', async () => {
         diffFilesListSpy.mockClear();
         upsertSessionReviewCommentDraftSpy.mockClear();
@@ -153,5 +161,30 @@ describe('DiffView (review comments)', () => {
 
         expect(node?.type).toBe('DiffReviewCommentsViewer');
         expect(node?.props?.filePath).toBe('src/a.ts');
+    });
+
+    it('enables review comments after the session workspace state loads without changing sessions', async () => {
+        workspaceScopeState.current = null;
+        diffFilesListSpy.mockClear();
+        lastInlineRendererConfig = null;
+        const { DiffView } = await import('./DiffView');
+
+        const tool = makeToolCall({
+            name: 'Diff',
+            state: 'completed',
+            input: { unified_diff: 'diff --git a/src/a.ts b/src/a.ts' },
+            result: null,
+        });
+        const element = React.createElement(DiffView, makeToolViewProps(tool, { sessionId: 's1', detailLevel: 'full' }));
+
+        const screen = await renderScreen(element);
+
+        expect(lastInlineRendererConfig?.enabled).toBe(false);
+
+        workspaceScopeState.current = { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' };
+
+        await screen.update(React.createElement(DiffView, makeToolViewProps(tool, { sessionId: 's1', detailLevel: 'summary' })));
+
+        expect(lastInlineRendererConfig?.enabled).toBe(true);
     });
 });

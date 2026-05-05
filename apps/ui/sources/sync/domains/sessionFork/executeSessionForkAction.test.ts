@@ -17,7 +17,7 @@ describe('executeSessionForkAction', () => {
     const result = await executeSessionForkAction({
       execute: execute as any,
       sessionId: 'parent-1',
-      context: { defaultSessionId: 'parent-1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'parent-1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(result).toEqual({ ok: true, childSessionId: 'child-1' });
@@ -35,7 +35,7 @@ describe('executeSessionForkAction', () => {
     const result = await executeSessionForkAction({
       execute: execute as any,
       sessionId: 'parent-1',
-      context: { defaultSessionId: 'parent-1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'parent-1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(result).toEqual({ ok: false, error: 'boom' });
@@ -56,7 +56,7 @@ describe('executeSessionForkAction', () => {
     const result = await executeSessionForkAction({
       execute: execute as any,
       sessionId: 'parent-1',
-      context: { defaultSessionId: 'parent-1', surface: 'ui_button', placement: 'session_info' } as any,
+      context: { defaultSessionId: 'parent-1', surface: 'ui', placement: 'session_info' } as any,
     });
 
     expect(result).toEqual({ ok: false, error: 'fork_failed' });

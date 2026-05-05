@@ -5,6 +5,11 @@ async function importFresh() {
     return await import('./pendingSetupIntent');
 }
 
+async function activateServer(serverUrl: string) {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
+}
+
 describe('pendingSetupIntent', () => {
     afterEach(async () => {
         const { clearPendingSetupIntent } = await importFresh();
@@ -15,6 +20,7 @@ describe('pendingSetupIntent', () => {
     it('round-trips and clears a pending setup intent payload', async () => {
         const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
 
+        await activateServer('https://relay.example.test');
         clearPendingSetupIntent();
         expect(getPendingSetupIntent()).toBeNull();
 
@@ -37,6 +43,7 @@ describe('pendingSetupIntent', () => {
     it('round-trips a dismissed onboarding marker', async () => {
         const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
 
+        await activateServer('https://relay.example.test');
         setPendingSetupIntent({
             branch: 'thisComputer',
             phase: 'dismissed',
@@ -56,6 +63,7 @@ describe('pendingSetupIntent', () => {
     it('round-trips a remote machine resume intent', async () => {
         const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
 
+        await activateServer('https://relay.remote.example.test');
         setPendingSetupIntent({
             branch: 'remoteMachine',
             phase: 'awaiting_auth',
@@ -79,6 +87,7 @@ describe('pendingSetupIntent', () => {
     it('round-trips a remote relay-host resume intent', async () => {
         const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
 
+        await activateServer('https://relay.remote.example.test');
         setPendingSetupIntent({
             branch: 'remoteMachine',
             phase: 'awaiting_auth',
@@ -97,5 +106,39 @@ describe('pendingSetupIntent', () => {
 
         clearPendingSetupIntent();
         expect(getPendingSetupIntent()).toBeNull();
+    });
+
+    it('keeps setup intent payloads isolated by active server', async () => {
+        const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
+
+        await activateServer('https://setup-a.example.test');
+        clearPendingSetupIntent();
+        setPendingSetupIntent({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://setup-a.example.test',
+        });
+
+        await activateServer('https://setup-b.example.test');
+        clearPendingSetupIntent();
+        expect(getPendingSetupIntent()).toBeNull();
+        setPendingSetupIntent({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://setup-b.example.test',
+        });
+
+        expect(getPendingSetupIntent()).toEqual({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://setup-b.example.test',
+        });
+
+        await activateServer('https://setup-a.example.test');
+        expect(getPendingSetupIntent()).toEqual({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://setup-a.example.test',
+        });
     });
 });

@@ -1820,6 +1820,8 @@ export const ru: TranslationStructure = {
       channelBridgesSubtitle: "Подключайте внешние чаты (Telegram) к сессиям",
       featuresTitle: "Возможности",
       featuresSubtitle: "Включить или отключить функции приложения",
+      pets: "Питомцы",
+      petsSubtitle: "Выберите Blink и питомцев-компаньонов для устройства",
     developer: "Разработчик",
     developerTools: "Инструменты разработчика",
     about: "О программе",
@@ -2522,6 +2524,16 @@ export const ru: TranslationStructure = {
       title: "Подтверждение удалённых операций",
       footer:
         "Управляет тем, требуют ли операции pull/push подтверждения.",
+      confirmBeforePulling: {
+        title: "Подтверждать перед pull",
+        subtitle:
+          "Спрашивать перед загрузкой и объединением удалённых изменений.",
+      },
+      confirmBeforePushing: {
+        title: "Подтверждать перед push",
+        subtitle:
+          "Спрашивать перед отправкой локальных коммитов на remote.",
+      },
       options: {
         always: {
           title: "Всегда подтверждать pull/push",
@@ -2754,6 +2766,70 @@ export const ru: TranslationStructure = {
     },
   },
 
+
+
+  settingsPets: {
+    title: 'Питомцы',
+    previewTitle: 'Компаньон Blink',
+    previewSubtitle: 'Небольшой компаньон для состояния сессии и внимания к ревью.',
+    disabledTitle: 'Питомцы отключены',
+    disabledSubtitle: 'Включите эксперимент Питомцы, чтобы использовать Blink на этом устройстве.',
+    accountTitle: 'Значение аккаунта по умолчанию',
+    enabledTitle: 'Включить питомцев',
+    enabledSubtitle: 'Показывать поверхности компаньона для этого аккаунта.',
+    companionSizeTitle: 'Размер питомца',
+    companionSizeSubtitle: 'Настройте размер компаньона на этом устройстве.',
+    companionSizeValue: ({ percent }: { percent: number }) => `${percent}%`,
+    deviceOverrideTitle: 'Использовать на этом устройстве',
+    deviceOverrideSubtitle: 'Локально переопределить настройку питомца из аккаунта.',
+    sourceTitle: 'Источник питомца',
+    builtInSubtitle: 'Встроено в Happier.',
+    builtInBlinkSubtitle: 'Превращает сигналы сессии в спокойные маленькие индикаторы.',
+    builtInFurySubtitle: 'Стресс-тестирует сложные потоки до попадания в продакшен.',
+    builtInMiloSubtitle: 'Держит UI в порядке и дремлет на упавших тестах.',
+    builtInOliSubtitle: 'Тихо отправляет фиксы, пока сборка не заметила.',
+    builtInTitiSubtitle: 'Разбирает релизные заметки с фокусом senior staff.',
+    localLibraryTitle: 'Это устройство',
+    localLibraryFooter: 'Локальные питомцы остаются на этом устройстве, пока вы не импортируете их в аккаунт.',
+    detectCodexPetsTitle: 'Обнаруживать питомцев Codex',
+    detectCodexPetsSubtitle: 'Искать совместимых питомцев в локальных Codex homes.',
+    detectedCodexPetsTileSubtitle: 'Найден в Codex и готов присоединиться к этому устройству.',
+    detectedCodexPetsEmptyTitle: 'Питомцы Codex не найдены',
+    detectedCodexPetsEmptySubtitle: 'Создайте питомца в Codex, затем запустите обнаружение снова.',
+    detectedCodexPetsErrorTitle: 'Не удалось обнаружить питомцев Codex',
+    detectedCodexPetsErrorSubtitle: 'Проверьте, что daemon подключен, и попробуйте снова.',
+    detectedCodexPetsNoTargetTitle: 'Нет доступного daemon',
+    detectedCodexPetsNoTargetSubtitle: 'Запустите Happier на этом компьютере, затем снова обнаружьте питомцев Codex.',
+    detectedCodexPetsDaemonMismatchTitle: 'Обновите daemon для обнаружения питомцев',
+    detectedCodexPetsDaemonMismatchSubtitle: 'Этот daemon еще не предоставляет обнаружение питомцев. Обновите stack и попробуйте снова.',
+    useOnThisDeviceTitle: 'Использовать на этом устройстве',
+    useOnThisDeviceSubtitle: 'Выберите локального питомца без изменения значения аккаунта по умолчанию.',
+    importedLocalSubtitle: 'Импортировано из Codex на этом устройстве.',
+    removeFromDeviceTitle: 'Удалить с устройства',
+    removeFromDeviceSubtitle: 'Удалить этого локального питомца с этого устройства.',
+    accountLibraryTitle: 'Библиотека аккаунта',
+    accountLibraryFooter: 'Синхронизированные питомцы доступны на ваших устройствах с входом в аккаунт.',
+    accountPetTileSubtitle: 'Синхронизировано из вашего аккаунта.',
+    importToAccountTitle: 'Импортировать в аккаунт',
+    importToAccountSubtitle: 'Загрузите совместимого локального питомца для использования на разных устройствах.',
+    desktopOverlayTitle: 'Оверлей рабочего стола',
+    desktopOverlayEnabledTitle: 'Включить оверлей рабочего стола',
+    desktopOverlayEnabledSubtitle: 'Показывать питомца в прозрачном окне-компаньоне рабочего стола.',
+    desktopOverlayDeviceOverrideTitle: 'Оверлей рабочего стола на этом устройстве',
+    desktopOverlayVisibilityModeTitle: 'Видимость оверлея на этом устройстве',
+    desktopOverlayVisibilityModeSubtitle: 'Выберите, когда локально показывать питомца на рабочем столе.',
+    desktopOverlayResetPositionTitle: 'Сбросить позицию',
+    desktopOverlayResetPositionSubtitle: 'Вернуть оверлей в правый нижний угол.',
+    overrideInherit: 'Значение аккаунта',
+    overrideEnabled: 'Включено',
+    overrideDisabled: 'Отключено',
+    visibilityModeInherit: 'Значение аккаунта',
+    visibilityModeAlwaysWhenEnabled: 'Всегда, когда включено',
+    visibilityModeAttentionOrActive: 'Внимание или активность',
+    visibilityModeAttentionOnly: 'Только внимание',
+  },
+
+
   settingsNotifications: {
     activitySurfaces: {
       title: 'Поверхности активности',
@@ -2792,6 +2868,45 @@ export const ru: TranslationStructure = {
         actionButtonsTitle: 'Кнопки действий',
         includeReadyTitle: 'Включать готовые сессии',
         includeThinkingTitle: 'Включать думающие сессии',
+        remoteUpdates: {
+          title: 'Удаленные обновления',
+          footer: 'Диагностика выбранного сервера для обновления Live Activities, когда приложение больше не на переднем плане.',
+          effectiveModeTitle: 'Фактическая доставка',
+          effectiveMode: {
+            hosted_happier_relay: 'Хостируемый ретранслятор',
+            direct_apns: 'Прямой APNs',
+            background_wake_best_effort: 'Фоновое пробуждение',
+            local_only: 'Только локальная среда',
+            disabled: 'Отключено',
+          },
+          details: {
+            available: 'Доступно',
+            unavailable: 'Недоступно',
+            blocked: 'Заблокировано',
+            missingCredentials: 'Нет учетных данных',
+            bestEffort: 'По возможности',
+            selected: 'Выбрано',
+            fallback: 'Запасной вариант',
+            preferred_unavailable: 'Только локально',
+            local_only: 'Только локально',
+            disabled: 'Отключено',
+            runtimeOnly: 'Только среда выполнения',
+          },
+          hostedRelayTitle: 'Хостируемый ретранслятор Happier',
+          hostedRelayAvailableSubtitle: 'Хостируемый ретранслятор настроен для выбранного сервера.',
+          hostedRelayDisabledSubtitle: 'Хостируемый ретранслятор отключен для этого self-hosted сервера.',
+          hostedRelayBlockedSubtitle: 'Идентификация ретранслятора и поддержка провайдера еще не реализованы.',
+          hostedRelayUnavailableSubtitle: 'Хостируемый ретранслятор недоступен с выбранного сервера.',
+          directApnsTitle: 'Прямой APNs',
+          directApnsConfiguredSubtitle: 'Учетные данные прямого APNs настроены без раскрытия секретов.',
+          directApnsMissingCredentialsSubtitle: 'Для прямого APNs не хватает серверной настройки учетных данных.',
+          directApnsUnavailableSubtitle: 'Прямой APNs недоступен для выбранного сервера.',
+          backgroundWakeTitle: 'Фоновое пробуждение',
+          backgroundWakeBestEffortSubtitle: 'Фоновое пробуждение может попытаться обновить данные, но iOS может отложить или отбросить его.',
+          backgroundWakeDisabledSubtitle: 'Запасной режим фонового пробуждения отключен на выбранном сервере.',
+          localOnlyTitle: 'Только локальные обновления',
+          localOnlyRuntimeSubtitle: 'Локальные обновления работают, пока может выполняться среда приложения; они не обещают обновления после завершения приложения.',
+        },
       },
       widgets: {
         title: 'Виджеты домашнего экрана',
@@ -2937,10 +3052,43 @@ export const ru: TranslationStructure = {
       userActionsTitle: "Запросы на действия",
       userActionsSubtitle: "Показывать локальное уведомление, когда сеансу требуется ваше участие",
     },
+    quietHours: {
+      title: "Тихие часы",
+      footer: "Тихие часы аккаунта по умолчанию действуют везде. Переопределения устройства влияют только на это устройство.",
+      accountOffTitle: "Без тихих часов аккаунта",
+      accountOffSubtitle: "Доставлять уведомления аккаунта в любое время",
+      accountNightlyTitle: "Каждую ночь с 22:00 до 7:00",
+      accountNightlySubtitle: "Отключать звук или подавлять каналы внимания ночью",
+      deviceAccountTitle: "Это устройство следует часам аккаунта",
+      deviceAccountSubtitle: "Использовать синхронизированную политику тихих часов аккаунта",
+      deviceDisabledTitle: "Отключить тихие часы на этом устройстве",
+      deviceDisabledSubtitle: "Разрешить доставку на этом устройстве даже во время тихих часов аккаунта",
+      deviceCustomNightlyTitle: "Это устройство использует ночные тихие часы",
+      deviceCustomNightlySubtitle: "Переопределить часы аккаунта интервалом с 22:00 до 7:00 на этом устройстве",
+    },
+    sounds: {
+      title: "Звуки",
+      footer: "Настройки звука аккаунта синхронизируются везде. Это устройство может отключать локальные звуки.",
+      accountHappierTitle: "Звуки Happier",
+      accountHappierSubtitle: "Использовать мягкий тон для обновлений и более яркий тон, когда требуется внимание",
+      accountDefaultTitle: "Системный звук",
+      accountDefaultSubtitle: "Использовать звук уведомлений платформы",
+      accountSilentTitle: "Без звука",
+      accountSilentSubtitle: "Доставлять уведомления без звука",
+      deviceEnabledTitle: "Воспроизводить звуки на этом устройстве",
+      deviceEnabledSubtitle: "Переопределение устройства для локальных звуков уведомлений",
+      previewTitle: "Предпросмотр звука",
+      previewSubtitle: "Отправить локальное тестовое уведомление на этом устройстве",
+      previewNotificationTitle: "Предпросмотр звука уведомления",
+      previewNotificationBody: "Так будет работать текущий звук уведомлений.",
+    },
     foregroundBehavior: {
       title: "Уведомления в приложении",
       footer:
         "Управляет уведомлениями, пока вы используете приложение. Уведомления для просматриваемой сессии всегда скрываются.",
+      account: "По умолчанию аккаунта",
+      accountDescription:
+        "Использовать поведение уведомлений в приложении из настроек аккаунта на этом устройстве",
       full: "Полные",
       fullDescription: "Показывать баннер и воспроизводить звук",
       silent: "Тихие",
@@ -2978,6 +3126,8 @@ export const ru: TranslationStructure = {
         allow: 'Разрешить',
         deny: 'Отклонить',
         answer: 'Ответить',
+        other: 'Другое',
+        alwaysAllowTool: ({ tool }: { tool: string }) => `Всегда разрешать ${tool}`,
       },
       activity: {
         defaultSessionTitle: "Сессия",
@@ -3403,9 +3553,6 @@ export const ru: TranslationStructure = {
       preview: "Вкладка предпросмотра",
       persistent: "Постоянные вкладки",
     },
-    editorFocusMode: "Режим фокуса редактора",
-    editorFocusModeDescription:
-      "Скрывать чат и боковую панель при просмотре файлов (web/tablet)",
     inlineToolCalls: "Встроенные вызовы инструментов",
     inlineToolCallsDescription:
       "Отображать вызовы инструментов прямо в сообщениях чата",
@@ -3584,6 +3731,8 @@ export const ru: TranslationStructure = {
     expMemorySearchSubtitle: "Включить экраны и настройки локального поиска по памяти",
     expSessionsDirect: "Прямые сессии",
     expSessionsDirectSubtitle: "Показывать и открывать в боковой панели прямые сессии провайдера",
+    expPetsCompanion: "Питомцы",
+    expPetsCompanionSubtitle: "Включить поверхности компаньона Blink и локальный выбор питомцев",
     expFriends: "Друзья",
     expFriendsSubtitle: "Включить функции друзей (вкладка «Входящие» и обмен сессиями)",
     webFeatures: "Веб-функции",
@@ -4043,6 +4192,7 @@ export const ru: TranslationStructure = {
     signedOut: "Не авторизован",
     authStatusUnknown: "Статус авторизации неизвестен",
     switchToServer: "Переключиться на этот Relay",
+    manageRelay: "Управлять Relay",
     active: "Активный",
     default: "По умолчанию",
     addServerTitle: "Добавить Relay",
@@ -4275,6 +4425,12 @@ export const ru: TranslationStructure = {
     lastUpdated: "Последнее обновление",
     sequence: "Последовательность",
     quickActions: "Быстрые действия",
+    newSessionSameSetup: "Новая сессия с той же настройкой",
+    newSessionSameSetupSubtitle: "Повторно использовать машину, папку, движок, модель и параметры этой сессии.",
+    markSessionRead: "Отметить как прочитанную",
+    markSessionReadSubtitle: "Снять непрочитанное внимание с этой сессии",
+    markSessionUnread: "Отметить как непрочитанную",
+    markSessionUnreadSubtitle: "Оставить эту сессию в списке непрочитанных",
     executionRunsSubtitle: "Посмотреть запуски этой сессии",
     automationsTitle: "Автоматизации",
     automationsSubtitle: "Управляйте запланированными сообщениями для этой сессии",
@@ -4347,6 +4503,8 @@ export const ru: TranslationStructure = {
     forkSession: "Создать ветку сессии",
     forkSessionSubtitle: "Создать новую сессию из последнего контекста",
     failedToRenameSession: "Не удалось переименовать сессию",
+    failedToMarkSessionRead: "Не удалось отметить сессию как прочитанную",
+    failedToMarkSessionUnread: "Не удалось отметить сессию как непрочитанную",
     sessionRenamed: "Сессия успешно переименована",
   },
 
@@ -4436,6 +4594,11 @@ export const ru: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Введите сообщение...",
+    rightPanel: {
+      tabs: {
+        git: "Git",
+      },
+    },
     toolCalls: "Вызовы инструментов",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
     forking: {
@@ -4572,8 +4735,8 @@ export const ru: TranslationStructure = {
           unpinTabA11y: "Открепить вкладку",
           pinnedTabA11y: "Закрепленная вкладка",
           closeTabA11y: "Закрыть вкладку",
-          enterFocusModeA11y: "Включить режим фокуса редактора",
-          exitFocusModeA11y: "Выключить режим фокуса редактора",
+          enterFocusModeA11y: 'Войти в режим фокуса панели',
+          exitFocusModeA11y: 'Выйти из режима фокуса панели',
       },
   
       actionsDraft: {
@@ -5459,6 +5622,8 @@ export const ru: TranslationStructure = {
       `Изменения, привязанные к сессии (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Изменения последнего хода (${count})`,
+    selectedForCommitChanges: ({ count }: { count: number }) =>
+      `Выбрано для коммита (${count})`,
     latestTurnDescription:
       'Изменения от провайдера из последнего завершённого хода.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
@@ -5526,6 +5691,13 @@ export const ru: TranslationStructure = {
           addCommentA11y: "Добавить комментарий",
           closeCommentA11y: "Закрыть комментарий",
           draftsChipLabel: ({ count }: { count: number }) => `Ревью (${count})`,
+          modalSubtitle: "Проверьте, какие комментарии будут отправлены со следующим сообщением.",
+          modalSummary: ({ included, count }: { included: number; count: number }) =>
+            `${included} из ${count} выбрано для следующего промпта`,
+          detachOrDiscardTitle: "Убрать комментарии ревью?",
+          detachOrDiscardBody:
+            "Открепление сохранит комментарии, но исключит их из следующего промпта. Удаление удалит их полностью.",
+          detachFromPrompt: "Открепить от промпта",
           errors: {
             empty: "Комментарий не может быть пустым",
             couldNotMapSelection: "Не удалось сопоставить выделение со строкой diff",
@@ -5559,6 +5731,17 @@ export const ru: TranslationStructure = {
 	          generateFailed: "Не удалось сгенерировать сообщение коммита",
 	          generatorDisabled: "Генератор сообщений коммита отключён",
 	        },
+      commitAdjacentPush: {
+        accessibilityLabel: ({ target }: { target: string }) => `Push в ${target}`,
+        confirm: {
+          title: "Отправить локальные коммиты?",
+          body: ({ target }: { target: string }) =>
+            `Отправить локальные коммиты в ${target}.`,
+          push: "Да",
+          notNow: "Нет",
+          pushAndDontAskAgain: "Push и больше не спрашивать",
+        },
+      },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Загрузка ${fileName}...`,
         binaryFile: "Бинарный файл",
@@ -5594,8 +5777,10 @@ export const ru: TranslationStructure = {
 	      uploadFolder: "Загрузить папку",
 	      allRepositoryFiles: "Все файлы репозитория",
       repositoryView: "Вид репозитория",
+      selectedForCommitView: "Выбрано для коммита",
       turnView: "Вид хода",
       sessionView: "Вид сессии",
+      view: "Вид",
       review: "Ревью",
       list: "Список",
       scm: "Git",
@@ -5680,6 +5865,51 @@ export const ru: TranslationStructure = {
         commitBlocked: "Коммит заблокирован",
         pullBlocked: "Pull заблокирован",
         pushBlocked: "Push заблокирован",
+      },
+      update: {
+        remotes: {
+          title: "Удаленные репозитории",
+          empty: "Для этого репозитория не настроены удаленные репозитории.",
+          addTitle: "Добавить удаленный репозиторий",
+          editTitle: ({ name }: { name: string }) => `Изменить ${name}`,
+          add: "Добавить удаленный",
+          remove: "Удалить",
+          nameLabel: "Имя удаленного",
+          fetchUrlLabel: "URL для fetch",
+          pushUrlLabel: "URL для push",
+          namePlaceholder: "origin",
+          fetchUrlPlaceholder: "URL для fetch",
+          pushUrlPlaceholder: "URL для push (необязательно)",
+          noFetchUrl: "Нет URL для fetch",
+          removeConfirmTitle: "Удалить удаленный репозиторий?",
+          removeConfirmBody: ({ name }: { name: string }) =>
+            `Удалить ${name} из этого репозитория?`,
+          errors: {
+            nameRequired: "Введите имя удаленного репозитория.",
+            fetchUrlRequired: "Введите URL для fetch.",
+            addFailed: "Не удалось добавить удаленный репозиторий.",
+            saveFailed: "Не удалось обновить удаленный репозиторий.",
+            removeFailed: "Не удалось удалить удаленный репозиторий.",
+          },
+        },
+        branchIntegration: {
+          title: "Merge и rebase",
+          sourceLabel: "Исходная ветка",
+          sourcePlaceholder: "Ветка или удаленная ссылка",
+          merge: "Слить",
+          rebase: "Перебазировать",
+          continue: "Продолжить",
+          abort: "Отменить",
+          operationInProgress: ({ operation, source }: { operation: string; source: string }) =>
+            `${operation} выполняется из ${source}`,
+          errors: {
+            sourceRequired: "Введите исходную ветку или ссылку.",
+            mergeFailed: "Не удалось выполнить merge ветки.",
+            rebaseFailed: "Не удалось выполнить rebase ветки.",
+            continueFailed: "Не удалось продолжить операцию.",
+            abortFailed: "Не удалось отменить операцию.",
+          },
+        },
       },
     },
   },
@@ -5805,13 +6035,9 @@ export const ru: TranslationStructure = {
                 title: "Запустить карты",
                 subtitle: "Видно на карточках выполнения.",
             },
-            voice_tool: {
-                title: "Голосовой инструмент",
-                subtitle: "Доступен голосовому агенту в качестве вызываемого инструмента.",
-            },
-            voice_action_block: {
-                title: "Блок голосовых действий",
-                subtitle: "Показано внутри блоков голосовых действий и возможностей.",
+            voice: {
+                title: "Голос",
+                subtitle: "Доступно голосовому агенту как вызываемая поверхность.",
             },
             session_agent: {
                 title: "Агент сессии",
@@ -5852,6 +6078,23 @@ settingsSession: {
             show: 'Показать',
         },
     },
+    sessionCreation: {
+        title: 'Быстрые действия новой сессии',
+        footer: 'Выберите, как быстрые действия проекта заполняют экран новой сессии.',
+        rememberLastProjectSelectionsTitle: 'Запоминать последние выборы сессии проекта',
+        rememberLastProjectSelectionsEnabledSubtitle: 'Быстрые действия проекта повторно используют машину, папку, движок, модель и параметры самой новой сессии.',
+        rememberLastProjectSelectionsDisabledSubtitle: 'Быстрые действия проекта только предварительно выбирают машину и папку проекта.',
+    },
+    mobileWorkspaceExperience: {
+        title: 'Мобильное рабочее пространство',
+        subtitle: 'Выберите макет мобильной сессии по умолчанию.',
+        options: {
+            cockpitTitle: 'Кокпит',
+            cockpitSubtitle: 'Используйте нижнюю панель вкладок для чата, файлов, Git, вкладок и терминала.',
+            classicTitle: 'Классический',
+            classicSubtitle: 'Используйте прежний одноэкранный мобильный макет.',
+        },
+    },
     input: {
         title: 'Ввод',
         footer: 'Настройте внешний вид и поведение панели ввода агента.',
@@ -5859,6 +6102,9 @@ settingsSession: {
     windows: {
         title: 'Windows',
         defaultModeTitle: 'Режим удалённой сессии Windows по умолчанию',
+        windowNameTitle: 'Имя окна Windows Terminal',
+        windowNamePlaceholder: 'happier',
+        windowNameHint: 'Сессии, открытые в Windows Terminal, используют это именованное окно, чтобы новые сессии могли появляться как вкладки.',
     },
     advanced: {
         title: 'Дополнительно',
@@ -6225,7 +6471,7 @@ settingsSession: {
     hiddenSubtitle: "Запускает сессию в фоне без открытия окна терминала.",
     windowsTerminal: "Windows Terminal",
     shortWindowsTerminal: "WT",
-    windowsTerminalSubtitle: "Открывает сессию в отдельном окне Windows Terminal.",
+    windowsTerminalSubtitle: "Открывает сессию как вкладку в общем окне Windows Terminal.",
     console: "Консоль",
     shortConsole: "Консоль",
     consoleSubtitle: "Открывает сессию в стандартном окне консоли Windows.",
@@ -7733,6 +7979,14 @@ settingsSession: {
     runtimeInventoryInstallations: 'Установки',
     runtimeInventoryServices: 'Сервисы',
     runtimeInventoryWarnings: 'Предупреждения',
+    doctorRepairSummary: 'Сводка исправления',
+    doctorRepairFindingsSummary: ({ total, warning, error, actionable }: {
+        total: number;
+        warning: number;
+        error: number;
+        actionable: number;
+    }) => `${total} находок • ${warning} предупреждений • ${error} ошибок • ${actionable} можно исправить`,
+    localRelays: 'Локальные Relay',
     runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
         cliVersion: string;
         daemonVersion: string;
@@ -7826,7 +8080,6 @@ settingsSession: {
     sessionRunningLocallyAndRemotely:
       "Эта сессия локально подключена в OpenCode и по-прежнему управляется из приложения.",
     switchingToRemote: "Переключение в удалённый режим…",
-    switchToLocal: "Переключиться на локальный",
     switchToRemote: "Переключиться на удалённый",
     detachLocalTerminal: "Отсоединить терминал",
     directSessionTakeoverAvailable:

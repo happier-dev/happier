@@ -2168,6 +2168,8 @@ export const it: TranslationStructure = {
       channelBridgesSubtitle: "Collega chat esterne (Telegram) alle sessioni",
       featuresTitle: "Funzionalità",
       featuresSubtitle: "Abilita o disabilita le funzionalità dell'app",
+      pets: "Mascotte",
+      petsSubtitle: "Scegli Blink e le mascotte compagne del dispositivo",
     developer: "Sviluppatore",
     developerTools: "Strumenti sviluppatore",
     about: "Informazioni",
@@ -2881,6 +2883,14 @@ export const it: TranslationStructure = {
     remoteConfirmation: {
       title: "Conferma remota",
       footer: "Controlla se le operazioni pull/push richiedono conferma.",
+      confirmBeforePulling: {
+        title: "Conferma prima del pull",
+        subtitle: "Chiede prima di scaricare e integrare modifiche remote.",
+      },
+      confirmBeforePushing: {
+        title: "Conferma prima del push",
+        subtitle: "Chiede prima di caricare commit locali sul remoto.",
+      },
       options: {
         always: {
           title: "Conferma sempre pull/push",
@@ -3116,6 +3126,70 @@ export const it: TranslationStructure = {
     },
   },
 
+
+
+  settingsPets: {
+    title: 'Mascotte',
+    previewTitle: 'Compagno Blink',
+    previewSubtitle: 'Un piccolo compagno per lo stato della sessione e le revisioni da seguire.',
+    disabledTitle: 'Le mascotte sono disattivate',
+    disabledSubtitle: 'Attiva l’esperimento Mascotte per usare Blink su questo dispositivo.',
+    accountTitle: 'Impostazione predefinita account',
+    enabledTitle: 'Attiva mascotte',
+    enabledSubtitle: 'Mostra le superfici di compagnia per questo account.',
+    companionSizeTitle: 'Dimensione mascotte',
+    companionSizeSubtitle: 'Regola la dimensione del compagno su questo dispositivo.',
+    companionSizeValue: ({ percent }: { percent: number }) => `${percent}%`,
+    deviceOverrideTitle: 'Usa su questo dispositivo',
+    deviceOverrideSubtitle: 'Sovrascrivi localmente l’impostazione mascotte dell’account.',
+    sourceTitle: 'Origine mascotte',
+    builtInSubtitle: 'Incluso in Happier.',
+    builtInBlinkSubtitle: 'Trasforma i segnali di sessione in piccole luci di stato tranquille.',
+    builtInFurySubtitle: 'Stressa i flussi difficili prima che arrivino in produzione.',
+    builtInMiloSubtitle: 'Tiene ordinata la UI e sonnecchia sui test falliti.',
+    builtInOliSubtitle: 'Spedisce fix furtivi prima che la build se ne accorga.',
+    builtInTitiSubtitle: 'Smista le note di release con attenzione da staff senior.',
+    localLibraryTitle: 'Questo dispositivo',
+    localLibraryFooter: 'Le mascotte locali restano su questo dispositivo salvo importazione nell’account.',
+    detectCodexPetsTitle: 'Rileva mascotte Codex',
+    detectCodexPetsSubtitle: 'Cerca mascotte compatibili nelle home Codex locali.',
+    detectedCodexPetsTileSubtitle: 'Trovata in Codex e pronta a unirsi a questo dispositivo.',
+    detectedCodexPetsEmptyTitle: 'Nessuna mascotte Codex trovata',
+    detectedCodexPetsEmptySubtitle: 'Creane una in Codex, quindi esegui di nuovo il rilevamento.',
+    detectedCodexPetsErrorTitle: 'Impossibile rilevare mascotte Codex',
+    detectedCodexPetsErrorSubtitle: 'Controlla che il daemon sia connesso e riprova.',
+    detectedCodexPetsNoTargetTitle: 'Nessun daemon disponibile',
+    detectedCodexPetsNoTargetSubtitle: 'Avvia Happier su questo computer, quindi rileva di nuovo le mascotte Codex.',
+    detectedCodexPetsDaemonMismatchTitle: 'Aggiorna il daemon per rilevare mascotte',
+    detectedCodexPetsDaemonMismatchSubtitle: 'Questo daemon non espone ancora il rilevamento mascotte. Aggiorna lo stack e riprova.',
+    useOnThisDeviceTitle: 'Usa su questo dispositivo',
+    useOnThisDeviceSubtitle: 'Seleziona una mascotte locale senza modificare il valore predefinito dell’account.',
+    importedLocalSubtitle: 'Importata da Codex su questo dispositivo.',
+    removeFromDeviceTitle: 'Rimuovi dal dispositivo',
+    removeFromDeviceSubtitle: 'Rimuovi questa mascotte locale da questo dispositivo.',
+    accountLibraryTitle: 'Libreria account',
+    accountLibraryFooter: 'Le mascotte sincronizzate sono disponibili sui dispositivi con accesso.',
+    accountPetTileSubtitle: 'Sincronizzata dal tuo account.',
+    importToAccountTitle: 'Importa nell’account',
+    importToAccountSubtitle: 'Carica una mascotte locale compatibile per usarla tra dispositivi.',
+    desktopOverlayTitle: 'Sovrapposizione desktop',
+    desktopOverlayEnabledTitle: 'Attiva sovrapposizione desktop',
+    desktopOverlayEnabledSubtitle: 'Mostra la mascotte in una finestra desktop trasparente.',
+    desktopOverlayDeviceOverrideTitle: 'Sovrapposizione desktop su questo dispositivo',
+    desktopOverlayVisibilityModeTitle: 'Visibilità della sovrapposizione su questo dispositivo',
+    desktopOverlayVisibilityModeSubtitle: 'Scegli quando la mascotte desktop appare localmente.',
+    desktopOverlayResetPositionTitle: 'Ripristina posizione',
+    desktopOverlayResetPositionSubtitle: 'Riporta la sovrapposizione nell’angolo in basso a destra.',
+    overrideInherit: 'Valore account',
+    overrideEnabled: 'Attivato',
+    overrideDisabled: 'Disattivato',
+    visibilityModeInherit: 'Valore account',
+    visibilityModeAlwaysWhenEnabled: 'Sempre quando attiva',
+    visibilityModeAttentionOrActive: 'Attenzione o attività',
+    visibilityModeAttentionOnly: 'Solo attenzione',
+  },
+
+
   settingsNotifications: {
     activitySurfaces: {
       title: "Superfici attività",
@@ -3158,6 +3232,45 @@ export const it: TranslationStructure = {
         actionButtonsTitle: "Pulsanti azione",
         includeReadyTitle: "Includi sessioni pronte",
         includeThinkingTitle: "Includi sessioni in pensiero",
+        remoteUpdates: {
+          title: "Aggiornamenti remoti",
+          footer: "Diagnostica del server selezionato per aggiornare le Live Activities quando l'app non è più in primo piano.",
+          effectiveModeTitle: "Consegna effettiva",
+          effectiveMode: {
+            hosted_happier_relay: "Relay ospitato",
+            direct_apns: "APNs diretto",
+            background_wake_best_effort: "Risveglio in background",
+            local_only: "Solo runtime locale",
+            disabled: "Disabilitato",
+          },
+          details: {
+            available: "Disponibile",
+            unavailable: "Non disponibile",
+            blocked: "Bloccato",
+            missingCredentials: "Credenziali mancanti",
+            bestEffort: "Massimo impegno",
+            selected: "Selezionato",
+            fallback: "Ripiego",
+            preferred_unavailable: "Solo locale",
+            local_only: "Solo locale",
+            disabled: "Disabilitato",
+            runtimeOnly: "Solo runtime",
+          },
+          hostedRelayTitle: "Relay Happier ospitato",
+          hostedRelayAvailableSubtitle: "Il relay ospitato è configurato per questo server selezionato.",
+          hostedRelayDisabledSubtitle: "Il relay ospitato è disabilitato per questo server self-hosted.",
+          hostedRelayBlockedSubtitle: "L'identità del relay ospitato e il supporto del provider non sono ancora implementati.",
+          hostedRelayUnavailableSubtitle: "Il relay ospitato non è disponibile da questo server selezionato.",
+          directApnsTitle: "APNs diretto",
+          directApnsConfiguredSubtitle: "Le credenziali APNs dirette sono configurate senza esporre materiale segreto.",
+          directApnsMissingCredentialsSubtitle: "Ad APNs diretto manca la configurazione server delle credenziali.",
+          directApnsUnavailableSubtitle: "APNs diretto non è disponibile per questo server selezionato.",
+          backgroundWakeTitle: "Risveglio in background",
+          backgroundWakeBestEffortSubtitle: "Il risveglio in background può provare ad aggiornare, ma iOS può rinviarlo o scartarlo.",
+          backgroundWakeDisabledSubtitle: "Il fallback di risveglio in background è disabilitato su questo server selezionato.",
+          localOnlyTitle: "Aggiornamenti solo locali",
+          localOnlyRuntimeSubtitle: "Gli aggiornamenti solo locali funzionano finché il runtime dell'app può essere eseguito; non promettono aggiornamenti con app chiusa.",
+        },
       },
       widgets: {
         title: "Widget della schermata Home",
@@ -3202,6 +3315,36 @@ export const it: TranslationStructure = {
       permissionRequestsSubtitle: "Mostra una notifica locale quando una sessione richiede approvazione",
       userActionsTitle: "Richieste di azione",
       userActionsSubtitle: "Mostra una notifica locale quando una sessione richiede il tuo input",
+    },
+    quietHours: {
+      title: "Ore silenziose",
+      footer: "Le ore silenziose dell'account si applicano ovunque per impostazione predefinita. Le modifiche del dispositivo valgono solo per questo dispositivo.",
+      accountOffTitle: "Nessuna ora silenziosa dell'account",
+      accountOffSubtitle: "Consegna le notifiche dell'account in qualsiasi momento",
+      accountNightlyTitle: "Ogni notte, dalle 22:00 alle 7:00",
+      accountNightlySubtitle: "Silenzia o sopprimi i canali di attenzione durante la notte",
+      deviceAccountTitle: "Questo dispositivo segue gli orari dell'account",
+      deviceAccountSubtitle: "Usa la policy sincronizzata delle ore silenziose dell'account",
+      deviceDisabledTitle: "Disabilita le ore silenziose su questo dispositivo",
+      deviceDisabledSubtitle: "Consenti a questo dispositivo di consegnare anche durante le ore silenziose dell'account",
+      deviceCustomNightlyTitle: "Questo dispositivo usa ore silenziose notturne",
+      deviceCustomNightlySubtitle: "Sostituisci gli orari dell'account con 22:00-7:00 su questo dispositivo",
+    },
+    sounds: {
+      title: "Suoni",
+      footer: "Le impostazioni audio predefinite dell'account si sincronizzano ovunque. Questo dispositivo può silenziare i suoni locali.",
+      accountHappierTitle: "Suoni di Happier",
+      accountHappierSubtitle: "Usa un tono più morbido per gli aggiornamenti e uno più chiaro quando serve attenzione",
+      accountDefaultTitle: "Predefinito di sistema",
+      accountDefaultSubtitle: "Usa il suono di notifica della piattaforma",
+      accountSilentTitle: "Silenzioso",
+      accountSilentSubtitle: "Consegna notifiche senza suono",
+      deviceEnabledTitle: "Riproduci suoni su questo dispositivo",
+      deviceEnabledSubtitle: "Sostituzione del dispositivo per i suoni delle notifiche locali",
+      previewTitle: "Anteprima suono",
+      previewSubtitle: "Invia una notifica locale di anteprima su questo dispositivo",
+      previewNotificationTitle: "Anteprima del suono di notifica",
+      previewNotificationBody: "Ecco come si comporterà il suono di notifica attuale.",
     },
     push: {
       title: "Notifiche push",
@@ -3309,6 +3452,9 @@ export const it: TranslationStructure = {
       title: "Notifiche in-app",
       footer:
         "Controlla le notifiche mentre usi l'app. Le notifiche per la sessione che stai visualizzando vengono sempre silenziate.",
+      account: "Predefinito account",
+      accountDescription:
+        "Usa il comportamento delle notifiche in-app dell'account su questo dispositivo",
       full: "Complete",
       fullDescription: "Mostra banner e riproduci suono",
       silent: "Silenziose",
@@ -3346,6 +3492,8 @@ export const it: TranslationStructure = {
         allow: 'Consenti',
         deny: 'Nega',
         answer: 'Rispondi',
+        other: 'Altro',
+        alwaysAllowTool: ({ tool }: { tool: string }) => `Consenti sempre ${tool}`,
       },
       activity: {
         defaultSessionTitle: "Sessione",
@@ -3765,9 +3913,6 @@ export const it: TranslationStructure = {
       preview: "Scheda anteprima",
       persistent: "Schede persistenti",
     },
-    editorFocusMode: "Modalità focus editor",
-    editorFocusModeDescription:
-      "Nasconde conversazione e barra laterale mentre rivedi i file (web/tablet)",
     inlineToolCalls: "Chiamate strumenti inline",
     inlineToolCallsDescription:
       "Mostra le chiamate agli strumenti direttamente nei messaggi di chat",
@@ -3952,6 +4097,8 @@ export const it: TranslationStructure = {
         "Abilita schermate e impostazioni di ricerca memoria locale",
     expSessionsDirect: "Sessioni dirette",
     expSessionsDirectSubtitle: "Mostra e apri nella barra laterale le sessioni dirette basate sul provider",
+    expPetsCompanion: "Mascotte",
+    expPetsCompanionSubtitle: "Attiva le superfici compagno di Blink e la selezione locale delle mascotte",
     expFriends: "Amici",
     expFriendsSubtitle: "Abilita le funzioni Amici (scheda Posta in arrivo e condivisione sessioni)",
     webFeatures: "Funzionalità web",
@@ -4389,6 +4536,11 @@ export const it: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Scrivi un messaggio ...",
+    rightPanel: {
+      tabs: {
+        git: "Git",
+      },
+    },
     toolCalls: "Chiamate strumento",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} in più…`,
     forking: {
@@ -4525,8 +4677,8 @@ export const it: TranslationStructure = {
               unpinTabA11y: "Rimuovi fissaggio scheda",
               pinnedTabA11y: "Scheda fissata",
               closeTabA11y: "Chiudi scheda",
-              enterFocusModeA11y: "Entra in modalità focus editor",
-              exitFocusModeA11y: "Esci dalla modalità focus editor",
+              enterFocusModeA11y: 'Entra in modalità focus pannello',
+              exitFocusModeA11y: 'Esci dalla modalità focus pannello',
         },
   
       actionsDraft: {
@@ -4885,6 +5037,7 @@ export const it: TranslationStructure = {
     signedOut: "Disconnesso",
     authStatusUnknown: "Stato di autenticazione sconosciuto",
     switchToServer: "Passa a questo Relay",
+    manageRelay: "Gestisci Relay",
     active: "Attivo",
     default: "Predefinito",
     addServerTitle: "Aggiungi Relay",
@@ -5120,6 +5273,12 @@ export const it: TranslationStructure = {
     lastUpdated: "Ultimo aggiornamento",
     sequence: "Sequenza",
     quickActions: "Azioni rapide",
+    newSessionSameSetup: "Nuova sessione con la stessa configurazione",
+    newSessionSameSetupSubtitle: "Riutilizza macchina, cartella, motore, modello e opzioni di questa sessione.",
+    markSessionRead: "Segna come letta",
+    markSessionReadSubtitle: "Rimuovi l'attenzione non letta per questa sessione",
+    markSessionUnread: "Segna come non letta",
+    markSessionUnreadSubtitle: "Mantieni questa sessione nell'elenco dei non letti",
     executionRunsSubtitle: "Vedi le esecuzioni di questa sessione",
     automationsTitle: "Automazioni",
     automationsSubtitle: "Gestisci i messaggi programmati per questa sessione",
@@ -5190,6 +5349,8 @@ export const it: TranslationStructure = {
     forkSession: "Deriva sessione",
     forkSessionSubtitle: "Crea una nuova sessione dal contesto più recente",
     failedToRenameSession: "Impossibile rinominare la sessione",
+    failedToMarkSessionRead: "Impossibile segnare la sessione come letta",
+    failedToMarkSessionUnread: "Impossibile segnare la sessione come non letta",
     sessionRenamed: "Sessione rinominata con successo",
   },
 
@@ -5805,6 +5966,8 @@ export const it: TranslationStructure = {
       `Modifiche attribuite alla sessione (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Modifiche dell'ultimo turno (${count})`,
+    selectedForCommitChanges: ({ count }: { count: number }) =>
+      `Selezionati per il commit (${count})`,
     latestTurnDescription:
       'Modifiche supportate dal provider per il turno completato più recente.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
@@ -5873,6 +6036,13 @@ export const it: TranslationStructure = {
           addCommentA11y: "Aggiungi commento",
           closeCommentA11y: "Chiudi commento",
           draftsChipLabel: ({ count }: { count: number }) => `Revisione (${count})`,
+          modalSubtitle: "Rivedi quali commenti verranno inviati con il prossimo messaggio.",
+          modalSummary: ({ included, count }: { included: number; count: number }) =>
+            `${included} di ${count} selezionati per il prossimo prompt`,
+          detachOrDiscardTitle: "Rimuovere i commenti di revisione?",
+          detachOrDiscardBody:
+            "Scollega li mantiene salvati ma li esclude dal prossimo prompt. Scarta li elimina.",
+          detachFromPrompt: "Scollega dal prompt",
             errors: {
               empty: "Il commento non può essere vuoto",
               couldNotMapSelection: "Impossibile associare la selezione a una riga del diff",
@@ -5906,6 +6076,17 @@ export const it: TranslationStructure = {
 	          generateFailed: "Impossibile generare il messaggio di commit",
 	          generatorDisabled: "Il generatore di messaggi di commit è disabilitato",
 	        },
+      commitAdjacentPush: {
+        accessibilityLabel: ({ target }: { target: string }) => `Push verso ${target}`,
+        confirm: {
+          title: "Inviare i commit locali?",
+          body: ({ target }: { target: string }) =>
+            `Invia i tuoi commit locali a ${target}.`,
+          push: "Sì",
+          notNow: "Non ora",
+          pushAndDontAskAgain: "Push e non chiedere più",
+        },
+      },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Caricamento ${fileName}...`,
         binaryFile: "File binario",
@@ -5941,8 +6122,10 @@ export const it: TranslationStructure = {
       uploadFolder: "Carica cartella",
       allRepositoryFiles: "Tutti i file del repository",
       repositoryView: "Vista repository",
+      selectedForCommitView: "Selezionati per il commit",
       turnView: "Vista turno",
       sessionView: "Vista sessione",
+      view: "Vista",
       review: "Revisione",
       list: "Elenco",
       scm: "Git",
@@ -6027,6 +6210,51 @@ export const it: TranslationStructure = {
         commitBlocked: "Commit bloccato",
         pullBlocked: "Pull bloccato",
         pushBlocked: "Push bloccato",
+      },
+      update: {
+        remotes: {
+          title: "Remoti",
+          empty: "Nessun remoto configurato per questo repository.",
+          addTitle: "Aggiungi remoto",
+          editTitle: ({ name }: { name: string }) => `Modifica ${name}`,
+          add: "Aggiungi remoto",
+          remove: "Rimuovi",
+          nameLabel: "Nome remoto",
+          fetchUrlLabel: "URL di fetch",
+          pushUrlLabel: "URL di push",
+          namePlaceholder: "origin",
+          fetchUrlPlaceholder: "URL di fetch",
+          pushUrlPlaceholder: "URL di push (opzionale)",
+          noFetchUrl: "Nessun URL di fetch",
+          removeConfirmTitle: "Rimuovere il remoto?",
+          removeConfirmBody: ({ name }: { name: string }) =>
+            `Rimuovere ${name} da questo repository?`,
+          errors: {
+            nameRequired: "Inserisci un nome remoto.",
+            fetchUrlRequired: "Inserisci un URL di fetch.",
+            addFailed: "Impossibile aggiungere il remoto.",
+            saveFailed: "Impossibile aggiornare il remoto.",
+            removeFailed: "Impossibile rimuovere il remoto.",
+          },
+        },
+        branchIntegration: {
+          title: "Merge e rebase",
+          sourceLabel: "Branch sorgente",
+          sourcePlaceholder: "Branch o riferimento remoto",
+          merge: "Unisci",
+          rebase: "Ribasa",
+          continue: "Continua",
+          abort: "Interrompi",
+          operationInProgress: ({ operation, source }: { operation: string; source: string }) =>
+            `${operation} in corso da ${source}`,
+          errors: {
+            sourceRequired: "Inserisci un branch o riferimento sorgente.",
+            mergeFailed: "Impossibile eseguire il merge del branch.",
+            rebaseFailed: "Impossibile eseguire il rebase del branch.",
+            continueFailed: "Impossibile continuare l’operazione.",
+            abortFailed: "Impossibile interrompere l’operazione.",
+          },
+        },
       },
     },
   },
@@ -6152,13 +6380,9 @@ export const it: TranslationStructure = {
                 title: "Schede esecuzione",
                 subtitle: "Visibile sulle schede delle execution run.",
             },
-            voice_tool: {
-                title: "Strumento vocale",
-                subtitle: "Disponibile all’agente vocale come strumento invocabile.",
-            },
-            voice_action_block: {
-                title: "Blocco azione vocale",
-                subtitle: "Mostrato dentro ai blocchi e alle affordance delle azioni vocali.",
+            voice: {
+                title: "Voce",
+                subtitle: "Disponibile all’agente vocale come superficie richiamabile.",
             },
             session_agent: {
                 title: "Agente di sessione",
@@ -6199,6 +6423,23 @@ settingsSession: {
               show: 'Mostra',
           },
       },
+      sessionCreation: {
+          title: 'Scorciatoie nuova sessione',
+          footer: 'Scegli come le scorciatoie di progetto precompilano la schermata della nuova sessione.',
+          rememberLastProjectSelectionsTitle: 'Ricorda le ultime selezioni di sessione del progetto',
+          rememberLastProjectSelectionsEnabledSubtitle: 'Le scorciatoie di progetto riutilizzano macchina, cartella, motore, modello e opzioni della sessione più recente.',
+          rememberLastProjectSelectionsDisabledSubtitle: 'Le scorciatoie di progetto preselezionano solo macchina e cartella del progetto.',
+      },
+      mobileWorkspaceExperience: {
+          title: 'Area di lavoro mobile',
+          subtitle: 'Scegli il layout predefinito della sessione mobile.',
+          options: {
+              cockpitTitle: 'Cruscotto',
+              cockpitSubtitle: 'Usa la barra delle schede in basso per chat, file, Git, schede e terminale.',
+              classicTitle: 'Classico',
+              classicSubtitle: 'Usa il layout mobile precedente a schermata singola.',
+          },
+      },
       input: {
           title: 'Immissione',
           footer: "Configura aspetto e comportamento della barra di input dell'agente.",
@@ -6206,6 +6447,9 @@ settingsSession: {
       windows: {
           title: 'Windows',
           defaultModeTitle: 'Modalità remota predefinita di Windows',
+          windowNameTitle: 'Nome finestra di Windows Terminal',
+          windowNamePlaceholder: 'happier',
+          windowNameHint: 'Le sessioni aperte in Windows Terminal usano questa finestra con nome, così le nuove sessioni possono apparire come schede.',
       },
       advanced: {
           title: 'Avanzate',
@@ -6571,7 +6815,7 @@ settingsSession: {
     hiddenSubtitle: "Avvia la sessione in background senza aprire una finestra del terminale.",
     windowsTerminal: "Windows Terminal",
     shortWindowsTerminal: "WT",
-    windowsTerminalSubtitle: "Apri la sessione in una finestra dedicata di Windows Terminal.",
+    windowsTerminalSubtitle: "Apri la sessione come scheda nella finestra condivisa di Windows Terminal.",
     console: "Console",
     shortConsole: "Console",
     consoleSubtitle: "Apri la sessione in una finestra standard della console di Windows.",
@@ -8170,6 +8414,14 @@ settingsSession: {
     runtimeInventoryInstallations: 'Installazioni',
     runtimeInventoryServices: 'Servizi',
     runtimeInventoryWarnings: 'Avvisi',
+    doctorRepairSummary: 'Riepilogo riparazione',
+    doctorRepairFindingsSummary: ({ total, warning, error, actionable }: {
+        total: number;
+        warning: number;
+        error: number;
+        actionable: number;
+    }) => `${total} risultati • ${warning} avvisi • ${error} errori • ${actionable} azionabili`,
+    localRelays: 'Relay locali',
     runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
         cliVersion: string;
         daemonVersion: string;
@@ -8263,7 +8515,6 @@ settingsSession: {
     sessionRunningLocallyAndRemotely:
       "Questa sessione è collegata localmente in OpenCode ed è ancora controllabile dall’app.",
     switchingToRemote: "Passaggio alla modalità remota…",
-    switchToLocal: "Passa a locale",
     switchToRemote: "Passa a remoto",
     detachLocalTerminal: "Scollega terminale",
     directSessionTakeoverAvailable:

@@ -142,7 +142,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
           sessionId: props.sessionId,
           ...(props.draft.input ?? {}),
         },
-        { defaultSessionId: props.sessionId, surface: 'ui_button', placement: 'session_action_menu' } as any,
+        { defaultSessionId: props.sessionId, surface: 'ui', placement: 'session_action_menu' } as any,
       );
       const errorMessage = resolveActionExecutionFailureMessage(res, 'Failed to start');
       if (errorMessage) {

@@ -7,7 +7,7 @@
  * provider-specific truth in `registryCore/registryUi/registryUiBehavior`.
  *
  * In the fully packetized state, this file is emitted by:
- * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`
+ * - `scripts/migrations/plugins/generateBundledPluginEntries.ts`
  *
  * Until that generator lane lands in this checkout, this file is maintained in-place so Lane D can
  * enforce the *consumption* contract without widening scope beyond `apps/ui/sources/agents/registry/**`.
@@ -42,10 +42,10 @@ import { PI_UI } from '@/agents/providers/pi/ui';
 import { OH_MY_PI_UI } from '@/agents/providers/ohMyPi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
-export const BUNDLED_FIRST_PARTY_EXTENSION_PACKAGE_NAMES: readonly string[] = Object.freeze([
-  "@happier-dev/extensions-claude",
-  "@happier-dev/extensions-codex",
-  "@happier-dev/extensions-opencode"
+export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze([
+  "@happier-dev/plugins-claude",
+  "@happier-dev/plugins-codex",
+  "@happier-dev/plugins-opencode"
 ]);
 
 export const BUNDLED_CANONICAL_AGENTS_CORE: Readonly<Record<CanonicalAgentId, AgentCoreConfig>> = Object.freeze({

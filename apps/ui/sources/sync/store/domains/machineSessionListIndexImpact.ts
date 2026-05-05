@@ -5,6 +5,7 @@ import {
     getMachineDisplaySubtitle,
     type MachineDisplayRenderable,
 } from '../../domains/machines/machineDisplayRenderable';
+import { normalizeMachineHost } from '@happier-dev/protocol';
 
 export type MachineSessionListIndexImpact = Readonly<{
     needsSessionListIndexRebuild: boolean;
@@ -51,7 +52,7 @@ export function resolveMachineSessionListIndexImpact(params: Readonly<{
                 : 'unknown';
         const nextGroupId = (() => {
             const machine = parts.machineId ? params.nextMachineDisplays[parts.machineId] : undefined;
-            const host = parts.host ?? machine?.metadata?.host ?? null;
+            const host = parts.host ?? (normalizeMachineHost(machine?.metadata?.host) || null);
             return host ? `host:${host}` : parts.machineId ? `id:${parts.machineId}` : 'unknown';
         })();
         referencedGroupIds.add(previousGroupId);

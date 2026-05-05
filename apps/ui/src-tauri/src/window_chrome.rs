@@ -208,7 +208,10 @@ fn emit_desktop_window_state<R: Runtime>(window: &WebviewWindow<R>) {
 
     let _ = window.emit(
         DESKTOP_WINDOW_STATE_EVENT,
-        resolve_desktop_window_state_payload_for_policy(policy, window.is_maximized().unwrap_or(false)),
+        resolve_desktop_window_state_payload_for_policy(
+            policy,
+            window.is_maximized().unwrap_or(false),
+        ),
     );
 }
 
@@ -297,7 +300,9 @@ pub async fn desktop_close_window(window: Window) -> Result<bool, String> {
 
 #[cfg(desktop)]
 #[tauri::command]
-pub async fn desktop_show_main_window<R: Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String> {
+pub async fn desktop_show_main_window<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<bool, String> {
     let has_main_window = app.get_webview_window(MAIN_WINDOW_LABEL).is_some();
     show_main_window(&app).map_err(|error| error.to_string())?;
     Ok(has_main_window)

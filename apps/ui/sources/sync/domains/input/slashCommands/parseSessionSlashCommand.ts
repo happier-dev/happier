@@ -6,7 +6,7 @@ export type ParsedSessionSlashCommand =
 const SLASH_TOKEN_TO_ACTION_ID: Readonly<Record<string, ActionId>> = (() => {
     const entries: Array<readonly [string, ActionId]> = [];
     for (const spec of listActionSpecs() as any[]) {
-        if (spec?.surfaces?.ui_slash_command !== true) continue;
+        if (spec?.surfaces?.ui !== true) continue;
         const actionId = String(spec?.id ?? '').trim();
         if (!actionId) continue;
         const tokens = Array.isArray(spec?.slash?.tokens) ? spec.slash.tokens : [];

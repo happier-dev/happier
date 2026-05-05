@@ -92,6 +92,9 @@ export function buildActivitySurfaceViewModel(params: Readonly<{
     );
 
     return {
+        serverId: params.candidate.serverId ?? params.candidate.session.serverId ?? null,
+        serverUrl: params.candidate.serverUrl ?? null,
+        serverName: params.candidate.serverName ?? null,
         sessionId: params.candidate.sessionId,
         title: resolveViewModelTitle({
             candidate: params.candidate,
@@ -113,9 +116,12 @@ export function buildActivitySurfaceViewModel(params: Readonly<{
             privacyMode: params.policy.privacyMode,
         }),
         attentionState: params.candidate.attentionState,
-        route: createActivitySurfaceSessionRoute(params.candidate.sessionId),
-        target: createActivitySurfaceSessionTarget(params.candidate.sessionId),
-        defaultTarget: createActivitySurfaceSessionTarget(params.candidate.sessionId),
+        route: params.candidate.route ?? createActivitySurfaceSessionRoute(params.candidate.sessionId),
+        target: params.candidate.target ?? createActivitySurfaceSessionTarget(params.candidate.sessionId),
+        defaultTarget: params.candidate.target ?? createActivitySurfaceSessionTarget(params.candidate.sessionId),
+        activityName: params.candidate.activityName ?? null,
+        activityInstanceKey: params.candidate.activityInstanceKey ?? null,
+        canExecuteDirectActions: params.candidate.directActionCapability?.canExecute ?? false,
         updatedAt: params.candidate.session.updatedAt,
         isPrimary: params.isPrimary,
     };

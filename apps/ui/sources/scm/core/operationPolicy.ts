@@ -18,7 +18,11 @@ export type ScmOperationIntent =
     | 'discard'
     | 'stage'
     | 'unstage'
-    | 'line_selection';
+    | 'line_selection'
+    | 'branch_merge'
+    | 'branch_rebase'
+    | 'branch_operation_continue'
+    | 'branch_operation_abort';
 
 export type ScmOperationBlockReason =
     | 'write_disabled'
@@ -30,7 +34,11 @@ export type ScmOperationBlockReason =
     | 'clean_worktree_required'
     | 'upstream_required'
     | 'detached_head'
-    | 'branch_behind_remote';
+    | 'branch_behind_remote'
+    | 'source_ref_required'
+    | 'source_ref_current_branch'
+    | 'branch_operation_in_progress'
+    | 'branch_operation_not_in_progress';
 
 export type ScmOperationPreflightResult =
     | { allowed: true }
@@ -43,6 +51,8 @@ export function evaluateScmOperationPreflight(input: {
     snapshot: ScmWorkingSnapshot | null | undefined;
     commitStrategy?: ScmCommitStrategy;
     commitSelectionPaths?: string[] | null;
+    sourceRef?: string | null;
+    operation?: 'merge' | 'rebase' | null;
 }): ScmOperationPreflightResult {
     const {
         intent,
@@ -51,6 +61,8 @@ export function evaluateScmOperationPreflight(input: {
         snapshot,
         commitStrategy = 'git_staging',
         commitSelectionPaths,
+        sourceRef,
+        operation,
     } = input;
 
     if (!sessionPath) {
@@ -129,6 +141,38 @@ export function evaluateScmOperationPreflight(input: {
         }
     }
 
+    if (intent === 'branch_merge' || intent === 'branch_rebase') {
+        const normalizedSourceRef = sourceRef?.trim() ?? '';
+        if (!normalizedSourceRef) {
+            return blocked('source_ref_required', 'Select a source branch before continuing.');
+        }
+        if (snapshot.branch.detached || !snapshot.branch.head) {
+            return blocked('detached_head', 'Operation is unavailable while HEAD is detached.');
+        }
+        if (isCurrentBranchSource(snapshot.branch.head, normalizedSourceRef)) {
+            return blocked('source_ref_current_branch', 'Choose a different branch before continuing.');
+        }
+        if (snapshot.operationState) {
+            return blocked('branch_operation_in_progress', 'Finish the current merge or rebase before starting another update.');
+        }
+        if (!isCleanWorktree(snapshot)) {
+            return blocked('clean_worktree_required', 'Operation requires a clean working tree.');
+        }
+    }
+
+    if (intent === 'branch_operation_continue' || intent === 'branch_operation_abort') {
+        const operationState = snapshot.operationState ?? null;
+        if (!operationState || (operation && operationState.kind !== operation)) {
+            return blocked('branch_operation_not_in_progress', 'No matching merge or rebase is in progress.');
+        }
+        if (intent === 'branch_operation_continue' && operationState.canContinue !== true) {
+            return blocked('branch_operation_not_in_progress', 'This operation cannot be continued yet.');
+        }
+        if (intent === 'branch_operation_abort' && operationState.canAbort !== true) {
+            return blocked('branch_operation_not_in_progress', 'This operation cannot be aborted.');
+        }
+    }
+
     if ((intent === 'revert') && snapshot.branch.detached) {
         return blocked('detached_head', 'Operation is unavailable while HEAD is detached.');
     }
@@ -137,7 +181,12 @@ export function evaluateScmOperationPreflight(input: {
 }
 
 function requiresConflictFree(intent: ScmOperationIntent): boolean {
-    return intent === 'commit' || intent === 'pull' || intent === 'push' || intent === 'revert';
+    return intent === 'commit'
+        || intent === 'pull'
+        || intent === 'push'
+        || intent === 'revert'
+        || intent === 'branch_merge'
+        || intent === 'branch_rebase';
 }
 
 function isCleanWorktree(snapshot: ScmWorkingSnapshot): boolean {
@@ -204,9 +253,24 @@ function supportsOperation(snapshot: ScmWorkingSnapshot, intent: ScmOperationInt
             return capabilities.writeExclude;
         case 'line_selection':
             return capabilities.writeCommitLineSelection || capabilities.writeInclude || capabilities.writeExclude;
+        case 'branch_merge':
+            return capabilities.writeBranchMerge === true;
+        case 'branch_rebase':
+            return capabilities.writeBranchRebase === true;
+        case 'branch_operation_continue':
+        case 'branch_operation_abort':
+            return capabilities.writeBranchOperationControl === true;
         default:
             return true;
     }
+}
+
+function isCurrentBranchSource(currentBranch: string, sourceRef: string): boolean {
+    return (
+        sourceRef === currentBranch
+        || sourceRef === `refs/heads/${currentBranch}`
+        || sourceRef === `heads/${currentBranch}`
+    );
 }
 
 function blocked(reason: ScmOperationBlockReason, message: string): ScmOperationPreflightResult {

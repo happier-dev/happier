@@ -236,6 +236,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         selectedProfileId: props.profiles.selectedProfileId,
         targetServerId: props.machine.serverId,
         selectedMachineId: props.machine.selectedMachine?.id ?? null,
+        selectedMachineHomeDir: props.machine.selectedMachine?.metadata?.homeDir ?? null,
         selectedPath: props.machine.selectedPath,
         baseActionChips: props.footer.agentInputExtraActionChips,
     });

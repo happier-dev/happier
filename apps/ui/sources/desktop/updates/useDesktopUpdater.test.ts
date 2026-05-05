@@ -7,6 +7,8 @@ import { useDesktopUpdater } from './useDesktopUpdater';
 
 type DesktopStorage = ReturnType<typeof createLocalStorage>;
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => unknown | Promise<unknown>;
+const UPDATE_CHECKS_ENV = 'EXPO_PUBLIC_HAPPIER_DESKTOP_UPDATES_ENABLED';
+const originalDevFlag = (globalThis as { __DEV__?: boolean }).__DEV__;
 
 function createLocalStorage() {
     const map = new Map<string, string>();
@@ -25,6 +27,12 @@ function clearDesktopGlobals() {
     delete (globalThis as any).__TAURI_INTERNALS__;
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete (globalThis as any).localStorage;
+    if (originalDevFlag === undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete (globalThis as { __DEV__?: boolean }).__DEV__;
+    } else {
+        (globalThis as { __DEV__?: boolean }).__DEV__ = originalDevFlag;
+    }
 }
 
 function setDesktopGlobals(options: {
@@ -167,8 +175,8 @@ describe('useDesktopUpdater (hook)', () => {
         expect(latest?.availableVersion).toBe(null);
     });
 
-    it('does not check for updates when running in desktop dev mode (avoids prompting for self-built dev runs)', async () => {
-        vi.stubEnv('NODE_ENV', 'development');
+    it('does not check for updates when running from a source development Tauri bundle', async () => {
+        (globalThis as { __DEV__?: boolean }).__DEV__ = true;
 
         const invokeMock = vi.fn(async (cmd: string) => {
             if (cmd === 'desktop_fetch_update') {
@@ -193,5 +201,61 @@ describe('useDesktopUpdater (hook)', () => {
         expect(invokeMock).toHaveBeenCalledTimes(0);
         expect(latest?.status).toBe('idle');
         expect(latest?.availableVersion).toBe(null);
+    });
+
+    it('continues checking updates for installed desktop dev-channel release bundles', async () => {
+        vi.stubEnv('NODE_ENV', 'development');
+        (globalThis as { __DEV__?: boolean }).__DEV__ = false;
+        const invokeMock = vi.fn(async (cmd: string) => {
+            if (cmd === 'desktop_fetch_update') {
+                return {
+                    version: '9.9.9',
+                    currentVersion: '9.9.8',
+                    notes: null,
+                    pubDate: null,
+                };
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+
+        const storage = createLocalStorage();
+        const hook = await renderDesktopUpdaterHook({
+            storage,
+            invokeMock,
+            isDesktop: true,
+        });
+
+        const latest = hook.getCurrent();
+        expect(invokeMock).toHaveBeenCalledWith('desktop_fetch_update', undefined);
+        expect(latest?.status).toBe('available');
+        expect(latest?.availableVersion).toBe('9.9.9');
+    });
+
+    it('allows update checks in source development bundles when explicitly enabled', async () => {
+        vi.stubEnv(UPDATE_CHECKS_ENV, '1');
+        (globalThis as { __DEV__?: boolean }).__DEV__ = true;
+        const invokeMock = vi.fn(async (cmd: string) => {
+            if (cmd === 'desktop_fetch_update') {
+                return {
+                    version: '9.9.9',
+                    currentVersion: '9.9.8',
+                    notes: null,
+                    pubDate: null,
+                };
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+
+        const storage = createLocalStorage();
+        const hook = await renderDesktopUpdaterHook({
+            storage,
+            invokeMock,
+            isDesktop: true,
+        });
+
+        const latest = hook.getCurrent();
+        expect(invokeMock).toHaveBeenCalledWith('desktop_fetch_update', undefined);
+        expect(latest?.status).toBe('available');
+        expect(latest?.availableVersion).toBe('9.9.9');
     });
 });

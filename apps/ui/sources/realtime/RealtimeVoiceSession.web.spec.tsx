@@ -16,11 +16,27 @@ type ConfigureModulesOptions = Readonly<{
   fallbackConversationId?: string | null;
 }>;
 
-const conversationStartSession = vi.fn(async () => 'conv_1');
+type TestConversationInstance = Readonly<{
+  endSession: () => Promise<void>;
+  getId: () => string | null;
+  setMicMuted: (muted: boolean) => void;
+  sendUserMessage: (message: string) => void;
+  sendContextualUpdate: (message: string) => void;
+}>;
+
 const conversationEndSession = vi.fn(async () => {});
 const conversationGetId = vi.fn(() => 'conv_1');
 const conversationSendUserMessage = vi.fn();
 const conversationSendContextualUpdate = vi.fn();
+const conversationSetMicMuted = vi.fn();
+const conversationInstance: TestConversationInstance = {
+  endSession: conversationEndSession,
+  getId: conversationGetId,
+  sendUserMessage: conversationSendUserMessage,
+  sendContextualUpdate: conversationSendContextualUpdate,
+  setMicMuted: conversationSetMicMuted,
+};
+const conversationStartSession = vi.fn(async (_opts: any) => conversationInstance);
 const setRealtimeStatus = vi.fn();
 const setRealtimeMode = vi.fn();
 const clearRealtimeModeDebounce = vi.fn();
@@ -29,8 +45,7 @@ const appendRealtimeVoiceTranscriptEvent = vi.fn();
 const getBindingByControlSessionId = vi.fn((_controlSessionId: string) => null as any);
 const ensureVoiceBinding = vi.fn(async (_params: any) => null);
 const captureExceptionIfEnabledMock = vi.fn();
-let lastConversationOptions: any = null;
-let conversationOptionsCalls: any[] = [];
+let lastStartSessionOptions: any = null;
 
 const languagePreferences = {
   global: 'en' as string | null,
@@ -62,17 +77,12 @@ installRealtimeCommonModuleMocks({
   },
 });
 
-vi.mock('@elevenlabs/react', () => ({
-  useConversation: (opts: any) => {
-    lastConversationOptions = opts;
-    conversationOptionsCalls.push(opts);
-    return ({
-      startSession: conversationStartSession,
-      endSession: conversationEndSession,
-      getId: conversationGetId,
-      sendUserMessage: conversationSendUserMessage,
-      sendContextualUpdate: conversationSendContextualUpdate,
-    });
+vi.mock('@elevenlabs/client', () => ({
+  Conversation: {
+    startSession: (opts: any) => {
+      lastStartSessionOptions = opts;
+      return conversationStartSession(opts);
+    },
   },
 }));
 
@@ -105,9 +115,10 @@ vi.mock('@/utils/system/sentry', () => ({
 function configureModules(options?: ConfigureModulesOptions) {
   languagePreferences.global = options?.globalLanguagePreference ?? 'en';
   languagePreferences.adapter = options?.adapterLanguagePreference ?? null;
-  conversationStartSession.mockImplementation(async () => options?.startSessionResult ?? 'conv_1');
+  const resolvedConversationId = options?.fallbackConversationId ?? options?.startSessionResult ?? 'conv_1';
+  conversationStartSession.mockImplementation(async () => conversationInstance);
   conversationEndSession.mockImplementation(async () => {});
-  conversationGetId.mockImplementation(() => options?.fallbackConversationId ?? 'conv_1');
+  conversationGetId.mockImplementation(() => resolvedConversationId);
   getElevenLabsCodeFromPreference.mockImplementation(() => options?.mappedLanguage ?? 'en');
 
   return {
@@ -146,6 +157,16 @@ async function startSessionWithTimeout(
   });
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('RealtimeVoiceSession.web', () => {
   let root: renderer.ReactTestRenderer | null = null;
   let previousNavigator: Navigator | undefined;
@@ -180,6 +201,7 @@ describe('RealtimeVoiceSession.web', () => {
     conversationGetId.mockReset();
     conversationSendUserMessage.mockReset();
     conversationSendContextualUpdate.mockReset();
+    conversationSetMicMuted.mockReset();
     setRealtimeStatus.mockReset();
     setRealtimeMode.mockReset();
     clearRealtimeModeDebounce.mockReset();
@@ -188,8 +210,7 @@ describe('RealtimeVoiceSession.web', () => {
     getBindingByControlSessionId.mockReset();
     getBindingByControlSessionId.mockReturnValue(null);
     ensureVoiceBinding.mockReset();
-    lastConversationOptions = null;
-    conversationOptionsCalls = [];
+    lastStartSessionOptions = null;
     configureModules();
     captureExceptionIfEnabledMock.mockReset();
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -284,11 +305,16 @@ describe('RealtimeVoiceSession.web', () => {
     const consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
     try {
-      await mountSessionComponent();
+      const session = await mountSessionComponent();
+      await startSessionWithTimeout(session!, {
+        sessionId: 's-debug',
+        token: 'token_debug',
+        initialContext: 'CTX',
+      });
       const debugCallCountBefore = consoleDebugSpy.mock.calls.length;
 
       await act(async () => {
-        lastConversationOptions.onDebug?.(new Error('TOP_SECRET_CONTEXT'));
+        lastStartSessionOptions.onDebug?.(new Error('TOP_SECRET_CONTEXT'));
       });
 
       const newDebugCalls = consoleDebugSpy.mock.calls.slice(debugCallCountBefore);
@@ -389,9 +415,14 @@ describe('RealtimeVoiceSession.web', () => {
       expect.objectContaining({
         connectionType: 'websocket',
         signedUrl: 'wss://signed.example',
+        textOnly: true,
+        overrides: expect.objectContaining({
+          conversation: {
+            textOnly: true,
+          },
+        }),
       }),
     );
-    expect(conversationOptionsCalls.some((options) => options?.textOnly === true)).toBe(true);
   });
 
   it('mirrors provider messages into the hidden voice conversation transcript binding', async () => {
@@ -407,7 +438,7 @@ describe('RealtimeVoiceSession.web', () => {
     });
 
     await act(async () => {
-      lastConversationOptions.onMessage?.({
+      lastStartSessionOptions.onMessage?.({
         type: 'agent_response',
         agent_response_event: {
           agent_response: 'Hello from the web session',
@@ -433,12 +464,57 @@ describe('RealtimeVoiceSession.web', () => {
     });
 
     await act(async () => {
-      lastConversationOptions.onDisconnect?.();
+      lastStartSessionOptions.onDisconnect?.();
     });
 
     expect(setRealtimeStatus).toHaveBeenCalledWith('disconnected');
     expect(setRealtimeMode).toHaveBeenCalledWith('idle', true);
     expect(clearRealtimeModeDebounce).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends a superseded late ElevenLabs conversation before it can become active', async () => {
+    const firstStart = createDeferred<TestConversationInstance>();
+    const secondStart = createDeferred<TestConversationInstance>();
+    const firstConversation: TestConversationInstance = {
+      endSession: vi.fn(async () => {}),
+      getId: vi.fn(() => 'conv_old'),
+      setMicMuted: vi.fn(),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+    };
+    const secondConversation: TestConversationInstance = {
+      endSession: vi.fn(async () => {}),
+      getId: vi.fn(() => 'conv_new'),
+      setMicMuted: vi.fn(),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+    };
+    conversationStartSession
+      .mockImplementationOnce(async () => firstStart.promise)
+      .mockImplementationOnce(async () => secondStart.promise);
+
+    const session = await mountSessionComponent();
+    const oldSessionStart = startSessionWithTimeout(session!, {
+      sessionId: 's-old',
+      token: 'token_old',
+      initialContext: 'OLD',
+    });
+    const newSessionStart = startSessionWithTimeout(session!, {
+      sessionId: 's-new',
+      token: 'token_new',
+      initialContext: 'NEW',
+    });
+
+    secondStart.resolve(secondConversation);
+    await expect(newSessionStart).resolves.toBe('conv_new');
+
+    firstStart.resolve(firstConversation);
+    await expect(oldSessionStart).resolves.toBeNull();
+
+    session!.sendTextMessage('still active');
+    expect(firstConversation.endSession).toHaveBeenCalledTimes(1);
+    expect(firstConversation.sendUserMessage).not.toHaveBeenCalled();
+    expect(secondConversation.sendUserMessage).toHaveBeenCalledWith('still active');
   });
 
   it('cleans up transport-owned connecting state when the provider session component unmounts', async () => {
@@ -464,13 +540,18 @@ describe('RealtimeVoiceSession.web', () => {
   });
 
   it('surfaces provider errors as recoverable QA entries without leaving realtime in error mode', async () => {
-    await mountSessionComponent();
+    const session = await mountSessionComponent();
+    await startSessionWithTimeout(session!, {
+      sessionId: 's-error',
+      token: 'token_error',
+      initialContext: 'CTX',
+    });
 
     const previousDev = (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__;
     (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = true;
     try {
       await act(async () => {
-        lastConversationOptions.onError?.(new Error('daemon unreachable'));
+        lastStartSessionOptions.onError?.(new Error('daemon unreachable'));
       });
     } finally {
       (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = previousDev;

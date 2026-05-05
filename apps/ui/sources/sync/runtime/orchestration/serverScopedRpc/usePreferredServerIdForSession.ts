@@ -1,16 +1,12 @@
 import * as React from 'react';
 
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useSessionServerId } from '@/sync/store/hooks';
 import { normalizeServerId } from './normalizeServerId';
 
 export function usePreferredServerIdForSession(sessionId: string, fallbackServerId?: string | null): string | null {
     const sessionServerId = useSessionServerId(sessionId);
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
-
-    React.useEffect(() => {
-        return subscribeActiveServer(setActiveServerSnapshot);
-    }, []);
+    const activeServerSnapshot = useActiveServerSnapshot();
 
     return React.useMemo(
         () =>

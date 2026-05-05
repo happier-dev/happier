@@ -7,6 +7,8 @@ import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '@/components/ui/we
 
 import { buildXtermWebViewHtml } from './xtermWebViewHtml';
 
+const XTERM_WEBVIEW_BOOT_RETRY_LIMIT = 1;
+
 function createMessageId(): string {
     return Math.random().toString(36).slice(2);
 }
@@ -33,6 +35,8 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
         const webViewRef = React.useRef<WebView>(null);
         const readyRef = React.useRef(false);
         const pendingWriteRef = React.useRef('');
+        const bootRetryCountRef = React.useRef(0);
+        const [reloadNonce, setReloadNonce] = React.useState(0);
         const maxChunkBytes = typeof props.bridgeMaxChunkBytes === 'number' ? props.bridgeMaxChunkBytes : 64_000;
 
         const allowCdnFallback = typeof (__DEV__ as any) === 'boolean' ? (__DEV__ as any) : true;
@@ -66,6 +70,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
 
         React.useEffect(() => {
             readyRef.current = false;
+            bootRetryCountRef.current = 0;
         }, [html]);
 
         const postEnvelope = React.useCallback(
@@ -204,7 +209,17 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                             props.onInput(data);
                             return;
                         }
+
+                        if (decoded.type === 'bootError') {
+                            readyRef.current = false;
+                            if (bootRetryCountRef.current < XTERM_WEBVIEW_BOOT_RETRY_LIMIT) {
+                                bootRetryCountRef.current += 1;
+                                setReloadNonce((value) => value + 1);
+                            }
+                            return;
+                        }
                     }}
+                    key={`xterm-webview-${reloadNonce}`}
                 />
             </View>
         );

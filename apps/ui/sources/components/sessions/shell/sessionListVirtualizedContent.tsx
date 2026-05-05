@@ -1,15 +1,18 @@
 import React from 'react';
-import { FlatList, Platform, Pressable, View } from 'react-native';
+import { FlatList, Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
-import { Text } from '@/components/ui/text/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { useSetting } from '@/sync/domains/state/storage';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 
 import { sessionListStyles } from './sessionListStyles';
 import { SessionsListHeader } from './sessionListChrome';
+
+const sessionListNodeKeyExtractor = (item: string): string => item;
 
 function getSessionListNodeType(nodeId: string): string {
     if (typeof nodeId === 'string' && nodeId.startsWith('session:')) {
@@ -41,20 +44,15 @@ const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFoote
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
 
     return (
-        <View style={styles.footerContainer}>
-            <Pressable
-                style={styles.footerButton}
+        <ItemGroup style={styles.footerContainer}>
+            <Item
+                title={hideInactiveSessions
+                    ? t('sessionInfo.inactiveAndArchivedSessions')
+                    : t('sessionInfo.archivedSessions')}
+                icon={<Ionicons name="archive-outline" size={22} color={theme.colors.textSecondary} />}
                 onPress={props.onPress}
-                accessibilityRole="button"
-            >
-                <Ionicons name="archive-outline" size={18} color={theme.colors.text} />
-                <Text style={styles.footerButtonLabel}>
-                    {hideInactiveSessions
-                        ? t('sessionInfo.inactiveAndArchivedSessions')
-                        : t('sessionInfo.archivedSessions')}
-                </Text>
-            </Pressable>
-        </View>
+            />
+        </ItemGroup>
     );
 });
 
@@ -66,7 +64,18 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     onStopScrollEventPropagationOnWeb: (event: any) => void;
     onPressArchivedSessions: () => void;
 }>) {
-    const contentContainerStyle = { paddingBottom: props.safeAreaBottom + 128, maxWidth: layout.maxWidth };
+    const contentContainerStyle = React.useMemo(() => ({
+        paddingBottom: props.safeAreaBottom + 128,
+        maxWidth: layout.maxWidth,
+    }), [props.safeAreaBottom]);
+    const onPressArchivedSessionsRef = React.useRef(props.onPressArchivedSessions);
+    onPressArchivedSessionsRef.current = props.onPressArchivedSessions;
+    const handlePressArchivedSessions = React.useCallback(() => {
+        onPressArchivedSessionsRef.current();
+    }, []);
+    const footerComponent = React.useMemo(() => (
+        <SessionsListArchivedFooter onPress={handlePressArchivedSessions} />
+    ), [handlePressArchivedSessions]);
 
     if (Platform.OS === 'web') {
         return (
@@ -77,10 +86,10 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
                 } as any)}
                 data={props.nodeIds as any}
                 renderItem={props.renderItem as any}
-                keyExtractor={(item: string) => item}
+                keyExtractor={sessionListNodeKeyExtractor}
                 contentContainerStyle={contentContainerStyle}
                 ListHeaderComponent={SessionsListHeader as any}
-                ListFooterComponent={<SessionsListArchivedFooter onPress={props.onPressArchivedSessions} /> as any}
+                ListFooterComponent={footerComponent as any}
             />
         );
     }
@@ -89,12 +98,11 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
         <FlashList
             data={props.nodeIds as any}
             renderItem={props.renderItem as any}
-            keyExtractor={(item: string) => item}
-            estimatedItemSize={props.rowHeight}
+            keyExtractor={sessionListNodeKeyExtractor}
             getItemType={getSessionListNodeType as any}
             contentContainerStyle={contentContainerStyle as any}
             ListHeaderComponent={SessionsListHeader as any}
-            ListFooterComponent={<SessionsListArchivedFooter onPress={props.onPressArchivedSessions} /> as any}
+            ListFooterComponent={footerComponent as any}
         />
     );
 });

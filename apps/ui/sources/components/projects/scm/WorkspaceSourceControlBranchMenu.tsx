@@ -15,7 +15,7 @@ import {
 } from '@/components/workspaces/scm/branches/branchMenuPredicates';
 import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/branches/SwitchBranchWithChangesDialog';
 import { WorkspaceScmBranchPopover } from '@/components/workspaces/scm/branches/WorkspaceScmBranchPopover';
-import { machineScmBranchCheckout, machineScmBranchCreate, machineScmRemotePublish } from '@/sync/ops/scm/machineScm';
+import { machineScmBranchCheckout, machineScmBranchCreate } from '@/sync/ops/scm/machineScm';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -50,19 +50,9 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
     const canCreate = snapshot?.capabilities?.writeBranchCreate === true && writeEnabled && !disabled;
     const canCreateWorktrees = snapshot?.capabilities?.worktreeCreate === true && writeEnabled && !disabled;
     const canLaunchWorktreeSession = snapshot?.repo.isRepo === true;
-    const canPublish = Boolean(
-        writeEnabled
-        && !disabled
-        && snapshot?.capabilities?.writeRemotePublish === true
-        && snapshot.repo.isRepo === true
-        && snapshot.branch.detached !== true
-        && snapshot.branch.head
-        && !snapshot.branch.upstream,
-    );
 
     const [open, setOpen] = React.useState(false);
     const [includeRemotes, setIncludeRemotes] = React.useState(false);
-    const [publishBusy, setPublishBusy] = React.useState(false);
 
     const worktreeRows = React.useMemo(() => {
         const worktrees = snapshot?.repo.worktrees ?? [];
@@ -109,7 +99,6 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
             canCheckout,
             canCreateWorktrees,
             canLaunchWorktreeSession,
-            canPublish,
             canReadBranches,
             currentBranch,
             includeRemotes,
@@ -136,7 +125,6 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         canCheckout,
         canCreateWorktrees,
         canLaunchWorktreeSession,
-        canPublish,
         canReadBranches,
         currentBranch,
         includeRemotes,
@@ -302,28 +290,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         await refreshWorkspaceState();
     }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState]);
 
-    const publishBranch = React.useCallback(async () => {
-        if (!canPublish || publishBusy) return false;
-        setPublishBusy(true);
-        try {
-            const response = await machineScmRemotePublish(props.machineId, { cwd: props.rootPath });
-            if (!response.success) {
-                Modal.alert(t('common.error'), response.error || t('files.branchMenu.publish.failed'));
-                return false;
-            }
-            await props.onRefreshSnapshot();
-            return true;
-        } finally {
-            setPublishBusy(false);
-        }
-    }, [canPublish, props.machineId, props.onRefreshSnapshot, props.rootPath, publishBusy]);
-
     const onSelect = React.useCallback(async (itemId: string) => {
-        if (itemId === 'publish') {
-            const published = await publishBranch();
-            if (published) closeMenu();
-            return;
-        }
         if (itemId === 'worktree:create-current-branch') {
             await createWorktreeFromCurrentBranch();
             return;
@@ -364,7 +331,6 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         createWorktreeFromCurrentBranch,
         props.onRequestCreateWorktreeFromAnotherBranch,
         pruneWorktrees,
-        publishBranch,
         removeWorktree,
         selectWorkspacePath,
         switchBranch,

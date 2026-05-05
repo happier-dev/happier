@@ -1,8 +1,8 @@
-import React, { useEffect, useRef } from 'react';
-import { useConversation } from '@elevenlabs/react';
-import type { MessagePayload, Mode, Status } from '@elevenlabs/types';
+import React, { useEffect, useMemo, useRef } from 'react';
+import type { Mode, Status } from '@elevenlabs/client';
 import { realtimeClientTools } from './realtimeClientTools';
-import { realtimeTransport, type RealtimeConversationHandle } from '@/voice/runtime/realtime/RealtimeTransport';
+import { createElevenLabsConversationHandle } from '@/voice/adapters/realtimeElevenLabs/createElevenLabsConversationHandle';
+import { realtimeTransport } from '@/voice/runtime/realtime/RealtimeTransport';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 
 function debugLog(...args: unknown[]) {
@@ -11,37 +11,36 @@ function debugLog(...args: unknown[]) {
 }
 
 export const RealtimeVoiceSession: React.FC = () => {
-    const buildConversationOptions = (textOnly: boolean) => ({
+    const conversation = useMemo(() => createElevenLabsConversationHandle({
         clientTools: realtimeClientTools,
-        textOnly,
-        onConnect: () => {
-            debugLog('Realtime session connected');
-            realtimeTransport.handleProviderConnected();
+        callbacks: {
+            onConnect: () => {
+                debugLog('Realtime session connected');
+                realtimeTransport.handleProviderConnected();
+            },
+            onDisconnect: () => {
+                debugLog('Realtime session disconnected');
+                realtimeTransport.handleProviderDisconnected();
+            },
+            onMessage: (data) => {
+                debugLog('Realtime message received');
+                realtimeTransport.handleProviderMessage(data);
+            },
+            onError: (error) => {
+                realtimeTransport.handleProviderError(error);
+            },
+            onStatusChange: (_data: { status: Status }) => {
+                debugLog('Realtime status change');
+            },
+            onModeChange: (data: { mode: Mode }) => {
+                debugLog('Realtime mode change');
+                realtimeTransport.handleProviderModeChange(data.mode as string);
+            },
+            onDebug: () => {
+                debugLog('Realtime debug');
+            },
         },
-        onDisconnect: () => {
-            debugLog('Realtime session disconnected');
-            realtimeTransport.handleProviderDisconnected();
-        },
-        onMessage: (data: MessagePayload) => {
-            debugLog('Realtime message received');
-            realtimeTransport.handleProviderMessage(data);
-        },
-        onError: (error: string) => {
-            realtimeTransport.handleProviderError(error);
-        },
-        onStatusChange: (_data: { status: Status }) => {
-            debugLog('Realtime status change');
-        },
-        onModeChange: (data: { mode: Mode }) => {
-            debugLog('Realtime mode change');
-            realtimeTransport.handleProviderModeChange(data.mode as string);
-        },
-        onDebug: () => {
-            debugLog('Realtime debug');
-        }
-    });
-    const voiceConversation = useConversation(buildConversationOptions(false));
-    const textConversation = useConversation(buildConversationOptions(true));
+    }), []);
 
     const hasRegistered = useRef(false);
 
@@ -72,21 +71,16 @@ export const RealtimeVoiceSession: React.FC = () => {
 
     useEffect(() => {
         debugLog('[RealtimeVoiceSession] Setting conversationInstance');
-        realtimeTransport.registerConversationHandle({
-            textOnly: false,
-            handle: voiceConversation as unknown as RealtimeConversationHandle,
-        });
-        realtimeTransport.registerConversationHandle({
-            textOnly: true,
-            handle: textConversation as unknown as RealtimeConversationHandle,
-        });
+        realtimeTransport.registerConversationHandle({ textOnly: false, handle: conversation });
+        realtimeTransport.registerConversationHandle({ textOnly: true, handle: conversation });
 
         return () => {
             realtimeTransport.registerConversationHandle({ textOnly: false, handle: null });
             realtimeTransport.registerConversationHandle({ textOnly: true, handle: null });
             realtimeTransport.setActiveConversationHandle(null);
+            conversation.dispose();
         };
-    }, [voiceConversation, textConversation]);
+    }, [conversation]);
 
     // This component doesn't render anything visible
     return null;

@@ -113,18 +113,20 @@ vi.mock('@/utils/platform/responsive', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useLocalSetting: (key: string) => {
+        useSetting: (key: string) => {
             if (key === 'mobileWorkspaceExperienceV1') {
                 return mobileWorkspaceExperience;
             }
             return null;
         },
-        useLocalSettingMutable: (key: string) => {
+        useSettingMutable: (key: string) => {
             if (key === 'mobileWorkspaceExperienceV1') {
                 return [mobileWorkspaceExperience, setMobileWorkspaceExperienceMock];
             }
             return [null, vi.fn()];
         },
+        useLocalSetting: () => null,
+        useLocalSettingMutable: () => [null, vi.fn()],
     });
 });
 

@@ -1,11 +1,15 @@
 import { readServerEnabledBit, type FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
-import type { TransferRouteViabilityRecord } from '@happier-dev/transfers';
+import type {
+    DirectPeerRouteKind,
+    PeerRouteViabilityRecord as TransferRouteViabilityRecord,
+} from '@happier-dev/peer-mediation';
 
 export type TransferAvailabilitySnapshot = Readonly<{
     machineTransferEnabled: boolean;
     directPeerEnabled: boolean;
     serverRelayEnabled: boolean;
     directPeerRoute: TransferRouteViabilityRecord;
+    directPeerRouteKinds: readonly DirectPeerRouteKind[];
     machineRpcDirectRoute: TransferRouteViabilityRecord;
 }>;
 
@@ -20,6 +24,7 @@ function resolveTransferRouteEnabledBit(
 export function resolveTransferAvailability(input: Readonly<{
     serverFeatures: ServerFeatures | null;
     directPeerRoute: TransferRouteViabilityRecord;
+    directPeerRouteKinds?: readonly DirectPeerRouteKind[];
     machineRpcDirectRoute: TransferRouteViabilityRecord;
 }>): TransferAvailabilitySnapshot {
     const machineTransferEnabled = input.serverFeatures
@@ -33,6 +38,7 @@ export function resolveTransferAvailability(input: Readonly<{
         directPeerEnabled,
         serverRelayEnabled,
         directPeerRoute: input.directPeerRoute,
+        directPeerRouteKinds: input.directPeerRouteKinds ?? [],
         machineRpcDirectRoute: input.machineRpcDirectRoute,
     };
 }

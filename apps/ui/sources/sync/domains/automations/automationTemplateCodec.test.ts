@@ -11,6 +11,7 @@ describe('automationTemplateCodec', () => {
             transcriptStorage: 'direct',
             permissionMode: 'default',
             permissionModeUpdatedAt: 123,
+            windowsTerminalWindowName: 'happier-qa',
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -26,6 +27,7 @@ describe('automationTemplateCodec', () => {
                 agent: 'codex',
                 prompt: 'Ship it',
                 transcriptStorage: 'direct',
+                windowsTerminalWindowName: 'happier-qa',
                 mcpSelection: {
                     v: 1,
                     managedServersEnabled: false,

@@ -1,9 +1,10 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { machineScmCommitCreate } from '@/sync/ops/scm/machineScm';
 import type { machineScmChangeDiscard } from '@/sync/ops/scm/machineScm';
+import type { machineScmRemoteFetch, machineScmRemotePull, machineScmRemotePush } from '@/sync/ops/scm/machineScm';
 import type { ScmStashListResponse } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
@@ -16,6 +17,12 @@ const removeWorkspaceScmCommitSelectionPatchSpy = vi.fn();
 const clearWorkspaceScmCommitSelectionPathsSpy = vi.fn();
 const clearWorkspaceScmCommitSelectionPatchesSpy = vi.fn();
 const refreshSpy = vi.fn(async () => {});
+const setScmRemoteConfirmPolicySpy = vi.fn();
+const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
+const modalAlertAsyncSpy = vi.hoisted(() => vi.fn(async (...args: Parameters<import('@/modal').IModal['alertAsync']>) => {
+    const buttons = args[2];
+    buttons?.[1]?.onPress?.();
+}));
 const machineScmStashListSpy = vi.fn(async (): Promise<ScmStashListResponse> => ({
     success: true,
     stashes: [],
@@ -23,6 +30,12 @@ const machineScmStashListSpy = vi.fn(async (): Promise<ScmStashListResponse> => 
 }));
 type MachineScmChangeDiscard = typeof machineScmChangeDiscard;
 const machineScmChangeDiscardSpy = vi.fn<MachineScmChangeDiscard>(async () => ({ success: true } as any));
+type MachineScmRemoteFetch = typeof machineScmRemoteFetch;
+type MachineScmRemotePull = typeof machineScmRemotePull;
+type MachineScmRemotePush = typeof machineScmRemotePush;
+const machineScmRemoteFetchSpy = vi.fn<MachineScmRemoteFetch>(async () => ({ success: true, stdout: '' }));
+const machineScmRemotePullSpy = vi.fn<MachineScmRemotePull>(async () => ({ success: true, stdout: '' }));
+const machineScmRemotePushSpy = vi.fn<MachineScmRemotePush>(async () => ({ success: true, stdout: '' }));
 
 type MachineScmCommitCreate = typeof machineScmCommitCreate;
 const machineScmCommitCreateSpy = vi.fn<MachineScmCommitCreate>(async () => ({ success: true, commitSha: 'abc' }));
@@ -34,6 +47,25 @@ vi.mock('@expo/vector-icons', async () => {
     return createExpoVectorIconsMock();
 });
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
+    const React = await import('react');
+    return {
+        DropdownMenu: (props: any) => React.createElement(
+            'DropdownMenu',
+            props,
+            typeof props.trigger === 'function'
+                ? props.trigger({
+                    open: false,
+                    toggle: vi.fn(),
+                    openMenu: vi.fn(),
+                    closeMenu: vi.fn(),
+                    selectedItem: props.items.find((item: any) => item.id === props.selectedId) ?? null,
+                })
+                : props.trigger,
+        ),
+    };
+});
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
@@ -41,7 +73,13 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ confirmResult: true }).module;
+    return createModalModuleMock({
+        confirmResult: true,
+        spies: {
+            alertAsync: modalAlertAsyncSpy,
+            confirm: modalConfirmSpy,
+        },
+    }).module;
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -89,6 +127,9 @@ vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmCommitCreate: (...args: Parameters<typeof machineScmCommitCreateSpy>) => machineScmCommitCreateSpy(...args),
     machineScmStashList: (...args: Parameters<typeof machineScmStashListSpy>) => machineScmStashListSpy(...args),
     machineScmChangeDiscard: (...args: Parameters<typeof machineScmChangeDiscardSpy>) => machineScmChangeDiscardSpy(...args),
+    machineScmRemoteFetch: (...args: Parameters<typeof machineScmRemoteFetchSpy>) => machineScmRemoteFetchSpy(...args),
+    machineScmRemotePull: (...args: Parameters<typeof machineScmRemotePullSpy>) => machineScmRemotePullSpy(...args),
+    machineScmRemotePush: (...args: Parameters<typeof machineScmRemotePushSpy>) => machineScmRemotePushSpy(...args),
 }));
 
 vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
@@ -103,6 +144,8 @@ vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
 let commitSelectionPaths: string[] = [];
 let commitSelectionPatches: Array<{ path: string; patch: string }> = [];
 let scmCommitStrategySetting: string | null = 'atomic';
+let scmRemoteConfirmPolicySetting = 'always';
+let scmPushRejectPolicySetting = 'manual';
 let workspaceSnapshotMock: ScmWorkingSnapshot | null = null;
 let scmWriteEnabledMock = true;
 
@@ -125,7 +168,15 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         storage: createStorageStoreMock(state as any),
         useSetting: (key: any) => {
             if (key === 'scmCommitStrategy') return scmCommitStrategySetting;
+            if (key === 'scmRemoteConfirmPolicy') return scmRemoteConfirmPolicySetting;
+            if (key === 'scmPushRejectPolicy') return scmPushRejectPolicySetting;
             return null;
+        },
+        useSettingMutable: (key: any) => {
+            if (key === 'scmRemoteConfirmPolicy') {
+                return [scmRemoteConfirmPolicySetting, setScmRemoteConfirmPolicySpy];
+            }
+            return [null, vi.fn()];
         },
         useWorkspaceScmCommitSelectionPaths: () => commitSelectionPaths,
         useWorkspaceScmCommitSelectionPatches: () => commitSelectionPatches as any,
@@ -182,8 +233,78 @@ function createSnapshot(): ScmWorkingSnapshot {
     };
 }
 
+function createMultiFileSnapshot(): ScmWorkingSnapshot {
+    return {
+        ...createSnapshot(),
+        entries: [
+            {
+                path: 'src/a.ts',
+                previousPath: null,
+                kind: 'modified',
+                includeStatus: '',
+                pendingStatus: '',
+                hasIncludedDelta: false,
+                hasPendingDelta: true,
+                stats: {
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 2,
+                    pendingRemoved: 1,
+                    isBinary: false,
+                },
+            },
+            {
+                path: 'src/b.ts',
+                previousPath: null,
+                kind: 'modified',
+                includeStatus: '',
+                pendingStatus: '',
+                hasIncludedDelta: false,
+                hasPendingDelta: true,
+                stats: {
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 3,
+                    pendingRemoved: 1,
+                    isBinary: false,
+                },
+            },
+        ],
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 2,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 5,
+            pendingRemoved: 2,
+        },
+    };
+}
+
 describe('WorkspaceSourceControlView', () => {
-    it('renders the shared branch, review, and remote-action affordances', async () => {
+    beforeEach(() => {
+        markWorkspaceScmCommitSelectionPathsSpy.mockClear();
+        unmarkWorkspaceScmCommitSelectionPathsSpy.mockClear();
+        removeWorkspaceScmCommitSelectionPatchSpy.mockClear();
+        clearWorkspaceScmCommitSelectionPathsSpy.mockClear();
+        clearWorkspaceScmCommitSelectionPatchesSpy.mockClear();
+        refreshSpy.mockClear();
+        machineScmStashListSpy.mockClear();
+        machineScmChangeDiscardSpy.mockClear();
+        machineScmCommitCreateSpy.mockClear();
+        machineScmRemoteFetchSpy.mockClear();
+        machineScmRemotePullSpy.mockClear();
+        machineScmRemotePushSpy.mockClear();
+        setScmRemoteConfirmPolicySpy.mockClear();
+        modalConfirmSpy.mockClear();
+        modalAlertAsyncSpy.mockClear();
+        scmRemoteConfirmPolicySetting = 'always';
+        scmPushRejectPolicySetting = 'manual';
+        scmWriteEnabledMock = true;
+    });
+
+    it('renders local changed-file affordances without remote update actions', async () => {
         workspaceSnapshotMock = createSnapshot();
         commitSelectionPaths = [];
         commitSelectionPatches = [];
@@ -203,9 +324,9 @@ describe('WorkspaceSourceControlView', () => {
 
         expect(tree.findByProps({ testID: 'scm-branch-menu-trigger' })).toBeTruthy();
         expect(tree.findByProps({ testID: 'workspace-scm-open-review' })).toBeTruthy();
-        expect(tree.findByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.fetch' })).toBeTruthy();
-        expect(tree.findByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.pull' })).toBeTruthy();
-        expect(tree.findByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.push' })).toBeTruthy();
+        expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.fetch' })).toHaveLength(0);
+        expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.pull' })).toHaveLength(0);
+        expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.push' })).toHaveLength(0);
     });
 
     it('opens the workspace review surface from the shared toolbar action', async () => {
@@ -304,6 +425,101 @@ describe('WorkspaceSourceControlView', () => {
         expect(tree.findByProps({ testID: 'scm-commit-message' })).toBeTruthy();
         expect(tree.findByProps({ testID: 'scm-commit-submit' })).toBeTruthy();
         expect(tree.findByProps({ testID: 'scm-commit-selection-toggle-src_a.ts' })).toBeTruthy();
+    });
+
+    it('renders a commit-adjacent push shortcut when the workspace branch is safely ahead', async () => {
+        workspaceSnapshotMock = {
+            ...createSnapshot(),
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'git',
+                mode: '.git',
+                remotes: [{ name: 'origin', fetchUrl: 'git@example.com:repo.git', pushUrl: 'git@example.com:repo.git' }],
+            },
+            branch: { head: 'main', upstream: 'origin/main', ahead: 2, behind: 0, detached: false },
+        };
+        commitSelectionPaths = [];
+        commitSelectionPatches = [];
+        scmCommitStrategySetting = 'atomic';
+        scmRemoteConfirmPolicySetting = 'always';
+        scmWriteEnabledMock = true;
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+            />
+        )).tree;
+
+        const pushShortcut = tree.findByProps({ testID: 'scm-commit-adjacent-push' });
+        expect(pushShortcut.props.accessibilityState).toMatchObject({ disabled: false, busy: false });
+
+        await act(async () => {
+            pushShortcut.props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(modalAlertAsyncSpy).toHaveBeenCalledTimes(1);
+        expect(modalConfirmSpy).not.toHaveBeenCalled();
+        expect(machineScmRemotePushSpy).toHaveBeenCalledWith('m1', {
+            cwd: '/repo',
+            remote: 'origin',
+            branch: 'main',
+        });
+        expect(refreshSpy).toHaveBeenCalled();
+    });
+
+    it('filters workspace changes to selected-for-commit files and select-all uses the current view', async () => {
+        workspaceSnapshotMock = createMultiFileSnapshot();
+        commitSelectionPaths = ['src/b.ts'];
+        commitSelectionPatches = [];
+        scmCommitStrategySetting = 'atomic';
+        scmWriteEnabledMock = true;
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+            />
+        )).tree;
+
+        const viewModeMenu = tree.findByType('DropdownMenu' as any);
+        expect(viewModeMenu.props.selectedId).toBe('repository');
+        expect(viewModeMenu.props.items.map((item: { id: string }) => item.id)).toEqual([
+            'repository',
+            'selected',
+        ]);
+
+        act(() => {
+            viewModeMenu.props.onSelect('selected');
+        });
+
+        const changedFilesList = tree.findByType('FlatList' as any);
+        expect(changedFilesList.props.data.map((file: { fullPath: string }) => file.fullPath)).toEqual(['src/b.ts']);
+
+        const currentViewCount = tree.findAll((node) => node.props?.children === '1');
+        expect(currentViewCount.length).toBeGreaterThan(0);
+
+        const selectAllButton = tree.findByProps({ accessibilityLabel: 'common.all' });
+        act(() => {
+            selectAllButton.props.onPress();
+        });
+
+        expect(markWorkspaceScmCommitSelectionPathsSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ serverId: 'server', machineId: 'm1', rootPath: '/repo' }),
+            ['src/b.ts'],
+        );
     });
 
     it('hides write controls when source control writes are disabled', async () => {

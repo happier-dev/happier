@@ -6,7 +6,10 @@ import { t } from '@/text';
 import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
 import { CollapsibleSectionHeader, ProjectGroupHeader } from './sessionListChrome';
 import { resolveSessionListHeaderViewState } from './resolveSessionListHeaderViewState';
-import { resolveSessionListHeaderActionHandlers } from './resolveSessionListHeaderActionHandlers';
+import {
+    resolveSessionListHeaderActionHandlers,
+    type CreateSessionFromWorkspaceScopeHandler,
+} from './resolveSessionListHeaderActionHandlers';
 
 type SessionListHeaderItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
@@ -14,7 +17,7 @@ type SessionListHeaderItemProps = Readonly<{
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
     hasMultipleMachines: boolean;
     onOpenProject: (workspaceRefId: string) => void;
-    onCreateSessionFromWorkspaceScope: (scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }>) => void;
+    onCreateSessionFromWorkspaceScope: CreateSessionFromWorkspaceScopeHandler;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;

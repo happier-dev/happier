@@ -66,4 +66,36 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         expect(getActiveServerUrl()).toBe('http://qa-stack.localhost:57010');
         expect(result?.serverUrl).toBe('http://127.0.0.1:57010');
     });
+
+    it('drops stale route serverId params when consuming a web server override', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:57010';
+
+        stubWebLocation('http://happier-github-auth-e2ee.localhost:19081/session/session-1?server=http%3A%2F%2F127.0.0.1%3A57010&serverId=127.0.0.1-57010&tab=files');
+
+        const { bootstrapActiveServerFromWebLocation } = await importFreshBootstrap();
+        const result = bootstrapActiveServerFromWebLocation({ scope: 'device' });
+
+        expect(result?.serverUrl).toBe('http://127.0.0.1:57010');
+        expect(result?.cleanedRelativeUrl).toBe('/session/session-1?tab=files');
+    });
+
+    it.each([
+        'https://app.example.test/terminal?key=abc123&server=https%3A%2F%2Fwrong.example.test',
+        'https://app.example.test/terminal/connect?key=abc123&server=https%3A%2F%2Fwrong.example.test',
+    ])('does not consume terminal route server params as global overrides for %s', async (href) => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://api.happier.dev';
+
+        stubWebLocation(href);
+
+        const { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocation } = await importFreshBootstrap();
+        const override = readWebServerUrlOverrideFromLocation();
+        const result = bootstrapActiveServerFromWebLocation({ scope: 'device' });
+
+        const { getActiveServerUrl } = await importFreshServerProfiles();
+        expect(override).toBeNull();
+        expect(result).toBeNull();
+        expect(getActiveServerUrl()).toBe('https://api.happier.dev');
+    });
 });

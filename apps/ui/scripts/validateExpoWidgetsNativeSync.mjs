@@ -32,6 +32,11 @@ export function assertExpoWidgetsIntrospectionOutput(
     throw new Error('Expo widgets introspection did not include a widget target bundleIdentifier.');
   }
 
+  const pushNotificationsPattern = /['"]?(?:enablePushNotifications|ExpoWidgets_EnablePushNotifications)['"]?\s*:\s*true\b/;
+  if (!pushNotificationsPattern.test(output)) {
+    throw new Error('Expo widgets introspection did not enable ActivityKit push notifications.');
+  }
+
   for (const widgetName of requiredWidgetNames) {
     const widgetPattern = new RegExp(`name:\\s*['"]${widgetName}['"]`);
     if (!widgetPattern.test(output)) {
@@ -42,6 +47,7 @@ export function assertExpoWidgetsIntrospectionOutput(
   return {
     targetName,
     bundleIdentifier: bundleIdentifierMatch[1],
+    enablePushNotifications: true,
     widgetNames: [...requiredWidgetNames],
   };
 }
@@ -92,6 +98,7 @@ function runCli() {
         'Expo widgets native sync validated via non-destructive introspection.',
         `target=${summary.targetName}`,
         `bundleIdentifier=${summary.bundleIdentifier}`,
+        `pushNotifications=${summary.enablePushNotifications ? 'enabled' : 'disabled'}`,
         `widgets=${summary.widgetNames.join(',')}`,
       ].join(' '),
     );

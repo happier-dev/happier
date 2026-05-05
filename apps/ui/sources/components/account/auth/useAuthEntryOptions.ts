@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { getAuthProvider } from '@/auth/providers/registry';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
@@ -88,7 +88,7 @@ function resolveMethodById(methods: readonly AuthMethod[], providerId: string): 
 }
 
 export function useAuthEntryOptions(): AuthEntryOptions {
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
+    const activeServerSnapshot = useActiveServerSnapshot();
     const [serverAvailability, setServerAvailability] = React.useState<AuthEntryServerAvailability>('loading');
     const [serverCheckNonce, setServerCheckNonce] = React.useState(0);
     const [options, setOptions] = React.useState<Pick<
@@ -132,14 +132,6 @@ export function useAuthEntryOptions(): AuthEntryOptions {
             toLegacySignupProvider: false,
         },
     });
-
-    // NOTE: getActiveServerSnapshot() is not reactive on its own; ensure we re-check when the active server changes
-    // by tracking a comparable key derived from the current snapshot.
-    React.useEffect(() => {
-        const unsubscribe = subscribeActiveServer(setActiveServerSnapshot);
-        setActiveServerSnapshot(getActiveServerSnapshot());
-        return unsubscribe;
-    }, []);
 
     const serverUrlForCopy = React.useMemo(() => {
         const raw = activeServerSnapshot?.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';

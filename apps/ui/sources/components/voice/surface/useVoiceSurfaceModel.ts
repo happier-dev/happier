@@ -117,7 +117,8 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
     }
 
     const canStart = !daemonLocalVoiceUnavailable && (allowsGlobalStart ? true : Boolean(startSessionId));
-    const isSpeaking = snap.mode === 'speaking';
+    const isConnected = snap.status === 'connected';
+    const isSpeaking = isConnected && snap.mode === 'speaking';
     const canStop = snap.canStop && snap.status !== 'disconnected';
     const controlsLoading = snap.status === 'connecting' && !canStop;
     const controlsDisabled = !canStop && !canStart;
@@ -143,7 +144,8 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         && typeof snap.sessionId === 'string'
         && snap.sessionId.trim().length > 0;
     const canCancelTurn =
-        typeof snap.sessionId === 'string'
+        isConnected
+        && typeof snap.sessionId === 'string'
         && snap.sessionId.trim().length > 0
         && (snap.mode === 'thinking' || snap.mode === 'speaking');
     const canMute =

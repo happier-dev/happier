@@ -211,6 +211,63 @@ describe('chunkTransferClient', () => {
         ]);
     });
 
+    it('downloads encrypted chunks when SubtleCrypto is unavailable', async () => {
+        const recipientKeyPair = createTransferRecipientKeyPair({
+            randomBytes: (length) => new Uint8Array(length).fill(7),
+        });
+        const encryptedChunk = await createEncryptedTransferChunkEnvelope({
+            transferId: 'd1',
+            sequence: 0,
+            payload: new TextEncoder().encode('native'),
+            recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+            randomBytes: (length) => new Uint8Array(length).fill(19),
+        });
+        const originalCryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+        const originalCrypto = globalThis.crypto;
+        if (!originalCrypto?.getRandomValues) {
+            throw new Error('Expected test runtime to expose crypto.getRandomValues');
+        }
+
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: {
+                getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto),
+            },
+        });
+
+        try {
+            const initSpy = vi.fn(async () => ({ success: true as const, downloadId: 'd1', chunkSizeBytes: 6, sizeBytes: 6, name: 'file.txt' }));
+            const chunkSpy = vi.fn(async (_req: { downloadId: string; index: number }) => ({
+                success: true as const,
+                ...encryptedChunk,
+                isLast: true,
+            }));
+            const finalizeSpy = vi.fn(async (_req: { downloadId: string }) => ({ success: true as const }));
+            const abortSpy = vi.fn(async (_req: { downloadId: string }) => ({ success: true as const }));
+            const chunks: Uint8Array[] = [];
+
+            const res = await downloadInChunks({
+                init: initSpy,
+                readChunk: chunkSpy,
+                finalize: finalizeSpy,
+                abort: abortSpy,
+                recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
+                writeBytes: async (chunk) => {
+                    chunks.push(chunk);
+                },
+            });
+
+            expect(res).toEqual({ ok: true, sizeBytes: 6 });
+            expect(new TextDecoder().decode(Uint8Array.from(chunks.flatMap((chunk) => Array.from(chunk))))).toBe('native');
+            expect(finalizeSpy).toHaveBeenCalledTimes(1);
+            expect(abortSpy).not.toHaveBeenCalled();
+        } finally {
+            if (originalCryptoDescriptor) {
+                Object.defineProperty(globalThis, 'crypto', originalCryptoDescriptor);
+            }
+        }
+    });
+
     it('aborts downloads when the signal is canceled', async () => {
         const recipientKeyPair = createTransferRecipientKeyPair({
             randomBytes: (length) => new Uint8Array(length).fill(7),

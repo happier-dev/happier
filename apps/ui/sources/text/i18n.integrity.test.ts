@@ -16,6 +16,8 @@ import { auditTranslations } from '../../tools/i18n/translationAudit';
 const IGNORED_UNTRANSLATED_KEYS = new Set([
     'promptLibrary.supportingFilePathPlaceholder',
     'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
+    // Canonical Git remote name: placeholders should keep the literal remote example.
+    'files.sourceControlOperations.update.remotes.namePlaceholder',
     // Proper nouns: keep the canonical platform label consistent across locales.
     'setupOnboarding.handoffPlatformPosixLabel',
     'setupOnboarding.handoffPlatformMacosLabel',

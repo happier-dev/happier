@@ -4,6 +4,7 @@ import {
     BackendTargetRefV2Schema,
     SessionMcpSelectionV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
+    WindowsTerminalWindowNameSchema,
 } from '@happier-dev/protocol';
 
 import type { AutomationTemplate } from './automationTypes';
@@ -52,6 +53,7 @@ const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     terminal: z.unknown().optional(),
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
+    windowsTerminalWindowName: WindowsTerminalWindowNameSchema.optional(),
     experimentalCodexAcp: z.boolean().optional(),
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
     agentModeId: z.string().optional(),

@@ -1,5 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 
+import type { ActivityOverviewSnapshot } from '../attention/activityAttentionTypes';
 import { buildActivityOverviewSnapshot } from '../attention/buildActivityOverviewSnapshot';
 
 export type ActivityBadgeState = Readonly<{
@@ -25,11 +26,25 @@ export function buildActivityBadgeState(params: Readonly<{
         sessionOptions: params.sessionOptions,
     });
 
-    const selectedSessionCount = snapshot.candidates.filter((candidate) => (
-        candidate.reasons.hasUnread
-        || candidate.reasons.hasPendingPermissionRequests
-        || candidate.reasons.hasPendingUserActionRequests
-        || candidate.reasons.hasQueuedUserInput
+    return buildActivityBadgeStateFromOverview({
+        overview: snapshot,
+        numericInboxCount: params.numericInboxCount,
+        hasNonNumericInboxAttention: params.hasNonNumericInboxAttention,
+        sessionOptions: params.sessionOptions,
+    });
+}
+
+export function buildActivityBadgeStateFromOverview(params: Readonly<{
+    overview: ActivityOverviewSnapshot;
+    numericInboxCount: number;
+    hasNonNumericInboxAttention: boolean;
+    sessionOptions?: ActivityBadgeSessionOptions;
+}>): ActivityBadgeState {
+    const selectedSessionCount = params.overview.candidates.filter((candidate) => (
+        (params.sessionOptions?.showUnread !== false && candidate.reasons.hasUnread)
+        || (params.sessionOptions?.showPendingPermissionRequests !== false && candidate.reasons.hasPendingPermissionRequests)
+        || (params.sessionOptions?.showPendingUserActionRequests !== false && candidate.reasons.hasPendingUserActionRequests)
+        || (params.sessionOptions?.showQueuedUserInput !== false && candidate.reasons.hasQueuedUserInput)
     )).length;
     const count = Math.max(0, selectedSessionCount + Math.max(0, Math.trunc(params.numericInboxCount)));
     return {

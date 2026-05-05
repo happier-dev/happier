@@ -108,9 +108,12 @@ export async function fetchAndApplyFeed(params: {
     assumeUsers: (userIds: string[]) => Promise<void>;
     getUsers: () => Record<string, UserProfile | null>;
     applyFeedItems: (items: FeedItem[]) => void;
+    shouldContinue?: () => boolean;
     log: { log: (message: string) => void };
 }): Promise<void> {
     const { credentials, getFeedItems, getFeedHead, assumeUsers, getUsers, applyFeedItems, log } = params;
+    const shouldContinue = params.shouldContinue ?? (() => true);
+    if (!shouldContinue()) return;
 
     try {
         log.log('📰 Fetching feed...');
@@ -131,6 +134,7 @@ export async function fetchAndApplyFeed(params: {
                 retry: 'none',
                 ...cursor,
             });
+            if (!shouldContinue()) return;
 
             // Check if we reached known items
             const foundKnown = response.items.some((item) => existingItems.some((existing) => existing.id === item.id));
@@ -152,6 +156,7 @@ export async function fetchAndApplyFeed(params: {
                 limit: 100,
                 retry: 'none',
             });
+            if (!shouldContinue()) return;
             allItems.push(...response.items);
         }
 
@@ -166,6 +171,7 @@ export async function fetchAndApplyFeed(params: {
         // Fetch missing users
         if (userIds.size > 0) {
             await assumeUsers(Array.from(userIds));
+            if (!shouldContinue()) return;
         }
 
         // Filter out items where user is not found (404)
@@ -185,6 +191,7 @@ export async function fetchAndApplyFeed(params: {
         });
 
         // Apply only compatible items to storage
+        if (!shouldContinue()) return;
         applyFeedItems(compatibleItems);
         log.log(
             `📰 fetchFeed completed - loaded ${compatibleItems.length} compatible items (${allItems.length - compatibleItems.length} filtered)`,

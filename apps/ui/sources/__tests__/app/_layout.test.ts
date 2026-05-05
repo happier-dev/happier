@@ -2,6 +2,9 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import {
+    clearPendingMobileSurfaceTransition,
+} from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -37,6 +40,7 @@ let syncErrorState: null | {
 } = null;
 let activeServerId = 'server-active';
 let globalSearchParamsState: Record<string, string | string[] | undefined> = {};
+let stackNavigatorScreenOptionsHistory: unknown[] = [];
 
 const router = { replace: vi.fn(), push: vi.fn() };
 type NotificationResponsePayload = {
@@ -226,7 +230,20 @@ vi.mock('expo-router', async () => {
             return segments;
         },
     });
-    return expoRouterMock.module;
+    const BaseStack = expoRouterMock.module.Stack;
+    const Stack = Object.assign(
+        (props: React.PropsWithChildren<{ screenOptions?: unknown }>) => {
+            stackNavigatorScreenOptionsHistory.push(props.screenOptions);
+            return React.createElement(React.Fragment, null, props.children ?? null);
+        },
+        {
+            Screen: BaseStack.Screen,
+        },
+    );
+    return {
+        ...expoRouterMock.module,
+        Stack,
+    };
 });
 
 vi.mock('@/auth/context/AuthContext', () => {
@@ -312,6 +329,8 @@ afterEach(() => {
     syncErrorState = null;
     activeServerId = 'server-active';
     globalSearchParamsState = {};
+    stackNavigatorScreenOptionsHistory = [];
+    clearPendingMobileSurfaceTransition();
 });
 
 describe('RootLayout hooks order', () => {
@@ -341,6 +360,76 @@ describe('RootLayout hooks order', () => {
                     tree!.unmount();
                 });
             }
+        }
+    }, 60_000);
+});
+
+describe('RootLayout stack options', () => {
+    it('keeps root stack screen options stable across unchanged renders', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
+            const initialScreenOptions = stackNavigatorScreenOptionsHistory.at(-1);
+            const initialTerminalConnectOptions = tree.root
+                .findAllByType('StackScreen')
+                .find((node) => node.props?.name === 'terminal/connect')
+                ?.props?.options;
+
+            act(() => {
+                tree!.update(React.createElement(RootLayout));
+            });
+
+            expect(stackNavigatorScreenOptionsHistory.at(-1)).toBe(initialScreenOptions);
+            const updatedTerminalConnectOptions = tree.root
+                .findAllByType('StackScreen')
+                .find((node) => node.props?.name === 'terminal/connect')
+                ?.props?.options;
+            expect(updatedTerminalConnectOptions).toBe(initialTerminalConnectOptions);
+        } finally {
+            if (tree) {
+                act(() => {
+                    tree!.unmount();
+                });
+            }
+        }
+    }, 60_000);
+
+    it('applies pending mobile surface transition options to the target route', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const mobileTransition = await import('@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent');
+        mobileTransition.prepareMobileSurfaceTransition({
+            currentPathname: '/session/s1/files',
+            targetHref: '/session/s1/git',
+            operation: 'replace',
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
+            const screenOptions = stackNavigatorScreenOptionsHistory.at(-1);
+
+            expect(typeof screenOptions).toBe('function');
+            const resolvedOptions = (screenOptions as (props: { route: { name?: string } }) => Record<string, unknown>)({
+                route: { name: 'session/[id]/git' },
+            });
+
+            expect(resolvedOptions).toMatchObject({
+                animation: 'slide_from_right',
+                animationTypeForReplace: 'push',
+            });
+        } finally {
+            if (tree) {
+                act(() => {
+                    tree!.unmount();
+                });
+            }
+            mobileTransition.clearPendingMobileSurfaceTransition();
         }
     }, 60_000);
 });

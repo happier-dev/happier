@@ -7,10 +7,13 @@ import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecision
 export async function fetchAndApplyFriends(params: {
     credentials: AuthCredentials | null | undefined;
     applyFriends: (friends: UserProfile[]) => void;
+    shouldContinue?: () => boolean;
 }): Promise<void> {
+    const shouldContinue = params.shouldContinue ?? (() => true);
     if (!params.credentials) {
         return;
     }
+    if (!shouldContinue()) return;
 
     const activeServer = getActiveServerSnapshot();
     const enabled = await isRuntimeFeatureEnabled({
@@ -22,7 +25,9 @@ export async function fetchAndApplyFriends(params: {
     if (!enabled) {
         return;
     }
+    if (!shouldContinue()) return;
 
     const friendsList = await getFriendsList(params.credentials);
+    if (!shouldContinue()) return;
     params.applyFriends(friendsList);
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchChanges } from './apiChanges';
+import { fetchChanges, fetchCurrentChangesCursor } from './apiChanges';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -80,18 +80,6 @@ describe('apiChanges', () => {
         expect(res).toEqual({ status: 'error' });
     });
 
-    it.each([401, 403] as const)('throws not_authenticated for auth status %s', async (status) => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(errorJson(status, { error: 'auth' }));
-
-        await expect(fetchChanges({ credentials, afterCursor: '0', limit: 200 })).rejects.toMatchObject({
-            name: 'HappyError',
-            canTryAgain: false,
-            kind: 'auth',
-            code: 'not_authenticated',
-            status,
-        });
-    });
-
     it('returns cursor-gone with fallback cursor when 410 body is invalid', async () => {
         (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
             ok: false,
@@ -120,5 +108,36 @@ describe('apiChanges', () => {
 
         await fetchChanges({ credentials, afterCursor: '-100', limit: 10_000 });
         expect(global.fetch).toHaveBeenCalledWith('https://api.test.com/v2/changes?after=0&limit=500', expect.any(Object));
+    });
+
+    it('returns the current cursor from /v2/cursor', async () => {
+        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(okJson({ cursor: 42, changesFloor: 7 }));
+
+        const res = await fetchCurrentChangesCursor({ credentials });
+
+        expect(res).toEqual({ status: 'ok', cursor: '42' });
+        expect(global.fetch).toHaveBeenCalledWith('https://api.test.com/v2/cursor', expect.any(Object));
+        const calls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const call = calls.find(([input]) => String(input) === 'https://api.test.com/v2/cursor');
+        const requestInit = call?.[1] as RequestInit | undefined;
+        expect(requestInit).toBeDefined();
+        expect(requestInit?.headers).toBeInstanceOf(Headers);
+        expect((requestInit!.headers as Headers).get('Authorization')).toBe('Bearer t');
+    });
+
+    it('returns error when /v2/cursor payload is invalid', async () => {
+        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(okJson({ cursor: -1, changesFloor: 0 }));
+
+        const res = await fetchCurrentChangesCursor({ credentials });
+
+        expect(res).toEqual({ status: 'error' });
+    });
+
+    it('returns error when /v2/cursor fetch throws', async () => {
+        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network down'));
+
+        const res = await fetchCurrentChangesCursor({ credentials });
+
+        expect(res).toEqual({ status: 'error' });
     });
 });

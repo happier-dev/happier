@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
@@ -74,6 +75,38 @@ describe('SelectableMenuResults', () => {
 
         expect(screen.tree).not.toBeNull();
         expect(screen.tree.toJSON()).toBe(null);
+    });
+
+    it('keeps hook order stable when empty results become populated', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const screen = await renderScreen(<SelectableMenuResults
+                    categories={[]}
+                    selectedIndex={0}
+                    onSelectionChange={() => {}}
+                    onPressItem={() => {}}
+                    rowVariant="slim"
+                    emptyLabel={null as any}
+                />);
+
+        expect(screen.tree.toJSON()).toBe(null);
+
+        expect(() => {
+            act(() => {
+                screen.tree.update(<SelectableMenuResults
+                            categories={[
+                                { id: 'c1', title: '', items: [{ id: 'a', title: 'A' }] },
+                            ]}
+                            selectedIndex={0}
+                            onSelectionChange={() => {}}
+                            onPressItem={() => {}}
+                            rowVariant="slim"
+                            emptyLabel={null as any}
+                        />);
+            });
+        }).not.toThrow();
+
+        expect(screen.findByType('SelectableRow')).toBeTruthy();
     });
 
     it('prefers an explicit item testID over the generated dropdown id', async () => {

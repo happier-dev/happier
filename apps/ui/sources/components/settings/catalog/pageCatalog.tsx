@@ -96,6 +96,15 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         icon: ({ theme }) => <Ionicons name="color-palette-outline" size={18} color={theme.colors.textSecondary} />,
                     },
                     {
+                        id: 'pets',
+                        titleKey: 'settings.pets',
+                        subtitleKey: 'settings.petsSubtitle',
+                        route: SETTINGS_ROUTES.pets,
+                        keywords: ['pets', 'blink', 'companion', 'codex'],
+                        gate: { featureId: 'pets.companion' },
+                        icon: ({ theme }) => <Ionicons name="paw-outline" size={18} color={theme.colors.textSecondary} />,
+                    },
+                    {
                         id: 'language',
                         titleKey: 'settingsLanguage.title',
                         route: SETTINGS_ROUTES.language,

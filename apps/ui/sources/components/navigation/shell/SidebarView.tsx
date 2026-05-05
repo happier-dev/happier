@@ -1,4 +1,4 @@
-import { useFriendRequests, useSetting } from '@/sync/domains/state/storage';
+import { useLocalSettingMutable, useSetting } from '@/sync/domains/state/storage';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -44,9 +44,10 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     const headerHeight = useHeaderHeight();
     const popoverBoundaryRef = React.useRef<any>(null);
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
+    const [, setSidebarCollapsed] = useLocalSettingMutable('sidebarCollapsed');
     useVoiceSurfaceE2eFixture();
     const voiceEnabled = useFeatureEnabled('voice');
-    const { headerActions, renderHeaderOverflowVisual } = useSidebarHeaderActions();
+    const { headerActions, topUtilityActions, renderHeaderOverflowVisual } = useSidebarHeaderActions();
     const resolvedDesktopWindowControls = useResolvedDesktopWindowControls({
         variant: 'expanded',
         desktopWindowControls: props.desktopWindowControls,
@@ -68,6 +69,27 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         }
     }, [router]);
 
+    const handleCollapseSidebar = React.useCallback(() => {
+        setSidebarCollapsed(true);
+    }, [setSidebarCollapsed]);
+
+    const handleNavigateBack = React.useCallback(() => {
+        const result = runGuardedNavigation(() => router.back());
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SidebarView.nav.back' });
+        }
+    }, [router]);
+
+    const handleNavigateForward = React.useCallback(() => {
+        const result = runGuardedNavigation(() => {
+            const historyLike = (globalThis as { history?: { forward?: () => void } }).history;
+            historyLike?.forward?.();
+        });
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SidebarView.nav.forward' });
+        }
+    }, []);
+
     return (
         <>
             <View testID="sidebar-view" ref={popoverBoundaryRef} style={[styles.container, { paddingTop: safeArea.top }]}>
@@ -76,8 +98,12 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                         sidebarWidthPx={props.sidebarWidthPx ?? null}
                         headerHeightPx={headerHeight}
                         onPressHome={handleHome}
+                        onPressCollapse={handleCollapseSidebar}
+                        onPressBack={handleNavigateBack}
+                        onPressForward={handleNavigateForward}
                         environmentBadge={environmentBadge}
                         headerActions={headerActions}
+                        topUtilityActions={topUtilityActions}
                         renderHeaderOverflowVisual={renderHeaderOverflowVisual}
                         popoverBoundaryRef={popoverBoundaryRef}
                         desktopWindowControls={resolvedDesktopWindowControls}

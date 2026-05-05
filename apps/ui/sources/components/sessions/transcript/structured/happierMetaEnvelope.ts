@@ -7,11 +7,10 @@ const HappierMetaEnvelopeSchema = z.object({
 
 export type HappierMetaEnvelope = z.infer<typeof HappierMetaEnvelopeSchema>;
 
-export function parseHappierMetaEnvelope(meta: unknown): HappierMetaEnvelope | null {
+export function parseHappierMetaEnvelope(meta: unknown, key = 'happier'): HappierMetaEnvelope | null {
     if (!meta || typeof meta !== 'object') return null;
     const record = meta as Record<string, unknown>;
-    const parsed = HappierMetaEnvelopeSchema.safeParse(record.happier);
+    const parsed = HappierMetaEnvelopeSchema.safeParse(record[key]);
     if (!parsed.success) return null;
     return parsed.data;
 }
-

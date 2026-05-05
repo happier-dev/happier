@@ -8,7 +8,7 @@ describe('resolveSessionRowInteractionPolicy', () => {
             platformOs: 'ios',
             isActiveSession: true,
             canStopSession: true,
-            canArchiveSession: false,
+            canArchiveSession: true,
             contextMenuItemCount: 2,
             contextMenuOpen: true,
             contextMenuWasOpen: false,
@@ -59,5 +59,21 @@ describe('resolveSessionRowInteractionPolicy', () => {
         });
 
         expect(policy.suppressNextPressOnNativeContextMenuOpen).toBe(false);
+    });
+
+    it('uses archive permission for active-session swipe actions', () => {
+        const policy = resolveSessionRowInteractionPolicy({
+            platformOs: 'ios',
+            isActiveSession: true,
+            canStopSession: true,
+            canArchiveSession: false,
+            contextMenuItemCount: 2,
+            contextMenuOpen: false,
+            contextMenuWasOpen: false,
+            nativeInlineDragEnabled: false,
+            hasReorderHandle: false,
+        });
+
+        expect(policy.swipeEnabled).toBe(false);
     });
 });

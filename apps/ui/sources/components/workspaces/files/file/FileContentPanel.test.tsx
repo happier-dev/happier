@@ -15,8 +15,8 @@ installSessionFileViewCommonModuleMocks({
             View: 'View',
             ScrollView: 'ScrollView',
             Platform: {
-                OS: 'ios',
-                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+                OS: 'android',
+                select: (options: any) => options?.android ?? options?.native ?? options?.default ?? options?.web ?? options?.ios,
             },
             AppState: {
                 addEventListener: () => ({ remove: () => {} }),
@@ -104,7 +104,7 @@ describe('FileContentPanel', () => {
         expect(codeLinesViewPropsState.current).toBeTruthy();
     });
 
-    it('renders a horizontal scroller for file content when wrapping is disabled', async () => {
+    it('uses a gesture-handler ScrollView for no-wrap file content on Android', async () => {
         const { FileContentPanel } = await import('./FileContentPanel');
 
         const screen = await renderScreen(<FileContentPanel
@@ -121,8 +121,10 @@ describe('FileContentPanel', () => {
             wrapLines={false}
         />);
 
-        const scrollViews = screen.tree.root.findAllByType('ScrollView' as any);
-        expect(scrollViews.some((node) => node.props.horizontal === true)).toBe(true);
+        const scrollView = screen.tree.root.findByType('GestureHandlerScrollView' as any);
+        expect(scrollView.props.horizontal).toBe(true);
+        expect(scrollView.props.nestedScrollEnabled).toBe(true);
+        expect(scrollView.props.disallowInterruption).toBe(true);
     });
 
     it('disables virtualization when review comments are enabled', async () => {
@@ -218,6 +220,30 @@ describe('FileContentPanel', () => {
 
         expect(codeLinesViewPropsState.current?.scrollToLineId).toBe('f:2');
         expect(codeLinesViewPropsState.current?.highlightLineId).toBe('f:2');
+    });
+
+    it('falls back to line hash when a fileLine anchor moved', async () => {
+        thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
+        const { FileContentPanel } = await import('./FileContentPanel');
+        const { computeLineContentHash } = await import('@/utils/text/lineContentHash');
+        codeLinesViewPropsState.current = null;
+
+        await renderScreen(<FileContentPanel
+                    theme={theme as any}
+                    displayMode="file"
+                    sessionId="s1"
+                    filePath="src/a.ts"
+                    diffContent={null}
+                    fileContent={['inserted', 'one', 'two'].join('\n')}
+                    language="typescript"
+                    selectedLineKeys={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                    jumpToAnchor={{ kind: 'fileLine', startLine: 1, lineHash: computeLineContentHash('two') }}
+                />);
+
+        expect(codeLinesViewPropsState.current?.scrollToLineId).toBe('f:3');
+        expect(codeLinesViewPropsState.current?.highlightLineId).toBe('f:3');
     });
 
     it('passes scroll/highlight target for diffLine anchors', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExtensionProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol';
 
 import {
     adaptDaemonContributionRegistryProjectionToMergedProjectionInputs,
@@ -115,8 +115,63 @@ describe('daemon contribution registry projection adapters', () => {
         }));
     });
 
-    it('adapts extension projection v2 plugin descriptors and registry metadata', () => {
-        const projection: ExtensionProjectionV2 = {
+    it('keeps v1 agent and provider settings descriptors in separate ownership buckets', () => {
+        const projection: DaemonContributionRegistryProjectionV1Like = {
+            v: 1,
+            uiDescriptorsById: {
+                'p1.agent-settings': {
+                    id: 'p1.agent-settings',
+                    pluginId: 'p1',
+                    surface: 'agentSettings',
+                    title: 'Agent Settings',
+                    fields: [
+                        {
+                            id: 'agentSecret',
+                            kind: 'secret',
+                            title: 'Agent secret',
+                            options: [],
+                        },
+                    ],
+                },
+                'p1.provider-settings': {
+                    id: 'p1.provider-settings',
+                    pluginId: 'p1',
+                    surface: 'providerSettings',
+                    title: 'Provider Settings',
+                    fields: [
+                        {
+                            id: 'providerSecret',
+                            kind: 'secret',
+                            title: 'Provider secret',
+                            options: [],
+                        },
+                    ],
+                },
+            },
+        };
+
+        const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+
+        expect(adapted.pluginProjectionById?.p1?.agentSettingsSections).toEqual([
+            expect.objectContaining({
+                id: 'p1.agent-settings',
+                fields: [
+                    expect.objectContaining({ key: 'agentSecret', kind: 'secret' }),
+                ],
+            }),
+        ]);
+        expect(adapted.pluginProjectionById?.p1?.providerSettingsSections).toEqual([
+            expect.objectContaining({
+                id: 'p1.provider-settings',
+                fields: [
+                    expect.objectContaining({ key: 'providerSecret', kind: 'secret' }),
+                ],
+            }),
+        ]);
+    });
+
+    it('adapts plugin projection v2 descriptors and registry metadata', () => {
+        const projection: PluginProjectionV2 = {
             v: 2,
             generation: 42,
             installedPackagesById: {
@@ -147,6 +202,7 @@ describe('daemon contribution registry projection adapters', () => {
                     available: true,
                 },
             },
+            familiesById: {},
             hooksById: {},
             toolsById: {},
             commandsById: {},
@@ -202,7 +258,7 @@ describe('daemon contribution registry projection adapters', () => {
                 'acme.review.provider-settings': {
                     id: 'acme.review.provider-settings',
                     pluginId: 'acme.review',
-                    surface: 'providerSettings',
+                    surface: 'agentSettings',
                     title: 'Provider Settings',
                     fields: [
                         {
@@ -310,7 +366,7 @@ describe('daemon contribution registry projection adapters', () => {
                 ],
             }),
         ]);
-        expect(adapted.pluginProjectionById?.['acme.review']?.providerSettingsSections).toEqual([
+        expect(adapted.pluginProjectionById?.['acme.review']?.agentSettingsSections).toEqual([
             expect.objectContaining({
                 id: 'acme.review.provider-settings',
                 fields: [
@@ -318,6 +374,7 @@ describe('daemon contribution registry projection adapters', () => {
                 ],
             }),
         ]);
+        expect(adapted.pluginProjectionById?.['acme.review']?.providerSettingsSections).toEqual([]);
         expect(adapted.pluginProjectionById?.['acme.review']?.backendSettingsSections).toEqual([
             expect.objectContaining({
                 id: 'acme.review.backend-settings',

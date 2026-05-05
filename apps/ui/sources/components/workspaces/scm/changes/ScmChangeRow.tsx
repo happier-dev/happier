@@ -8,6 +8,10 @@ import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 const PATH_SEPARATOR = '/';
+const CHANGE_STATS_MIN_COLUMN_WIDTH = 38;
+const CHANGE_STATS_CHARACTER_WIDTH = 7;
+const CHANGE_STATS_COLUMN_EXTRA_WIDTH = 4;
+
 type Theme = Readonly<{
     colors: Readonly<{
         surface?: string;
@@ -36,6 +40,30 @@ type ChangeDescriptor = Readonly<{
     color: string;
     label: string;
 }>;
+
+type ScmChangeStatsLike = Readonly<{
+    linesAdded?: number | null;
+    linesRemoved?: number | null;
+}>;
+
+function normalizeLineCount(value: unknown): string {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? String(Math.max(0, Math.trunc(value)))
+        : '0';
+}
+
+export function resolveScmChangeStatsColumnWidth(files: readonly ScmChangeStatsLike[]): number {
+    let maxLabelLength = 0;
+    for (const file of files) {
+        const added = normalizeLineCount(file.linesAdded);
+        const removed = normalizeLineCount(file.linesRemoved);
+        maxLabelLength = Math.max(maxLabelLength, `+${added}${PATH_SEPARATOR}-${removed}`.length);
+    }
+    return Math.max(
+        CHANGE_STATS_MIN_COLUMN_WIDTH,
+        maxLabelLength * CHANGE_STATS_CHARACTER_WIDTH + CHANGE_STATS_COLUMN_EXTRA_WIDTH,
+    );
+}
 
 function describeChange(file: ScmFileStatus, theme: Theme): ChangeDescriptor {
     const info = theme.colors.textLink ?? theme.colors.textSecondary;
@@ -74,6 +102,7 @@ export type ScmChangeRowProps = Readonly<{
     density?: 'comfortable' | 'compact';
     showDivider?: boolean;
     highlighted?: boolean;
+    statsColumnWidth?: number;
 }>;
 
 export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
@@ -83,6 +112,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
     const isWeb = Platform.OS === 'web';
 
     const paddingVertical = density === 'compact' ? 4 : 10;
+    const statsColumnWidth = props.statsColumnWidth ?? resolveScmChangeStatsColumnWidth([file]);
 
     const containerStyle = React.useMemo(() => {
         const bg = props.highlighted
@@ -164,14 +194,24 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                 }}
             />
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                <Text style={{ fontSize: 11, color: theme.colors.success ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+            <View
+                testID="scm-change-row-stats-column"
+                style={{
+                    width: statsColumnWidth,
+                    flexShrink: 0,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'flex-end',
+                    gap: 2,
+                }}
+            >
+                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.success ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
                     {`+${file.linesAdded}`}
                 </Text>
-                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
+                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.textSecondary, ...Typography.default() }}>
                     {PATH_SEPARATOR}
                 </Text>
-                <Text style={{ fontSize: 11, color: theme.colors.textDestructive ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.textDestructive ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
                     {`-${file.linesRemoved}`}
                 </Text>
             </View>

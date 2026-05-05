@@ -133,57 +133,59 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 }>): React.ReactNode {
     if (params.stepId === 'welcome') {
         return (
-            <View testID={`${params.testIDPrefix}-welcome-auth`} style={params.styles.welcomeBody}>
-                <View style={params.styles.labelContainer}>
-                    <Text style={params.styles.label}>{t('setupOnboarding.welcomeBody2')}</Text>
-                    <Text style={params.styles.label}>{t('setupOnboarding.welcomeBody3')}</Text>
-                </View>
-                <WelcomeProvidersShowcase
-                    testID={`${params.testIDPrefix}-welcome-showcase`}
-                    testIDPrefix={`${params.testIDPrefix}-welcome`}
-                />
-                {params.canScanQr ? (
-                    <View style={params.styles.scanCtaBlock}>
-                        <RoundButton
-                            testID={`${params.testIDPrefix}-scan`}
-                            size="normal"
-                            display="inverted"
-                            title={t('setupOnboarding.scanQrCode')}
-                            onPress={params.onStartScan}
-                        />
+            <View testID="welcome-hero" style={params.styles.welcomeHero}>
+                <View testID={`${params.testIDPrefix}-welcome-auth`} style={params.styles.welcomeBody}>
+                    <View style={params.styles.labelContainer}>
+                        <Text style={params.styles.label}>{t('setupOnboarding.welcomeBody2')}</Text>
+                        <Text style={params.styles.label}>{t('setupOnboarding.welcomeBody3')}</Text>
                     </View>
-                ) : null}
-                {params.welcomeHasKnownRelay ? (
-                    <>
-                        <View style={params.styles.authEntryWrapper}>
-                            <AuthEntryView
-                                layout={params.layout}
-                                isDesktopShell={false}
-                                options={params.authEntryOptions}
-                                onOpenSetup={() => {}}
-                                onChangeRelay={params.allowRelaySelection ? params.onOpenRelaySelectionFromWelcome : () => {}}
-                                onRestore={params.onOpenRestore}
-                                onCreateAccount={params.onCreateAccount}
-                                onCreateAccountViaProvider={params.onCreateAccountViaProvider}
-                                onLoginWithKeylessProvider={params.onLoginWithKeylessProvider}
-                                onLoginWithMtls={params.onLoginWithMtls}
+                    <WelcomeProvidersShowcase
+                        testID={`${params.testIDPrefix}-welcome-showcase`}
+                        testIDPrefix={`${params.testIDPrefix}-welcome`}
+                    />
+                    {params.canScanQr ? (
+                        <View style={params.styles.scanCtaBlock}>
+                            <RoundButton
+                                testID={`${params.testIDPrefix}-scan`}
+                                size="normal"
+                                display="inverted"
+                                title={t('setupOnboarding.scanQrCode')}
+                                onPress={params.onStartScan}
                             />
                         </View>
-                        {params.welcomeHasAuthActions && params.allowRelaySelection ? (
-                            <View style={params.styles.scanCtaBlock}>
-                                <RoundButton
-                                    testID={`${params.testIDPrefix}-change-relay`}
-                                    size="small"
-                                    display="inverted"
-                                    title={t('setupOnboarding.changeRelayAction')}
-                                    onPress={() => {
-                                        params.onOpenRelaySelectionFromWelcome();
-                                    }}
+                    ) : null}
+                    {params.welcomeHasKnownRelay ? (
+                        <>
+                            <View style={params.styles.authEntryWrapper}>
+                                <AuthEntryView
+                                    layout={params.layout}
+                                    isDesktopShell={false}
+                                    options={params.authEntryOptions}
+                                    onOpenSetup={() => {}}
+                                    onChangeRelay={params.allowRelaySelection ? params.onOpenRelaySelectionFromWelcome : () => {}}
+                                    onRestore={params.onOpenRestore}
+                                    onCreateAccount={params.onCreateAccount}
+                                    onCreateAccountViaProvider={params.onCreateAccountViaProvider}
+                                    onLoginWithKeylessProvider={params.onLoginWithKeylessProvider}
+                                    onLoginWithMtls={params.onLoginWithMtls}
                                 />
                             </View>
-                        ) : null}
-                    </>
-                ) : null}
+                            {params.welcomeHasAuthActions && params.allowRelaySelection ? (
+                                <View style={params.styles.scanCtaBlock}>
+                                    <RoundButton
+                                        testID={`${params.testIDPrefix}-change-relay`}
+                                        size="small"
+                                        display="inverted"
+                                        title={t('setupOnboarding.changeRelayAction')}
+                                        onPress={() => {
+                                            params.onOpenRelaySelectionFromWelcome();
+                                        }}
+                                    />
+                                </View>
+                            ) : null}
+                        </>
+                    ) : null}
+                </View>
             </View>
         );
     }

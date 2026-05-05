@@ -7,6 +7,7 @@ import { createFriendsDomain } from '../../store/domains/friends';
 import { createMachinesDomain } from '../../store/domains/machines';
 import { createMessagesDomain } from '../../store/domains/messages';
 import { createPendingDomain } from '../../store/domains/pending';
+import { createPetsDomain } from '../../store/domains/pets';
 import { createProfileDomain } from '../../store/domains/profile';
 import { createRealtimeDomain } from '../../store/domains/realtime';
 import { createSessionsDomain } from '../../store/domains/sessions';
@@ -29,6 +30,7 @@ export const storage = create<StorageState>()((set, get) => {
     const realtimeDomain = createRealtimeDomain<StorageState>({ set, get });
     const artifactsDomain = createArtifactsDomain<StorageState>({ set, get });
     const automationsDomain = createAutomationsDomain<StorageState>({ set, get });
+    const petsDomain = createPetsDomain<StorageState>({ set, get });
     const friendsDomain = createFriendsDomain<StorageState>({ set, get });
     const feedDomain = createFeedDomain<StorageState>({ set, get });
 
@@ -39,6 +41,7 @@ export const storage = create<StorageState>()((set, get) => {
         ...machinesDomain,
         ...artifactsDomain,
         ...automationsDomain,
+        ...petsDomain,
         ...friendsDomain,
         ...feedDomain,
         ...todosDomain,

@@ -56,6 +56,8 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_APP_VERSION',
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
+        'EXPO_APP_BUNDLE_ID',
+        'EXPO_ANDROID_PACKAGE',
         'HAPPIER_EXPO_RUNTIME_VERSION',
         'HAPPIER_EXPO_RUNTIME_VERSION_POLICY',
         'EXPO_APP_LOCAL_CONFIG_PATH',
@@ -65,10 +67,17 @@ function withCleanEnv<T>(fn: () => T): T {
         'HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC',
         'EXPO_PUBLIC_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES',
         'EXPO_IOS_LIVE_ACTIVITIES_FREQUENT_UPDATES',
+        'EXPO_PUBLIC_IOS_LIVE_ACTIVITIES_PUSH_NOTIFICATIONS',
+        'EXPO_IOS_LIVE_ACTIVITIES_PUSH_NOTIFICATIONS',
+        'EXPO_PUBLIC_HAPPIER_IOS_APNS_ENVIRONMENT',
+        'EXPO_IOS_APNS_ENVIRONMENT',
         'HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE',
         'HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH',
+        'HAPPIER_EXPO_DEVCLIENT_ADD_GENERATED_SCHEME',
         'HAPPIER_EXPO_USE_NATIVE_DEBUG',
         'EX_UPDATES_NATIVE_DEBUG',
+        'EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON',
+        'HAPPIER_SYNC_TUNING_JSON',
     ] as const;
 
     const previous: Partial<Record<(typeof keys)[number], string | undefined>> = {};
@@ -135,6 +144,27 @@ describe('app.config.js', () => {
         expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('dev');
     });
 
+    it('does not use iOS bundle id overrides as Android package overrides', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_APP_BUNDLE_ID = 'com.happier.local.leeroy.dev';
+            return getPublicConfig();
+        });
+
+        expect(exp.ios?.bundleIdentifier).toBe('com.happier.local.leeroy.dev');
+        expect(exp.android?.package).toBe('dev.happier.app.internaldev');
+    });
+
+    it('uses explicit Android package overrides independently from iOS bundle id overrides', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_APP_BUNDLE_ID = 'com.happier.local.leeroy.dev';
+            process.env.EXPO_ANDROID_PACKAGE = 'dev.happier.app.internaldev.devclient';
+            return getPublicConfig();
+        });
+
+        expect(exp.ios?.bundleIdentifier).toBe('com.happier.local.leeroy.dev');
+        expect(exp.android?.package).toBe('dev.happier.app.internaldev.devclient');
+    });
+
     it('enables Android cleartext traffic by default through expo-build-properties so native manifests allow LAN/local HTTP relays', () => {
         const exp = withCleanEnv(() => getPublicConfig());
         expect(getPluginOptions(exp, 'expo-build-properties')).toEqual(
@@ -144,6 +174,13 @@ describe('app.config.js', () => {
                 }),
             })
         );
+    });
+
+    it('enables enriched markdown native math dependencies', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        expect(getPluginOptions(exp, 'react-native-enriched-markdown')).toEqual({
+            enableMath: true,
+        });
     });
 
     it('allows disabling Android cleartext traffic explicitly via env override', () => {
@@ -285,6 +322,19 @@ describe('app.config.js', () => {
         expect(exp.updates?.url).toBe('https://u.expo.dev/public-project-id');
     });
 
+    it('forwards sync tuning JSON into extra.app for native release builds', () => {
+        const tuningJson = JSON.stringify({
+            syncPerformanceTelemetryEnabled: true,
+            nativeCryptoWorkerMode: 'auto',
+        });
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON = tuningJson;
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.app?.syncTuningJson).toBe(tuningJson);
+    });
+
     it('uses EAS_PROJECT_ID when EXPO_PUBLIC_EAS_PROJECT_ID is unset', () => {
         const exp = withCleanEnv(() => {
             process.env.EAS_PROJECT_ID = 'eas-project-id';
@@ -350,6 +400,28 @@ describe('app.config.js', () => {
         expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: false })]);
     });
 
+    it('bundles Happier notification sounds through expo-notifications', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+
+        const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-notifications');
+        expect(plugin).toEqual([
+            'expo-notifications',
+            expect.objectContaining({
+                sounds: [
+                    './sources/assets/sounds/happier_soft.wav',
+                    './sources/assets/sounds/happier_urgent.wav',
+                ],
+            }),
+        ]);
+        expect(plugin).toEqual([
+            'expo-notifications',
+            expect.objectContaining({
+                enableBackgroundRemoteNotifications: true,
+            }),
+        ]);
+        expect(exp.extra?.app?.iosBackgroundWakeNotificationsEnabled).toBe(true);
+    });
+
     it('does not enable OTA-native debug development-client launch overrides by default', () => {
         const exp = withCleanEnv(() => {
             process.env.APP_ENV = 'development';
@@ -375,6 +447,17 @@ describe('app.config.js', () => {
         expect(devClientPlugin).toEqual(['expo-dev-client', expect.objectContaining({ launchMode: 'most-recent' })]);
         expect(exp.developmentClient?.silentLaunch).toBe(true);
         expect(exp.updates?.useNativeDebug).toBe(true);
+    });
+
+    it('can opt Expo dev-client out of generated exp slug URL schemes for local app isolation', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'development';
+            process.env.HAPPIER_EXPO_DEVCLIENT_ADD_GENERATED_SCHEME = '0';
+            return getPublicConfig();
+        });
+
+        const devClientPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-dev-client');
+        expect(devClientPlugin).toEqual(['expo-dev-client', expect.objectContaining({ addGeneratedScheme: false })]);
     });
 
     it('does not include unused optional native plugins in the default config', () => {
@@ -424,6 +507,62 @@ describe('app.config.js', () => {
                 frequentUpdates: true,
             }),
         ]);
+    });
+
+    it('enables ActivityKit push notifications in the expo-widgets plugin config by default', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        const widgetPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-widgets');
+
+        expect(widgetPlugin).toEqual([
+            'expo-widgets',
+            expect.objectContaining({
+                enablePushNotifications: true,
+            }),
+        ]);
+        expect(exp.extra?.app?.iosLiveActivityPushNotificationsEnabled).toBe(true);
+    });
+
+    it('publishes disabled ActivityKit push support when the static widget push flag is disabled', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_IOS_LIVE_ACTIVITIES_PUSH_NOTIFICATIONS = 'false';
+            return getPublicConfig();
+        });
+        const widgetPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-widgets');
+
+        expect(widgetPlugin).toEqual([
+            'expo-widgets',
+            expect.objectContaining({
+                enablePushNotifications: false,
+            }),
+        ]);
+        expect(exp.extra?.app?.iosLiveActivityPushNotificationsEnabled).toBe(false);
+    });
+
+    it('publishes the APNs environment used for ActivityKit token registration', () => {
+        const production = withCleanEnv(() => {
+            process.env.APP_ENV = 'production';
+            return getPublicConfig();
+        });
+        const preview = withCleanEnv(() => {
+            process.env.APP_ENV = 'preview';
+            return getPublicConfig();
+        });
+
+        expect(production.extra?.app?.happierLiveActivityApnsEnvironment).toBe('production');
+        expect(preview.extra?.app?.happierLiveActivityApnsEnvironment).toBe('sandbox');
+    });
+
+    it('prefixes the widget extension bundle identifier with the active iOS app bundle identifier', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_APP_BUNDLE_ID = 'dev.happier.app.dev.next-dev.devclient';
+            return getPublicConfig();
+        });
+
+        expect(getPluginOptions(exp, 'expo-widgets')).toEqual(
+            expect.objectContaining({
+                bundleIdentifier: 'dev.happier.app.dev.next-dev.devclient.ExpoWidgetsTarget',
+            })
+        );
     });
 
     it('includes iOS privacy purpose strings required by App Store static analysis', () => {

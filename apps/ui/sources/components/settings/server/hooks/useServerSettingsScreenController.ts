@@ -12,20 +12,23 @@ import {
     getDeviceDefaultServerId,
     getResetToDefaultServerId,
     listServerProfiles,
-    setActiveServerId,
     type ServerProfile,
     removeServerProfile,
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
+import { setActiveServer } from '@/sync/domains/server/serverRuntime';
 import {
     filterServerSelectionGroupsToAvailableServers,
     normalizeStoredServerSelectionGroups,
 } from '@/sync/domains/server/selection/serverSelectionMutations';
+import { writeServerSelectionActiveTargetToServer } from '@/sync/domains/server/selection/serverSelectionActiveTarget';
+import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isInsecureRemoteHttpServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { useAuth } from '@/auth/context/AuthContext';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { parseServerSettingsRouteParams } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { useServerAuthStatusByServerId } from '@/components/settings/server/hooks/useServerAuthStatusByServerId';
@@ -34,8 +37,10 @@ import { useEndpointReachabilityRemediationController } from '@/components/setti
 import { useServerSettingsServerProfileActions } from '@/components/settings/server/hooks/useServerSettingsServerProfileActions';
 import { useServerSettingsGroupActions } from '@/components/settings/server/hooks/useServerSettingsGroupActions';
 import { useServerSettingsConcurrentActions } from '@/components/settings/server/hooks/useServerSettingsConcurrentActions';
+import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTypes';
+import { retargetPendingTerminalConnectToServerUrl } from '@/sync/domains/pending/retargetPendingTerminalConnectToServerUrl';
 import {
     resolveEndpointReachabilityRemediation,
     type EndpointReachabilityRemediation,
@@ -46,8 +51,13 @@ import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/d
 import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { buildTerminalConnectAuthRedirectHref } from '@/utils/path/terminalConnectUrl';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
+type SwitchServerByIdOptions = Readonly<{
+    normalizeRoute?: boolean;
+    preserveSelectionTarget?: boolean;
+}>;
 
 function normalizeUrl(raw: string): string {
     return canonicalizeServerUrl(raw);
@@ -147,14 +157,20 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const addServerPrefillHint = route.source === 'notification' && route.url ? t('server.notificationAddServerHint') : null;
     const addServerDefaultExpanded = route.source === 'notification' && route.url ? ('server' as const) : null;
 
-    const switchServerById = React.useCallback(async (serverId: string, opts?: { normalizeRoute?: boolean }) => {
-        setActiveServerId(serverId, { scope: 'device' });
+    const switchServerById = React.useCallback(async (serverId: string, opts?: SwitchServerByIdOptions) => {
+        if (opts?.preserveSelectionTarget !== true) {
+            writeServerSelectionActiveTargetToServer({
+                setServerSelectionActiveTargetKind,
+                setServerSelectionActiveTargetId,
+            }, serverId);
+        }
+        setActiveServer({ serverId, scope: 'device' });
         await switchConnectionToActiveServer();
         await auth.refreshFromActiveServer();
         if (opts?.normalizeRoute ?? true) {
             router.replace('/server');
         }
-    }, [auth, router]);
+    }, [auth, router, setServerSelectionActiveTargetId, setServerSelectionActiveTargetKind]);
 
     const validateServerReachable = React.useCallback(async (url: string): Promise<boolean> => {
         const attemptId = (validationAttemptIdRef.current += 1);
@@ -297,14 +313,26 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         }
     }, [revision]);
 
+    const resolvedActiveSelection = React.useMemo(() => resolveActiveServerSelectionFromRawSettings({
+        activeServerId: activeServerIdValue,
+        availableServerIds: servers.map((server) => server.id),
+        settings: {
+            serverSelectionGroups,
+            serverSelectionActiveTargetKind,
+            serverSelectionActiveTargetId,
+        },
+    }), [
+        activeServerIdValue,
+        serverSelectionActiveTargetId,
+        serverSelectionActiveTargetKind,
+        serverSelectionGroups,
+        servers,
+    ]);
+
     const activeTargetKey = React.useMemo(() => {
-        const kind = serverSelectionActiveTargetKind === 'server' || serverSelectionActiveTargetKind === 'group'
-            ? serverSelectionActiveTargetKind
-            : null;
-        const id = typeof serverSelectionActiveTargetId === 'string' ? serverSelectionActiveTargetId.trim() : '';
-        if (kind && id) return `${kind}:${id}`;
-        return activeServerIdValue ? `server:${activeServerIdValue}` : null;
-    }, [activeServerIdValue, serverSelectionActiveTargetId, serverSelectionActiveTargetKind]);
+        const target = resolvedActiveSelection.activeTarget;
+        return target.id ? `${target.kind}:${target.id}` : null;
+    }, [resolvedActiveSelection.activeTarget]);
 
     const authStatusByServerId = useServerAuthStatusByServerId(servers);
     const activeServerUrl = React.useMemo(() => {
@@ -355,18 +383,20 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     ]);
 
     const activeMultiServerProfileId = React.useMemo(() => {
-        if (serverSelectionActiveTargetKind !== 'group') return null;
-        const id = String(serverSelectionActiveTargetId ?? '').trim();
-        return id || null;
-    }, [serverSelectionActiveTargetId, serverSelectionActiveTargetKind]);
+        const target = resolvedActiveSelection.activeTarget;
+        return target.kind === 'group' && target.id ? target.id : null;
+    }, [resolvedActiveSelection.activeTarget]);
+
+    const activeGroupProfile = React.useMemo(() => (
+        activeMultiServerProfileId
+            ? normalizedGroupProfiles.find((profile) => profile.id === activeMultiServerProfileId) ?? null
+            : null
+    ), [activeMultiServerProfileId, normalizedGroupProfiles]);
 
     const selectedConcurrentServerIds = React.useMemo(() => {
-        const activeGroup = activeMultiServerProfileId
-            ? normalizedGroupProfiles.find((profile) => profile.id === activeMultiServerProfileId) ?? null
-            : null;
-        if (activeGroup) return new Set(activeGroup.serverIds);
-        return activeServerIdValue ? new Set([activeServerIdValue]) : new Set<string>();
-    }, [activeMultiServerProfileId, activeServerIdValue, normalizedGroupProfiles]);
+        if (activeGroupProfile) return new Set(activeGroupProfile.serverIds);
+        return new Set(resolvedActiveSelection.allowedServerIds);
+    }, [activeGroupProfile, resolvedActiveSelection.allowedServerIds]);
 
     const concurrentActions = useServerSettingsConcurrentActions({
         activeGroupId: activeMultiServerProfileId,
@@ -379,8 +409,6 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         onSwitchServerById: async (serverId) => switchServerById(serverId),
         onAfterSignedOutSwitch: () => router.replace('/'),
         setRevision,
-        setServerSelectionActiveTargetKind,
-        setServerSelectionActiveTargetId,
     });
 
     const groupActions = useServerSettingsGroupActions({
@@ -390,12 +418,9 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         authStatusByServerId,
         normalizedGroupProfiles,
         activeGroupId: activeMultiServerProfileId,
-        groupPresentation: (
-            normalizedGroupProfiles.find((profile) => profile.id === activeMultiServerProfileId)?.presentation
-            ?? 'grouped'
-        ) === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
+        groupPresentation: (activeGroupProfile?.presentation ?? 'grouped') === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
         setRevision,
-        onSwitchServerById: async (serverId) => switchServerById(serverId),
+        onSwitchServerById: async (serverId) => switchServerById(serverId, { preserveSelectionTarget: true }),
         onAfterSignedOutSwitch: () => router.replace('/'),
         setServerSelectionActiveTargetKind,
         setServerSelectionActiveTargetId,
@@ -467,8 +492,29 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             // best-effort
         }
 
-        await switchServerById(profile.id, { normalizeRoute: route.source !== 'notification' });
+        let targetAuthStatus: 'signedIn' | 'signedOut' | 'unknown' = 'unknown';
+        try {
+            const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
+            targetAuthStatus = creds ? 'signedIn' : 'signedOut';
+        } catch {
+            targetAuthStatus = 'unknown';
+        }
+
+        if (targetAuthStatus === 'signedOut') {
+            const shouldContinue = await promptSignedOutServerSwitchConfirmation();
+            if (!shouldContinue) return;
+        }
+
+        retargetPendingTerminalConnectToServerUrl(profile.serverUrl);
+        await switchServerById(profile.id, {
+            normalizeRoute: targetAuthStatus === 'signedOut' ? false : route.source !== 'notification',
+        });
         setRevision((r) => r + 1);
+
+        if (targetAuthStatus === 'signedOut') {
+            router.replace(buildTerminalConnectAuthRedirectHref({ serverUrl: profile.serverUrl }));
+            return;
+        }
 
         if (route.source === 'notification' && route.url) {
             const pending = getPendingNotificationNav();
@@ -541,7 +587,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         onRemoveGroup: groupActions.onRemoveGroup,
         onCreateServerGroup: groupActions.onCreateServerGroup,
 
-        groupSelectionEnabled: serverSelectionActiveTargetKind === 'group',
+        groupSelectionEnabled: activeMultiServerProfileId !== null,
         setGroupSelectionEnabled: (value) => {
             if (!value) {
                 setServerSelectionActiveTargetKind('server');
@@ -570,10 +616,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             setServerSelectionActiveTargetKind('group');
             setServerSelectionActiveTargetId(nextGroupId);
         },
-        groupSelectionPresentation: (
-            normalizedGroupProfiles.find((profile) => profile.id === activeMultiServerProfileId)?.presentation
-            ?? 'grouped'
-        ) === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
+        groupSelectionPresentation: (activeGroupProfile?.presentation ?? 'grouped') === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
         activeServerGroupId: activeMultiServerProfileId,
         selectedGroupServerIds: selectedConcurrentServerIds,
         onToggleGroupPresentation: concurrentActions.onTogglePresentation,

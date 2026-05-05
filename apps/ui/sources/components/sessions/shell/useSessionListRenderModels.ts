@@ -3,6 +3,8 @@ import * as React from 'react';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { useSessionListRowStateByServerId } from '@/sync/domains/state/storage';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
@@ -17,7 +19,8 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 type SessionReachableDisplay = Readonly<{
     machineId: string | null;
     machineLabel: string;
-    pathSubtitle: string;
+    workspaceSubtitle: string;
+    workspaceSubtitleEllipsizeMode: WorkspaceDisplayEllipsizeMode;
 }>;
 
 const EMPTY_PINNED_KEY_SET: ReadonlySet<string> = new Set();
@@ -38,6 +41,36 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
     projectHeaderViewModelState: SessionListProjectHeaderViewModelState;
     rowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
 }>;
+
+function countSessionListItems(items: ReadonlyArray<SessionListIndexItem> | null | undefined): number {
+    if (!items) return 0;
+    let sessions = 0;
+    for (const item of items) {
+        if (item?.type === 'session') {
+            sessions += 1;
+        }
+    }
+    return sessions;
+}
+
+function countCollapsedSessionListGroups(collapsedGroupKeys: Readonly<Record<string, boolean>>): number {
+    let groups = 0;
+    for (const value of Object.values(collapsedGroupKeys)) {
+        if (value === true) {
+            groups += 1;
+        }
+    }
+    return groups;
+}
+
+function measureSessionListRenderDerivation<T>(
+    name: string,
+    fields: () => Record<string, number>,
+    fn: () => T,
+): T {
+    if (!syncPerformanceTelemetry.isEnabled()) return fn();
+    return syncPerformanceTelemetry.measure(name, fields(), fn);
+}
 
 export function useSessionListRenderModels(input: Readonly<{
     paneState: VisibleSessionListPaneState;
@@ -70,25 +103,43 @@ export function useSessionListRenderModels(input: Readonly<{
 
     const visibleListItems = React.useMemo(() => {
         const items = input.paneState.visibleSessionListIndex;
-        if (!items || items.length === 0) return items;
-        return filterCollapsedSessionListItems(items, input.collapsedGroupKeys);
+        return measureSessionListRenderDerivation(
+            'ui.sessionsList.render.collapsedFiltering',
+            () => ({
+                items: items?.length ?? 0,
+                collapsedGroups: countCollapsedSessionListGroups(input.collapsedGroupKeys),
+            }),
+            () => {
+                if (!items || items.length === 0) return items;
+                return filterCollapsedSessionListItems(items, input.collapsedGroupKeys);
+            },
+        );
     }, [input.collapsedGroupKeys, input.paneState.visibleSessionListIndex]);
     const listItems = (visibleListItems ?? []) as Array<SessionListIndexItem>;
 
     const sessionReachabilitySummary = React.useMemo(() => {
-        return buildSessionListReachabilitySummary({
-            listItems,
-            machinesById,
-            resolveSessionRenderable: (item) => {
-                const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
-                const sessionId = String(item.sessionId ?? '').trim();
-                if (!serverId || !sessionId) return null;
-                const scoped = sessionRowStateByServerId?.[serverId];
-                if (!scoped || typeof scoped !== 'object') return null;
-                return scoped[sessionId] ?? null;
-            },
-        });
-    }, [listItems, machinesById, sessionRowStateByServerId]);
+        return measureSessionListRenderDerivation(
+            'ui.sessionsList.render.reachabilityDisplayMap',
+            () => ({
+                items: listItems.length,
+                machines: machinesById.size,
+                displayRows: countSessionListItems(listItems),
+            }),
+            () => buildSessionListReachabilitySummary({
+                listItems,
+                machinesById,
+                workspaceRefs: normalizedShellState.workspaceRefs,
+                resolveSessionRenderable: (item) => {
+                    const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
+                    const sessionId = String(item.sessionId ?? '').trim();
+                    if (!serverId || !sessionId) return null;
+                    const scoped = sessionRowStateByServerId?.[serverId];
+                    if (!scoped || typeof scoped !== 'object') return null;
+                    return scoped[sessionId] ?? null;
+                },
+            }),
+        );
+    }, [listItems, machinesById, normalizedShellState.workspaceRefs, sessionRowStateByServerId]);
 
     const projectHeaderViewModelState = React.useMemo(() => {
         return buildSessionListProjectHeaderViewModels({
@@ -99,16 +150,23 @@ export function useSessionListRenderModels(input: Readonly<{
     }, [listItems, normalizedShellState.workspaceLabels, normalizedShellState.workspaceRefs]);
 
     const rowViewModels = React.useMemo(() => {
-        return buildSessionListRowViewModels({
-            listItems,
-            reachableSessionDisplayById: sessionReachabilitySummary.displayById,
-            hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
-            pinnedSessionKeys: pinnedKeySet,
-            sessionTags: normalizedShellState.sessionTags,
-            selectedSessionId: input.selectedSessionId,
-            showServerBadge: input.showServerBadge,
-            showPinnedServerBadge: input.showPinnedServerBadge,
-        });
+        return measureSessionListRenderDerivation(
+            'ui.sessionsList.render.selectedMapping',
+            () => ({
+                items: listItems.length,
+                selectable: input.selectedSessionId ? 1 : 0,
+            }),
+            () => buildSessionListRowViewModels({
+                listItems,
+                reachableSessionDisplayById: sessionReachabilitySummary.displayById,
+                hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
+                pinnedSessionKeys: pinnedKeySet,
+                sessionTags: normalizedShellState.sessionTags,
+                selectedSessionId: input.selectedSessionId,
+                showServerBadge: input.showServerBadge,
+                showPinnedServerBadge: input.showPinnedServerBadge,
+            }),
+        );
     }, [
         pinnedKeySet,
         input.selectedSessionId,

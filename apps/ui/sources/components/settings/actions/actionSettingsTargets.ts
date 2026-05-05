@@ -17,8 +17,7 @@ export type ActionSettingsTargetId =
     | ActionUiPlacement
     | 'mcp'
     | 'session_agent'
-    | 'voice_tool'
-    | 'voice_action_block'
+    | 'voice'
     | 'cli'
     | 'contextual_ui';
 
@@ -140,21 +139,12 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
 
 const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
     {
-        id: 'voice_tool',
+        id: 'voice',
         kind: 'surface',
-        surface: 'voice_tool',
-        titleKey: 'settingsActions.targets.voice_tool.title',
-        subtitleKey: 'settingsActions.targets.voice_tool.subtitle',
+        surface: 'voice',
+        titleKey: 'settingsActions.targets.voice.title',
+        subtitleKey: 'settingsActions.targets.voice.subtitle',
         icon: 'mic-circle-outline',
-        category: 'voice',
-    },
-    {
-        id: 'voice_action_block',
-        kind: 'surface',
-        surface: 'voice_action_block',
-        titleKey: 'settingsActions.targets.voice_action_block.title',
-        subtitleKey: 'settingsActions.targets.voice_action_block.subtitle',
-        icon: 'chatbubble-ellipses-outline',
         category: 'voice',
     },
     {
@@ -187,7 +177,7 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
     {
         id: 'contextual_ui',
         kind: 'surface',
-        surface: 'ui_button',
+        surface: 'ui',
         titleKey: 'settingsActions.targets.contextual_ui.title',
         subtitleKey: 'settingsActions.targets.contextual_ui.subtitle',
         icon: 'flash-outline',
@@ -269,20 +259,20 @@ function isSurfaceSupported(spec: ActionSpec, surface: ActionSettingsSurface): b
 }
 
 function shouldExposeContextualUi(spec: ActionSpec): boolean {
-    return spec.surfaces.ui_button === true && spec.placements.length === 0;
+    return spec.surfaces.ui === true && spec.placements.length === 0;
 }
 
 function buildSyntheticSlashCommandTarget(spec: ActionSpec): ActionSettingsTargetDefinition | null {
     if (isPlacementSupported(spec, 'slash_command')) {
         return null;
     }
-    if (!isSurfaceSupported(spec, 'ui_slash_command')) {
+    if (!isSurfaceSupported(spec, 'ui') || !spec.slash) {
         return null;
     }
     return {
         id: 'slash_command',
         kind: 'surface',
-        surface: 'ui_slash_command',
+        surface: 'ui',
         titleKey: 'settingsActions.targets.slash_command.title',
         subtitleKey: 'settingsActions.targets.slash_command.subtitle',
         icon: 'code-slash-outline',
@@ -408,9 +398,9 @@ export function resolveActionSettingsApprovalSurface(actionId: ActionId, targetI
     }
 
     // `slash_command` is modeled as a placement for UI surfacing, but approvals are surface-scoped.
-    // Treat the slash command tile as configuring the `ui_slash_command` surface approvals gate.
+    // Treat the slash command tile as configuring the `ui` surface approvals gate.
     if (target.kind === 'placement' && target.placement === 'slash_command') {
-        return 'ui_slash_command';
+        return 'ui';
     }
 
     return null;
@@ -447,7 +437,7 @@ export function getActionSettingsTargetContext(target: ActionSettingsTargetDefin
 }
 
 export function isVoiceTargetId(targetId: ActionSettingsTargetId): boolean {
-    return targetId === 'voice_panel' || targetId === 'voice_tool' || targetId === 'voice_action_block';
+    return targetId === 'voice_panel' || targetId === 'voice';
 }
 
 export function isRunScopedPlacement(targetId: ActionSettingsTargetId): boolean {

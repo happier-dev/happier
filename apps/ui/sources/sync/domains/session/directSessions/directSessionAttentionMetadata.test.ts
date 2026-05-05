@@ -5,6 +5,7 @@ import type { Metadata } from '@/sync/domains/state/storageTypes';
 import {
     deriveDirectSessionObservedProgress,
     updateMetadataWithObservedDirectSessionProgress,
+    updateMetadataWithUnreadDirectSessionProgress,
     updateMetadataWithViewedDirectSessionProgress,
 } from './directSessionAttentionMetadata';
 
@@ -48,6 +49,16 @@ describe('directSessionAttentionMetadata', () => {
             viewedProgressToken: '10:msg-1',
             observedAtMs: 10,
             viewedAtMs: 10,
+        });
+    });
+
+    it('lowers viewed attention markers when direct-session progress is marked unread', () => {
+        const next = updateMetadataWithUnreadDirectSessionProgress(createBaseMetadata());
+
+        expect((next as any).directSessionAttentionV1).toEqual({
+            v: 1,
+            observedProgressToken: '10:msg-1',
+            observedAtMs: 10,
         });
     });
 });

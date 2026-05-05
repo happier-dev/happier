@@ -127,4 +127,35 @@ describe('buildSessionListIndexFromViewData', () => {
         const secondHeader = (second ?? []).find((item) => item.type === 'header' && item.title === 'Today');
         expect(secondHeader).toBe(firstHeader);
     });
+
+    it('propagates project header seed session ids and treats changes as semantic updates', () => {
+        const viewData: SessionListViewItem[] = [
+            {
+                type: 'header',
+                title: '/repo',
+                headerKind: 'project',
+                groupKey: 'project:repo',
+                seedSessionId: 'newest',
+            },
+        ];
+
+        const first = buildSessionListIndexFromViewData(viewData);
+        expect(first?.[0]).toMatchObject({
+            type: 'header',
+            seedSessionId: 'newest',
+        });
+
+        const header = viewData[0] as Extract<SessionListViewItem, { type: 'header' }>;
+        const second = buildSessionListIndexFromViewData([
+            {
+                ...header,
+                seedSessionId: 'newer',
+            },
+        ], first);
+
+        expect(second?.[0]).toMatchObject({
+            seedSessionId: 'newer',
+        });
+        expect(second?.[0]).not.toBe(first?.[0]);
+    });
 });

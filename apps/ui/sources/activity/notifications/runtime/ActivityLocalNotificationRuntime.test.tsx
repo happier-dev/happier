@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { accountSettingsParse } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import {
     createActivityNotificationTextModuleMock,
@@ -26,6 +27,7 @@ let localSettingsValue: Record<string, unknown> = {
     localNotificationsShowPendingPermissionRequests: true,
     localNotificationsShowPendingUserActionRequests: true,
 };
+let accountSettingsValue = accountSettingsParse({});
 let sessionsByIdValue: Record<string, unknown> = {
     'session-1': {
         id: 'session-1',
@@ -57,11 +59,13 @@ installActivityNotificationRuntimeCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
+            useSettings: () => accountSettingsValue,
             useLocalSettings: () => localSettingsValue,
             storage: {
                 getState: () => ({
                     sessions: sessionsByIdValue,
                     localSettings: localSettingsValue,
+                    settings: accountSettingsValue,
                 }),
             },
         });
@@ -100,6 +104,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             localNotificationsShowPendingPermissionRequests: true,
             localNotificationsShowPendingUserActionRequests: true,
         };
+        accountSettingsValue = accountSettingsParse({});
         sessionsByIdValue = {
             'session-1': {
                 id: 'session-1',
@@ -139,6 +144,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             title: 'Ready session',
             body: 'Everything is ready.',
             data: expect.objectContaining({ sessionId: 'session-1' }),
+            sound: 'happier_soft.wav',
         }));
         expect(sendTauriLocalNotification).not.toHaveBeenCalled();
 
@@ -289,6 +295,235 @@ describe('ActivityLocalNotificationRuntime', () => {
         expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Ready session',
             body: 'Run: pwd',
+        }));
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('suppresses local notifications during account quiet hours', async () => {
+        accountSettingsValue = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                quietHours: {
+                    enabled: true,
+                    timezone: 'UTC',
+                    windows: [{ startLocalTime: '00:00', endLocalTime: '23:59' }],
+                },
+            },
+        });
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('lets a device quiet-hours override deliver local notifications during account quiet hours', async () => {
+        accountSettingsValue = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                quietHours: {
+                    enabled: true,
+                    timezone: 'UTC',
+                    windows: [{ startLocalTime: '00:00', endLocalTime: '23:59' }],
+                },
+            },
+        });
+        localSettingsValue = {
+            ...localSettingsValue,
+            attentionDeviceOverridesV1: {
+                v: 1,
+                quietHoursOverride: { mode: 'disabled' },
+            },
+        };
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ sessionId: 'session-1' }),
+        }));
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('delivers quiet-hours silent local notifications without sound when configured by account policy', async () => {
+        accountSettingsValue = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                quietHours: {
+                    enabled: true,
+                    timezone: 'UTC',
+                    windows: [{ startLocalTime: '00:00', endLocalTime: '23:59' }],
+                },
+                channels: {
+                    local_notification: {
+                        quietHoursBehavior: 'silent',
+                    },
+                },
+            },
+        });
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ sessionId: 'session-1' }),
+            sound: null,
+        }));
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('suppresses account-disabled local notification events even when legacy device toggles are enabled', async () => {
+        accountSettingsValue = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                channels: {
+                    local_notification: {
+                        events: {
+                            ready: { enabled: false },
+                        },
+                    },
+                },
+            },
+        });
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('passes resolved silent sound options to Expo local notifications', async () => {
+        accountSettingsValue = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                sounds: {
+                    defaultSoundId: 'none',
+                },
+            },
+        });
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ sessionId: 'session-1' }),
+            sound: null,
+        }));
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('passes bundled sound filenames and Android channel ids to Expo local notifications', async () => {
+        reactNativeRuntime.platformOs = 'android';
+        accountSettingsValue = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                sounds: {
+                    defaultSoundId: 'soft',
+                },
+            },
+        });
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ sessionId: 'session-1' }),
+            sound: 'happier_soft.wav',
+            channelId: 'happier.default.soft.v1',
+        }));
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('does not pass unsupported custom sound ids to Expo local notifications', async () => {
+        accountSettingsValue = accountSettingsParse({
+            attentionDeliveryPolicyV1: {
+                v: 1,
+                sounds: {
+                    defaultSoundId: 'custom:imported-tone',
+                },
+            },
+        });
+
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+        await act(async () => {
+            notifyActivityReady('session-1', []);
+        });
+
+        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ sessionId: 'session-1' }),
+            sound: null,
         }));
 
         await act(async () => {

@@ -301,6 +301,11 @@ export function PluginDetailDescriptorsSection(props: Readonly<{
             />
             <PluginDescriptorSurfaceSection
                 pluginId={props.pluginId}
+                surface="agentSettings"
+                sections={props.projection?.agentSettingsSections ?? []}
+            />
+            <PluginDescriptorSurfaceSection
+                pluginId={props.pluginId}
                 surface="providerSettings"
                 sections={props.projection?.providerSettingsSections ?? []}
             />

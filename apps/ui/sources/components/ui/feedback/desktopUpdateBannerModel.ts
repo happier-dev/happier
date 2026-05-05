@@ -22,9 +22,12 @@ export function getDesktopUpdateBannerModel(params: {
 }): { message: string; actionLabel: string; actionDisabled: boolean } {
     const { status, availableVersion, error, t } = params;
 
+    const errorMessage = error?.trim()
+        ? `${t('common.error')}: ${error.trim()}`
+        : t('common.error');
     const message =
         status === 'error'
-            ? t('common.error')
+            ? errorMessage
             : availableVersion
                 ? `${t('updateBanner.updateAvailable')}: v${availableVersion}`
                 : t('updateBanner.updateAvailable');

@@ -456,6 +456,81 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
         expect(getProjectForSession.mock.calls).toEqual([['stale']]);
     });
 
+    it('projects linked direct-session machine targets when top-level machine id is absent', () => {
+        const getProjectForSession = vi.fn(() => null);
+        const sessions = {
+            direct: {
+                id: 'direct',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 10,
+                active: false,
+                activeAt: 0,
+                metadataVersion: 1,
+                agentStateVersion: 0,
+                metadata: {
+                    machineId: null,
+                    path: '/workspace/direct-repo',
+                    homeDir: null,
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'codex',
+                    },
+                },
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'offline' as const,
+            },
+        };
+        const sessionRecords = {
+            direct: {
+                id: 'direct',
+                active: false,
+                updatedAt: 10,
+                metadata: {
+                    path: '/workspace/direct-repo',
+                    directSessionV1: {
+                        v: 1,
+                        providerId: 'codex',
+                        machineId: 'm-direct',
+                        remoteSessionId: 'remote-1',
+                        source: { kind: 'codexHome', home: 'user' },
+                    },
+                },
+            },
+        };
+        const machineRecords = {
+            'm-other': {
+                id: 'm-other',
+                active: true,
+                activeAt: 20,
+                metadata: {
+                    host: 'other.local',
+                    homeDir: '/other',
+                },
+            },
+            'm-direct': {
+                id: 'm-direct',
+                active: false,
+                activeAt: 1,
+                metadata: {
+                    host: 'direct.local',
+                    homeDir: '/workspace',
+                },
+            },
+        };
+
+        const result = applyReachableTargetsToSessionListRenderables({
+            sessions: sessions as any,
+            sessionRecords: sessionRecords as any,
+            machineRecords: machineRecords as any,
+            getProjectForSession,
+        });
+
+        expect(result.direct?.metadata?.machineId).toBe('m-direct');
+        expect(result.direct?.metadata?.path).toBe('/workspace/direct-repo');
+    });
+
 });
 
 describe('buildSessionListIndexWithServerScope', () => {

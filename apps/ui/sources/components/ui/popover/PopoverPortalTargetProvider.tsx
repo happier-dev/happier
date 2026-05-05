@@ -18,12 +18,27 @@ import { PopoverPortalTargetContextProvider } from './PopoverPortalTarget';
  */
 export function PopoverPortalTargetProvider(props: { children: React.ReactNode }) {
     if (Platform.OS === 'web') {
-        const [webPortalTarget, setWebPortalTarget] = React.useState<HTMLElement | null>(null);
-        const webPortalHostRef = React.useRef<HTMLElement | null>(null);
+        const webPortalTarget = React.useMemo(() => {
+            if (typeof document === 'undefined') return null;
+
+            const host = document.createElement('div');
+            host.setAttribute('data-happy-popover-portal-host', '');
+            Object.assign(host.style, {
+                position: 'absolute',
+                top: '0px',
+                left: '0px',
+                width: '0px',
+                height: '0px',
+                overflow: 'visible',
+                pointerEvents: 'none',
+            } satisfies Partial<CSSStyleDeclaration>);
+            return host;
+        }, []);
         const anchorRef = React.useRef<HTMLElement | null>(null);
 
         React.useLayoutEffect(() => {
             if (typeof document === 'undefined') return;
+            if (!webPortalTarget) return;
 
             const resolveDialogContentTarget = (): HTMLElement | null => {
                 const anchor = anchorRef.current;
@@ -31,11 +46,7 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
                     const dialogContent = anchor.closest('[data-radix-dialog-content]') as HTMLElement | null;
                     if (dialogContent) return dialogContent;
                 }
-
-                // Fallback: if we are inside a Radix dialog, prefer the most recently-mounted dialog content.
-                // This keeps popovers within the active modal focus/pointer scope (instead of `document.body`).
-                const all = Array.from(document.querySelectorAll('[data-radix-dialog-content]')) as HTMLElement[];
-                return all.length > 0 ? all[all.length - 1] : null;
+                return null;
             };
 
             const resolveHostContainer = (): HTMLElement | null => {
@@ -84,40 +95,26 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
             };
 
             const container = resolveHostContainer();
-            const host = document.createElement('div');
-            host.setAttribute('data-happy-popover-portal-host', '');
-            Object.assign(host.style, {
-                position: 'absolute',
-                top: '0px',
-                left: '0px',
-                width: '0px',
-                height: '0px',
-                overflow: 'visible',
-                pointerEvents: 'none',
-            } satisfies Partial<CSSStyleDeclaration>);
 
             try {
-                (container ?? document.body).appendChild(host);
+                (container ?? document.body).appendChild(webPortalTarget);
             } catch {
                 // If we can't append (should be extremely rare), fall back to body.
                 try {
-                    document.body.appendChild(host);
+                    document.body.appendChild(webPortalTarget);
                 } catch {
                     // give up
                 }
             }
 
-            webPortalHostRef.current = host;
-            setWebPortalTarget(host);
             return () => {
-                webPortalHostRef.current = null;
                 try {
-                    host.remove();
+                    webPortalTarget.remove();
                 } catch {
                     // ignore
                 }
             };
-        }, []);
+        }, [webPortalTarget]);
 
         return (
             <ModalPortalTargetProvider target={webPortalTarget}>

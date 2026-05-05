@@ -1,5 +1,7 @@
-import type { ParsedActivityInteraction } from '@/activity/actions/activityActionTypes';
-import { parseActivityInteraction } from '@/activity/actions/parseActivityInteraction';
+import {
+    resolveActivityInteractionCommand,
+    type ActivityInteractionCommand,
+} from '@/activity/actions/resolveActivityInteractionCommand';
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,7 +51,8 @@ function readNotificationData(params: Readonly<{ response: unknown }>): unknown 
     return isRecord(content) ? content.data : null;
 }
 
-export type ParsedNotificationTap = ParsedActivityInteraction & Readonly<{
+export type ParsedNotificationTap = Readonly<{
+    command: ActivityInteractionCommand;
     dedupeKey: string | null;
 }>;
 
@@ -58,16 +61,16 @@ export function parseNotificationTap(params: Readonly<{
     defaultActionIdentifier: string;
 }>): ParsedNotificationTap | null {
     const actionIdentifier = readNotificationActionIdentifier(params);
-    const parsed = parseActivityInteraction({
+    const command = resolveActivityInteractionCommand({
         actionIdentifier,
         defaultActionIdentifier: params.defaultActionIdentifier,
         data: readNotificationData({ response: params.response }),
+        requireKnownIdentity: false,
     });
-    if (!parsed) return null;
 
     const notificationId = readNotificationId({ response: params.response });
     return {
-        ...parsed,
+        command,
         dedupeKey: notificationId ? `${notificationId}:${actionIdentifier}` : null,
     };
 }

@@ -1,6 +1,10 @@
 import * as React from 'react';
-import { View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
+import {
+    WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
+    WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
+} from '@/components/ui/text/webStartEllipsisTextStyles';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 
 const PATH_SEPARATOR = '/';
@@ -26,6 +30,7 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
         });
     }, [props.fileName, props.filePath, props.fullPath]);
 
+    const isWeb = Platform.OS === 'web';
     const dirLabel = dir ? `${dir}${PATH_SEPARATOR}` : null;
     const containerStyle = React.useMemo<StyleProp<ViewStyle>>(() => {
         return [
@@ -43,11 +48,13 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
             {
                 flex: 1,
                 minWidth: 0,
-                textAlign: 'right' as const,
             },
+            isWeb
+                ? [WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE, { textAlign: 'right' } satisfies TextStyle]
+                : { textAlign: 'right' } satisfies TextStyle,
             props.pathTextStyle,
         ];
-    }, [props.pathTextStyle]);
+    }, [isWeb, props.pathTextStyle]);
     const nameStyle = React.useMemo<StyleProp<TextStyle>>(() => {
         return [
             {
@@ -61,8 +68,12 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
     return (
         <View style={containerStyle}>
             {dirLabel ? (
-                <Text numberOfLines={1} ellipsizeMode="head" style={pathStyle}>
-                    {dirLabel}
+                <Text numberOfLines={1} ellipsizeMode={isWeb ? undefined : 'head'} style={pathStyle}>
+                    {isWeb ? (
+                        <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>
+                            {dirLabel}
+                        </Text>
+                    ) : dirLabel}
                 </Text>
             ) : props.alignForRootFiles === false ? null : (
                 <View style={{ flex: 1, minWidth: 0 }} />

@@ -14,24 +14,8 @@ vi.mock('./MermaidRenderer', () => ({
     MermaidRenderer: () => null,
 }));
 
-function flattenStyle(style: any): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    const visit = (node: any) => {
-        if (!node) return;
-        if (Array.isArray(node)) {
-            for (const child of node) visit(child);
-            return;
-        }
-        if (typeof node === 'object') {
-            for (const [k, v] of Object.entries(node)) out[k] = v;
-        }
-    };
-    visit(style);
-    return out;
-}
-
 describe('MarkdownView (span styles)', () => {
-    it('renders bold/italic using the correct font families and keeps inline code aligned with base color/size', async () => {
+    it('passes bold/italic/code typography through the enriched markdown style contract', async () => {
         const { MarkdownView } = await import('./MarkdownView');
 
         const markdown = '**Exploring Reasoning Options** *Considering tools* `git diff`';
@@ -44,22 +28,21 @@ describe('MarkdownView (span styles)', () => {
 
         const screen = await renderScreen(<MarkdownView markdown={markdown} textStyle={textStyle} />);
 
-        const findTextNode = (text: string) =>
-            screen.findAll((n) => typeof n.props?.children === 'string' && n.props.children === text)[0]!;
+        const enrichedRun = screen.findByType('EnrichedMarkdownText');
+        const markdownStyle = enrichedRun.props.markdownStyle;
 
-        const boldNode = findTextNode('Exploring Reasoning Options');
-        const italicNode = findTextNode('Considering tools');
-        const codeNode = findTextNode('git diff');
-
-        const boldStyle = flattenStyle(boldNode.props.style);
-        const italicStyle = flattenStyle(italicNode.props.style);
-        const codeStyle = flattenStyle(codeNode.props.style);
-
-        expect(boldStyle.fontFamily).toBe('Inter-SemiBold');
-        expect(italicStyle.fontFamily).toBe('Inter-Italic');
-        expect(codeStyle.fontFamily).toBe('IBMPlexMono-Regular');
-        expect(codeStyle.fontSize).toBe(14);
-        expect(codeStyle.lineHeight).toBe(20);
-        expect(codeStyle.color).toBe('rgb(120, 120, 120)');
+        expect(markdownStyle.strong.fontFamily).toBe('Inter-SemiBold');
+        expect(markdownStyle.em.fontFamily).toBe('Inter-Italic');
+        expect(markdownStyle.code.fontFamily).toBe('IBMPlexMono-Regular');
+        expect(markdownStyle.code.fontSize).toBeLessThan(markdownStyle.paragraph.fontSize);
+        expect(markdownStyle.code.color).toBe('rgb(120, 120, 120)');
+        expect(markdownStyle.code.borderColor).toBe('transparent');
+        expect(markdownStyle.inlineMath.color).toBe(markdownStyle.paragraph.color);
+        expect(markdownStyle.math.fontSize).toBe(markdownStyle.paragraph.fontSize);
+        expect(markdownStyle.math.color).toBe(markdownStyle.paragraph.color);
+        expect(markdownStyle.math.backgroundColor).toBe('transparent');
+        expect(markdownStyle.list.marginLeft).toBeGreaterThan(0);
+        expect(markdownStyle.paragraph.marginTop).toBe(0);
+        expect(markdownStyle.paragraph.lineHeight).toBe(20);
     }, 60_000);
 });

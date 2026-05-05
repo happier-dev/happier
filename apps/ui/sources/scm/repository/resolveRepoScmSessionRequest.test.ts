@@ -63,4 +63,56 @@ describe('resolveRepoScmSessionRequest', () => {
             repoIdentityKey: 'machine-a:/Users/tester/repo',
         });
     });
+
+    it('resolves direct-session machine/path identity when only the direct link has a machine id', async () => {
+        storageGetStateMock.mockReturnValue({
+            machines: {
+                'machine-other': {
+                    id: 'machine-other',
+                    active: true,
+                    activeAt: 50,
+                    metadata: {
+                        homeDir: '/Users/other',
+                        host: 'other.local',
+                    },
+                },
+                'machine-direct': {
+                    id: 'machine-direct',
+                    active: false,
+                    activeAt: 1,
+                    metadata: {
+                        homeDir: '/Users/tester',
+                        host: 'direct.local',
+                    },
+                },
+            },
+            sessions: {
+                session_direct: {
+                    id: 'session_direct',
+                    active: false,
+                    updatedAt: 100,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'codex',
+                            machineId: 'machine-direct',
+                            remoteSessionId: 'remote-1',
+                            source: { kind: 'codexHome', home: 'user' },
+                        },
+                    },
+                },
+            },
+            getProjectForSession: () => null,
+        } as any);
+
+        const { resolveRepoScmSessionRequest } = await import('./resolveRepoScmSessionRequest');
+        expect(resolveRepoScmSessionRequest({ sessionId: 'session_direct' })).toEqual({
+            sessionId: 'session_direct',
+            machineId: 'machine-direct',
+            resolvedPath: '/Users/tester/repo',
+            repoIdentityKey: 'machine-direct:/Users/tester/repo',
+        });
+    });
 });

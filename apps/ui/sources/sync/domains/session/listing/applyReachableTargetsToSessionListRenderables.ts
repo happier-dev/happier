@@ -6,6 +6,7 @@ import {
     resolveSessionMachineRpcTarget,
     type MachineResolutionContext,
 } from '@/sync/domains/session/resolveSessionReachableMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 import {
@@ -81,7 +82,7 @@ function buildNormalizedSessionRecordMetadata(sessionRecord: Session): Normalize
     const sessionPath = normalizeTrimmedString(metadata?.path) || null;
     const sessionHomeDir = normalizeTrimmedString(metadata?.homeDir) || null;
     return {
-        sessionMachineId: normalizeTrimmedString(metadata?.machineId) || null,
+        sessionMachineId: resolveSessionMachineId(metadata),
         sessionHostHint: normalizeTrimmedString(metadata?.host) || null,
         sessionPath,
         sessionHomeDir,

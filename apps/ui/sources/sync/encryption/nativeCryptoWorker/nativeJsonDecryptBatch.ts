@@ -106,6 +106,7 @@ export async function decryptSecretboxJsonBatchWithNativeWorker(
         routing,
         itemCount: data.length,
         payloadBytes,
+        capabilityCacheKey: getWorker(),
         signal: options.signal,
         probe: () => getWorker().probe(),
         nativeRun: async () => {
@@ -184,6 +185,7 @@ export async function decryptSecretboxJsonBase64BatchWithNativeWorker(
         routing,
         itemCount: ciphertextBase64.length,
         payloadBytes,
+        capabilityCacheKey: getWorker(),
         signal: options.signal,
         probe: () => getWorker().probe(),
         nativeRun: async () => {
@@ -263,6 +265,7 @@ export async function decryptAesGcmJsonBatchWithNativeWorker(
         routing,
         itemCount: data.length,
         payloadBytes,
+        capabilityCacheKey: getWorker(),
         signal: options.signal,
         probe: () => getWorker().probe(),
         nativeRun: async () => {
@@ -341,6 +344,7 @@ export async function decryptAesGcmJsonBase64BatchWithNativeWorker(
         routing,
         itemCount: encryptedPayloadBase64.length,
         payloadBytes,
+        capabilityCacheKey: getWorker(),
         signal: options.signal,
         probe: () => getWorker().probe(),
         nativeRun: async () => {

@@ -1,13 +1,13 @@
 import {
     DaemonContributionRegistryProjectionDescribeResponseSchema,
     type DaemonContributionRegistryProjectionV1,
-    ExtensionProjectionV2Schema,
-    type ExtensionProjectionV2,
+    PluginProjectionV2Schema,
+    type PluginProjectionV2,
 } from '@happier-dev/protocol';
 
 export type DaemonContributionRegistryProjection =
     | DaemonContributionRegistryProjectionV1Like
-    | ExtensionProjectionV2;
+    | PluginProjectionV2;
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -27,7 +27,7 @@ export function parseDaemonContributionRegistryProjectionDescribeResponse(
 ): DaemonContributionRegistryProjection | null {
     const projection = asRecord(raw)?.projection;
     if (asRecord(projection)?.v === 2) {
-        const parsedV2 = ExtensionProjectionV2Schema.safeParse(projection);
+        const parsedV2 = PluginProjectionV2Schema.safeParse(projection);
         return parsedV2.success ? parsedV2.data : null;
     }
 

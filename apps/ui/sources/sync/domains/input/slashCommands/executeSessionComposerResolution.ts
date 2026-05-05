@@ -35,7 +35,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
 }>): Promise<boolean> {
   const ctx: ActionExecutorContext = {
     defaultSessionId: args.sessionId,
-    surface: 'ui_slash_command',
+    surface: 'ui',
     placement: 'slash_command',
   };
 

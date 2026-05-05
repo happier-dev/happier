@@ -29,7 +29,6 @@ const bootCredentialsState = vi.hoisted(() => ({
 const shellChromeState = vi.hoisted(() => ({
     isTauriDesktop: false,
     isTablet: true,
-    editorFocusModeEnabled: false,
 }));
 const desktopOverlayWindowState = vi.hoisted(() => ({
     value: false,
@@ -217,14 +216,7 @@ installRouteRootCommonModuleMocks({
     },
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        const useLocalSetting = createUseLocalSettingMock({
-            fallback: (key) => {
-                if (key === 'editorFocusModeEnabled') {
-                    return shellChromeState.editorFocusModeEnabled;
-                }
-                return undefined;
-            },
-        });
+        const useLocalSetting = createUseLocalSettingMock({ fallback: () => undefined });
 
         return createStorageModuleMock({
             importOriginal,
@@ -413,7 +405,6 @@ describe('app/_layout init resilience', () => {
         bootCredentialsState.value = null;
         shellChromeState.isTauriDesktop = false;
         shellChromeState.isTablet = true;
-        shellChromeState.editorFocusModeEnabled = false;
         desktopOverlayWindowState.value = false;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
         desktopWindowBridgeState.getDesktopWindowState.mockReset();
@@ -515,6 +506,20 @@ describe('app/_layout init resilience', () => {
             expect.objectContaining({
                 importance: Notifications.AndroidImportance.HIGH,
                 showBadge: true,
+            }),
+        );
+        expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
+            PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultSoftV1,
+            expect.objectContaining({
+                sound: 'happier_soft',
+                importance: Notifications.AndroidImportance.MAX,
+            }),
+        );
+        expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
+            PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsUrgentV1,
+            expect.objectContaining({
+                sound: 'happier_urgent',
+                importance: Notifications.AndroidImportance.MAX,
             }),
         );
     });
@@ -652,21 +657,18 @@ describe('app/_layout init resilience', () => {
         expect(screen.findAllByTestId('desktop-narrow-shell-chrome')).toHaveLength(0);
     });
 
-    it('renders a focus-mode fallback shell host with a real desktop controls slot', async () => {
+    it('keeps desktop shell chrome inside the sidebar host for authenticated wide desktop flows', async () => {
         mockedPathname = '/';
         bootCredentialsState.value = { token: 'token', secret: 'secret' };
         shellChromeState.isTauriDesktop = true;
         shellChromeState.isTablet = true;
-        shellChromeState.editorFocusModeEnabled = true;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
 
         const screen = await renderSettledRootLayout();
 
-        expect(screen.findByTestId('desktop-focus-mode-shell-chrome')).toBeTruthy();
-        expect(screen.findAllByType('AppUpdateStatusTag' as any)).toHaveLength(1);
-        expect(screen.findByTestId('desktop-window-controls-host')).toBeTruthy();
-        expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
-        expect(screen.findByTestId('desktop-window-drag-region')).toBeTruthy();
+        expect(screen.findAllByTestId('desktop-focus-mode-shell-chrome')).toHaveLength(0);
+        expect(screen.findAllByTestId('desktop-narrow-shell-chrome')).toHaveLength(0);
+        expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(1);
     });
 
     it('renders an explicit narrow-desktop fallback host instead of folding it into focus-mode fallback', async () => {
@@ -674,7 +676,6 @@ describe('app/_layout init resilience', () => {
         bootCredentialsState.value = { token: 'token', secret: 'secret' };
         shellChromeState.isTauriDesktop = true;
         shellChromeState.isTablet = false;
-        shellChromeState.editorFocusModeEnabled = false;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
 
         const screen = await renderSettledRootLayout();

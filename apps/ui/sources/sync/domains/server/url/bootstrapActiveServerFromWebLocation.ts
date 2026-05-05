@@ -13,12 +13,25 @@ function normalizeServerUrl(raw: string): string | null {
     return normalized ? normalized : null;
 }
 
+function normalizePathname(raw: string): string {
+    const pathname = String(raw ?? '').trim() || '/';
+    const withSlash = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return withSlash.length > 1 ? withSlash.replace(/\/+$/, '') : withSlash;
+}
+
+function isRouteOwnedServerParam(pathname: string): boolean {
+    const normalized = normalizePathname(pathname);
+    return normalized === '/terminal' || normalized === '/terminal/connect';
+}
+
 export function readWebServerUrlOverrideFromLocation(): WebServerUrlOverride | null {
     if (!isWebRuntime()) return null;
     if (typeof window.location?.href !== 'string') return null;
 
     try {
         const current = new URL(window.location.href);
+        if (isRouteOwnedServerParam(current.pathname)) return null;
+
         const rawServer = (current.searchParams.get('server') ?? '').trim();
         const rawLegacyUrl = (current.searchParams.get('url') ?? '').trim();
         const rawLegacyAuto = (current.searchParams.get('auto') ?? '').trim().toLowerCase();
@@ -30,6 +43,7 @@ export function readWebServerUrlOverrideFromLocation(): WebServerUrlOverride | n
         current.searchParams.delete('server');
         current.searchParams.delete('url');
         current.searchParams.delete('auto');
+        current.searchParams.delete('serverId');
         const search = current.searchParams.toString();
         const cleanedRelativeUrl = `${current.pathname}${search ? `?${search}` : ''}${current.hash ?? ''}`;
         return { serverUrl, cleanedRelativeUrl };

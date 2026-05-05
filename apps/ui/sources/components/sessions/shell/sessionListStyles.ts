@@ -123,22 +123,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         opacity: 1,
     },
     footerContainer: {
-        paddingHorizontal: 16,
-        paddingTop: 12,
-    },
-    footerButton: {
-        borderRadius: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-        alignSelf: 'stretch' as const,
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        gap: 8,
-        backgroundColor: theme.colors.surface,
-    },
-    footerButtonLabel: {
-        fontSize: 13,
-        color: theme.colors.text,
+        marginTop: -4,
     },
     dropIndicator: {
         position: 'absolute' as const,

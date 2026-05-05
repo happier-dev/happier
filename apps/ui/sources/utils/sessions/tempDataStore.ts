@@ -17,6 +17,7 @@ export interface NewSessionData {
     machineId?: string;
     directory?: string;
     path?: string;
+    replacePersistedDraftSelections?: boolean;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     agentType?: AgentId;
     backendTarget?: BackendTargetRefV2;

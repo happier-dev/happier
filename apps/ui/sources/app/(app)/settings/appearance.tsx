@@ -1,6 +1,7 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, View } from 'react-native';
+import { setStatusBarStyle } from 'expo-status-bar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -15,6 +16,7 @@ import * as SystemUI from 'expo-system-ui';
 import { darkTheme, lightTheme } from '@/theme';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/statusBarStyle';
 
 // Define known avatar styles for this version of the app
 type KnownAvatarStyle = 'pixelated' | 'gradient' | 'brutalist';
@@ -33,15 +35,12 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
-    const [mobileWorkspaceExperience, setMobileWorkspaceExperience] = useLocalSettingMutable('mobileWorkspaceExperienceV1');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
-    const [editorFocusModeEnabled, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
     const [settingsNavSidebarEnabled, setSettingsNavSidebarEnabled] = useLocalSettingMutable('settingsNavSidebarEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
     const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
-    const [openMobileWorkspaceExperienceMenu, setOpenMobileWorkspaceExperienceMenu] = React.useState(false);
     const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
 
     const uiFontScalePresets = React.useMemo(() => {
@@ -92,13 +91,6 @@ export default React.memo(function AppearanceSettingsScreen() {
                 title: t('settingsAppearance.itemDensityOptions.compact'),
                 subtitle: t('settingsAppearance.itemDensityOptions.compactDescription'),
             },
-        ];
-    }, []);
-
-    const mobileWorkspaceExperienceMenuItems = React.useMemo(() => {
-        return [
-            { id: 'classic', title: t('settingsAppearance.mobileWorkspaceExperienceOptions.classic') },
-            { id: 'cockpit', title: t('settingsAppearance.mobileWorkspaceExperienceOptions.cockpit') },
         ];
     }, []);
 
@@ -159,10 +151,10 @@ export default React.memo(function AppearanceSettingsScreen() {
                         setThemePreference(nextTheme);
                         
                         // Apply the theme change immediately
+                        const systemTheme = Appearance.getColorScheme() ?? 'light';
                         if (nextTheme === 'adaptive') {
                             // Enable adaptive themes and set to system theme
                             UnistylesRuntime.setAdaptiveThemes(true);
-                            const systemTheme = Appearance.getColorScheme();
                             const color = systemTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
                             UnistylesRuntime.setRootViewBackgroundColor(color);
                             SystemUI.setBackgroundColorAsync(color);
@@ -174,6 +166,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                             UnistylesRuntime.setRootViewBackgroundColor(color);
                             SystemUI.setBackgroundColorAsync(color);
                         }
+                        setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextTheme, systemTheme), true);
                     }}
                 />
             </ItemGroup>
@@ -287,28 +280,6 @@ export default React.memo(function AppearanceSettingsScreen() {
                     showChevron={false}
                 />
                 <DropdownMenu
-                    open={openMobileWorkspaceExperienceMenu}
-                    onOpenChange={setOpenMobileWorkspaceExperienceMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={mobileWorkspaceExperience as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    itemTrigger={{
-                        title: t('settingsAppearance.mobileWorkspaceExperience'),
-                        subtitle: t('settingsAppearance.mobileWorkspaceExperienceDescription'),
-                        icon: <Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />,
-                        showSelectedSubtitle: false,
-                    }}
-                    items={mobileWorkspaceExperienceMenuItems as any}
-                    onSelect={(itemId) => {
-                        if (itemId !== 'classic' && itemId !== 'cockpit') return;
-                        setMobileWorkspaceExperience(itemId as any);
-                    }}
-                />
-                <DropdownMenu
                     open={openDetailsTabsMenu}
                     onOpenChange={setOpenDetailsTabsMenu}
                     variant="selectable"
@@ -330,20 +301,6 @@ export default React.memo(function AppearanceSettingsScreen() {
                         if (itemId !== 'preview' && itemId !== 'persistent') return;
                         setDetailsPaneTabsBehavior(itemId as any);
                     }}
-                />
-                <Item
-                    title={t('settingsAppearance.editorFocusMode')}
-                    subtitle={t('settingsAppearance.editorFocusModeDescription')}
-                    icon={<Ionicons name="expand-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={
-                        <Switch
-                            value={editorFocusModeEnabled}
-                            onValueChange={setEditorFocusModeEnabled}
-                            disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
-                        />
-                    }
-                    disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
-                    showChevron={false}
                 />
             </ItemGroup>
 

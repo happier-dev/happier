@@ -38,5 +38,21 @@ describe('parseMarkdownBlock (tables)', () => {
       rows: [['1', '2', '']],
     });
   });
-});
 
+  it('captures GitHub table column alignment from the separator row', () => {
+    const markdown = [
+      '| Left | Center | Right | Default |',
+      '| :--- | :---: | ---: | --- |',
+      '| Alpha | Bravo | Charlie | Delta |',
+      '',
+    ].join('\n');
+
+    const blocks = parseMarkdownBlock(markdown);
+    const table = blocks.find((b) => b.type === 'table');
+    expect(table).toBeTruthy();
+    expect(table).toMatchObject({
+      type: 'table',
+      alignments: ['left', 'center', 'right', 'default'],
+    });
+  });
+});

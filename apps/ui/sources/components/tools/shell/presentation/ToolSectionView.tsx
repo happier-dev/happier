@@ -10,9 +10,34 @@ interface ToolSectionViewProps {
     children: React.ReactNode;
 }
 
-export const ToolSectionView = React.memo<ToolSectionViewProps>(({ title, children, fullWidth }) => {
+type ToolSectionSpacing = 'default' | 'compact';
+
+const TOOL_SECTION_BOTTOM_SPACING: Record<ToolSectionSpacing, number> = {
+    default: 12,
+    compact: 8,
+};
+
+const ToolSectionSpacingContext = React.createContext<ToolSectionSpacing>('default');
+
+export function ToolSectionSpacingProvider(props: {
+    spacing: ToolSectionSpacing;
+    children: React.ReactNode;
+}) {
     return (
-        <View style={[styles.section, fullWidth && styles.fullWidthSection]}>
+        <ToolSectionSpacingContext.Provider value={props.spacing}>
+            {props.children}
+        </ToolSectionSpacingContext.Provider>
+    );
+}
+
+export const ToolSectionView = React.memo<ToolSectionViewProps>(({ title, children, fullWidth }) => {
+    const spacing = React.useContext(ToolSectionSpacingContext);
+    return (
+        <View style={[
+            styles.section,
+            { marginBottom: TOOL_SECTION_BOTTOM_SPACING[spacing] },
+            fullWidth && styles.fullWidthSection,
+        ]}>
             {title && <Text style={styles.sectionTitle}>{title}</Text>}
             <View style={fullWidth ? styles.fullWidthContent : undefined}>
                 {children}
@@ -23,7 +48,6 @@ export const ToolSectionView = React.memo<ToolSectionViewProps>(({ title, childr
 
 const styles = StyleSheet.create((theme) => ({
     section: {
-        marginBottom: 12,
         overflow: 'visible',
     },
     fullWidthSection: {

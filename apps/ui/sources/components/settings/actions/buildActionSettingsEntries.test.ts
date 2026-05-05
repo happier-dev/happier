@@ -25,7 +25,7 @@ describe('buildActionSettingsEntries', () => {
         expect(paths).toBeTruthy();
 
         const voicePanel = paths!.targets.find((target) => target.id === 'voice_panel');
-        const voiceTool = paths!.targets.find((target) => target.id === 'voice_tool');
+        const voiceTool = paths!.targets.find((target) => target.id === 'voice');
 
         expect(voicePanel?.state).toBe('unavailable');
         expect(voicePanel?.reasonKey).toBe('settingsActions.reasons.voiceInventoryPrivacy');

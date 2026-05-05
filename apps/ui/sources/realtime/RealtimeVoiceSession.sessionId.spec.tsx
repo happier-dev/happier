@@ -28,27 +28,31 @@ vi.mock('./elevenlabs/elevenLabsApi', () => ({
   getElevenLabsApiTimeoutMs: () => 25,
 }));
 
-const conversationStartSession = vi.fn(async (..._args: any[]) => 'conv_1');
-const conversationGetId = vi.fn((..._args: any[]) => null);
 const conversationEndSession = vi.fn(async (..._args: any[]) => {});
-let lastConversationOptions: any = null;
-
-const useConversationMock = vi.fn((_opts: any) => ({
-  startSession: conversationStartSession,
-  getId: conversationGetId,
+const conversationGetId = vi.fn((..._args: any[]) => 'conv_1');
+const conversationSendUserMessage = vi.fn();
+const conversationSendContextualUpdate = vi.fn();
+const conversationSetMicMuted = vi.fn();
+const conversationInstance = {
   endSession: conversationEndSession,
-  sendUserMessage: vi.fn(),
-  sendContextualUpdate: vi.fn(),
-}));
+  getId: conversationGetId,
+  sendUserMessage: conversationSendUserMessage,
+  sendContextualUpdate: conversationSendContextualUpdate,
+  setMicMuted: conversationSetMicMuted,
+};
+const conversationStartSession = vi.fn(async (..._args: any[]) => conversationInstance);
+let lastStartSessionOptions: any = null;
 
-vi.mock('@elevenlabs/react-native', () => ({
-  ElevenLabsProvider: (props: { children?: React.ReactNode }) =>
-    React.createElement(React.Fragment, null, props.children),
-  useConversation: (opts: any) => {
-    lastConversationOptions = opts;
-    return useConversationMock(opts);
+vi.mock('@elevenlabs/client', () => ({
+  Conversation: {
+    startSession: (opts: any) => {
+      lastStartSessionOptions = opts;
+      return conversationStartSession(opts);
+    },
   },
 }));
+
+vi.mock('@elevenlabs/react-native', () => ({}));
 
 const state: any = {
   sessions: {
@@ -133,10 +137,14 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
   beforeEach(() => {
     modalAlert.mockReset();
     conversationStartSession.mockClear();
+    conversationStartSession.mockImplementation(async (..._args: any[]) => conversationInstance);
     conversationGetId.mockClear();
+    conversationGetId.mockImplementation((..._args: any[]) => 'conv_1');
     conversationEndSession.mockClear();
-    useConversationMock.mockClear();
-    lastConversationOptions = null;
+    conversationSendUserMessage.mockClear();
+    conversationSendContextualUpdate.mockClear();
+    conversationSetMicMuted.mockClear();
+    lastStartSessionOptions = null;
     appendRealtimeVoiceTranscriptEvent.mockReset();
     getBindingByControlSessionId.mockReset();
     getBindingByControlSessionId.mockReturnValue(null);
@@ -265,14 +273,16 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     useVoiceQaStore.getState().setStatus('running');
 
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
+    const { realtimeTransport } = await import('@/voice/runtime/realtime/RealtimeTransport');
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
-    expect(lastConversationOptions).toBeTruthy();
+    await startRealtimeSessionWithTimeout(realtimeTransport.startRealtimeSession.bind(realtimeTransport), 's1', 'ctx');
+    expect(lastStartSessionOptions).toBeTruthy();
 
     await act(async () => {
-      lastConversationOptions.onMessage?.({
+      lastStartSessionOptions.onMessage?.({
         type: 'agent_response',
         transcript: 'I found the available backends.',
       });
@@ -300,7 +310,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     await startRealtimeSessionWithTimeout(realtimeTransport.startRealtimeSession.bind(realtimeTransport), 's3', 'ctx');
 
     await act(async () => {
-      lastConversationOptions.onMessage?.({
+      lastStartSessionOptions.onMessage?.({
         type: 'agent_response',
         agent_response_event: {
           agent_response: 'Hello from ElevenLabs',

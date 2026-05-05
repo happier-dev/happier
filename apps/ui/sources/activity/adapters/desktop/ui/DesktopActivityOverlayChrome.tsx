@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { UnistylesThemes } from 'react-native-unistyles';
 import Svg, { Path } from 'react-native-svg';
 
+import { interpolateDesktopOverlayCorners } from '../motion/desktopOverlayCornerInterpolation';
 import type { DesktopActivityOverlayVisualMode } from './DesktopActivityOverlayVisualMode';
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
@@ -12,16 +13,16 @@ type InteriorSurfaceKind = 'action' | 'badge' | 'card';
 
 const notchIntegratedChromeRadii = {
     collapsed: {
-        borderTopLeftRadius: 6,
-        borderTopRightRadius: 6,
-        borderBottomLeftRadius: 14,
-        borderBottomRightRadius: 14,
+        borderTopLeftRadius: interpolateDesktopOverlayCorners(0).topRadius,
+        borderTopRightRadius: interpolateDesktopOverlayCorners(0).topRadius,
+        borderBottomLeftRadius: interpolateDesktopOverlayCorners(0).bottomRadius,
+        borderBottomRightRadius: interpolateDesktopOverlayCorners(0).bottomRadius,
     },
     expanded: {
-        borderTopLeftRadius: 19,
-        borderTopRightRadius: 19,
-        borderBottomLeftRadius: 24,
-        borderBottomRightRadius: 24,
+        borderTopLeftRadius: interpolateDesktopOverlayCorners(1).topRadius,
+        borderTopRightRadius: interpolateDesktopOverlayCorners(1).topRadius,
+        borderBottomLeftRadius: interpolateDesktopOverlayCorners(1).bottomRadius,
+        borderBottomRightRadius: interpolateDesktopOverlayCorners(1).bottomRadius,
     },
     row: {
         borderTopLeftRadius: 10,
@@ -30,6 +31,16 @@ const notchIntegratedChromeRadii = {
         borderBottomRightRadius: 14,
     },
 } as const satisfies Record<ChromeTone, Readonly<Record<string, number>>>;
+
+function resolveNotchIntegratedChromeRadii(openProgress: number): Readonly<Record<string, number>> {
+    const corners = interpolateDesktopOverlayCorners(openProgress);
+    return {
+        borderTopLeftRadius: corners.topRadius,
+        borderTopRightRadius: corners.topRadius,
+        borderBottomLeftRadius: corners.bottomRadius,
+        borderBottomRightRadius: corners.bottomRadius,
+    };
+}
 
 function formatOpaqueColorWithAlpha(baseColor: string, alpha: number): string {
     const normalizedAlpha = Math.max(0, Math.min(1, alpha));
@@ -58,7 +69,12 @@ function formatOpaqueColorWithAlpha(baseColor: string, alpha: number): string {
 function resolveChromeRadii(
     visualMode: DesktopActivityOverlayVisualMode,
     tone: ChromeTone,
+    openProgress?: number,
 ): Readonly<Record<string, number>> {
+    if (visualMode === 'notch_integrated' && tone !== 'row' && typeof openProgress === 'number') {
+        return resolveNotchIntegratedChromeRadii(openProgress);
+    }
+
     if (tone === 'collapsed') {
         return visualMode === 'notch_integrated'
             ? notchIntegratedChromeRadii.collapsed
@@ -123,21 +139,30 @@ function resolveChromeBackgroundColor(
     );
 }
 
-function resolveNotchGeometry(tone: ChromeTone): Readonly<{
+function resolveNotchGeometry(tone: ChromeTone, openProgress?: number): Readonly<{
     topCornerRadius: number;
     bottomCornerRadius: number;
 }> {
-    if (tone === 'collapsed') {
+    if (tone !== 'row' && typeof openProgress === 'number') {
+        const corners = interpolateDesktopOverlayCorners(openProgress);
         return {
-            topCornerRadius: 6,
-            bottomCornerRadius: 14,
+            topCornerRadius: corners.topRadius,
+            bottomCornerRadius: corners.bottomRadius,
+        };
+    }
+    if (tone === 'collapsed') {
+        const corners = interpolateDesktopOverlayCorners(0);
+        return {
+            topCornerRadius: corners.topRadius,
+            bottomCornerRadius: corners.bottomRadius,
         };
     }
 
     if (tone === 'expanded') {
+        const corners = interpolateDesktopOverlayCorners(1);
         return {
-            topCornerRadius: 19,
-            bottomCornerRadius: 24,
+            topCornerRadius: corners.topRadius,
+            bottomCornerRadius: corners.bottomRadius,
         };
     }
 
@@ -151,10 +176,11 @@ function buildDesktopActivityOverlayNotchPath(
     width: number,
     height: number,
     tone: ChromeTone,
+    openProgress?: number,
 ): string {
     const normalizedWidth = Math.max(1, width);
     const normalizedHeight = Math.max(1, height);
-    const geometry = resolveNotchGeometry(tone);
+    const geometry = resolveNotchGeometry(tone, openProgress);
     const topCornerRadius = Math.min(geometry.topCornerRadius, normalizedWidth / 4, normalizedHeight / 2);
     const bottomCornerRadius = Math.min(geometry.bottomCornerRadius, normalizedWidth / 4, normalizedHeight / 2);
 
@@ -177,6 +203,7 @@ export function createDesktopActivityOverlayChromeStyle(
     params: Readonly<{
         visualMode: DesktopActivityOverlayVisualMode;
         tone: ChromeTone;
+        openProgress?: number;
     }>,
 ): Record<string, unknown> {
     const backgroundColor = params.visualMode === 'notch_integrated'
@@ -187,7 +214,7 @@ export function createDesktopActivityOverlayChromeStyle(
         borderWidth: 0,
         borderColor: 'transparent',
         backgroundColor,
-        ...resolveChromeRadii(params.visualMode, params.tone),
+        ...resolveChromeRadii(params.visualMode, params.tone, params.openProgress),
     };
 }
 
@@ -197,6 +224,7 @@ export function DesktopActivityOverlayChromeBackdrop(props: Readonly<{
     tone: ChromeTone;
     width: number;
     height: number;
+    openProgress?: number;
 }>): React.ReactElement | null {
     if (props.visualMode !== 'notch_integrated') {
         return null;
@@ -210,7 +238,7 @@ export function DesktopActivityOverlayChromeBackdrop(props: Readonly<{
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <Svg width="100%" height="100%" viewBox={`0 0 ${props.width} ${props.height}`}>
                 <Path
-                    d={buildDesktopActivityOverlayNotchPath(props.width, props.height, props.tone)}
+                    d={buildDesktopActivityOverlayNotchPath(props.width, props.height, props.tone, props.openProgress)}
                     fill={resolveChromeBackgroundColor(props.theme, props)}
                 />
             </Svg>

@@ -16,6 +16,7 @@ import { desktopSidebarChromeStyles } from './desktopSidebarChromeStyles';
 
 type SidebarHeaderActionsResult = Readonly<{
     headerActions: ItemAction[];
+    topUtilityActions: ItemAction[];
     renderHeaderOverflowVisual: () => React.ReactNode;
 }>;
 
@@ -87,18 +88,6 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         });
 
         out.push({
-            id: 'newSession',
-            title: t('newSession.title'),
-            inlineTestID: 'nav-new-session',
-            icon: (
-                <View style={styles.iconButton}>
-                    <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
-                </View>
-            ),
-            onPress: () => navigate('/new', 'SidebarView.nav.newSession'),
-        });
-
-        out.push({
             id: 'settings',
             title: t('settings.title'),
             inlineTestID: 'nav-settings',
@@ -108,6 +97,18 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 </View>
             ),
             onPress: () => navigate('/settings', 'SidebarView.nav.settings'),
+        });
+
+        out.push({
+            id: 'newSession',
+            title: t('newSession.title'),
+            inlineTestID: 'nav-new-session',
+            icon: (
+                <View style={styles.trailingIconButton}>
+                    <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
+                </View>
+            ),
+            onPress: () => navigate('/new', 'SidebarView.nav.newSession'),
         });
 
         return out;
@@ -120,6 +121,43 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         styles.badge,
         styles.badgeText,
         styles.iconButton,
+        styles.indicatorDot,
+        styles.notificationButton,
+        styles.trailingIconButton,
+        theme.colors.header.tint,
+    ]);
+
+    const topUtilityActions = React.useMemo((): ItemAction[] => {
+        const out: ItemAction[] = [];
+
+        if (inboxEnabled) {
+            out.push({
+                id: 'inbox',
+                title: t('tabs.inbox'),
+                inlineTestID: 'sidebar-inbox-button',
+                icon: (
+                    <View style={styles.notificationButton}>
+                        <Octicons name="inbox" size={15} color={theme.colors.header.tint} />
+                        {inboxHasContent ? <View style={styles.indicatorDot} /> : null}
+                    </View>
+                ),
+                onPress: () => navigate('/(app)/inbox', 'SidebarView.nav.inbox'),
+            });
+        }
+
+        out.push({
+            id: 'settings',
+            title: t('settings.title'),
+            inlineTestID: 'nav-settings',
+            icon: 'cog-outline' as const,
+            onPress: () => navigate('/settings', 'SidebarView.nav.settings'),
+        });
+
+        return out;
+    }, [
+        inboxEnabled,
+        inboxHasContent,
+        navigate,
         styles.indicatorDot,
         styles.notificationButton,
         theme.colors.header.tint,
@@ -156,6 +194,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
 
     return {
         headerActions,
+        topUtilityActions,
         renderHeaderOverflowVisual,
     };
 }

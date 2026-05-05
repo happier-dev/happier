@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -104,8 +105,10 @@ import { flushHookEffects } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { Encryption } from '@/sync/encryption/encryption';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import type { SyncTuning } from '@/sync/runtime/syncTuning';
 
 function buildTokenWithSub(sub: string): string {
     const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
@@ -145,6 +148,40 @@ function publishConnectionState(state: ManagedConnectionState): void {
     }
 }
 
+function jsonResponse(body: unknown, init?: ResponseInit): Response {
+    return new Response(JSON.stringify(body), {
+        ...init,
+        headers: {
+            'content-type': 'application/json',
+            ...(init?.headers ?? {}),
+        },
+    });
+}
+
+function accountPetMetadata(accountPetId: string) {
+    return {
+        accountPetId,
+        packageFormat: 'codex-compatible-atlas-v1',
+        manifest: {
+            id: 'blink',
+            displayName: 'Blink',
+            description: 'Built-in compatible pet',
+            spritesheetPath: 'spritesheet.webp',
+        },
+        spritesheetAssetRef: {
+            assetId: 'asset-1',
+            mediaType: 'image/webp',
+            digest: 'sha256:abc',
+            sizeBytes: 3,
+        },
+        digest: 'sha256:pkg',
+        sizeBytes: 128,
+        createdAt: 1,
+        updatedAt: 2,
+        origin: { kind: 'manualImport' },
+    };
+}
+
 describe('sync.create initial awaits', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -153,6 +190,7 @@ describe('sync.create initial awaits', () => {
         trackMocks.initializeTracking.mockReset();
         connectionStateListeners.clear();
         socketStatusListeners.clear();
+        resetServerFeaturesClientForTests();
         storage.getState().resetEndpointConnectivity();
         installLocalStorage();
     });
@@ -160,6 +198,61 @@ describe('sync.create initial awaits', () => {
     afterEach(() => {
         vi.useRealTimers();
         vi.unstubAllGlobals();
+        resetServerFeaturesClientForTests();
+    });
+
+    it('materializes account pets during initial sync when pets.sync is enabled', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const pet = accountPetMetadata('pet-1');
+        const features = FeaturesResponseSchema.parse({
+            features: {
+                pets: {
+                    sync: { enabled: true },
+                },
+            },
+            capabilities: {},
+        });
+        const fetchSpy = vi.fn<typeof fetch>(async (input) => {
+            const url = String(input);
+            if (url.includes('/v1/features')) {
+                return jsonResponse(features);
+            }
+            if (url.includes('/v1/account/pets')) {
+                return jsonResponse({ ok: true, pets: [pet] });
+            }
+            return jsonResponse({ error: 'not_found' }, { status: 404 });
+        });
+        vi.stubGlobal('fetch', fetchSpy);
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        const { sync } = await import('./sync');
+        const syncWithTuning = sync as unknown as {
+            syncTuning: SyncTuning;
+        };
+        syncWithTuning.syncTuning = {
+            ...sync.getSyncTuning(),
+            invalidateSyncAwaitTimeoutMs: 1,
+            bootstrapConcurrencyLimit: 4,
+            resumeConcurrencyLimit: 4,
+        };
+
+        const credentials: AuthCredentials = {
+            token: buildTokenWithSub('server-pets'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+        };
+
+        const createPromise = sync.create(credentials, encryption);
+        await flushHookEffects({ cycles: 8, turns: 2, advanceTimersMs: 2_500 });
+        await createPromise;
+        await flushHookEffects({ cycles: 8, turns: 2, advanceTimersMs: 10 });
+
+        expect(storage.getState().accountPetsById['pet-1']).toMatchObject({
+            accountPetId: 'pet-1',
+            digest: 'sha256:pkg',
+        });
+        expect(fetchSpy.mock.calls.some(([input]) => String(input).includes('/v1/account/pets'))).toBe(true);
     });
 
     it('does not hang forever waiting for initial sync queues', async () => {
@@ -169,7 +262,26 @@ describe('sync.create initial awaits', () => {
         upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
 
         const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        const configureNativeCryptoWorkerSpy = vi.spyOn(encryption, 'configureNativeCryptoWorker');
+        const warmNativeCryptoWorkerSpy = vi
+            .spyOn(encryption, 'warmNativeCryptoWorkerForDiagnostics')
+            .mockResolvedValue(null);
         const { sync } = await import('./sync');
+        const syncWithTuning = sync as unknown as {
+            syncTuning: SyncTuning;
+        };
+        syncWithTuning.syncTuning = {
+            ...sync.getSyncTuning(),
+            nativeCryptoWorkerMode: 'auto',
+            nativeCryptoWorkerMaxBatchSize: 32,
+            nativeCryptoWorkerMinBatchSize: 2,
+            nativeCryptoWorkerMinPayloadBytes: 0,
+            nativeCryptoWorkerTimeoutMs: 1234,
+            nativeCryptoWorkerLogFallbacks: true,
+            nativeCryptoWorkerTelemetryEnabled: true,
+            nativeCryptoWorkerStreamingSampleRate: 0.5,
+            nativeCryptoWorkerCapabilityStalenessMs: 60_000,
+        };
 
         const credentials: AuthCredentials = {
             token: buildTokenWithSub('server-test'),
@@ -188,6 +300,25 @@ describe('sync.create initial awaits', () => {
         expect(resolved).toBe(true);
 
         await promise;
+        expect(configureNativeCryptoWorkerSpy).toHaveBeenCalledWith({
+            routing: {
+                mode: 'auto',
+                maxBatchSize: 32,
+                minBatchSize: 2,
+                minPayloadBytes: 0,
+                timeoutMs: 1234,
+                logFallbacks: true,
+                telemetryEnabled: true,
+                streamingSampleRate: 0.5,
+                capabilityStalenessMs: 60_000,
+            },
+            scope: {
+                accountId: 'server-test',
+                serverId: expect.any(String),
+                generation: 0,
+            },
+        });
+        expect(warmNativeCryptoWorkerSpy).toHaveBeenCalledTimes(1);
     });
 
     it('rebinds the tracking identity when switching to a different authenticated account', async () => {

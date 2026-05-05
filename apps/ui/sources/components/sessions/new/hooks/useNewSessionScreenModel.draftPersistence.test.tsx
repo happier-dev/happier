@@ -336,16 +336,28 @@ const storageSubscriptionState = vi.hoisted(() => ({
     listeners: new Set<() => void>(),
 }));
 const createSessionActionDraftMock = vi.hoisted(() => vi.fn());
+const activeServerAccountScopeState = vi.hoisted(() => ({
+    value: { serverId: 'server-a', accountId: 'account-a' } as import('@/sync/domains/scope/serverAccountScope').ServerAccountScope | null,
+}));
 
 function getMockStorageState() {
     return {
         settings: { ...settingsDefaults, ...settingsState },
+        profileScope: activeServerAccountScopeState.value,
         createSessionActionDraft: createSessionActionDraftMock,
         workspaceLocations: workspaceGraphState.workspaceLocations,
         workspaceCheckouts: workspaceGraphState.workspaceCheckouts,
         machineListByServerId: machineListByServerIdState.value,
     };
 }
+
+vi.mock('@/sync/store/hooks', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        useActiveServerAccountScope: () => activeServerAccountScopeState.value,
+    };
+});
 
 function notifyMockStorageSubscribers() {
     for (const listener of Array.from(storageSubscriptionState.listeners)) {
@@ -778,10 +790,10 @@ vi.mock('@/components/sessions/new/modules/profileHelpers', () => ({
     transformProfileToEnvironmentVars: () => [],
 }));
 
-vi.mock('@/components/sessions/new/hooks/newSessionModelModePolicy', () => ({
-    resolveInitialNewSessionModelMode: () => 'default',
-    coerceNewSessionModelMode: ({ modelMode }: any) => modelMode,
-}));
+vi.mock('@/components/sessions/new/hooks/newSessionModelModePolicy', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return actual;
+});
 
 vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
     const actual = await importOriginal<any>();
@@ -890,6 +902,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         tryShowDaemonUnavailableAlertForRpcErrorMock.mockReturnValue(false);
         interactionQueueState.callbacks = [];
         focusEffectRef.current = [];
+        activeServerAccountScopeState.value = { serverId: 'server-a', accountId: 'account-a' };
         routerPushMock.mockClear();
         routerSetParamsMock.mockClear();
         featureFlags.mcpServersEnabled = false;
@@ -1673,6 +1686,55 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }));
     });
 
+    it('lets contextual temp seed data replace persisted selections while preserving draft content', async () => {
+        searchParamsState.value = {
+            dataId: 'session-config-seed',
+        };
+        persistedDraft.input = 'Persisted prompt';
+        persistedDraft.selectedMachineId = 'machine-2';
+        persistedDraft.selectedPath = '/repo/persisted';
+        persistedDraft.agentType = 'claude';
+        persistedDraft.backendTarget = { kind: 'backend', backendId: 'claude' } as any;
+        persistedDraft.permissionMode = 'yolo';
+        persistedDraft.resumeSessionId = 'resume-persisted';
+        tempSessionDataState.value = {
+            prompt: '',
+            machineId: 'machine-1',
+            directory: '/repo/from-session',
+            agentType: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            permissionMode: 'acceptEdits',
+            modelMode: 'gpt-5',
+            acpSessionModeId: 'plan',
+            replacePersistedDraftSelections: true,
+        };
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.sessionPrompt).toBe('Persisted prompt');
+        expect(model?.simpleProps?.agentType).toBe('codex');
+        expect(model?.simpleProps?.permissionMode).toBe('acceptEdits');
+        expect(model?.simpleProps?.selectedPath).toBe('/repo/from-session');
+        expect(model?.simpleProps?.machineName).toBe('Machine One');
+        expect(model?.simpleProps?.resumeSessionId).toBe('');
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            authoringDraft: expect.objectContaining({
+                prompt: 'Persisted prompt',
+                displayText: 'Persisted prompt',
+                agentId: 'codex',
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                permissionMode: 'acceptEdits',
+                modelId: 'gpt-5',
+                acpSessionModeId: 'plan',
+                resumeSessionId: null,
+            }),
+        }));
+        expect(loadNewSessionDraftMock).toHaveBeenCalled();
+    });
+
     it('persists configured backend autosave drafts with the canonical backend target carrier', async () => {
         settingsState.lastUsedAgent = 'codex';
         settingsState.acpCatalogSettingsV1 = {
@@ -2230,6 +2292,27 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
+        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not persist a launch draft when the active account scope is cleared', async () => {
+        activeServerAccountScopeState.value = null;
+        loadNewSessionDraftMock.mockReturnValueOnce(null);
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        await act(async () => {
+            model?.simpleProps?.setPrompt?.('draft after logout');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        await act(async () => {
+            persistDraftNowRef.current?.();
+        });
+
         expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(0);
     });
 

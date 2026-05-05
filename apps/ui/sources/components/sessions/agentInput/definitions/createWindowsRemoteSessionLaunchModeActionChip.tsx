@@ -13,7 +13,6 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import {
-    listAvailableWindowsRemoteSessionLaunchModes,
     WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS,
 } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 
@@ -27,16 +26,14 @@ type WindowsRemoteSessionLaunchModeChipProps = Readonly<{
 function buildWindowsRemoteSessionLaunchModeOptions(params: Readonly<{
     windowsTerminalAvailable: boolean;
 }>) {
-    const availableModes = listAvailableWindowsRemoteSessionLaunchModes({
-        windowsTerminalAvailable: params.windowsTerminalAvailable,
-    });
-
     return WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS
-        .filter((option) => availableModes.includes(option.value))
         .map((option) => ({
             id: option.value,
             label: t(option.labelKey),
-            subtitle: t(option.subtitleKey),
+            subtitle: option.value === 'windows_terminal' && !params.windowsTerminalAvailable
+                ? `${t(option.subtitleKey)} ${t('machine.windows.windowsTerminalUnavailableSuffix')}`
+                : t(option.subtitleKey),
+            disabled: option.value === 'windows_terminal' && !params.windowsTerminalAvailable,
         }));
 }
 

@@ -43,6 +43,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             machineId: null,
             flavor: null,
             directSessionV1: { v: 1, providerId: 'provider-a' },
+            readStateV1: null,
             hiddenSystemSession: true,
         });
     });
@@ -57,6 +58,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             machineId: 'm1',
             flavor: 'pro',
             directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            readStateV1: null,
             hiddenSystemSession: false,
         });
 
@@ -69,6 +71,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             machineId: 'm1',
             flavor: 'pro',
             directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            readStateV1: null,
             hiddenSystemSession: false,
         }, previous);
 

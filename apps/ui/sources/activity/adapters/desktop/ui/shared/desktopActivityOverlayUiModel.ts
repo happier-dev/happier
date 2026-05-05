@@ -17,4 +17,5 @@ export type DesktopActivityOverlayActionDescriptor = Readonly<{
     accessibilityLabel?: string | null;
     data?: Readonly<Record<string, unknown>>;
     tone?: DesktopActivityOverlayActionTone;
+    inputKind?: 'inline_text';
 }>;

@@ -12,8 +12,9 @@ export function runSidechainsPhase(params: Readonly<{
     sidechainMessages: TracedMessage[];
     changed: Set<string>;
     allocateId: () => string;
-}>): void {
+}>): boolean {
     const { state, sidechainMessages, changed, allocateId } = params;
+    let stateChanged = false;
 
     //
     // Phase 4: Process sidechains and store them in state
@@ -34,6 +35,7 @@ export function runSidechainsPhase(params: Readonly<{
 
         // Mark as processed
         state.messageIds.set(msg.id, msg.id);
+        stateChanged = true;
 
         // Get or create the sidechain array for this Task
         const existingSidechain = state.sidechains.get(sidechainId) || [];
@@ -312,4 +314,6 @@ export function runSidechainsPhase(params: Readonly<{
             changed.add(parentMessageId);
         }
     }
+
+    return stateChanged;
 }

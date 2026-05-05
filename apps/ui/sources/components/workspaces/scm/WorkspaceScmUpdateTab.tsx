@@ -17,6 +17,7 @@ export type WorkspaceScmUpdateTabProps = Readonly<{
     showBranchSummary?: boolean;
     branchTrigger?: React.ReactNode;
     branchSummaryActionSlot?: React.ReactNode;
+    children?: React.ReactNode;
 }>;
 
 export const WorkspaceScmUpdateTab = React.memo((props: WorkspaceScmUpdateTabProps) => {
@@ -46,6 +47,7 @@ export const WorkspaceScmUpdateTab = React.memo((props: WorkspaceScmUpdateTabPro
                     />
                 ) : null}
                 <SourceControlRemoteActionsRail theme={props.theme} actions={props.actions} hint={props.hint} />
+                {props.children}
             </ScrollView>
             <ScrollEdgeFades
                 color={props.theme.colors.surface}

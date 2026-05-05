@@ -42,10 +42,15 @@ export type PaneScopeState = Readonly<{
     };
 }>;
 
+export type AppPaneFocusModeState = Readonly<{
+    scopeId: string | null;
+}>;
+
 export type AppPaneState = Readonly<{
     activeScopeId: string | null;
     scopes: Readonly<Record<string, PaneScopeState>>;
     scopeLru: ReadonlyArray<string>;
+    focusMode: AppPaneFocusModeState;
     limits: {
         maxScopesInMemory: number;
     };
@@ -54,6 +59,8 @@ export type AppPaneState = Readonly<{
 export type AppPaneAction =
     | { type: 'mergePersistedScopes'; scopes: Readonly<Record<string, PaneScopeState>> }
     | { type: 'activateScope'; scopeId: string }
+    | { type: 'enterFocusMode'; scopeId: string }
+    | { type: 'exitFocusMode'; scopeId?: string }
     | { type: 'openRight'; scopeId: string; tabId?: string }
     | { type: 'closeRight'; scopeId: string }
     | { type: 'setRightTab'; scopeId: string; tabId: string }
@@ -91,6 +98,7 @@ export function createAppPaneState(options: Readonly<{
         activeScopeId: null,
         scopes: persistedScopes,
         scopeLru: Object.keys(persistedScopes),
+        focusMode: { scopeId: null },
         limits: { maxScopesInMemory: options.maxScopesInMemory },
     });
 }
@@ -159,13 +167,26 @@ function evictScopesIfNeeded(state: AppPaneState): AppPaneState {
     }
     const nextLru = state.scopeLru.filter((id) => keep.has(id));
     const nextActive = state.activeScopeId && keep.has(state.activeScopeId) ? state.activeScopeId : nextLru[0] ?? null;
-    return { ...state, scopes: nextScopes, scopeLru: nextLru, activeScopeId: nextActive };
+    const nextFocusMode = state.focusMode.scopeId && keep.has(state.focusMode.scopeId)
+        ? state.focusMode
+        : { scopeId: null };
+    return { ...state, scopes: nextScopes, scopeLru: nextLru, activeScopeId: nextActive, focusMode: nextFocusMode };
 }
 
 function upsertScope(state: AppPaneState, scopeId: string, mutate: (prev: PaneScopeState) => PaneScopeState): AppPaneState {
     const prev = state.scopes[scopeId] ?? createEmptyScopeState();
     const nextScopes = { ...state.scopes, [scopeId]: mutate(prev) };
     return { ...state, scopes: nextScopes };
+}
+
+function scopeHasFocusablePane(scope: PaneScopeState | undefined): boolean {
+    return Boolean(scope?.right.isOpen || scope?.details.isOpen);
+}
+
+function clearFocusModeIfScopeCannotFocus(state: AppPaneState, scopeId: string): AppPaneState {
+    if (state.focusMode.scopeId !== scopeId) return state;
+    if (scopeHasFocusablePane(state.scopes[scopeId])) return state;
+    return { ...state, focusMode: { scopeId: null } };
 }
 
 export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPaneState {
@@ -201,9 +222,21 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 ...state,
                 activeScopeId: action.scopeId,
                 scopeLru: touchScopeLru(state.scopeLru, action.scopeId),
+                focusMode: state.focusMode.scopeId === action.scopeId ? state.focusMode : { scopeId: null },
                 scopes: state.scopes[action.scopeId] ? state.scopes : { ...state.scopes, [action.scopeId]: createEmptyScopeState() },
             };
             return evictScopesIfNeeded(next);
+        }
+        case 'enterFocusMode': {
+            if (state.activeScopeId !== action.scopeId) return state;
+            if (!scopeHasFocusablePane(state.scopes[action.scopeId])) return state;
+            if (state.focusMode.scopeId === action.scopeId) return state;
+            return { ...state, focusMode: { scopeId: action.scopeId } };
+        }
+        case 'exitFocusMode': {
+            if (state.focusMode.scopeId == null) return state;
+            if (action.scopeId && action.scopeId !== state.focusMode.scopeId) return state;
+            return { ...state, focusMode: { scopeId: null } };
         }
         case 'openRight': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
@@ -225,10 +258,10 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             if (prev.right.isOpen === false) {
                 return state;
             }
-            return upsertScope(state, action.scopeId, () => ({
+            return clearFocusModeIfScopeCannotFocus(upsertScope(state, action.scopeId, () => ({
                 ...prev,
                 right: { ...prev.right, isOpen: false },
-            }));
+            })), action.scopeId);
         }
         case 'setRightTab': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
@@ -320,15 +353,15 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 details: applyUnpinDetailsTab(prev.details, action.tabKey),
             }));
         case 'closeDetails':
-            return upsertScope(state, action.scopeId, (prev) => ({
+            return clearFocusModeIfScopeCannotFocus(upsertScope(state, action.scopeId, (prev) => ({
                 ...prev,
                 details: applyCloseDetails(prev.details),
-            }));
+            })), action.scopeId);
         case 'closeDetailsTab':
-            return upsertScope(state, action.scopeId, (prev) => ({
+            return clearFocusModeIfScopeCannotFocus(upsertScope(state, action.scopeId, (prev) => ({
                 ...prev,
                 details: applyCloseDetailsTab(prev.details, action.tabKey),
-            }));
+            })), action.scopeId);
         case 'setActiveDetailsTab':
             return upsertScope(state, action.scopeId, (prev) => ({
                 ...prev,
@@ -364,10 +397,10 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 details: applySetMaximizedDetailsGroup(prev.details, action.groupId),
             }));
         case 'closeDetailsGroup':
-            return upsertScope(state, action.scopeId, (prev) => ({
+            return clearFocusModeIfScopeCannotFocus(upsertScope(state, action.scopeId, (prev) => ({
                 ...prev,
                 details: applyCloseDetailsGroup(prev.details, action.groupId),
-            }));
+            })), action.scopeId);
         default:
             return state;
     }

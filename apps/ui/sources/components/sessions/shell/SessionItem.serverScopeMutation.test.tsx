@@ -67,13 +67,21 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 }));
 
 const stopSpy = vi.fn(async () => ({ success: true }));
-const archiveSpy = vi.fn(async () => ({ success: true, archivedAt: 1 }));
+type ArchiveSpyResult = Readonly<{
+    success: boolean;
+    archivedAt?: number | null;
+    message?: string;
+    code?: string;
+}>;
+const archiveSpy = vi.fn(async (): Promise<ArchiveSpyResult> => ({ success: true, archivedAt: 1 }));
+const readStateSpy = vi.fn(async () => ({ success: true, readState: 'unread', lastViewedSessionSeq: 0, didChange: true }));
 const modalConfirmSpy = vi.fn(async () => true);
 let hideInactiveSessions = false;
 
 vi.mock('@/sync/ops', () => ({
     sessionStopWithServerScope: stopSpy,
     sessionArchiveWithServerScope: archiveSpy,
+    sessionSetManualReadStateWithServerScope: readStateSpy,
 }));
 
 const modalAlertSpy = vi.fn();
@@ -135,9 +143,10 @@ describe('SessionItem server-scoped mutations', () => {
         hideInactiveSessions = false;
     });
 
-    it('stops active sessions using server scope when serverId is provided', async () => {
+    it('archives active sessions from the swipe action using server scope when serverId is provided', async () => {
         archiveSpy.mockClear();
         stopSpy.mockClear();
+        readStateSpy.mockClear();
         modalAlertSpy.mockClear();
 
         const { SessionItem } = await import('./SessionItem');
@@ -183,14 +192,19 @@ describe('SessionItem server-scoped mutations', () => {
             );
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await act(async () => {
-            actions[1].onPress();
-        });
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.archiveSession',
+            'sessionInfo.archiveSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.archiveSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
 
         expect(stopSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
-        expect(archiveSpy).not.toHaveBeenCalled();
+        expect(archiveSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
     });
 
     it('archives inactive sessions using server scope when serverId is provided', async () => {
@@ -242,17 +256,94 @@ describe('SessionItem server-scoped mutations', () => {
             );
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await act(async () => {
-            actions[1].onPress();
-        });
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.archiveSession',
+            'sessionInfo.archiveSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.archiveSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
 
         expect(archiveSpy).toHaveBeenCalledWith('sess_2', { serverId: 'server_b' });
         expect(stopSpy).not.toHaveBeenCalled();
     });
 
-    it('stops without archiving when hidden inactive sessions are enabled', async () => {
+    it('stops and retries archiving when an inactive-looking session is still active server-side', async () => {
+        archiveSpy.mockClear();
+        archiveSpy
+            .mockResolvedValueOnce({
+                success: false,
+                message: 'Cannot archive an active session',
+                code: 'session_active',
+            })
+            .mockResolvedValueOnce({ success: true, archivedAt: 1 });
+        stopSpy.mockClear();
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_stale_inactive',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_b"
+                serverName="Server B"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const swipeable = screen.find((node: any) => typeof node.props?.renderRightActions === 'function');
+        const rightActions = swipeable.props.renderRightActions();
+        const rightActionsScreen = await renderScreen(rightActions);
+        await act(async () => {
+            await pressTestInstanceAsync(
+                rightActionsScreen.find((node: any) => node.type === 'Pressable'),
+                'session swipe action',
+            );
+        });
+
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.archiveSession',
+            'sessionInfo.archiveSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.archiveSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(stopSpy).toHaveBeenCalledWith('sess_stale_inactive', { serverId: 'server_b' });
+        expect(archiveSpy).toHaveBeenCalledTimes(2);
+        expect(archiveSpy).toHaveBeenNthCalledWith(1, 'sess_stale_inactive', { serverId: 'server_b' });
+        expect(archiveSpy).toHaveBeenNthCalledWith(2, 'sess_stale_inactive', { serverId: 'server_b' });
+    });
+
+    it('archives active sessions from the swipe action when hidden inactive sessions are enabled', async () => {
         hideInactiveSessions = true;
         archiveSpy.mockClear();
         stopSpy.mockClear();
@@ -302,15 +393,19 @@ describe('SessionItem server-scoped mutations', () => {
             );
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await act(async () => {
-            await actions[1].onPress();
-        });
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.archiveSession',
+            'sessionInfo.archiveSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.archiveSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
 
         expect(stopSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
-        expect(modalConfirmSpy).not.toHaveBeenCalled();
-        expect(archiveSpy).not.toHaveBeenCalled();
+        expect(archiveSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
     });
 
     it('offers an archive action for active sessions in the more menu and stops before archiving', async () => {
@@ -364,17 +459,22 @@ describe('SessionItem server-scoped mutations', () => {
             moreMenu!.props.onSelect('archive');
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await act(async () => {
-            await actions[1].onPress();
-        });
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.archiveSession',
+            'sessionInfo.archiveSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.archiveSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
 
         expect(stopSpy).toHaveBeenCalledWith('sess_active_archive', { serverId: 'server_d' });
         expect(archiveSpy).toHaveBeenCalledWith('sess_active_archive', { serverId: 'server_d' });
     });
 
-    it('stops pinned sessions without archiving when hidden inactive sessions are enabled', async () => {
+    it('archives pinned active sessions from the swipe action when hidden inactive sessions are enabled', async () => {
         hideInactiveSessions = true;
         archiveSpy.mockClear();
         stopSpy.mockClear();
@@ -425,14 +525,108 @@ describe('SessionItem server-scoped mutations', () => {
             );
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
-        const actions = modalAlertSpy.mock.calls[0][2];
-        await act(async () => {
-            await actions[1].onPress();
-        });
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.archiveSession',
+            'sessionInfo.archiveSessionConfirm',
+            {
+                cancelText: 'common.cancel',
+                confirmText: 'sessionInfo.archiveSession',
+                destructive: true,
+            },
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalled();
 
         expect(stopSpy).toHaveBeenCalledWith('sess_4', { serverId: 'server_d' });
-        expect(modalConfirmSpy).not.toHaveBeenCalled();
-        expect(archiveSpy).not.toHaveBeenCalled();
+        expect(archiveSpy).toHaveBeenCalledWith('sess_4', { serverId: 'server_d' });
+    });
+
+    it('offers manual mark-unread in the context menu and uses server scope', async () => {
+        readStateSpy.mockClear();
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_read',
+            seq: 3,
+            lastViewedSessionSeq: 3,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_read"
+                serverName="Server Read"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.mark-unread'),
+        );
+        expect(contextMenu).toBeTruthy();
+
+        await act(async () => {
+            contextMenu!.props.onSelect('session.mark-unread');
+        });
+
+        expect(readStateSpy).toHaveBeenCalledWith('sess_read', 'unread', { serverId: 'server_read' });
+    });
+
+    it('hides manual read-state actions for archived sessions', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_archived_read',
+            seq: 3,
+            lastViewedSessionSeq: 3,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            archivedAt: 2,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_archived"
+                serverName="Server Archived"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
+        expect(contextMenus.some((node: any) =>
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.mark-unread' || item?.id === 'session.mark-read'),
+        )).toBe(false);
     });
 });

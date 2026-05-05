@@ -8,6 +8,9 @@ import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/n
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let translationPrefix = 'en';
+const sessionMetadataState = vi.hoisted(() => ({
+    metadata: { flavor: 'codex' } as Record<string, unknown> | null,
+}));
 
 installNavigationCommonModuleMocks({
     reactNative: async () => {
@@ -43,10 +46,17 @@ installNavigationCommonModuleMocks({
             getPreferredLanguage: () => translationPrefix,
         });
     },
+    storage: async () => ({
+        useSession: () => ({ id: 'sess_1', metadata: sessionMetadataState.metadata }),
+    }),
 });
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -54,6 +64,25 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 describe('cockpit tab bars', () => {
+    it('uses the session agent name and icon for the chat tab', async () => {
+        sessionMetadataState.metadata = { flavor: 'codex' };
+        translationPrefix = 'en';
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="chat"
+                terminalTabAvailable={true}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('en:agentInput.agent.codex');
+        const icon = screen.findByTestId('session-cockpit-tab-chat-agent-icon');
+        expect(icon?.props.agentId).toBe('codex');
+    });
+
     it('does not render a session cockpit active pill overlay', async () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
@@ -112,6 +141,7 @@ describe('cockpit tab bars', () => {
 
         expect(screen.getTextContent()).toContain('fr:common.files');
         expect(screen.getTextContent()).toContain('fr:common.tabs');
+        expect(screen.getTextContent()).toContain('fr:session.rightPanel.tabs.git');
         expect(screen.getTextContent()).not.toContain('fr:common.details');
     });
 
@@ -142,6 +172,24 @@ describe('cockpit tab bars', () => {
 
         expect(screen.getTextContent()).toContain('fr:common.files');
         expect(screen.getTextContent()).toContain('fr:common.tabs');
+        expect(screen.getTextContent()).toContain('fr:session.rightPanel.tabs.git');
         expect(screen.getTextContent()).not.toContain('fr:common.details');
     });
+
+    it('exposes the selected state on the active cockpit tab', async () => {
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="git"
+                terminalTabAvailable={true}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('session-cockpit-tab-git')?.props.accessibilityRole).toBe('tab');
+        expect(screen.findByTestId('session-cockpit-tab-git')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('session-cockpit-tab-browse')?.props.accessibilityState).toEqual({ selected: false });
+    }, 120_000);
 });

@@ -8,7 +8,15 @@ import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPa
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
-const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
+const usePublishBranchActionMock = vi.hoisted(() => vi.fn<(input: unknown) => unknown>());
+const setScmRemoteConfirmPolicyMock = vi.hoisted(() => vi.fn());
+const confirmCommitAdjacentPushMock = vi.hoisted(() => vi.fn<(input: unknown) => Promise<boolean>>(async () => true));
+const scmOperationsState = vi.hoisted(() => ({
+    pullPreflight: { allowed: false, reason: 'upstream_required', message: 'Set a tracking target before pull or push.' } as any,
+    pushPreflight: { allowed: false, reason: 'upstream_required', message: 'Set a tracking target before pull or push.' } as any,
+    runRemoteOperation: vi.fn(),
+    createCommitFromMessage: vi.fn(),
+}));
 let activeGitSubTab: 'commit' | 'update' | 'history' = 'update';
 let scmSnapshotMock: any = null;
 let scmWriteEnabledMock = true;
@@ -40,6 +48,11 @@ installSessionDetailsPanelCommonModuleMocks({
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
             useSetting: () => null,
+            useSettingMutable: (key: string) => (
+                key === 'scmRemoteConfirmPolicy'
+                    ? ['always', setScmRemoteConfirmPolicyMock]
+                    : [null, vi.fn()]
+            ),
             useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
             useProjectForSession: () => null,
             useProjectSessions: () => [],
@@ -98,10 +111,10 @@ vi.mock('@/hooks/session/files/useFilesScmOperations', () => ({
         scmOperationBusy: false,
         scmOperationStatus: null,
         commitPreflight: { allowed: true, message: null },
-        pullPreflight: { allowed: false, reason: 'upstream_required', message: 'Set a tracking target before pull or push.' },
-        pushPreflight: { allowed: false, reason: 'upstream_required', message: 'Set a tracking target before pull or push.' },
-        runRemoteOperation: vi.fn(),
-        createCommitFromMessage: vi.fn(),
+        pullPreflight: scmOperationsState.pullPreflight,
+        pushPreflight: scmOperationsState.pushPreflight,
+        runRemoteOperation: scmOperationsState.runRemoteOperation,
+        createCommitFromMessage: scmOperationsState.createCommitFromMessage,
         commitMessageGeneratorEnabled: false,
         generateCommitMessageSuggestion: vi.fn(),
     }),
@@ -112,7 +125,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
-    usePublishBranchAction: (...args: any[]) => usePublishBranchActionMock(...args),
+    usePublishBranchAction: (input: unknown) => usePublishBranchActionMock(input),
+}));
+
+vi.mock('@/scm/operations/commitAdjacentPushConfirmation', () => ({
+    confirmCommitAdjacentPush: (input: unknown) => confirmCommitAdjacentPushMock(input),
 }));
 
 vi.mock('@/components/workspaces/scm/states', () => ({
@@ -148,7 +165,7 @@ vi.mock('@/scm/scmStatusSync', () => ({
 }));
 
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
-    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
+    SessionRightPanelGitCommitTabContent: (props: any) => React.createElement('CommitTab', { ...props, testID: 'session-right-panel-git-commit-tab' }),
 }));
 
 vi.mock('@/components/workspaces/scm/WorkspaceScmUpdateTab', () => ({
@@ -197,6 +214,12 @@ function createScmSnapshot(overrides?: Partial<NonNullable<typeof scmSnapshotMoc
 describe('SessionRightPanelGitView (remote action visibility)', () => {
     beforeEach(() => {
         publishBranchMock.mockClear();
+        setScmRemoteConfirmPolicyMock.mockClear();
+        confirmCommitAdjacentPushMock.mockClear();
+        scmOperationsState.runRemoteOperation.mockReset();
+        scmOperationsState.createCommitFromMessage.mockReset();
+        scmOperationsState.pullPreflight = { allowed: false, reason: 'upstream_required', message: 'Set a tracking target before pull or push.' };
+        scmOperationsState.pushPreflight = { allowed: false, reason: 'upstream_required', message: 'Set a tracking target before pull or push.' };
         activeGitSubTab = 'update';
         scmSnapshotMock = createScmSnapshot();
         scmWriteEnabledMock = true;
@@ -258,5 +281,45 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
 
         expect(screen.findAllByTestId('session-right-panel-git-update-tab')).toHaveLength(0);
         expect(screen.findByTestId('session-rightpanel-git-surface:commit')).toBeTruthy();
+    });
+
+    it('passes a canonical push shortcut into the commit tab when the branch is safely ahead', async () => {
+        activeGitSubTab = 'commit';
+        scmOperationsState.pushPreflight = { allowed: true };
+        scmSnapshotMock = createScmSnapshot({
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'git',
+                mode: '.git',
+                remotes: [{ name: 'origin', fetchUrl: 'git@example.com:repo.git', pushUrl: 'git@example.com:repo.git' }],
+            },
+            branch: { head: 'main', upstream: 'origin/main', ahead: 2, behind: 0, detached: false },
+        });
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+
+        const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
+
+        const commitTab = screen.findByTestId('session-right-panel-git-commit-tab');
+        expect(commitTab).not.toBeNull();
+        if (!commitTab) throw new Error('Expected commit tab to render');
+        const pushAction = (commitTab.props as any).commitAdjacentPushAction;
+        expect(pushAction).toMatchObject({
+            disabled: false,
+            busy: false,
+        });
+
+        await renderer.act(async () => {
+            pushAction.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(confirmCommitAdjacentPushMock).toHaveBeenCalledWith(expect.objectContaining({
+            target: { remote: 'origin', branch: 'main' },
+            policy: 'always',
+            detachedHeadLabel: 'files.detachedHead',
+        }));
+        expect(scmOperationsState.runRemoteOperation).toHaveBeenCalledWith('push', { skipConfirmation: true });
     });
 });

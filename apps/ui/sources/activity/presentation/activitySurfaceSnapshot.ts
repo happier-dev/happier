@@ -1,4 +1,5 @@
 import { buildActivityOverviewSnapshot } from '@/activity/attention/buildActivityOverviewSnapshot';
+import type { ActivityOverviewSnapshot } from '@/activity/attention/activityAttentionTypes';
 import { resolveActivitySurfacePolicy, type ActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import { buildActivitySurfaceCountsViewModel } from '@/activity/presentation/buildActivitySurfaceCountsViewModel';
 import { buildActivitySurfaceViewModels } from '@/activity/presentation/buildActivitySurfaceViewModel';
@@ -63,12 +64,13 @@ function buildActivitySurfaceSnapshotLabels(policy: ActivitySurfacePolicy): Acti
 
 export function buildActivitySurfaceSnapshot(params: Readonly<{
     sessions: readonly Session[];
+    overview?: ActivityOverviewSnapshot;
     policy?: ActivitySurfacePolicy;
     nowMs?: number;
 }>): ActivitySurfaceSnapshot {
     const nowMs = params.nowMs ?? Date.now();
     const policy = params.policy ?? resolveActivitySurfacePolicy({});
-    const overview = buildActivityOverviewSnapshot({
+    const overview = params.overview ?? buildActivityOverviewSnapshot({
         sessions: params.sessions,
         nowMs,
     });

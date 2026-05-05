@@ -74,6 +74,8 @@ vi.mock('@/sync/domains/state/storage', () => storageMock);
 describe('session file route', () => {
     beforeEach(() => {
         openDetailsTabSpy.mockClear();
+        paneScopeMock.openRight.mockClear();
+        paneScopeMock.setRightTab.mockClear();
         routerReplaceSpy.mockClear();
     });
 
@@ -99,6 +101,8 @@ describe('session file route', () => {
             expect.objectContaining({ intent: 'preview' }),
         );
         expect(capturedScopeIdRef.current).toBe('session:s1');
+        expect(paneScopeMock.openRight).toHaveBeenCalledWith({ tabId: 'files' });
+        expect(paneScopeMock.setRightTab).toHaveBeenCalledWith('files');
         expect(routerReplaceSpy).toHaveBeenCalledWith({
             pathname: '/session/[id]/details',
             params: expect.objectContaining({ id: 's1' }),

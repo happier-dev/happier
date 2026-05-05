@@ -32,10 +32,10 @@ describe('resolveUiMemoryRecallGuidanceEnabled', () => {
       settings: {},
       serverId: 'srv',
       machineId: 'machine',
-      surfaces: ['voice_action_block'],
+      surfaces: ['voice'],
       deps: {
         resolveLocalFeaturePolicyEnabled: () => true,
-        isActionEnabledInState: (_state, actionId, ctx) => ctx?.surface === 'voice_action_block' && actionId === 'memory.search',
+        isActionEnabledInState: (_state, actionId, ctx) => ctx?.surface === 'voice' && actionId === 'memory.search',
         fetchDaemonMemoryStatus: async () => buildMemoryStatus(),
         isDaemonMemorySearchUsable: () => true,
       },
@@ -49,11 +49,11 @@ describe('resolveUiMemoryRecallGuidanceEnabled', () => {
       settings: {},
       serverId: 'srv',
       machineId: 'machine',
-      surfaces: ['voice_action_block'],
+      surfaces: ['voice'],
       deps: {
         resolveLocalFeaturePolicyEnabled: () => true,
         isActionEnabledInState: (_state, actionId, ctx) =>
-          ctx?.surface === 'voice_action_block' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
+          ctx?.surface === 'voice' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
         fetchDaemonMemoryStatus: async () => buildMemoryStatus(),
         isDaemonMemorySearchUsable: () => true,
       },

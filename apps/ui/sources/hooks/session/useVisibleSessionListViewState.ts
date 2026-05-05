@@ -70,6 +70,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
             presentation: params.selection.presentation,
             selectedServerIds: params.selection.allowedServerIds,
         },
+        storageFilterApplied: params.storageFilter !== 'all',
     });
     if (!visible || params.storageFilter === 'all') return visible;
     return filterSessionListIndexByStorageKind(visible, params.storageFilter);

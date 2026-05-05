@@ -50,10 +50,12 @@ describe('buildSpawnHappySessionRpcParams', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             windowsRemoteSessionLaunchMode: 'windows_terminal',
+            windowsTerminalWindowName: 'happier-qa',
         } satisfies SpawnSessionOptions);
 
         expect(params).toMatchObject({
             windowsRemoteSessionLaunchMode: 'windows_terminal',
+            windowsTerminalWindowName: 'happier-qa',
         });
     });
 

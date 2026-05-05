@@ -1,15 +1,17 @@
 use super::host_mode::{DesktopActivityOverlayDisplayContext, DesktopActivityOverlayHostMode};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSColor, NSMainMenuWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSColor, NSMainMenuWindowLevel, NSPopUpMenuWindowLevel, NSWindow, NSWindowCollectionBehavior,
+    NSWindowStyleMask,
 };
 use tauri::TitleBarStyle;
 #[cfg(target_os = "macos")]
-use tauri::{ActivationPolicy, AppHandle, Runtime, WebviewWindow};
+use tauri::{Runtime, WebviewWindow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DesktopActivityOverlayMacWindowLevelOverride {
     NotchPanel,
+    NotchPanelExpanded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,12 +31,15 @@ pub(crate) struct DesktopActivityOverlayMacWindowBuilderDefaults {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DesktopActivityOverlayMacWindowHostSettings {
     pub(crate) host_path: DesktopActivityOverlayMacHostPath,
-    pub(crate) prefer_accessory_activation_policy: bool,
     pub(crate) visible_on_all_workspaces: bool,
+    pub(crate) accepts_mouse_moved_events: bool,
+    pub(crate) ignores_mouse_events: bool,
     pub(crate) shadow: bool,
     pub(crate) full_screen_auxiliary: bool,
     pub(crate) stationary: bool,
     pub(crate) ignores_cycle: bool,
+    pub(crate) movable: bool,
+    pub(crate) movable_by_window_background: bool,
     pub(crate) nonactivating_panel: bool,
     pub(crate) opaque: bool,
     pub(crate) window_level_override: Option<DesktopActivityOverlayMacWindowLevelOverride>,
@@ -58,6 +63,7 @@ pub(crate) fn resolve_macos_overlay_window_builder_defaults(
 pub(crate) fn resolve_macos_overlay_window_host_settings(
     host_mode: DesktopActivityOverlayHostMode,
     display_context: Option<DesktopActivityOverlayDisplayContext>,
+    expanded: bool,
 ) -> Option<DesktopActivityOverlayMacWindowHostSettings> {
     let Some(display_context) = display_context else {
         return None;
@@ -73,23 +79,31 @@ pub(crate) fn resolve_macos_overlay_window_host_settings(
         } else {
             DesktopActivityOverlayMacHostPath::Window
         },
-        prefer_accessory_activation_policy: matches!(
-            host_mode,
-            DesktopActivityOverlayHostMode::NotchIntegrated
-        ),
         visible_on_all_workspaces: matches!(
             host_mode,
             DesktopActivityOverlayHostMode::NotchIntegrated
         ),
+        accepts_mouse_moved_events: matches!(
+            host_mode,
+            DesktopActivityOverlayHostMode::NotchIntegrated
+        ),
+        ignores_mouse_events: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated)
+            && !expanded,
         shadow: false,
         full_screen_auxiliary: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
         stationary: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
         ignores_cycle: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
+        movable: !matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
+        movable_by_window_background: false,
         nonactivating_panel: matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated),
         opaque: false,
         window_level_override: match host_mode {
             DesktopActivityOverlayHostMode::NotchIntegrated => {
-                Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanel)
+                if expanded {
+                    Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanelExpanded)
+                } else {
+                    Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanel)
+                }
             }
             DesktopActivityOverlayHostMode::Floating => None,
         },
@@ -106,35 +120,13 @@ pub(crate) fn should_apply_raw_macos_overlay_window_collection_behavior(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn apply_macos_overlay_activation_policy<R: Runtime>(
-    app: &AppHandle<R>,
-    settings: DesktopActivityOverlayMacWindowHostSettings,
-) -> Result<(), String> {
-    let activation_policy = if settings.prefer_accessory_activation_policy {
-        ActivationPolicy::Accessory
-    } else {
-        ActivationPolicy::Regular
-    };
-
-    app.set_activation_policy(activation_policy)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn apply_macos_overlay_activation_policy<R: tauri::Runtime>(
-    _app: &tauri::AppHandle<R>,
-    _settings: DesktopActivityOverlayMacWindowHostSettings,
-) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
 fn resolve_macos_window_level_override(
     level_override: DesktopActivityOverlayMacWindowLevelOverride,
 ) -> isize {
     match level_override {
         // Claude Island / VibeHub both run above the menu bar using `.mainMenu + 3`.
         DesktopActivityOverlayMacWindowLevelOverride::NotchPanel => NSMainMenuWindowLevel + 3,
+        DesktopActivityOverlayMacWindowLevelOverride::NotchPanelExpanded => NSPopUpMenuWindowLevel,
     }
 }
 
@@ -182,6 +174,10 @@ pub(crate) fn apply_macos_overlay_window_collection_behavior<R: Runtime>(
     ns_window.setOpaque(settings.opaque);
     ns_window.setBackgroundColor(Some(&clear_color));
     ns_window.setStyleMask(style_mask);
+    ns_window.setMovable(settings.movable);
+    ns_window.setMovableByWindowBackground(settings.movable_by_window_background);
+    ns_window.setAcceptsMouseMovedEvents(settings.accepts_mouse_moved_events);
+    ns_window.setIgnoresMouseEvents(settings.ignores_mouse_events);
     if let Some(level_override) = settings.window_level_override {
         ns_window.setLevel(resolve_macos_window_level_override(level_override));
     }
@@ -213,6 +209,8 @@ mod tests {
             is_builtin_display,
             has_physical_notch,
             safe_area_top: 74.0,
+            physical_notch_size: None,
+            display_identity: None,
             screen_frame: Rect {
                 x: 0.0,
                 y: 0.0,
@@ -249,16 +247,20 @@ mod tests {
         let settings = resolve_macos_overlay_window_host_settings(
             DesktopActivityOverlayHostMode::NotchIntegrated,
             Some(display_context(true, true, true)),
+            false,
         )
         .expect("expected notch-integrated host settings");
 
         assert!(settings.visible_on_all_workspaces);
         assert_eq!(settings.host_path, DesktopActivityOverlayMacHostPath::Panel);
-        assert!(settings.prefer_accessory_activation_policy);
+        assert!(settings.accepts_mouse_moved_events);
+        assert!(settings.ignores_mouse_events);
         assert!(!settings.shadow);
         assert!(settings.full_screen_auxiliary);
         assert!(settings.stationary);
         assert!(settings.ignores_cycle);
+        assert!(!settings.movable);
+        assert!(!settings.movable_by_window_background);
         assert!(settings.nonactivating_panel);
         assert!(!settings.opaque);
         assert_eq!(
@@ -272,6 +274,7 @@ mod tests {
         let settings = resolve_macos_overlay_window_host_settings(
             DesktopActivityOverlayHostMode::Floating,
             Some(display_context(true, true, true)),
+            false,
         )
         .expect("expected floating host settings on macOS");
 
@@ -280,14 +283,30 @@ mod tests {
             settings.host_path,
             DesktopActivityOverlayMacHostPath::Window
         );
-        assert!(!settings.prefer_accessory_activation_policy);
+        assert!(!settings.accepts_mouse_moved_events);
+        assert!(!settings.ignores_mouse_events);
         assert!(!settings.shadow);
         assert!(!settings.full_screen_auxiliary);
         assert!(!settings.stationary);
         assert!(!settings.ignores_cycle);
+        assert!(settings.movable);
+        assert!(!settings.movable_by_window_background);
         assert!(!settings.nonactivating_panel);
         assert!(!settings.opaque);
         assert_eq!(settings.window_level_override, None);
+    }
+
+    #[test]
+    fn notch_integrated_panel_uses_nonactivating_window_settings() {
+        let settings = resolve_macos_overlay_window_host_settings(
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+            Some(display_context(true, true, true)),
+            false,
+        )
+        .expect("expected notch-integrated host settings");
+
+        assert_eq!(settings.host_path, DesktopActivityOverlayMacHostPath::Panel);
+        assert!(settings.nonactivating_panel);
     }
 
     #[test]
@@ -296,9 +315,23 @@ mod tests {
             resolve_macos_overlay_window_host_settings(
                 DesktopActivityOverlayHostMode::NotchIntegrated,
                 Some(display_context(false, true, true)),
+                false,
             ),
             None
         );
+    }
+
+    #[test]
+    fn notch_integrated_expanded_hosts_accept_mouse_events_for_panel_controls() {
+        let settings = resolve_macos_overlay_window_host_settings(
+            DesktopActivityOverlayHostMode::NotchIntegrated,
+            Some(display_context(true, true, true)),
+            true,
+        )
+        .expect("expected notch-integrated host settings");
+
+        assert!(settings.accepts_mouse_moved_events);
+        assert!(!settings.ignores_mouse_events);
     }
 
     #[test]
@@ -306,6 +339,7 @@ mod tests {
         let settings = resolve_macos_overlay_window_host_settings(
             DesktopActivityOverlayHostMode::NotchIntegrated,
             Some(display_context(true, true, true)),
+            false,
         )
         .expect("expected notch-integrated host settings");
 
@@ -319,6 +353,7 @@ mod tests {
         let settings = resolve_macos_overlay_window_host_settings(
             DesktopActivityOverlayHostMode::Floating,
             Some(display_context(true, true, true)),
+            false,
         )
         .expect("expected floating host settings");
 

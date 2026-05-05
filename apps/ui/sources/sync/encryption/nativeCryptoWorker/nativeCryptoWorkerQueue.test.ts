@@ -4,9 +4,13 @@ import { createDeferred } from '@/dev/testkit';
 import { createSyncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 import * as nativeCryptoWorkerQueueModule from './nativeCryptoWorkerQueue';
-import { createNativeCryptoWorkerBatchQueue } from './nativeCryptoWorkerQueue';
+import {
+    createNativeCryptoWorkerBatchQueue,
+    runNativeCryptoWorkerQueuedBatch,
+} from './nativeCryptoWorkerQueue';
 
 type NativeCryptoWorkerQueueLifecycleExports = Readonly<{
+    getNativeCryptoWorkerOwnerQueueCountForTests: (owner: object) => number;
     markNativeCryptoWorkerQueueQuiescent: (options?: Readonly<{ now?: () => number }>) => void;
     markNativeCryptoWorkerQueueActive: (options?: Readonly<{
         now?: () => number;
@@ -32,6 +36,7 @@ async function getPromiseSettlement<T>(promise: Promise<T>): Promise<PromiseSett
 
 function getQueueLifecycleExports(): NativeCryptoWorkerQueueLifecycleExports {
     const candidate = nativeCryptoWorkerQueueModule as Partial<NativeCryptoWorkerQueueLifecycleExports>;
+    expect(candidate.getNativeCryptoWorkerOwnerQueueCountForTests).toBeTypeOf('function');
     expect(candidate.markNativeCryptoWorkerQueueQuiescent).toBeTypeOf('function');
     expect(candidate.markNativeCryptoWorkerQueueActive).toBeTypeOf('function');
     expect(candidate.resetNativeCryptoWorkerQueueLifecycleForTests).toBeTypeOf('function');
@@ -341,5 +346,35 @@ describe('createNativeCryptoWorkerBatchQueue', () => {
 
         await expect(disabledQueue.enqueue(3)).resolves.toBe('r3');
         expect(disabledTelemetry.snapshot().events).toEqual([]);
+    });
+
+    it('reclaims drained per-generation queued batch entries after generation churn', async () => {
+        const lifecycle = getQueueLifecycleExports();
+        lifecycle.resetNativeCryptoWorkerQueueLifecycleForTests();
+
+        const owner = {};
+        const dispatch = async (items: readonly number[]) => items.map((item) => `r${item}`);
+
+        await expect(runNativeCryptoWorkerQueuedBatch({
+            owner,
+            operation: 'decryptSecretboxJson',
+            scope: { accountId: 'account', serverId: 'server', generation: 1 },
+            maxBatchSize: 2,
+            items: [1, 2],
+            dispatch,
+        })).resolves.toEqual(['r1', 'r2']);
+        expect(lifecycle.getNativeCryptoWorkerOwnerQueueCountForTests(owner)).toBe(0);
+
+        await expect(runNativeCryptoWorkerQueuedBatch({
+            owner,
+            operation: 'decryptSecretboxJson',
+            scope: { accountId: 'account', serverId: 'server', generation: 2 },
+            maxBatchSize: 2,
+            items: [3],
+            dispatch,
+        })).resolves.toEqual(['r3']);
+        expect(lifecycle.getNativeCryptoWorkerOwnerQueueCountForTests(owner)).toBe(0);
+
+        lifecycle.resetNativeCryptoWorkerQueueLifecycleForTests();
     });
 });

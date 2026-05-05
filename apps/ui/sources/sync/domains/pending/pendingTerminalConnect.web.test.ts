@@ -24,6 +24,11 @@ async function importFreshWeb() {
     return await import('./pendingTerminalConnect.web');
 }
 
+async function activateServer(serverUrl: string) {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    upsertAndActivateServer({ serverUrl, source: 'manual', scope: 'device', replaceEquivalentStoredUrl: true });
+}
+
 describe('pendingTerminalConnect.web', () => {
     beforeEach(() => {
         vi.stubGlobal('localStorage', createLocalStorage());
@@ -38,6 +43,7 @@ describe('pendingTerminalConnect.web', () => {
 
     it('round-trips a pending terminal connect payload on web', async () => {
         const { setPendingTerminalConnect, getPendingTerminalConnect } = await importFreshWeb();
+        await activateServer('https://stack.example.test');
         setPendingTerminalConnect({
             publicKeyB64Url: 'abcDEF_123-zzz',
             serverUrl: 'https://stack.example.test',
@@ -52,6 +58,7 @@ describe('pendingTerminalConnect.web', () => {
         const now = 1_700_000_000_000;
         vi.spyOn(Date, 'now').mockReturnValue(now);
         const { setPendingTerminalConnect, getPendingTerminalConnect } = await importFreshWeb();
+        await activateServer('https://stack.example.test');
         setPendingTerminalConnect({
             publicKeyB64Url: 'abcDEF_123-zzz',
             serverUrl: 'https://stack.example.test',

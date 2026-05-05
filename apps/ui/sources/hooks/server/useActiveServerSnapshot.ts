@@ -1,19 +1,48 @@
 import * as React from 'react';
 
-import { getActiveServerSnapshot, subscribeActiveServer, type ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import {
+    getActiveServerSnapshot,
+    subscribeActiveServer,
+    type ActiveServerSnapshot,
+} from '@/sync/domains/server/serverRuntime';
+
+const emptyActiveServerSnapshot: ActiveServerSnapshot = {
+    serverId: '',
+    serverUrl: '',
+    generation: 0,
+};
+
+let lastActiveServerSnapshot: ActiveServerSnapshot | null = null;
+
+function areActiveServerSnapshotsEqual(left: ActiveServerSnapshot, right: ActiveServerSnapshot): boolean {
+    return left.serverId === right.serverId
+        && left.serverUrl === right.serverUrl
+        && (left.activeShareableServerUrl ?? null) === (right.activeShareableServerUrl ?? null)
+        && (left.activeShareableServerUrlValidatedAgainstServerUrl ?? null) === (right.activeShareableServerUrlValidatedAgainstServerUrl ?? null)
+        && (left.activeLocalRelayUrl ?? null) === (right.activeLocalRelayUrl ?? null)
+        && (left.isSelectionExplicit ?? null) === (right.isSelectionExplicit ?? null)
+        && left.generation === right.generation;
+}
+
+function getActiveServerSnapshotSafe(): ActiveServerSnapshot {
+    let snapshot: ActiveServerSnapshot;
+    try {
+        snapshot = getActiveServerSnapshot();
+    } catch {
+        snapshot = emptyActiveServerSnapshot;
+    }
+    const nextSnapshot = { ...snapshot };
+    if (lastActiveServerSnapshot && areActiveServerSnapshotsEqual(lastActiveServerSnapshot, nextSnapshot)) {
+        return lastActiveServerSnapshot;
+    }
+    lastActiveServerSnapshot = nextSnapshot;
+    return nextSnapshot;
+}
 
 export function useActiveServerSnapshot(): ActiveServerSnapshot {
-    const [snapshot, setSnapshot] = React.useState(() => getActiveServerSnapshot());
-
-    React.useEffect(() => {
-        const unsubscribe = subscribeActiveServer((next) => {
-            // Defensive copy: some runtime paths update the underlying snapshot object in-place.
-            // React state updates are referential, so ensure subscribers re-render when fields change.
-            setSnapshot({ ...next });
-        });
-        setSnapshot({ ...getActiveServerSnapshot() });
-        return unsubscribe;
-    }, []);
-
-    return snapshot;
+    return React.useSyncExternalStore(
+        subscribeActiveServer,
+        getActiveServerSnapshotSafe,
+        getActiveServerSnapshotSafe,
+    );
 }

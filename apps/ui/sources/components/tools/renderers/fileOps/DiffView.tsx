@@ -15,7 +15,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { useInlineUnifiedDiffReviewCommentsRenderer } from '@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer';
-import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
 
 export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId: sessionIdProp }) => {
@@ -44,10 +44,7 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionI
     const showFileList = effectiveDetailLevel !== 'title';
 
     const reviewCommentsFeatureEnabled = useFeatureEnabled('files.reviewComments');
-    const reviewScope = React.useMemo(
-        () => (sessionId ? resolveWorkspaceScopeForSession(sessionId) : null),
-        [sessionId],
-    );
+    const reviewScope = useWorkspaceScopeForSession(sessionId);
     const reviewCommentsEnabled = reviewCommentsFeatureEnabled === true && Boolean(reviewScope);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);

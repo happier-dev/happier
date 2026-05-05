@@ -19,7 +19,6 @@ export function buildWorkspaceScmBranchPopoverItems(input: Readonly<{
     canCheckout: boolean;
     canCreateWorktrees: boolean;
     canLaunchWorktreeSession: boolean;
-    canPublish: boolean;
     canReadBranches: boolean;
     currentBranch: string | null;
     hasMachineTarget: boolean;
@@ -33,15 +32,6 @@ export function buildWorkspaceScmBranchPopoverItems(input: Readonly<{
 }> {
     const branchItems: SelectableMenuItem[] = [];
     const worktreeItems: SelectableMenuItem[] = [];
-
-    if (input.canPublish) {
-        branchItems.push({
-            id: 'publish',
-            title: t('files.branchMenu.publish.title'),
-            subtitle: t('files.branchMenu.publish.subtitle'),
-            category: t('files.branchMenu.category.actions'),
-        });
-    }
 
     if (input.canCreateWorktrees) {
         worktreeItems.push({

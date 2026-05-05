@@ -9,6 +9,7 @@ import type { SessionListIndexItem } from '../../sessionList/sessionListIndex';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 import { normalizeSessionListServerScope } from './normalizeSessionListServerScope';
 import { getActiveServerSnapshot } from '../../server/serverRuntime';
+import { resolveSessionMachineId } from '../directSessions/resolveSessionMachineId';
 
 export type SessionListLookupStateLike = Readonly<{
     sessionListIndexByServerId?: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>> | null | undefined;
@@ -34,6 +35,7 @@ export type SessionMetadataLike = Readonly<{
     homeDir?: unknown;
     machineId?: unknown;
     permissionMode?: unknown;
+    directSessionV1?: unknown;
 }> | null | undefined;
 
 export type SessionListLookupSessionServerScope = Readonly<{
@@ -273,6 +275,29 @@ function writeMemoizedPreferredSessionListMetadataToState(
 
     cachedBySessionId.set(sessionId, metadata);
     return metadata;
+}
+
+function mergeCachedSessionMetadataWithCanonicalMachineId(
+    cachedMetadata: SessionMetadataLike,
+    directMetadata: SessionMetadataLike,
+): SessionMetadataLike {
+    if (!cachedMetadata || typeof cachedMetadata !== 'object') {
+        return cachedMetadata;
+    }
+
+    if (resolveSessionMachineId(cachedMetadata)) {
+        return cachedMetadata;
+    }
+
+    const canonicalMachineId = resolveSessionMachineId(directMetadata);
+    if (!canonicalMachineId) {
+        return cachedMetadata;
+    }
+
+    return {
+        ...cachedMetadata,
+        machineId: canonicalMachineId,
+    };
 }
 
 function readCachedSessionListLookupSessionServerScopeFromState(
@@ -574,6 +599,12 @@ export function resolveSessionListPreferredSessionMetadataFromState(
     }
 
     const directSession = state?.sessions?.[normalizedSessionId];
+    const directMetadataValue = directSession && typeof directSession === 'object'
+        ? directSession.metadata
+        : null;
+    const directMetadata = directMetadataValue && typeof directMetadataValue === 'object'
+        ? directMetadataValue
+        : null;
     const cachedSession = findSessionListLookupSession(state, normalizedSessionId);
 
     const cachedMetadata = cachedSession?.session?.metadata;
@@ -581,16 +612,13 @@ export function resolveSessionListPreferredSessionMetadataFromState(
         return writeMemoizedPreferredSessionListMetadataToState(
             state,
             normalizedSessionId,
-            cachedMetadata as SessionMetadataLike,
+            mergeCachedSessionMetadataWithCanonicalMachineId(
+                cachedMetadata as SessionMetadataLike,
+                directMetadata as SessionMetadataLike,
+            ),
         );
     }
 
-    const directMetadataValue = directSession && typeof directSession === 'object'
-        ? directSession.metadata
-        : null;
-    const directMetadata = directMetadataValue && typeof directMetadataValue === 'object'
-        ? directMetadataValue
-        : null;
     return writeMemoizedPreferredSessionListMetadataToState(
         state,
         normalizedSessionId,

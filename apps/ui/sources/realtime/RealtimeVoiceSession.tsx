@@ -1,30 +1,34 @@
-import React, { useEffect, useRef } from 'react';
-import { ElevenLabsProvider, useConversation } from '@elevenlabs/react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import './elevenlabs/installElevenLabsNativeGlobals';
+import '@elevenlabs/react-native';
 import { realtimeClientTools } from './realtimeClientTools';
-import { realtimeTransport, type RealtimeConversationHandle } from '@/voice/runtime/realtime/RealtimeTransport';
+import { createElevenLabsConversationHandle } from '@/voice/adapters/realtimeElevenLabs/createElevenLabsConversationHandle';
+import { realtimeTransport } from '@/voice/runtime/realtime/RealtimeTransport';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 
-const RealtimeVoiceSessionInner: React.FC = () => {
-    const conversation = useConversation({
+export const RealtimeVoiceSession: React.FC = () => {
+    const conversation = useMemo(() => createElevenLabsConversationHandle({
         clientTools: realtimeClientTools,
-        onConnect: () => {
-            realtimeTransport.handleProviderConnected();
+        callbacks: {
+            onConnect: () => {
+                realtimeTransport.handleProviderConnected();
+            },
+            onDisconnect: () => {
+                realtimeTransport.handleProviderDisconnected();
+            },
+            onMessage: (data) => {
+                realtimeTransport.handleProviderMessage(data);
+            },
+            onError: (error) => {
+                realtimeTransport.handleProviderError(error);
+            },
+            onStatusChange: () => {},
+            onModeChange: (data) => {
+                realtimeTransport.handleProviderModeChange(data.mode as string);
+            },
+            onDebug: () => {},
         },
-        onDisconnect: () => {
-            realtimeTransport.handleProviderDisconnected();
-        },
-        onMessage: (data) => {
-            realtimeTransport.handleProviderMessage(data);
-        },
-        onError: (error) => {
-            realtimeTransport.handleProviderError(error);
-        },
-        onStatusChange: () => {},
-        onModeChange: (data) => {
-            realtimeTransport.handleProviderModeChange(data.mode as string);
-        },
-        onDebug: () => {},
-    });
+    }), []);
 
     const hasRegistered = useRef(false);
 
@@ -54,23 +58,17 @@ const RealtimeVoiceSessionInner: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        realtimeTransport.registerConversationHandle({
-            textOnly: false,
-            handle: conversation as unknown as RealtimeConversationHandle,
-        });
+        realtimeTransport.registerConversationHandle({ textOnly: false, handle: conversation });
+        realtimeTransport.registerConversationHandle({ textOnly: true, handle: conversation });
 
         return () => {
             realtimeTransport.registerConversationHandle({ textOnly: false, handle: null });
+            realtimeTransport.registerConversationHandle({ textOnly: true, handle: null });
             realtimeTransport.setActiveConversationHandle(null);
+            conversation.dispose();
         };
     }, [conversation]);
 
     // This component doesn't render anything visible
     return null;
 };
-
-export const RealtimeVoiceSession: React.FC = () => (
-    <ElevenLabsProvider>
-        <RealtimeVoiceSessionInner />
-    </ElevenLabsProvider>
-);

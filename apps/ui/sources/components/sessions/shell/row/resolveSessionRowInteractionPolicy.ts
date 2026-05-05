@@ -57,7 +57,7 @@ export function resolveSessionRowInteractionPolicy(
     } = params;
 
     const isNativeMobile = platformOs === 'ios' || platformOs === 'android';
-    const swipeEnabled = platformOs !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
+    const swipeEnabled = platformOs !== 'web' && canArchiveSession;
     const suppressNextPressOnNativeContextMenuOpen = contextMenuItemCount > 0 && contextMenuOpen && !contextMenuWasOpen;
 
     const next = {

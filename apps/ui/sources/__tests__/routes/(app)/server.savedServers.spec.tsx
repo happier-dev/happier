@@ -22,68 +22,69 @@ const clearPendingNotificationNavSpy = vi.fn();
 const { modalMockRef } = vi.hoisted(() => ({
     modalMockRef: { current: null as any },
 }));
+const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn(async () => null as unknown));
 
-installServerRouteCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            KeyboardAvoidingView: 'KeyboardAvoidingView',
-            Platform: { OS: 'ios' },
-        });
-    },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const routerMock = createExpoRouterMock({
-            router: {
-                back: vi.fn(),
-                push: vi.fn(),
-                replace: routerReplaceMock,
-                setParams: vi.fn(),
-            },
-        });
-        return {
-            ...routerMock.module,
-            useLocalSearchParams: () => localSearchParamsMock,
-        };
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    surface: '#fff',
-                    groupped: { background: '#fff' },
-                    text: '#000',
-                    textSecondary: '#666',
-                    textDestructive: '#f00',
-                    input: { background: '#fff', text: '#000', placeholder: '#999' },
-                    status: { connecting: '#00f' },
-                    divider: '#ccc',
-                    switch: {
-                        track: { inactive: '#ddd', active: '#0a0' },
-                        thumb: { active: '#fff' },
+function installServerSavedRouteModuleMocks() {
+    installServerRouteCommonModuleMocks({
+        reactNative: async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                KeyboardAvoidingView: 'KeyboardAvoidingView',
+                Platform: { OS: 'ios' },
+            });
+        },
+        router: async () => {
+            const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+            const routerMock = createExpoRouterMock({
+                router: {
+                    back: vi.fn(),
+                    push: vi.fn(),
+                    replace: routerReplaceMock,
+                    setParams: vi.fn(),
+                },
+            });
+            return {
+                ...routerMock.module,
+                useLocalSearchParams: () => localSearchParamsMock,
+            };
+        },
+        unistyles: async () => {
+            const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+            return createUnistylesMock({
+                theme: {
+                    colors: {
+                        surface: '#fff',
+                        groupped: { background: '#fff' },
+                        text: '#000',
+                        textSecondary: '#666',
+                        textDestructive: '#f00',
+                        input: { background: '#fff', text: '#000', placeholder: '#999' },
+                        status: { connecting: '#00f' },
+                        divider: '#ccc',
+                        switch: {
+                            track: { inactive: '#ddd', active: '#0a0' },
+                            thumb: { active: '#fff' },
+                        },
                     },
                 },
-            },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => key,
-        });
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        const modalMock = createModalModuleMock({ confirmResult: true });
-        modalMockRef.current = modalMock;
-        return modalMock.module;
-    },
-});
+            });
+        },
+        text: async () => {
+            const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+            return createTextModuleMock({
+                translate: (key: string) => key,
+            });
+        },
+        modal: async () => {
+            const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+            const modalMock = createModalModuleMock({ confirmResult: true });
+            modalMockRef.current = modalMock;
+            return modalMock.module;
+        },
+    });
+}
 
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    switchConnectionToActiveServer: switchConnectionToActiveServerSpy,
-}));
+installServerSavedRouteModuleMocks();
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: refreshFromActiveServerSpy }),
@@ -92,7 +93,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentials: vi.fn(async () => null),
-        getCredentialsForServerUrl: vi.fn(async () => null),
+        getCredentialsForServerUrl: getCredentialsForServerUrlMock,
         invalidateCredentialsTokenForServerUrl: vi.fn(async () => {}),
         removeCredentialsForServerUrl: vi.fn(async () => {}),
         setCredentialsForServerUrl: vi.fn(async () => {}),
@@ -126,6 +127,15 @@ vi.mock('@/components/ui/lists/Item', () => ({
 describe('ServerConfigScreen', () => {
     beforeEach(() => {
         vi.resetModules();
+        installServerSavedRouteModuleMocks();
+        vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
+            switchConnectionToActiveServer: switchConnectionToActiveServerSpy,
+        }));
+        vi.doMock('@/sync/runtime/getSyncSingleton', () => ({
+            getSyncSingleton: () => ({
+                applySettings: vi.fn(),
+            }),
+        }));
         localSearchParamsMock = {};
         routerReplaceMock.mockReset();
         switchConnectionToActiveServerSpy.mockReset();
@@ -133,6 +143,8 @@ describe('ServerConfigScreen', () => {
         delete (globalThis as any).fetch;
         pendingNotificationNavValue = null;
         clearPendingNotificationNavSpy.mockReset();
+        getCredentialsForServerUrlMock.mockReset();
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
         modalMockRef.current?.spies.alert.mockReset();
         modalMockRef.current?.spies.confirm.mockReset();
         modalMockRef.current?.spies.prompt.mockReset();
@@ -183,6 +195,7 @@ describe('ServerConfigScreen', () => {
         const { getActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 
         const screen = await renderServerScreen();
+        await flushHookEffects();
 
         expect(getActiveServerId()).toBeTruthy();
         expect(fetchSpy).toHaveBeenCalledWith('https://company.example.test/health', expect.any(Object));
@@ -220,6 +233,7 @@ describe('ServerConfigScreen', () => {
     it('navigates to pending notification session after adding a server from a notification deep link', async () => {
         localSearchParamsMock = { url: 'https://company.example.test', source: 'notification' };
         pendingNotificationNavValue = { serverUrl: 'https://company.example.test', route: '/session/s_123' };
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token', secret: 'secret' });
 
         const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
         (globalThis as any).fetch = fetchSpy;
@@ -308,6 +322,7 @@ describe('ServerConfigScreen', () => {
         routerReplaceMock.mockClear();
         switchConnectionToActiveServerSpy.mockClear();
         refreshFromActiveServerSpy.mockClear();
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token', secret: 'secret' });
 
         const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
         (globalThis as any).fetch = fetchSpy;

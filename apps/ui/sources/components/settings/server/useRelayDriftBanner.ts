@@ -158,6 +158,7 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
         const daemonSnapshot = cachedDoctorSnapshot?.snapshot.daemonStatus;
         const daemonServer = daemonSnapshot?.server;
         const daemonAuth = daemonSnapshot?.auth;
+        const doctorBackgroundService = cachedDoctorSnapshot?.snapshot.serviceHealth?.backgroundService;
         const daemonService = daemonSnapshot?.service;
         const classification = classifyRelayDrift({
             activeRelayUrl: activeServerSnapshot.serverUrl,
@@ -168,8 +169,8 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
             ],
             daemonAccountId: daemonAuth?.accountId ?? cachedDoctorSnapshot?.snapshot.accountId ?? null,
             daemonNeedsAuth: daemonAuth?.needsAuth,
-            daemonServiceInstalled: daemonService?.installed,
-            daemonRunning: daemonService?.running,
+            daemonServiceInstalled: daemonService?.installed ?? doctorBackgroundService?.installed,
+            daemonRunning: daemonService?.running ?? doctorBackgroundService?.running,
         });
 
         if (classification.status === 'aligned' || classification.repairAction == null) {

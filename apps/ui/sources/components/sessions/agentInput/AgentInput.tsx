@@ -97,6 +97,7 @@ import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import type {
     AgentInputAttachment,
+    AgentInputComposerAttachmentBadge,
     AgentInputExtraActionChip,
 } from './agentInputContracts';
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
@@ -833,6 +834,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sessionId: props.sessionId ?? null,
     });
 
+    const inputRef = React.useRef<MultiTextInputHandle>(null);
     const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
     const enterToSendEnabled = Platform.OS === 'web'
         ? agentInputEnterToSend === true
@@ -841,6 +843,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const handleSend = React.useCallback(() => {
         if (sendActionDisabled) {
             return;
+        }
+        if (props.sessionId) {
+            inputRef.current?.blur();
         }
         if (props.sessionId && (props.value.trim().length > 0 || props.hasSendableAttachments === true)) {
             // Clear immediately for existing sessions so Enter-to-send doesn't leave stale text behind
@@ -879,7 +884,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Abort button state
     const [isAborting, setIsAborting] = React.useState(false);
     const shakerRef = React.useRef<ShakeInstance>(null);
-    const inputRef = React.useRef<MultiTextInputHandle>(null);
     const [isInputFocused, setIsInputFocused] = React.useState(false);
 
     // Forward ref to the MultiTextInput
@@ -968,18 +972,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         overflowThreshold: 2,
         edgeThreshold: 2,
     });
-    const [permissionRequestsContentHeightPx, setPermissionRequestsContentHeightPx] = React.useState<number | null>(null);
     const [actionFooterHeightPx, setActionFooterHeightPx] = React.useState(0);
     const permissionRequestsMaxHeightPx = React.useMemo(() => {
         const available = Math.max(1, screenHeight - keyboardHeight);
         const desired = Math.round(available * 0.34);
         return Math.max(160, Math.min(320, desired));
     }, [keyboardHeight, screenHeight]);
-    const permissionRequestsClampedHeightPx = React.useMemo(() => {
-        const raw = permissionRequestsContentHeightPx;
-        if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return undefined;
-        return Math.max(1, Math.min(Math.trunc(raw), permissionRequestsMaxHeightPx));
-    }, [permissionRequestsContentHeightPx, permissionRequestsMaxHeightPx]);
     const keyboardOpenVariableSectionMaxHeight = React.useMemo(() => {
         if (typeof keyboardOpenPanelMaxHeight !== 'number') return undefined;
         return computeAgentInputKeyboardOpenVariableSectionMaxHeight({
@@ -1424,6 +1422,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'delivery');
     }, [props.extraActionChips]);
     const hasExtraActionChips = (props.extraActionChips?.length ?? 0) > 0;
+    const composerAttachmentBadges = React.useMemo<readonly AgentInputComposerAttachmentBadge[]>(() => {
+        return (props.extraActionChips ?? [])
+            .map((chip) => chip.composerAttachmentBadge)
+            .filter((badge): badge is AgentInputComposerAttachmentBadge => Boolean(badge));
+    }, [props.extraActionChips]);
     const hasMachine = Boolean(props.onMachineClick || props.machinePopover);
     const hasPath = Boolean(props.onPathClick || props.pathPopover);
     const hasResume = Boolean(props.onResumeClick || props.resumePopover);
@@ -1912,9 +1915,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     canApprovePermissions={canApprovePermissions}
                                     disabledReason={props.permissionDisabledReason}
                                     maxHeightPx={permissionRequestsMaxHeightPx}
-                                    clampedHeightPx={permissionRequestsClampedHeightPx ?? permissionRequestsMaxHeightPx}
                                     onContentSizeChange={(_w, h) => {
-                                        setPermissionRequestsContentHeightPx(h);
                                         permissionRequestsFades.onContentSizeChange?.(_w, h);
                                     }}
                                     onLayout={(e) => {
@@ -1927,8 +1928,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 />
                             ) : null}
 
-                            {props.attachments && props.attachments.length > 0 ? (
-                                <AgentInputAttachmentsRow attachments={props.attachments} />
+                            {((props.attachments?.length ?? 0) > 0 || composerAttachmentBadges.length > 0) ? (
+                                <AgentInputAttachmentsRow
+                                    attachments={props.attachments ?? []}
+                                    composerBadges={composerAttachmentBadges}
+                                />
                             ) : null}
                             <View
                                 ref={composerAnchorRef}
@@ -2088,9 +2092,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         canApprovePermissions={canApprovePermissions}
                                         disabledReason={props.permissionDisabledReason}
                                         maxHeightPx={permissionRequestsMaxHeightPx}
-                                        clampedHeightPx={permissionRequestsClampedHeightPx ?? permissionRequestsMaxHeightPx}
                                         onContentSizeChange={(_w, h) => {
-                                            setPermissionRequestsContentHeightPx(h);
                                             permissionRequestsFades.onContentSizeChange?.(_w, h);
                                         }}
                                         onLayout={(e) => {
@@ -2102,8 +2104,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         fadeVisibility={permissionRequestsFades.visibility}
                                     />
                                 ) : null}
-                                {props.attachments && props.attachments.length > 0 ? (
-                                    <AgentInputAttachmentsRow attachments={props.attachments} />
+                                {((props.attachments?.length ?? 0) > 0 || composerAttachmentBadges.length > 0) ? (
+                                    <AgentInputAttachmentsRow
+                                        attachments={props.attachments ?? []}
+                                        composerBadges={composerAttachmentBadges}
+                                    />
                                 ) : null}
                                 <View
                                     ref={composerAnchorRef}

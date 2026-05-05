@@ -13,6 +13,12 @@ export type SessionListRenderableMetadataComparison = Readonly<{
         v: 1;
         providerId?: string;
     }> | null;
+    readStateV1: Readonly<{
+        v: 1;
+        sessionSeq: number;
+        pendingActivityAt: number;
+        updatedAt: number;
+    }> | null;
     hiddenSystemSession: boolean;
 }>;
 
@@ -25,6 +31,7 @@ type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
     machineId: string | null;
     flavor: string | null;
     directSessionV1: unknown;
+    readStateV1: unknown;
     hiddenSystemSession: boolean;
 }>;
 
@@ -53,10 +60,52 @@ function readDirectSessionRenderableMetadata(
     return next;
 }
 
+function readStateRenderableMetadata(
+    candidate: unknown,
+    previous?: SessionListRenderableMetadataComparison['readStateV1'],
+): SessionListRenderableMetadataComparison['readStateV1'] {
+    if (!candidate || typeof candidate !== 'object') return null;
+    if (!('v' in candidate) || candidate.v !== 1) return null;
+
+    const sessionSeq = (candidate as { sessionSeq?: unknown }).sessionSeq;
+    const pendingActivityAt = (candidate as { pendingActivityAt?: unknown }).pendingActivityAt;
+    const updatedAt = (candidate as { updatedAt?: unknown }).updatedAt;
+    if (
+        typeof sessionSeq !== 'number'
+        || !Number.isFinite(sessionSeq)
+        || typeof pendingActivityAt !== 'number'
+        || !Number.isFinite(pendingActivityAt)
+        || typeof updatedAt !== 'number'
+        || !Number.isFinite(updatedAt)
+    ) {
+        return null;
+    }
+
+    const next = {
+        v: 1 as const,
+        sessionSeq: Math.max(0, Math.trunc(sessionSeq)),
+        pendingActivityAt: Math.max(0, Math.trunc(pendingActivityAt)),
+        updatedAt,
+    };
+
+    if (
+        previous
+        && previous.v === next.v
+        && previous.sessionSeq === next.sessionSeq
+        && previous.pendingActivityAt === next.pendingActivityAt
+        && previous.updatedAt === next.updatedAt
+    ) {
+        return previous;
+    }
+
+    return next;
+}
+
 function isSessionListRenderableMetadataComparisonSnapshotEqual(
     snapshot: SessionListRenderableMetadataComparisonSnapshot,
     previous: SessionListRenderableMetadata,
     nextDirectSessionV1: SessionListRenderableMetadataComparison['directSessionV1'],
+    nextReadStateV1: SessionListRenderableMetadataComparison['readStateV1'],
 ): boolean {
     return previous.name === snapshot.name
         && (previous.summaryText ?? null) === snapshot.summaryText
@@ -66,7 +115,8 @@ function isSessionListRenderableMetadataComparisonSnapshotEqual(
         && (previous.machineId ?? null) === snapshot.machineId
         && (previous.flavor ?? null) === snapshot.flavor
         && (previous.hiddenSystemSession === true) === snapshot.hiddenSystemSession
-        && previous.directSessionV1 === nextDirectSessionV1;
+        && previous.directSessionV1 === nextDirectSessionV1
+        && previous.readStateV1 === nextReadStateV1;
 }
 
 export function normalizeSessionListRenderableMetadataComparison(
@@ -80,8 +130,12 @@ export function normalizeSessionListRenderableMetadataComparison(
         normalizedSnapshot.directSessionV1,
         previous?.directSessionV1 ?? null,
     );
+    const nextReadStateV1 = readStateRenderableMetadata(
+        normalizedSnapshot.readStateV1,
+        previous?.readStateV1 ?? null,
+    );
 
-    if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(normalizedSnapshot, previous, nextDirectSessionV1)) {
+    if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(normalizedSnapshot, previous, nextDirectSessionV1, nextReadStateV1)) {
         return previous as SessionListRenderableMetadataComparison;
     }
 
@@ -94,6 +148,7 @@ export function normalizeSessionListRenderableMetadataComparison(
         machineId: normalizedSnapshot.machineId,
         flavor: normalizedSnapshot.flavor,
         directSessionV1: nextDirectSessionV1,
+        readStateV1: nextReadStateV1,
         hiddenSystemSession: normalizedSnapshot.hiddenSystemSession,
     };
 
@@ -117,6 +172,7 @@ export function readSessionListRenderableMetadataComparison(
         machineId: typeof metadata.machineId === 'string' ? metadata.machineId : null,
         flavor: typeof metadata.flavor === 'string' ? metadata.flavor : null,
         directSessionV1: (metadata as Readonly<{ directSessionV1?: unknown }>).directSessionV1,
+        readStateV1: (metadata as Readonly<{ readStateV1?: unknown }>).readStateV1,
         hiddenSystemSession: metadata.systemSessionV1?.hidden === true,
     }, previous);
 }
@@ -135,6 +191,7 @@ export function readSessionListRenderableMetadataComparisonFromRenderable(
         machineId: metadata.machineId ?? null,
         flavor: metadata.flavor ?? null,
         directSessionV1: metadata.directSessionV1 ?? null,
+        readStateV1: metadata.readStateV1 ?? null,
         hiddenSystemSession: metadata.hiddenSystemSession === true,
     });
 }
@@ -166,5 +223,9 @@ export function areSessionListRenderableMetadataComparisonsEqual(
         && (previous.flavor ?? null) === (next.flavor ?? null)
         && (previous.hiddenSystemSession === true) === (next.hiddenSystemSession === true)
         && (previous.directSessionV1?.v ?? null) === (next.directSessionV1?.v ?? null)
-        && (previous.directSessionV1?.providerId ?? null) === (next.directSessionV1?.providerId ?? null);
+        && (previous.directSessionV1?.providerId ?? null) === (next.directSessionV1?.providerId ?? null)
+        && (previous.readStateV1?.v ?? null) === (next.readStateV1?.v ?? null)
+        && (previous.readStateV1?.sessionSeq ?? null) === (next.readStateV1?.sessionSeq ?? null)
+        && (previous.readStateV1?.pendingActivityAt ?? null) === (next.readStateV1?.pendingActivityAt ?? null)
+        && (previous.readStateV1?.updatedAt ?? null) === (next.readStateV1?.updatedAt ?? null);
 }

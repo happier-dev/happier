@@ -8,9 +8,11 @@ import * as Notifications from 'expo-notifications';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import {
+    PUSH_NOTIFICATION_BUNDLED_SOUND_FILES,
     PUSH_NOTIFICATION_ACTION_IDS,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
+    resolveAndroidNotificationSoundName,
 } from '@happier-dev/protocol';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
@@ -27,7 +29,7 @@ import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
 import { SettingsAnalyticsRuntime } from '@/track/settingsAnalytics/SettingsAnalyticsRuntime';
 import { syncRestore } from '@/sync/sync';
-import { storage, useLocalSetting } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
@@ -72,6 +74,7 @@ function shouldCaptureRnwUnexpectedTextNodeStacks(): boolean {
     // Dev-only diagnostics: enable via `?debugRnwTextNode=1` on web.
     // Keep this silent by default to avoid console noise.
     if (process.env.NODE_ENV === 'production') return false;
+    if (Platform.OS !== 'web') return false;
     if (typeof window === 'undefined') return false;
     try {
         const current = new URL(window.location.href);
@@ -85,6 +88,7 @@ function shouldCaptureRnwUnexpectedTextNodeStacks(): boolean {
 function shouldCrashOnRnwUnexpectedTextNode(): boolean {
     // Dev-only diagnostics: enable via `?debugRnwTextNodeCrash=1` on web.
     if (process.env.NODE_ENV === 'production') return false;
+    if (Platform.OS !== 'web') return false;
     if (typeof window === 'undefined') return false;
     try {
         const current = new URL(window.location.href);
@@ -316,29 +320,89 @@ Notifications.setNotificationHandler({
 
 // Setup Android notification channel (required for Android 8.0+)
 if (Platform.OS === 'android') {
-    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultV1, {
-        name: t('notifications.channels.default'),
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
-        showBadge: true,
-    }).catch(() => {});
+    const channelConfigs = [
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultV1,
+            name: t('notifications.channels.default'),
+            importance: Notifications.AndroidImportance.MAX,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultSoftV1,
+            name: t('notifications.channels.default'),
+            importance: Notifications.AndroidImportance.MAX,
+            sound: resolveAndroidNotificationSoundName('soft'),
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultUrgentV1,
+            name: t('notifications.channels.default'),
+            importance: Notifications.AndroidImportance.MAX,
+            sound: resolveAndroidNotificationSoundName('urgent'),
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultSilentV1,
+            name: t('notifications.channels.default'),
+            importance: Notifications.AndroidImportance.MAX,
+            sound: null,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1,
+            name: t('notifications.channels.permissionRequests'),
+            importance: Notifications.AndroidImportance.MAX,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsSoftV1,
+            name: t('notifications.channels.permissionRequests'),
+            importance: Notifications.AndroidImportance.MAX,
+            sound: PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.soft.androidSoundName,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsUrgentV1,
+            name: t('notifications.channels.permissionRequests'),
+            importance: Notifications.AndroidImportance.MAX,
+            sound: PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.urgent.androidSoundName,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsSilentV1,
+            name: t('notifications.channels.permissionRequests'),
+            importance: Notifications.AndroidImportance.MAX,
+            sound: null,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1,
+            name: t('notifications.channels.userActionRequests'),
+            importance: Notifications.AndroidImportance.HIGH,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsSoftV1,
+            name: t('notifications.channels.userActionRequests'),
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.soft.androidSoundName,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsUrgentV1,
+            name: t('notifications.channels.userActionRequests'),
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.urgent.androidSoundName,
+        },
+        {
+            id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsSilentV1,
+            name: t('notifications.channels.userActionRequests'),
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: null,
+        },
+    ] as const;
 
-    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1, {
-        name: t('notifications.channels.permissionRequests'),
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
-        showBadge: true,
-    }).catch(() => {});
-
-    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1, {
-        name: t('notifications.channels.userActionRequests'),
-        importance: Notifications.AndroidImportance.HIGH,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
-        showBadge: true,
-    }).catch(() => {});
+    for (const channel of channelConfigs) {
+        const channelSound = 'sound' in channel ? channel.sound : undefined;
+        void Notifications.setNotificationChannelAsync(channel.id, {
+            name: channel.name,
+            importance: channel.importance,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#FF231F7C',
+            showBadge: true,
+            ...('sound' in channel ? { sound: channelSound } : {}),
+        }).catch(() => {});
+    }
 }
 
 // Register interactive notification actions.
@@ -662,7 +726,6 @@ function AppBoot(props: {
     const router = useRouter();
     const pathname = usePathname();
     const chromeSafeArea = useChromeSafeAreaInsets();
-    const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
     const isTablet = useIsTablet();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(null);
@@ -753,17 +816,15 @@ function AppBoot(props: {
         isAuthenticated: initState.credentials != null,
         isTauriDesktop: isTauriDesktop(),
         isTablet,
-        editorFocusModeEnabled: editorFocusModeEnabled === true,
         isTerminalConnectRoute,
     });
     const effectiveAppShellChromeHost = isDesktopOverlayWindow ? 'none' : appShellChromeHost;
 
     const appShell = (
         <View style={{ flex: 1, position: 'relative' }}>
-            {effectiveAppShellChromeHost === 'focus-mode-fallback' || effectiveAppShellChromeHost === 'narrow-desktop-fallback' ? (
+            {effectiveAppShellChromeHost === 'narrow-desktop-fallback' ? (
                 <DesktopFallbackShellChrome
                     chromeSafeArea={chromeSafeArea}
-                    host={effectiveAppShellChromeHost}
                 />
             ) : effectiveAppShellChromeHost === 'web-top-right' ? (
                 <View
@@ -838,7 +899,6 @@ function AppBoot(props: {
 
 function DesktopFallbackShellChrome(props: Readonly<{
     chromeSafeArea: Readonly<{ top: number; left: number }>;
-    host: 'focus-mode-fallback' | 'narrow-desktop-fallback';
 }>) {
     const resolvedDesktopWindowControls = useResolvedDesktopWindowControls({
         variant: 'expanded',
@@ -856,11 +916,7 @@ function DesktopFallbackShellChrome(props: Readonly<{
                 alignItems: 'center',
                 gap: 10,
             }}
-            testID={
-                props.host === 'focus-mode-fallback'
-                    ? 'desktop-focus-mode-shell-chrome'
-                    : 'desktop-narrow-shell-chrome'
-            }
+            testID="desktop-narrow-shell-chrome"
         >
             <DesktopShellWindowControlsHost>
                 {resolvedDesktopWindowControls}

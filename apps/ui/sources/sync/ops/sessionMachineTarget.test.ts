@@ -32,6 +32,112 @@ describe('sessionMachineTarget', () => {
         });
     });
 
+    it('resolves machine target from linked direct-session metadata when top-level machine id is absent', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        path: '/workspace/direct-repo',
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'codex',
+                            machineId: 'm-direct',
+                            remoteSessionId: 'remote-1',
+                            source: { kind: 'codexHome', home: 'user' },
+                        },
+                    },
+                },
+            },
+            machines: {
+                'm-other': {
+                    id: 'm-other',
+                    active: true,
+                    activeAt: 1,
+                    metadata: { host: 'other.local' },
+                },
+                'm-direct': {
+                    id: 'm-direct',
+                    active: false,
+                    activeAt: 0,
+                    metadata: { host: 'direct.local' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-direct',
+            basePath: '/workspace/direct-repo',
+        });
+    });
+
+    it('uses canonical direct-session metadata when visible list metadata is stripped', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        path: '/workspace/direct-repo',
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'codex',
+                            machineId: 'm-direct',
+                            remoteSessionId: 'remote-1',
+                            source: { kind: 'codexHome', home: 'user' },
+                        },
+                    },
+                },
+            },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    updatedAt: 10,
+                    metadata: {
+                        path: '/workspace/direct-repo',
+                        machineId: null,
+                        directSessionV1: {
+                            v: 1,
+                            providerId: 'codex',
+                        },
+                    },
+                },
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    {
+                        type: 'session',
+                        sessionId: 's1',
+                        serverId: 'server-a',
+                        serverName: 'Server A',
+                    },
+                ],
+            },
+            machines: {
+                'm-other': {
+                    id: 'm-other',
+                    active: true,
+                    activeAt: 1,
+                    metadata: { host: 'other.local' },
+                },
+                'm-direct': {
+                    id: 'm-direct',
+                    active: false,
+                    activeAt: 0,
+                    metadata: { host: 'direct.local' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-direct',
+            basePath: '/workspace/direct-repo',
+        });
+    });
+
     it('falls back to project key metadata for inactive sessions', async () => {
         const { readMachineTargetForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({

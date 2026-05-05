@@ -207,10 +207,6 @@ export function useMachineTerminalSession(params: Readonly<{
             }
             setStatus('connected');
 
-            if (ensured.reused && (!terminalIdChanged || shouldPreserveReusedSurfaceState)) {
-                writeTerminalOutput('\r\n[Reconnected]\r\n');
-            }
-
             let idleCount = 0;
             while (!canceled) {
                 const terminalId = terminalIdRef.current;

@@ -1,14 +1,18 @@
 import * as React from 'react';
 import { Animated, Platform } from 'react-native';
-import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useGlobalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSetting, useLocalSettingMutable, useSetting } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
-import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import {
+    collapseSessionDetailsRouteBeforeSurfaceSwitch,
+    resolveSessionCockpitSurfaceSwitchPlan,
+} from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
+import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 
@@ -18,25 +22,46 @@ import { SessionCockpitTabBar } from './bars/SessionCockpitTabBar';
 import { useMainAppTabState } from './MainAppTabStateProvider';
 import { resolveMobileBottomChromeModel } from './resolveMobileBottomChromeModel';
 
+function normalizeRouteParam(value: string | string[] | undefined): string | null {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    }
+    if (Array.isArray(value)) {
+        return normalizeRouteParam(value[0]);
+    }
+    return null;
+}
+
+type PendingSessionSurfaceSwitch = Readonly<{
+    sourceDetailsPathname: string;
+    targetHref: string;
+}>;
+
 export const MobileBottomChromeHost = React.memo(() => {
     const pathname = usePathname();
     const router = useRouter();
-    const params = useGlobalSearchParams<{ mobileSurface?: string | string[]; worktreeId?: string | string[] }>();
+    const navigation = useNavigation();
+    const params = useGlobalSearchParams<{
+        mobileSurface?: string | string[];
+        serverId?: string | string[];
+        worktreeId?: string | string[];
+        sourceSurface?: string | string[];
+    }>();
     const auth = useAuth();
     const deviceType = useDeviceType();
     const reduceMotion = useReducedMotionPreference();
     const { activeTab, setActiveTab } = useMainAppTabState();
-    const mobileWorkspaceExperience = useLocalSetting('mobileWorkspaceExperienceV1');
+    const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
     const { sidebarTabAvailable: sessionTerminalTabAvailable } = useSessionTerminalAvailability();
     const sessionLastMobileSurfaceBySessionId = useLocalSetting('sessionLastMobileSurfaceBySessionId');
     const projectLastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
     const [, setSessionLastMobileSurfaceBySessionId] = useLocalSettingMutable('sessionLastMobileSurfaceBySessionId');
     const [, setProjectLastMobileSurfaceByWorkspaceRefId] = useLocalSettingMutable('projectLastMobileSurfaceByWorkspaceRefId');
-    const explicitMobileSurfaceHint = typeof params.mobileSurface === 'string'
-        ? params.mobileSurface
-        : Array.isArray(params.mobileSurface)
-            ? params.mobileSurface[0] ?? null
-            : null;
+    const explicitMobileSurfaceHint = normalizeRouteParam(params.mobileSurface);
+    const routeServerId = normalizeRouteParam(params.serverId);
+    const currentDetailsSourceSurface = normalizeRouteParam(params.sourceSurface);
+    const [pendingSessionSurfaceSwitch, setPendingSessionSurfaceSwitch] = React.useState<PendingSessionSurfaceSwitch | null>(null);
 
     const model = resolveMobileBottomChromeModel({
         isAuthenticated: auth.isAuthenticated,
@@ -47,6 +72,28 @@ export const MobileBottomChromeHost = React.memo(() => {
         projectLastMobileSurfaceByWorkspaceRefId,
         explicitMobileSurfaceHint,
     });
+
+    const handleMainAppTabPress = React.useCallback((tab: typeof activeTab) => {
+        if (tab === activeTab) {
+            return;
+        }
+        void setActiveTab(tab);
+    }, [activeTab, setActiveTab]);
+
+    React.useEffect(() => {
+        if (!pendingSessionSurfaceSwitch) {
+            return;
+        }
+
+        const currentPathname = typeof pathname === 'string' ? pathname.trim() : '';
+        if (!currentPathname || currentPathname === pendingSessionSurfaceSwitch.sourceDetailsPathname) {
+            return;
+        }
+
+        const targetHref = pendingSessionSurfaceSwitch.targetHref;
+        setPendingSessionSurfaceSwitch(null);
+        router.replace(targetHref);
+    }, [pathname, pendingSessionSurfaceSwitch, router]);
 
     const resolvedChrome = React.useMemo((): Readonly<{
         key: string;
@@ -63,7 +110,7 @@ export const MobileBottomChromeHost = React.memo(() => {
                 node: (
                     <MainAppTabBar
                         activeTab={activeTab}
-                        onTabPress={setActiveTab}
+                        onTabPress={handleMainAppTabPress}
                     />
                 ),
             };
@@ -78,7 +125,7 @@ export const MobileBottomChromeHost = React.memo(() => {
         ) {
             return {
                 key: `session:${model.sessionId}`,
-                signature: `session:${model.sessionId}:${model.surface}:${model.terminalTabAvailable ? 'terminal' : 'no-terminal'}`,
+                signature: `session:${model.sessionId}:${model.surface}:${model.terminalTabAvailable ? 'terminal' : 'no-terminal'}:${routeServerId ?? 'default-server'}`,
                 node: (
                     <SessionCockpitTabBar
                         sessionId={model.sessionId}
@@ -89,7 +136,36 @@ export const MobileBottomChromeHost = React.memo(() => {
                                 ...(sessionLastMobileSurfaceBySessionId ?? {}),
                                 [model.sessionId]: surface,
                             });
-                            router.replace(resolveSessionRoutePathForSurface(model.sessionId, surface));
+                            const switchPlan = resolveSessionCockpitSurfaceSwitchPlan({
+                                sessionId: model.sessionId,
+                                targetSurface: surface,
+                                serverId: routeServerId,
+                                currentPathname: pathname,
+                                currentDetailsSourceSurface,
+                            });
+                            prepareMobileSurfaceTransition({
+                                currentPathname: pathname,
+                                targetHref: switchPlan.targetHref,
+                                operation: 'replace',
+                            });
+                            if (switchPlan.kind === 'replace') {
+                                setPendingSessionSurfaceSwitch(null);
+                                router.replace(switchPlan.targetHref);
+                                return;
+                            }
+
+                            setPendingSessionSurfaceSwitch({
+                                sourceDetailsPathname: switchPlan.sourceDetailsPathname,
+                                targetHref: switchPlan.targetHref,
+                            });
+                            const collapseStarted = collapseSessionDetailsRouteBeforeSurfaceSwitch({
+                                router,
+                                navigation,
+                            });
+                            if (!collapseStarted) {
+                                setPendingSessionSurfaceSwitch(null);
+                                router.replace(switchPlan.targetHref);
+                            }
                         }}
                     />
                 ),
@@ -137,6 +213,10 @@ export const MobileBottomChromeHost = React.memo(() => {
         deviceType,
         mobileWorkspaceExperience,
         model,
+        pathname,
+        routeServerId,
+        currentDetailsSourceSurface,
+        navigation,
         params.worktreeId,
         router,
         sessionTerminalTabAvailable,
@@ -144,7 +224,7 @@ export const MobileBottomChromeHost = React.memo(() => {
         setProjectLastMobileSurfaceByWorkspaceRefId,
         setSessionLastMobileSurfaceBySessionId,
         projectLastMobileSurfaceByWorkspaceRefId,
-        setActiveTab,
+        handleMainAppTabPress,
     ]);
     const [renderedChrome, setRenderedChrome] = React.useState(resolvedChrome);
     const progress = React.useRef(new Animated.Value(resolvedChrome ? 1 : 0)).current;

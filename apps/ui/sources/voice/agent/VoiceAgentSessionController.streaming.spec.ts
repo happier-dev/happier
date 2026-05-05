@@ -892,7 +892,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
         actionsSettingsV1: {
           v: 1,
           actions: {
-            'review.start': { enabled: true, disabledSurfaces: ['voice_tool'], disabledPlacements: [] },
+            'review.start': { enabled: true, disabledSurfaces: ['voice'], disabledPlacements: [] },
           },
         },
         voice: {

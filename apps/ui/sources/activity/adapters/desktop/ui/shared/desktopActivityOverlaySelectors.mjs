@@ -61,6 +61,10 @@ export function resolveDesktopActivityOverlayCardKindTestID(kind) {
     return `desktop-activity-overlay-card-kind-${normalizeDesktopActivityOverlayCardKindForTestID(kind)}`;
 }
 
+export function resolveDesktopActivityOverlayCardKindSelector(kind) {
+    return `[data-testid="${resolveDesktopActivityOverlayCardKindTestID(kind)}"]`;
+}
+
 export function resolveDesktopActivityOverlayCardInstanceTestID(card) {
     const normalizedKind = normalizeDesktopActivityOverlayCardKindForTestID(card?.kind);
     const instanceId = resolveCardInstanceIdFromCard(card);

@@ -1,3 +1,4 @@
+import { normalizeMachineHost } from '@happier-dev/protocol';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 
@@ -52,6 +53,10 @@ function readMaxSessionProjectGroupingKeyPartsCacheEntriesFromEnv(): number {
     return Math.max(1, Math.min(100_000, parsed));
 }
 
+function normalizeHostForProjectGrouping(value: unknown): string | null {
+    return normalizeMachineHost(normalizeNonEmptyString(value)) || null;
+}
+
 const SESSION_PROJECT_GROUPING_KEY_PARTS_CACHE = new LruMap<string, SessionProjectGroupingKeyParts>({
     maxEntries: readMaxSessionProjectGroupingKeyPartsCacheEntriesFromEnv(),
 });
@@ -83,7 +88,7 @@ export function resolveSessionProjectGroupingKeyParts(metadata: Readonly<{
     path?: unknown;
     homeDir?: unknown;
 }> | null | undefined): SessionProjectGroupingKeyParts {
-    const host = normalizeNonEmptyString(metadata?.host);
+    const host = normalizeHostForProjectGrouping(metadata?.host);
     const machineId = normalizeNonEmptyString(metadata?.machineId);
     const homeDirRaw = normalizeNonEmptyString(metadata?.homeDir);
     const homeDir = homeDirRaw ? normalizeProjectGroupingPath(homeDirRaw) : null;
@@ -120,7 +125,7 @@ export function resolveSessionProjectGroupingKeyPartsWithMachineMetadata(
     displayPathInput?: unknown,
 ): SessionProjectGroupingKeyPartsWithMachineMetadata {
     const parts = resolveSessionProjectGroupingKeyParts(metadata);
-    const host = normalizeTrimmedString(machineMetadata?.host) || parts.host;
+    const host = normalizeHostForProjectGrouping(machineMetadata?.host) || parts.host;
     const homeDirRaw = normalizeTrimmedString(machineMetadata?.homeDir);
     const homeDir = homeDirRaw ? normalizeProjectGroupingPath(homeDirRaw) : parts.homeDir;
     const displayPath = normalizeTrimmedString(displayPathInput ?? metadata?.path) || null;

@@ -45,7 +45,7 @@ describe('executeSessionComposerResolution', () => {
     expect(handled).toBe(true);
     expect(actionExecutor.execute).toHaveBeenCalledWith('ui.voice_global.reset', {}, {
       defaultSessionId: 's1',
-      surface: 'ui_slash_command',
+      surface: 'ui',
       placement: 'slash_command',
     });
     expect(setMessage).toHaveBeenCalledWith('');
@@ -152,7 +152,7 @@ describe('executeSessionComposerResolution', () => {
         changeType: 'uncommitted',
         base: { kind: 'none' },
       }),
-      { defaultSessionId: 's1', surface: 'ui_slash_command', placement: 'slash_command' },
+      { defaultSessionId: 's1', surface: 'ui', placement: 'slash_command' },
     );
   });
 
@@ -246,7 +246,7 @@ describe('executeSessionComposerResolution', () => {
         instructions: 'Do the thing.',
         permissionMode: 'safe-yolo',
       }),
-      { defaultSessionId: 's1', surface: 'ui_slash_command', placement: 'slash_command' },
+      { defaultSessionId: 's1', surface: 'ui', placement: 'slash_command' },
     );
   });
 
@@ -330,7 +330,7 @@ describe('executeSessionComposerResolution', () => {
         instructions: 'Plan this.',
         permissionMode: 'read-only',
       }),
-      { defaultSessionId: 's1', surface: 'ui_slash_command', placement: 'slash_command' },
+      { defaultSessionId: 's1', surface: 'ui', placement: 'slash_command' },
     );
   });
 });

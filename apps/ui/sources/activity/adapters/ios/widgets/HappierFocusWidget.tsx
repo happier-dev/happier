@@ -11,6 +11,7 @@ import {
     renderActivitySurfaceSessionStrip,
     resolveActivitySurfaceSessionLimit,
 } from '@/activity/adapters/ios/presentation/activitySurfacePresentation';
+import { ACTIVITY_SURFACE_TARGETS } from '@/activity/actions/activitySurfaceTargets';
 import type { ActivitySurfaceSnapshot } from '@/activity/presentation/activitySurfaceSnapshot';
 
 export function HappierFocusWidgetComponent(props: ActivitySurfaceSnapshot, environment: WidgetEnvironment): React.ReactElement {
@@ -32,7 +33,9 @@ export function HappierFocusWidgetComponent(props: ActivitySurfaceSnapshot, envi
             {props.primary ? (
                 <>
                     {renderActivitySurfaceHeroCard(props.primary, {
-                        actionTarget: props.defaultTarget,
+                        actionTarget: props.defaultTarget === ACTIVITY_SURFACE_TARGETS.openInbox
+                            ? props.defaultTarget
+                            : undefined,
                         showPreviewText: !isSmallFamily,
                     })}
                     {isSmallFamily

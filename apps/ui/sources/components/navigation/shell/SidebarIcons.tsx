@@ -6,10 +6,10 @@ type SidebarIconProps = {
     color?: string;
 };
 
-export const SidebarExpandIcon = React.memo(({ size = 16, color = '#6B7280' }: SidebarIconProps) => {
+export const SidebarExpandIcon = React.memo(({ size = 16, color }: SidebarIconProps) => {
     return <Octicons name="sidebar-expand" size={size} color={color} />;
 });
 
-export const SidebarCollapseIcon = React.memo(({ size = 16, color = '#6B7280' }: SidebarIconProps) => {
+export const SidebarCollapseIcon = React.memo(({ size = 16, color }: SidebarIconProps) => {
     return <Octicons name="sidebar-collapse" size={size} color={color} />;
 });

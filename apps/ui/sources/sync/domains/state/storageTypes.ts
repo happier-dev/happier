@@ -311,6 +311,23 @@ export const MetadataSchema = z.preprocess((value) => {
 
 export type Metadata = z.infer<typeof MetadataSchema>;
 
+const TerminalPendingHandoffStateV1Schema = z.object({
+    v: z.literal(1),
+    status: z.enum([
+        'none',
+        'deferred_until_terminal_turn_finishes',
+        'switching_to_remote',
+        'blocked_waiting_for_resume_identity',
+        'switch_failed',
+        'manual_action_required',
+    ]),
+    pendingCount: z.number(),
+    updatedAtMs: z.number(),
+    lastTerminalState: z.any().optional(),
+    interruptRequired: z.boolean().optional(),
+    detail: z.string().optional(),
+}).passthrough();
+
 const AgentStateObjectSchema = z.object({
     controlledByUser: z.boolean().nullish(),
     localControl: z.object({
@@ -320,6 +337,9 @@ const AgentStateObjectSchema = z.object({
         canAttach: z.boolean().nullish(),
         canDetach: z.boolean().nullish(),
     }).nullish(),
+    terminalControl: z.object({
+        pendingHandoffV1: TerminalPendingHandoffStateV1Schema.nullish(),
+    }).passthrough().nullish(),
     requests: z.record(z.string(), z.object({
         tool: z.string(),
         kind: z.string().optional(),
@@ -407,6 +427,7 @@ export interface Session {
     presence: "online" | number, // "online" when active, timestamp when last seen
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
     thinkingGraceUntil?: number | null; // Local-only timestamp used to debounce thinking indicator and avoid flicker between streaming chunks
+    lastTurnCompletedAt?: number | null; // Local-only explicit terminal lifecycle timestamp used for completion surfaces
     todos?: Array<{
         content: string;
         status: 'pending' | 'in_progress' | 'completed';
@@ -573,6 +594,12 @@ export interface ScmCapabilities {
     readBranches?: boolean;
     writeBranchCreate?: boolean;
     writeBranchCheckout?: boolean;
+    writeBranchMerge?: boolean;
+    writeBranchRebase?: boolean;
+    writeBranchOperationControl?: boolean;
+    writeRemoteAdd?: boolean;
+    writeRemoteSetUrl?: boolean;
+    writeRemoteRemove?: boolean;
     readStash?: boolean;
     writeStash?: boolean;
     worktreeCreate: boolean;
@@ -587,6 +614,19 @@ export interface ScmCapabilities {
         pull?: string;
         push?: string;
     };
+}
+
+export interface ScmRemoteInfo {
+    name: string;
+    fetchUrl?: string;
+    pushUrl?: string;
+}
+
+export interface ScmOperationState {
+    kind: 'merge' | 'rebase';
+    sourceRef?: string | null;
+    canContinue: boolean;
+    canAbort: boolean;
 }
 
 export interface ScmWorkingEntry {
@@ -616,6 +656,7 @@ export interface ScmWorkingSnapshot {
             isMain?: boolean;
             isPrunable?: boolean;
         }>;
+        remotes?: ScmRemoteInfo[];
     };
     capabilities?: ScmCapabilities;
     branch: {
@@ -626,6 +667,7 @@ export interface ScmWorkingSnapshot {
         detached: boolean;
     };
     stashCount?: number;
+    operationState?: ScmOperationState | null;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
     totals: {

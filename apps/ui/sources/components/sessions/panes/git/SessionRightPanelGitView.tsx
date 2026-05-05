@@ -19,7 +19,14 @@ import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
+import { resolveCommitAdjacentPushActionState } from '@/scm/operations/commitAdjacentPushAction';
+import { confirmCommitAdjacentPush } from '@/scm/operations/commitAdjacentPushConfirmation';
+import { formatRemoteTargetForDisplay } from '@/scm/operations/remoteFeedback';
+import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
+import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
+import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import {
+    storage,
     useProjectForSession,
     useProjectSessions,
     useSession,
@@ -31,10 +38,11 @@ import {
     useSessionProjectScmSnapshotError,
     useSessionProjectScmTouchedPaths,
     useSetting,
+    useSettingMutable,
 } from '@/sync/domains/state/storage';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol';
 import { WorkspaceScmSubTabsBar } from '@/components/workspaces/scm/WorkspaceScmSubTabsBar';
 import { SourceControlBranchMenu } from '@/components/sessions/sourceControl/branches/SourceControlBranchMenu';
 import { SessionRightPanelGitCommitTabContent } from './SessionRightPanelGitCommitTabContent';
@@ -43,6 +51,22 @@ import { WorkspaceScmUpdateTab } from '@/components/workspaces/scm/WorkspaceScmU
 import { useSessionRightPanelGitTabState } from './useSessionRightPanelGitTabState';
 import { useSessionRightPanelGitOpenDetails } from './useSessionRightPanelGitOpenDetails';
 import type { SourceControlRemoteAction } from '@/components/workspaces/scm/SourceControlRemoteActionsRail';
+import { SourceControlRemotesSection } from '@/components/workspaces/scm/update/SourceControlRemotesSection';
+import { SourceControlBranchIntegrationSection } from '@/components/workspaces/scm/update/SourceControlBranchIntegrationSection';
+import {
+    createSessionScmReviewDetailsTab,
+    createSessionScmStashDetailsTab,
+} from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import {
+    sessionScmBranchMerge,
+    sessionScmBranchOperationAbort,
+    sessionScmBranchOperationContinue,
+    sessionScmBranchRebase,
+    sessionScmRemoteAdd,
+    sessionScmRemoteRemove,
+    sessionScmRemoteSetUrl,
+} from '@/sync/ops/sessions';
+import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
 
 export type SessionRightPanelGitViewProps = Readonly<{
     sessionId: string;
@@ -50,6 +74,14 @@ export type SessionRightPanelGitViewProps = Readonly<{
     onOpenFile?: (fullPath: string) => void;
     onOpenFilePinned?: (fullPath: string) => void;
     onOpenCommit?: (sha: string) => void;
+    onOpenReviewAllChanges?: () => void;
+    onOpenStashDetails?: () => void;
+}>;
+
+type ScmUpdateMutationResponse = Readonly<{
+    success: boolean;
+    error?: string;
+    errorCode?: ScmOperationErrorCode;
 }>;
 
 export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitViewProps) => {
@@ -79,7 +111,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             ? (scmCommitStrategySetting as ScmCommitStrategy)
             : 'atomic';
     }, [scmCommitStrategySetting]);
-    const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
+    const [scmRemoteConfirmPolicy, setScmRemoteConfirmPolicy] = useSettingMutable('scmRemoteConfirmPolicy');
     const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
     const autoRefreshIntervalSetting = useSetting('scmFilesAutoRefreshIntervalMs');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
@@ -241,29 +273,15 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         pane.setRightTab('files');
     }, [pane.openRight, pane.setRightTab]);
 
-    const onOpenReviewAllChanges = React.useCallback(() => {
-        pane.openDetailsTab(
-            {
-                key: 'scmReview:working',
-                kind: 'scmReview',
-                title: t('files.toolbar.review'),
-                resource: { kind: 'scmReview', scope: 'working' },
-            },
-            { intent: 'pinned' },
-        );
+    const defaultOpenReviewAllChanges = React.useCallback(() => {
+        pane.openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' });
     }, [pane.openDetailsTab]);
 
-    const onOpenStashDetails = React.useCallback(() => {
-        pane.openDetailsTab(
-            {
-                key: 'scmStash',
-                kind: 'scmStash',
-                title: t('files.stash.detailsTitle'),
-                resource: { kind: 'scmStash' },
-            },
-            { intent: 'pinned' },
-        );
+    const defaultOpenStashDetails = React.useCallback(() => {
+        pane.openDetailsTab(createSessionScmStashDetailsTab(), { intent: 'pinned' });
     }, [pane.openDetailsTab]);
+    const onOpenReviewAllChanges = props.onOpenReviewAllChanges ?? defaultOpenReviewAllChanges;
+    const onOpenStashDetails = props.onOpenStashDetails ?? defaultOpenStashDetails;
 
     const scmStatusFilesSummary: ScmStatusFiles | null = React.useMemo(() => {
         if (!effectiveScmSnapshot?.repo.isRepo) return null;
@@ -314,6 +332,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 label: t('files.sourceControlOperations.actions.fetch'),
                 disabled: busy,
                 onPress: onFetch,
+                testID: 'scm-update-remote-action-fetch',
             });
         }
 
@@ -327,6 +346,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 label: t('files.sourceControlOperations.actions.pull'),
                 disabled: busy || !pullPreflight.allowed,
                 onPress: onPull,
+                testID: 'scm-update-remote-action-pull',
             });
         }
 
@@ -340,6 +360,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 label: t('files.sourceControlOperations.actions.push'),
                 disabled: busy || !pushPreflight.allowed,
                 onPress: onPush,
+                testID: 'scm-update-remote-action-push',
             });
         }
 
@@ -352,6 +373,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 onPress: () => {
                     void publishBranch();
                 },
+                testID: 'scm-update-publish-branch',
             });
         }
 
@@ -385,6 +407,173 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         }
         return null;
     }, [pullPreflight.allowed, pullPreflightMessage, pullPreflightReason, pushPreflight.allowed, pushPreflightMessage, pushPreflightReason, remoteActions.length]);
+
+    const commitAdjacentPushState = React.useMemo(() => {
+        return resolveCommitAdjacentPushActionState({
+            snapshot: effectiveScmSnapshot,
+            pushPreflight,
+            scmWriteEnabled,
+            sessionPath,
+            scmOperationBusy,
+            hasGlobalOperationInFlight,
+            isLockedByOtherSession,
+        });
+    }, [
+        effectiveScmSnapshot,
+        hasGlobalOperationInFlight,
+        isLockedByOtherSession,
+        pushPreflight,
+        scmOperationBusy,
+        scmWriteEnabled,
+        sessionPath,
+    ]);
+    const onCommitAdjacentPush = React.useCallback(() => {
+        if (!commitAdjacentPushState.visible) return;
+        void (async () => {
+            const confirmed = await confirmCommitAdjacentPush({
+                target: commitAdjacentPushState.target,
+                policy: scmRemoteConfirmPolicy,
+                setRemoteConfirmPolicy: setScmRemoteConfirmPolicy,
+                detachedHeadLabel: t('files.detachedHead'),
+            });
+            if (!confirmed) return;
+            await runRemoteOperation('push', { skipConfirmation: true });
+        })();
+    }, [
+        commitAdjacentPushState,
+        runRemoteOperation,
+        scmRemoteConfirmPolicy,
+        setScmRemoteConfirmPolicy,
+    ]);
+    const commitAdjacentPushAction = React.useMemo(() => {
+        if (!commitAdjacentPushState.visible) return undefined;
+        const displayTarget = formatRemoteTargetForDisplay(
+            commitAdjacentPushState.target,
+            t('files.detachedHead'),
+        );
+        return {
+            label: t('files.commitAdjacentPush.accessibilityLabel', { target: displayTarget }),
+            disabled: commitAdjacentPushState.disabled,
+            busy: commitAdjacentPushState.busy,
+            onPress: onCommitAdjacentPush,
+        };
+    }, [commitAdjacentPushState, onCommitAdjacentPush]);
+
+    const refreshScmDataFromMutation = React.useCallback(async () => {
+        await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
+    }, [props.sessionId]);
+    const runSessionUpdateMutation = React.useCallback(async <T extends ScmUpdateMutationResponse>(input: {
+        operation: ScmProjectOperationKind;
+        fallbackError: string;
+        run: () => Promise<T>;
+    }): Promise<T> => {
+        const lockResult = await withSessionProjectScmOperationLock({
+            state: storage.getState(),
+            sessionId: props.sessionId,
+            operation: input.operation,
+            run: async () => {
+                const response = await input.run();
+                if (!response.success) {
+                    reportSessionScmOperation({
+                        state: storage.getState(),
+                        sessionId: props.sessionId,
+                        operation: input.operation,
+                        status: 'failed',
+                        detail: getScmUserFacingError({
+                            errorCode: response.errorCode,
+                            error: response.error,
+                            fallback: response.error || input.fallbackError,
+                        }),
+                        rawError: response.error,
+                        errorCode: response.errorCode,
+                        surface: 'update',
+                        tracking: null,
+                    });
+                    return response;
+                }
+
+                reportSessionScmOperation({
+                    state: storage.getState(),
+                    sessionId: props.sessionId,
+                    operation: input.operation,
+                    status: 'success',
+                    surface: 'update',
+                    tracking: null,
+                });
+                return response;
+            },
+        });
+        if (!lockResult.started) {
+            trackBlockedScmOperation({
+                operation: input.operation,
+                reason: 'lock',
+                message: lockResult.message,
+                surface: 'update',
+                tracking: null,
+            });
+            return {
+                success: false,
+                error: lockResult.message,
+            } as T;
+        }
+        return lockResult.value;
+    }, [props.sessionId]);
+    const addRemote = React.useCallback(
+        (request: Parameters<typeof sessionScmRemoteAdd>[1]) => runSessionUpdateMutation({
+            operation: 'remote_add',
+            fallbackError: 'Failed to add remote.',
+            run: () => sessionScmRemoteAdd(props.sessionId, request),
+        }),
+        [props.sessionId, runSessionUpdateMutation],
+    );
+    const setRemoteUrl = React.useCallback(
+        (request: Parameters<typeof sessionScmRemoteSetUrl>[1]) => runSessionUpdateMutation({
+            operation: 'remote_set_url',
+            fallbackError: 'Failed to update remote.',
+            run: () => sessionScmRemoteSetUrl(props.sessionId, request),
+        }),
+        [props.sessionId, runSessionUpdateMutation],
+    );
+    const removeRemote = React.useCallback(
+        (name: string) => runSessionUpdateMutation({
+            operation: 'remote_remove',
+            fallbackError: 'Failed to remove remote.',
+            run: () => sessionScmRemoteRemove(props.sessionId, { name }),
+        }),
+        [props.sessionId, runSessionUpdateMutation],
+    );
+    const mergeBranch = React.useCallback(
+        (sourceRef: string) => runSessionUpdateMutation({
+            operation: 'branch_merge',
+            fallbackError: 'Failed to merge branch.',
+            run: () => sessionScmBranchMerge(props.sessionId, { sourceRef }),
+        }),
+        [props.sessionId, runSessionUpdateMutation],
+    );
+    const rebaseBranch = React.useCallback(
+        (sourceRef: string) => runSessionUpdateMutation({
+            operation: 'branch_rebase',
+            fallbackError: 'Failed to rebase branch.',
+            run: () => sessionScmBranchRebase(props.sessionId, { sourceRef }),
+        }),
+        [props.sessionId, runSessionUpdateMutation],
+    );
+    const continueBranchOperation = React.useCallback(
+        (operation: 'merge' | 'rebase') => runSessionUpdateMutation({
+            operation: 'branch_operation_continue',
+            fallbackError: 'Failed to continue operation.',
+            run: () => sessionScmBranchOperationContinue(props.sessionId, { operation }),
+        }),
+        [props.sessionId, runSessionUpdateMutation],
+    );
+    const abortBranchOperation = React.useCallback(
+        (operation: 'merge' | 'rebase') => runSessionUpdateMutation({
+            operation: 'branch_operation_abort',
+            fallbackError: 'Failed to abort operation.',
+            run: () => sessionScmBranchOperationAbort(props.sessionId, { operation }),
+        }),
+        [props.sessionId, runSessionUpdateMutation],
+    );
 
     if (!effectiveScmSnapshot && scmSnapshotError) {
         if (isSessionInactive && !machineRpcTargetAvailable) {
@@ -471,6 +660,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             onCommitFromMessage={onCommitFromMessage}
             commitMessageGeneratorEnabled={commitMessageGeneratorEnabled}
             onGenerateCommitMessageSuggestion={onGenerateCommitMessageSuggestion}
+            commitAdjacentPushAction={commitAdjacentPushAction}
             onOpenFilesSidebar={onOpenFilesSidebar}
             onOpenReviewAllChanges={onOpenReviewAllChanges}
             onOpenStashDetails={onOpenStashDetails}
@@ -497,7 +687,30 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                     testID="scm-branch-menu-trigger"
                 />
             ) : null}
-        />
+        >
+            <SourceControlRemotesSection
+                theme={theme}
+                snapshot={effectiveScmSnapshot}
+                writeEnabled={scmWriteEnabled}
+                disabled={scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
+                onAddRemote={addRemote}
+                onSetRemoteUrl={setRemoteUrl}
+                onRemoveRemote={removeRemote}
+                onRefresh={refreshScmDataFromMutation}
+            />
+            <SourceControlBranchIntegrationSection
+                theme={theme}
+                snapshot={effectiveScmSnapshot}
+                rootPath={sessionPath}
+                writeEnabled={scmWriteEnabled}
+                disabled={scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
+                onMerge={mergeBranch}
+                onRebase={rebaseBranch}
+                onContinue={continueBranchOperation}
+                onAbort={abortBranchOperation}
+                onRefresh={refreshScmDataFromMutation}
+            />
+        </WorkspaceScmUpdateTab>
     );
 
     const historyTab = (

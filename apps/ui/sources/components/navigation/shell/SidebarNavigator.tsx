@@ -13,6 +13,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveSidebarDockMaxWidthPx, SIDEBAR_COLLAPSED_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
+import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/focusMode/resolvePaneFocusModeRouteScopeId';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 
 type DrawerNavigatorComponent = typeof ExpoRouterDrawer.Drawer;
 
@@ -29,15 +33,23 @@ function resolveDrawerComponent(module: typeof ExpoRouterDrawer): DrawerNavigato
 
 const Drawer = resolveDrawerComponent(ExpoRouterDrawer);
 
+const stylesheet = StyleSheet.create(() => ({
+    desktopDrawerRoot: {
+        flex: 1,
+        position: 'relative',
+    },
+}));
+
 export const SidebarNavigator = React.memo(() => {
+    const styles = stylesheet;
     const auth = useAuth();
     const pathname = usePathname();
     const isTablet = useIsTablet();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
-    const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
+    const { state: paneState, dispatch: dispatchPaneAction } = useAppPaneContext();
     const bypassDesktopDrawerShell = Platform.OS === 'web' && isTerminalConnectWebPathname(pathname);
     const desktopDrawerEnabled = auth.isAuthenticated && isTablet && !isDesktopOverlayWindow;
-    const showPermanentDrawer = desktopDrawerEnabled && !editorFocusModeEnabled;
+    const showPermanentDrawer = desktopDrawerEnabled;
     const { theme } = useUnistyles();
     const { width: windowWidth } = useWindowDimensions();
     const sidebarCollapsed = useLocalSetting('sidebarCollapsed');
@@ -48,6 +60,16 @@ export const SidebarNavigator = React.memo(() => {
     const [, setSidebarWidthBasisPx] = useLocalSettingMutable('sidebarWidthBasisPx');
     const [dragSidebarWidthPx, setDragSidebarWidthPx] = React.useState<number | null>(null);
     const collapseTriggeredDuringDragRef = React.useRef(false);
+    const focusedPaneScopeId = paneState.focusMode?.scopeId ?? null;
+    const focusedPaneScope = focusedPaneScopeId ? paneState.scopes[focusedPaneScopeId] : undefined;
+    const focusedPaneScopeHasFocusablePane = Boolean(focusedPaneScope?.right.isOpen || focusedPaneScope?.details.isOpen);
+    const routePaneScopeId = React.useMemo(() => resolvePaneFocusModeRouteScopeId(pathname), [pathname]);
+    const focusedPaneScopeMatchesRoute =
+        focusedPaneScopeId != null
+        && focusedPaneScopeId === routePaneScopeId
+        && paneState.activeScopeId === focusedPaneScopeId
+        && focusedPaneScopeHasFocusablePane;
+    const paneFocusModeChromeActive = desktopDrawerEnabled && focusedPaneScopeMatchesRoute;
 
     const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
@@ -70,12 +92,20 @@ export const SidebarNavigator = React.memo(() => {
         });
     }, [sidebarMaxWidthPx, sidebarWidthBasisPx, sidebarWidthPx, windowWidth]);
 
+    const effectiveSidebarCollapsed = Boolean(sidebarCollapsed || paneFocusModeChromeActive);
+
+    React.useEffect(() => {
+        if (!focusedPaneScopeId) return;
+        if (focusedPaneScopeMatchesRoute) return;
+        dispatchPaneAction({ type: 'exitFocusMode', scopeId: focusedPaneScopeId });
+    }, [dispatchPaneAction, focusedPaneScopeId, focusedPaneScopeMatchesRoute]);
+
     // Calculate drawer width only when needed
     const drawerWidth = React.useMemo(() => {
         if (!showPermanentDrawer) return 280; // default width; hidden drawers are not rendered
-        if (sidebarCollapsed) return SIDEBAR_COLLAPSED_WIDTH_PX;
+        if (effectiveSidebarCollapsed) return SIDEBAR_COLLAPSED_WIDTH_PX;
         return dragSidebarWidthPx ?? effectiveSidebarWidthPx;
-    }, [dragSidebarWidthPx, effectiveSidebarWidthPx, showPermanentDrawer, sidebarCollapsed]);
+    }, [dragSidebarWidthPx, effectiveSidebarCollapsed, effectiveSidebarWidthPx, showPermanentDrawer]);
 
     const handleSidebarWidthDrag = React.useCallback((nextWidthPx: number | null, dragMeta?: ResizableDockedPaneCommitMeta | null) => {
         if (nextWidthPx == null) {
@@ -138,21 +168,6 @@ export const SidebarNavigator = React.memo(() => {
             };
         }
 
-        // When the desktop drawer is enabled but hidden (e.g. editor focus mode), ensure we do not
-        // keep the permanent drawer layout slot around. Some drawer implementations can reserve
-        // space even when the style width is set to 0. Switching to a front drawer avoids that
-        // layout reservation while still preserving navigation state (no remount).
-        if (!showPermanentDrawer) {
-            return {
-                ...base,
-                drawerType: 'front' as const,
-                drawerStyle: {
-                    width: 0,
-                    display: 'none' as const,
-                },
-            };
-        }
-
         return {
             ...base,
             drawerType: 'permanent' as const,
@@ -169,11 +184,28 @@ export const SidebarNavigator = React.memo(() => {
         };
     }, [desktopDrawerEnabled, showPermanentDrawer, drawerWidth, theme.colors.divider, theme.colors.groupped.background]);
 
+    const handleExitFocusMode = React.useCallback(() => {
+        dispatchPaneAction({ type: 'exitFocusMode' });
+    }, [dispatchPaneAction]);
+
+    const handleRequestExpand = React.useCallback(() => {
+        if (paneFocusModeChromeActive) {
+            dispatchPaneAction({ type: 'exitFocusMode' });
+        }
+        setSidebarCollapsed(false);
+    }, [dispatchPaneAction, paneFocusModeChromeActive, setSidebarCollapsed]);
+
     // Always render SidebarView but hide it when not needed
     const drawerContent = React.useCallback(
         () => {
-            if (sidebarCollapsed) {
-                return <CollapsedSidebarView />;
+            if (effectiveSidebarCollapsed) {
+                return (
+                    <CollapsedSidebarView
+                        focusModeActive={paneFocusModeChromeActive}
+                        onExitFocusMode={handleExitFocusMode}
+                        onRequestExpand={handleRequestExpand}
+                    />
+                );
             }
             return (
                 <ResizableDockedPane
@@ -195,7 +227,16 @@ export const SidebarNavigator = React.memo(() => {
                 </ResizableDockedPane>
             );
         },
-        [drawerWidth, handleSidebarWidthCommit, handleSidebarWidthDrag, sidebarCollapsed, sidebarMaxWidthPx]
+        [
+            drawerWidth,
+            effectiveSidebarCollapsed,
+            handleExitFocusMode,
+            handleRequestExpand,
+            handleSidebarWidthCommit,
+            handleSidebarWidthDrag,
+            paneFocusModeChromeActive,
+            sidebarMaxWidthPx,
+        ]
     );
 
     if (!desktopDrawerEnabled || bypassDesktopDrawerShell) {
@@ -203,9 +244,15 @@ export const SidebarNavigator = React.memo(() => {
     }
 
     return (
-        <Drawer
-            screenOptions={drawerNavigationOptions}
-            drawerContent={showPermanentDrawer ? drawerContent : undefined}
-        />
+        <DesktopMainContentDragSurface
+            enabled={Platform.OS === 'web' && isTauriDesktop()}
+            leftOffsetPx={drawerWidth}
+            style={styles.desktopDrawerRoot}
+        >
+            <Drawer
+                screenOptions={drawerNavigationOptions}
+                drawerContent={showPermanentDrawer ? drawerContent : undefined}
+            />
+        </DesktopMainContentDragSurface>
     );
 });

@@ -2,13 +2,14 @@ import * as React from 'react';
 import { View, Platform, StatusBar, Pressable } from 'react-native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { layout } from '../ui/layout/layout';
-import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
+import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 
 
 interface HeaderProps {
@@ -47,12 +48,14 @@ export const Header = React.memo((props: HeaderProps) => {
     const insets = useChromeSafeAreaInsets();
     const paddingTop = safeAreaEnabled ? insets.top : 0;
     const headerHeight = useHeaderHeight();
+    const desktopDragProps = useDesktopWindowDragMouseProps();
 
     const containerStyle = [
         styles.container,
         headerTransparent && styles.containerTransparent,
         !headerTransparent && styles.containerNormal,
         {
+            minHeight: headerHeight + paddingTop,
             paddingTop,
         },
         headerShadowVisible && styles.shadow,
@@ -65,19 +68,35 @@ export const Header = React.memo((props: HeaderProps) => {
     ];
 
     return (
-        <View style={[containerStyle]}>
-            <View style={styles.contentWrapper}>
-                <View style={[styles.content, { height: headerHeight }]}>
-                    <View style={styles.leftContainer}>
+        <View
+            {...desktopDragProps}
+            testID="desktop-route-header-drag-region"
+            style={containerStyle}
+        >
+            <View
+                testID="desktop-route-header-content-wrapper"
+                pointerEvents="box-none"
+                style={styles.contentWrapper}
+            >
+                <View
+                    testID="desktop-route-header-content"
+                    pointerEvents="box-none"
+                    style={[styles.content, { height: headerHeight }]}
+                >
+                    <View pointerEvents="box-none" style={styles.leftContainer}>
                         {headerLeft && headerLeft()}
                     </View>
 
-                    <View style={styles.centerContainer}>
+                    <View
+                        testID="desktop-route-header-center"
+                        pointerEvents="box-none"
+                        style={styles.centerContainer}
+                    >
                         {title}
                         {subtitle && <Text style={subtitleStyle} numberOfLines={1}>{subtitle}</Text>}
                     </View>
 
-                    <View style={styles.rightContainer}>
+                    <View pointerEvents="box-none" style={styles.rightContainer}>
                         {headerRight && headerRight()}
                     </View>
                 </View>
@@ -95,7 +114,7 @@ interface ExtendedNavigationOptions extends Partial<NativeStackHeaderProps['opti
 // Default back button component
 const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void }> = ({ tintColor = '#000', onPress }) => {
     return (
-        <Pressable onPress={onPress} hitSlop={15}>
+        <Pressable onPress={onPress} hitSlop={15} accessibilityRole="button">
             <SafeIonicons
                 name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
                 size={24}
@@ -109,20 +128,6 @@ const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void }> =
 const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((props) => {
     const { options, route, back, navigation } = props;
     const extendedOptions = options as ExtendedNavigationOptions;
-    const isTablet = useIsTablet();
-
-    // Check if we should hide back button on tablet
-    const shouldHideBackButton = React.useMemo(() => {
-        if (!isTablet) return false;
-
-        // Get navigation state to check stack depth
-        const state = navigation.getState();
-        const currentIndex = state?.index ?? 0;
-
-        // Hide back button if we're at the first or second screen in the stack
-        // In tablet mode, index 0 is the empty screen, index 1 is the first real screen
-        return currentIndex <= 1;
-    }, [isTablet, navigation]);
 
     // Extract title - handle both string and function types
     let title: React.ReactNode | null = null;
@@ -158,9 +163,8 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     if (options.headerLeft) {
         // Use custom headerLeft if provided
         headerLeftContent = () => options.headerLeft!({ canGoBack: !!back, tintColor: options.headerTintColor });
-    } else if (back && options.headerBackVisible !== false && !shouldHideBackButton) {
+    } else if (back && options.headerBackVisible !== false) {
         // Show default back button if can go back and not explicitly hidden
-        // Also hide on tablet when at first or second screen
         headerLeftContent = () => (
             <DefaultBackButton
                 tintColor={options.headerTintColor}
@@ -209,6 +213,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     contentWrapper: {
         width: '100%',
         alignItems: 'center',
+        position: 'relative',
+        zIndex: 1,
     },
     content: {
         flexDirection: 'row',

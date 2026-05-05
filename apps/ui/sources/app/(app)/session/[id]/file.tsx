@@ -53,6 +53,8 @@ export default function FileScreen() {
     React.useEffect(() => {
         if (!shouldRedirect) return;
         const fileName = filePath.split('/').at(-1) ?? filePath;
+        pane.openRight({ tabId: 'files' });
+        pane.setRightTab('files');
         pane.openDetailsTab({
             key: `file:${filePath}`,
             kind: 'file',
@@ -71,6 +73,8 @@ export default function FileScreen() {
         if (shouldRedirect) return;
         hasRedirectedToDetailsRef.current = true;
         const fileName = filePath.split('/').at(-1) ?? filePath;
+        pane.openRight({ tabId: 'files' });
+        pane.setRightTab('files');
         pane.openDetailsTab(
             {
                 key: `file:${filePath}`,

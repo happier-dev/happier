@@ -3,8 +3,7 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main",
-    "activity_overlay"
+    "main"
   ],
   "permissions": [
     "core:default",
@@ -13,6 +12,33 @@
     "core:window:allow-set-badge-count",
     "core:window:allow-set-badge-label",
     "dialog:allow-open",
+    "allow-desktop-fetch-update",
+    "allow-desktop-install-update",
+    "allow-desktop-pick-ssh-identity-file",
+    "allow-desktop-get-autostart-enabled",
+    "allow-desktop-set-autostart-enabled",
+    "allow-desktop-set-tray-state",
+    "allow-start-system-task",
+    "allow-cancel-system-task",
+    "allow-get-system-task-snapshot",
+    "allow-system-tasks-open-log-path",
+    "allow-respond-system-task-prompt",
+    "allow-desktop-get-window-chrome-policy",
+    "allow-desktop-get-window-state",
+    "allow-desktop-minimize-window",
+    "allow-desktop-toggle-window-maximize",
+    "allow-desktop-close-window",
+    "allow-desktop-show-main-window",
+    "allow-desktop-start-window-dragging",
+    "allow-desktop-set-window-mode",
+    "allow-desktop-read-stack-boot-credentials",
+    "allow-desktop-activity-overlay-sync",
+    "allow-desktop-activity-overlay-get-window-state",
+    "allow-desktop-activity-overlay-set-expanded",
+    "allow-desktop-activity-overlay-set-input-locked",
+    "allow-desktop-activity-overlay-reset-position",
+    "allow-desktop-activity-overlay-emit-interaction",
+    "allow-desktop-activity-overlay-emit-interaction-result",
     {
       "identifier": "http:default",
       "allow": [

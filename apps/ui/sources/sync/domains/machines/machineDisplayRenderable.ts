@@ -1,5 +1,6 @@
 import type { Machine, MachineMetadata } from '@/sync/domains/state/storageTypes';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
+import { normalizeMachineHost } from '@happier-dev/protocol';
 
 export interface MachineDisplayMetadata {
     displayName?: string | null;
@@ -50,12 +51,12 @@ export function resolveBestMachineDisplayRenderableForHost(
     machines: Record<string, MachineDisplayRenderable>,
     hostInput: string,
 ): MachineDisplayRenderable | null {
-    const host = normalizeNonEmptyString(hostInput);
+    const host = normalizeMachineHost(hostInput);
     if (!host) return null;
 
     let best: MachineDisplayRenderable | null = null;
     for (const machine of Object.values(machines)) {
-        const machineHost = normalizeNonEmptyString(machine.metadata?.host);
+        const machineHost = normalizeMachineHost(normalizeNonEmptyString(machine.metadata?.host));
         if (!machineHost || machineHost !== host) continue;
         if (!best) {
             best = machine;

@@ -80,9 +80,12 @@ pub fn run() {
                 activity_overlay::desktop_activity_overlay_sync,
                 activity_overlay::desktop_activity_overlay_get_window_state,
                 activity_overlay::desktop_activity_overlay_set_expanded,
+                activity_overlay::desktop_activity_overlay_set_input_locked,
                 activity_overlay::desktop_activity_overlay_apply_drag_delta,
+                activity_overlay::desktop_activity_overlay_release_drag_velocity,
                 activity_overlay::desktop_activity_overlay_reset_position,
-                activity_overlay::desktop_activity_overlay_emit_interaction
+                activity_overlay::desktop_activity_overlay_emit_interaction,
+                activity_overlay::desktop_activity_overlay_emit_interaction_result,
             ]);
     }
 

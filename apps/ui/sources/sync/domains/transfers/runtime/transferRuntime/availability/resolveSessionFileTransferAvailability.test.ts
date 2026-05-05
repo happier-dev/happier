@@ -73,6 +73,7 @@ describe('resolveSessionFileTransferAvailability', () => {
             state: 'unconfigured',
             configuredListenerClasses: [],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: [],
             unavailableListenerClasses: [],
         });
@@ -151,6 +152,7 @@ describe('resolveSessionFileTransferAvailability', () => {
             state: 'active',
             configuredListenerClasses: ['loopback_http'],
             activeListenerClasses: ['loopback_http'],
+            activeRouteKinds: ['loopback_direct'],
             inactiveListenerClasses: [],
             unavailableListenerClasses: [],
         });
@@ -159,6 +161,7 @@ describe('resolveSessionFileTransferAvailability', () => {
             throw new Error('expected selected transfer route decision');
         }
         expect(result.decision.preferredRouteKind).toBe('direct_peer');
+        expect(result.decision.availability.directPeerRouteKinds).toEqual(['loopback_direct']);
     });
 
     it('does not prefer a cached direct peer route when the daemon transfer listener is configured but inactive', async () => {
@@ -226,6 +229,7 @@ describe('resolveSessionFileTransferAvailability', () => {
             state: 'configured_inactive',
             configuredListenerClasses: ['loopback_http'],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: ['loopback_http'],
             unavailableListenerClasses: [],
         });
@@ -302,6 +306,7 @@ describe('resolveSessionFileTransferAvailability', () => {
             state: 'configured_inactive',
             configuredListenerClasses: ['loopback_http'],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: [],
             unavailableListenerClasses: ['loopback_http'],
         });
@@ -382,6 +387,7 @@ describe('resolveSessionFileTransferAvailability', () => {
             state: 'unconfigured',
             configuredListenerClasses: [],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: [],
             unavailableListenerClasses: [],
         });

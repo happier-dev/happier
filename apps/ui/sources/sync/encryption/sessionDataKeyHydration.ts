@@ -18,6 +18,7 @@ type SessionDataKeyHydrationPlanEntry = Readonly<{
     cachedKey: Uint8Array | null;
     needsDecrypt: boolean;
     hasEnvelope: boolean;
+    shouldClearRuntimeEncryption: boolean;
 }>;
 
 export type SessionDataKeyHydrationPlan = Readonly<{
@@ -30,6 +31,7 @@ export type SessionDataKeyHydrationPlan = Readonly<{
 
 export type SessionDataKeyHydrationResult = Readonly<{
     sessionKeys: Map<string, Uint8Array | null>;
+    sessionEncryptionClears: readonly string[];
     stale: boolean;
 }>;
 
@@ -52,6 +54,7 @@ export function createSessionDataKeyHydrationPlan(params: Readonly<{
                 cachedKey: null,
                 needsDecrypt: false,
                 hasEnvelope: false,
+                shouldClearRuntimeEncryption: false,
             });
             continue;
         }
@@ -66,6 +69,7 @@ export function createSessionDataKeyHydrationPlan(params: Readonly<{
                 cachedKey: null,
                 needsDecrypt: false,
                 hasEnvelope: false,
+                shouldClearRuntimeEncryption: true,
             });
             continue;
         }
@@ -79,6 +83,7 @@ export function createSessionDataKeyHydrationPlan(params: Readonly<{
                 cachedKey,
                 needsDecrypt: false,
                 hasEnvelope: true,
+                shouldClearRuntimeEncryption: false,
             });
             continue;
         }
@@ -90,6 +95,7 @@ export function createSessionDataKeyHydrationPlan(params: Readonly<{
             cachedKey: null,
             needsDecrypt: true,
             hasEnvelope: true,
+            shouldClearRuntimeEncryption: false,
         });
     }
 
@@ -132,8 +138,9 @@ export async function hydrateSessionDataKeys(params: Readonly<{
     const shouldContinue = params.shouldContinue ?? (() => true);
     const capturedScope = params.encryption.getCurrentEncryptionGenerationScope?.(scope) ?? null;
     const sessionKeys = new Map<string, Uint8Array | null>();
+    const sessionEncryptionClears: string[] = [];
     if (!isHydrationScopeCurrent({ encryption: params.encryption, capturedScope, shouldContinue })) {
-        return { sessionKeys, stale: true };
+        return { sessionKeys, sessionEncryptionClears, stale: true };
     }
 
     const decryptEntries = params.plan.entries.filter((entry) => entry.needsDecrypt && entry.envelope);
@@ -146,7 +153,7 @@ export async function hydrateSessionDataKeys(params: Readonly<{
         : [];
 
     if (!isHydrationScopeCurrent({ encryption: params.encryption, capturedScope, shouldContinue })) {
-        return { sessionKeys, stale: true };
+        return { sessionKeys, sessionEncryptionClears, stale: true };
     }
 
     const decryptedBySessionId = new Map<string, Uint8Array | null>();
@@ -158,14 +165,17 @@ export async function hydrateSessionDataKeys(params: Readonly<{
         if (!entry.hasEnvelope) {
             params.sessionDataKeys.delete(entry.sessionId);
             params.sessionDataKeyEnvelopes?.delete(entry.sessionId);
+            if (entry.shouldClearRuntimeEncryption) {
+                sessionEncryptionClears.push(entry.sessionId);
+            }
             continue;
         }
 
         const decryptedKey = entry.needsDecrypt
             ? decryptedBySessionId.get(entry.sessionId) ?? null
             : entry.cachedKey;
-        sessionKeys.set(entry.sessionId, decryptedKey);
         if (decryptedKey) {
+            sessionKeys.set(entry.sessionId, decryptedKey);
             params.sessionDataKeys.set(entry.sessionId, decryptedKey);
             if (entry.envelope) {
                 params.sessionDataKeyEnvelopes?.set(entry.sessionId, entry.envelope);
@@ -173,8 +183,9 @@ export async function hydrateSessionDataKeys(params: Readonly<{
         } else {
             params.sessionDataKeys.delete(entry.sessionId);
             params.sessionDataKeyEnvelopes?.delete(entry.sessionId);
+            sessionEncryptionClears.push(entry.sessionId);
         }
     }
 
-    return { sessionKeys, stale: false };
+    return { sessionKeys, sessionEncryptionClears, stale: false };
 }

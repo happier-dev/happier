@@ -1,10 +1,11 @@
 import {
     type AccountSettings,
-    DEFAULT_NOTIFICATIONS_SETTINGS_V1,
-    NotificationsSettingsV1Schema,
+    accountSettingsParse,
 } from '@happier-dev/protocol';
 
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { localSettingsParse, type LocalSettings } from '@/sync/domains/settings/localSettings';
+
+import { resolveActivityAttentionDeliveryPlan } from '../delivery/resolveActivityAttentionDeliveryPlan';
 
 export type ForegroundNotificationBehavior = 'full' | 'silent' | 'off';
 
@@ -12,24 +13,19 @@ export function resolveForegroundNotificationBehavior(params: Readonly<{
     localSettings: Partial<LocalSettings> | null | undefined;
     accountSettings: Partial<AccountSettings> | null | undefined;
 }>): ForegroundNotificationBehavior {
-    if (params.localSettings?.localNotificationsEnabled === false) {
+    const parsedLocalSettings = localSettingsParse(params.localSettings ?? {});
+    const parsedAccountSettings = accountSettingsParse(params.accountSettings ?? {});
+
+    const unifiedPlan = resolveActivityAttentionDeliveryPlan({
+        localSettings: parsedLocalSettings,
+        accountSettings: parsedAccountSettings,
+        event: 'ready',
+        channel: 'local_notification',
+        foregroundState: 'foreground',
+        now: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    if (unifiedPlan.reason === 'channel_disabled') {
         return 'off';
     }
-
-    const localForegroundBehavior = params.localSettings?.localNotificationsForegroundBehavior;
-    if (
-        localForegroundBehavior === 'full' ||
-        localForegroundBehavior === 'silent' ||
-        localForegroundBehavior === 'off'
-    ) {
-        return localForegroundBehavior;
-    }
-
-    const notificationsSettingsInput = params.accountSettings?.notificationsSettingsV1 ?? DEFAULT_NOTIFICATIONS_SETTINGS_V1;
-    const notificationsSettingsResult = NotificationsSettingsV1Schema.safeParse(notificationsSettingsInput);
-    const notificationsSettings = notificationsSettingsResult.success
-        ? notificationsSettingsResult.data
-        : DEFAULT_NOTIFICATIONS_SETTINGS_V1;
-
-    return notificationsSettings.foregroundBehavior ?? 'full';
+    return unifiedPlan.foregroundBehavior;
 }

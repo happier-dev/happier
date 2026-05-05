@@ -43,6 +43,20 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'code-slash-outline', color: '#AF52DE' },
         },
     },
+    'pets.companion': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            serverVisibilityScope: 'main_selection',
+            titleKey: 'settingsFeatures.expPetsCompanion',
+            subtitleKey: 'settingsFeatures.expPetsCompanionSubtitle',
+            icon: { ioniconName: 'paw-outline', color: '#34C759' },
+        },
+    },
+    'pets.sync': {
+        settingsToggle: undefined,
+    },
     'encryption.plaintextStorage': {
         settingsToggle: undefined,
     },
@@ -153,6 +167,30 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'machines.transfer.serverRouted': {
+        settingsToggle: undefined,
+    },
+    'machines.tunnel': {
+        settingsToggle: undefined,
+    },
+    'machines.tunnel.directPeer': {
+        settingsToggle: undefined,
+    },
+    'machines.tunnel.serverRouted': {
+        settingsToggle: undefined,
+    },
+    'machines.liveStream': {
+        settingsToggle: undefined,
+    },
+    'machines.liveStream.directPeer': {
+        settingsToggle: undefined,
+    },
+    'machines.liveStream.serverRouted': {
+        settingsToggle: undefined,
+    },
+    'machines.rpc': {
+        settingsToggle: undefined,
+    },
+    'machines.rpc.directPeer': {
         settingsToggle: undefined,
     },
     'social.friends': {

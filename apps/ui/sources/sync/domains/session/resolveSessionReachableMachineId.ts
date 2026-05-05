@@ -1,4 +1,5 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { normalizeMachineHost } from '@happier-dev/protocol';
 
 function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -69,7 +70,7 @@ function addMachineToResolutionContextState(
         }
     }
 
-    const machineHost = normalizeNonEmptyString(machine.metadata?.host);
+    const machineHost = normalizeMachineHost(machine.metadata?.host);
     if (!machineHost) {
         return;
     }
@@ -125,7 +126,7 @@ export function buildMachineResolutionContextFromRecord<TMachine extends Machine
 }
 
 function resolveMachineIdByHost(hostInput: unknown, context: MachineResolutionContext): string | null {
-    const host = normalizeNonEmptyString(hostInput);
+    const host = normalizeMachineHost(normalizeNonEmptyString(hostInput));
     if (!host) return null;
     return context.bestMachineIdByHost.get(host) ?? null;
 }

@@ -2,9 +2,9 @@ import * as React from 'react';
 import { useNavigation, useRouter } from 'expo-router';
 
 import { WizardModalShell } from '@/components/onboarding';
+import { ScanAuthQrScreen } from '@/components/qr/ScanAuthQrScreen';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { ScanAuthQrScreen } from './ScanAuthQrScreen';
 
 export default function ScanAccountQrScreen() {
     const router = useRouter();

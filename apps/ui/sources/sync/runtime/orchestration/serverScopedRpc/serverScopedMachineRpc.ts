@@ -1,21 +1,43 @@
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
 import { resolveScopedMachineDataKey } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
 import { delay } from '@/utils/timing/time';
+import {
+    MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,
+    measureMachineEncryptRawAttribution,
+    type MachineEncryptRawAttributionEventName,
+} from '@/sync/encryption/machineEncryption';
+import { machineRpcWithPeerMediationRoute } from '@/sync/domains/machines/peer/mediation/rpc/client';
+import {
+    postProductionMachineRpcDirect,
+    resolveProductionMachineRpcDirectRoute,
+} from '@/sync/domains/machines/peer/mediation/rpc/productionRoute';
 
 import type { ServerScopedMachineRpcParams, SocketRpcResult } from './serverScopedRpcTypes';
 import { isGuardedMachineRpcMethod, resolveTransferPolicyAllowsMachineRpcDirect } from './guardedMachineRpcPolicy';
 
+const SCOPED_MACHINE_RPC_SESSION_WRITE_METHODS = new Set<string>([
+    RPC_METHODS.SPAWN_HAPPY_SESSION,
+    RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
+    RPC_METHODS.SESSION_FORK,
+    SESSION_RPC_METHODS.SESSION_ROLLBACK,
+]);
+
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
+}
+
+function resolveScopedMachineRpcEncryptRawAttributionEvent(method: string): MachineEncryptRawAttributionEventName {
+    return SCOPED_MACHINE_RPC_SESSION_WRITE_METHODS.has(method)
+        ? MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS.scopedRpcSessionWrite
+        : MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS.scopedRpcOther;
 }
 
 type MachineRpcTimeoutScope = 'active' | 'scoped';
@@ -112,7 +134,7 @@ function shouldFallbackToScopedMachineRpc(error: unknown): boolean {
         || error.message.includes('Socket not connected');
 }
 
-export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachineRpcParams<A>): Promise<R> {
+async function machineRpcWithServerTransport<R, A>(params: ServerScopedMachineRpcParams<A>): Promise<R> {
     const configuredTimeoutMs = resolveMachineRpcTimeoutMs(params.timeoutMs);
     const timeoutBudget = createMachineRpcTimeoutBudget({
         method: params.method,
@@ -154,11 +176,6 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                         { timeoutMs },
                     ),
                 );
-                const recordedServerId = normalizeId(params.serverId) || normalizeId(getActiveServerSnapshot().serverId);
-                recordCachedMachineRpcDirectRouteViable({
-                    serverId: recordedServerId,
-                    remoteMachineId: context.machineId,
-                });
                 return result;
             } catch (error) {
                 if (!shouldFallbackToScopedMachineRpc(error)) {
@@ -209,7 +226,10 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
         try {
             const encryptedPayload = await timeoutBudget.runWithinTimeout(
                 'scoped',
-                async () => await machineEncryption.encryptRaw(params.payload),
+                async () => await measureMachineEncryptRawAttribution(
+                    resolveScopedMachineRpcEncryptRawAttributionEvent(params.method),
+                    async () => await machineEncryption.encryptRaw(params.payload),
+                ),
             );
             const result = await timeoutBudget.runWithinTimeout(
                 'scoped',
@@ -228,10 +248,6 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                     'scoped',
                     async () => await machineEncryption.decryptRaw(result.result) as R,
                 );
-                recordCachedMachineRpcDirectRouteViable({
-                    serverId: context.targetServerId,
-                    remoteMachineId: context.machineId,
-                });
                 return decoded;
             }
 
@@ -265,4 +281,28 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
         }
     }
     throw lastError ?? new Error('Machine RPC failed');
+}
+
+export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachineRpcParams<A>): Promise<R> {
+    return await machineRpcWithPeerMediationRoute<R, A>({
+        serverId: params.serverId,
+        machineId: params.machineId,
+        method: params.method,
+        payload: params.payload,
+        timeoutMs: params.timeoutMs,
+        resolveDirectRoute: async (input) => await resolveProductionMachineRpcDirectRoute({
+            ...input,
+            timeoutMs: params.timeoutMs,
+        }),
+        postDirect: postProductionMachineRpcDirect,
+        serverFallback: async (fallbackInput) => await machineRpcWithServerTransport<R, A>({
+            machineId: fallbackInput.machineId,
+            method: fallbackInput.method,
+            payload: fallbackInput.payload,
+            serverId: fallbackInput.serverId,
+            timeoutMs: fallbackInput.timeoutMs,
+            preferScoped: params.preferScoped,
+            skipTransferPolicyEvaluation: params.skipTransferPolicyEvaluation,
+        }),
+    });
 }

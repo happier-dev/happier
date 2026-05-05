@@ -1,14 +1,11 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
-import { ChangesResponseSchema, CursorGoneErrorSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
-import { createNotAuthenticatedError, isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
-
-function readAuthStatus(status: number): 401 | 403 | null {
-    if (status === 401 || status === 403) {
-        return status;
-    }
-    return null;
-}
+import {
+    ChangesResponseSchema,
+    CurrentCursorResponseSchema,
+    CursorGoneErrorSchema,
+    type ChangeEntry,
+} from '@happier-dev/protocol/changes';
 
 export async function fetchChanges(params: {
     credentials: AuthCredentials;
@@ -39,10 +36,7 @@ export async function fetchChanges(params: {
             },
             { includeAuth: false },
         );
-    } catch (error) {
-        if (isTerminalAuthError(error)) {
-            throw error;
-        }
+    } catch {
         return { status: 'error' };
     }
 
@@ -60,10 +54,6 @@ export async function fetchChanges(params: {
     }
 
     if (!response.ok) {
-        const authStatus = readAuthStatus(response.status);
-        if (authStatus) {
-            throw createNotAuthenticatedError(authStatus);
-        }
         return { status: 'error' };
     }
 
@@ -74,6 +64,41 @@ export async function fetchChanges(params: {
             return { status: 'error' };
         }
         return { status: 'ok', changes: parsed.data.changes, nextCursor: String(parsed.data.nextCursor) };
+    } catch {
+        return { status: 'error' };
+    }
+}
+
+export async function fetchCurrentChangesCursor(params: {
+    credentials: AuthCredentials;
+}): Promise<{ status: 'ok'; cursor: string } | { status: 'error' }> {
+    let response: Response;
+    try {
+        response = await serverFetch(
+            '/v2/cursor',
+            {
+                headers: {
+                    Authorization: `Bearer ${params.credentials.token}`,
+                    'Content-Type': 'application/json',
+                },
+            },
+            { includeAuth: false },
+        );
+    } catch {
+        return { status: 'error' };
+    }
+
+    if (!response.ok) {
+        return { status: 'error' };
+    }
+
+    try {
+        const raw = await response.json();
+        const parsed = CurrentCursorResponseSchema.safeParse(raw);
+        if (!parsed.success) {
+            return { status: 'error' };
+        }
+        return { status: 'ok', cursor: String(parsed.data.cursor) };
     } catch {
         return { status: 'error' };
     }

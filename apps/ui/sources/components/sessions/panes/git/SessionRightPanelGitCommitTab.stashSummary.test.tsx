@@ -41,6 +41,7 @@ vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () =
 
 vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
+    resolveScmChangeStatsColumnWidth: () => 38,
 }));
 
 vi.mock('@/sync/ops', async (importOriginal) => {

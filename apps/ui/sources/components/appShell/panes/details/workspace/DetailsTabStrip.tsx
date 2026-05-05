@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { PinIcon, PinSlashIcon } from '@/components/sessions/shell/sessionPinIcons';
+import { FileIcon } from '@/components/ui/media/FileIcon';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -123,11 +124,19 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                             accessibilityRole="button"
                             accessibilityLabel={t('session.detailsPanel.openTabA11y', { title: tab.title })}
                         >
-                            <Octicons
-                                name={iconName as React.ComponentProps<typeof Octicons>['name']}
-                                size={14}
-                                color={theme.colors.textSecondary}
-                            />
+                            {tab.kind === 'file' ? (
+                                <FileIcon
+                                    fileName={tab.title}
+                                    size={14}
+                                    testID={`session-details-tab-file-icon-${safeTabKey}`}
+                                />
+                            ) : (
+                                <Octicons
+                                    name={iconName as React.ComponentProps<typeof Octicons>['name']}
+                                    size={14}
+                                    color={theme.colors.textSecondary}
+                                />
+                            )}
                             <View style={styles.tabCopy}>
                                 <Text
                                     style={[styles.tabLabel, isActive ? styles.tabLabelActive : null]}
@@ -161,7 +170,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                     accessibilityLabel={t('session.detailsPanel.pinTabA11y')}
                                     hitSlop={10}
                                 >
-                                    <PinIcon size={16} color={theme.colors.textSecondary} />
+                                    <PinIcon size={14} color={theme.colors.textSecondary} />
                                 </Pressable>
                             ) : tab.isPinned ? (
                                 <Pressable
@@ -176,7 +185,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                     accessibilityLabel={t('session.detailsPanel.unpinTabA11y')}
                                     hitSlop={10}
                                 >
-                                    <PinSlashIcon size={16} color={theme.colors.textSecondary} />
+                                    <PinSlashIcon size={14} color={theme.colors.textSecondary} />
                                 </Pressable>
                             ) : null}
                             <Pressable
@@ -191,7 +200,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                 accessibilityLabel={t('session.detailsPanel.closeTabA11y')}
                                 hitSlop={10}
                             >
-                                <Octicons name="x" size={14} color={theme.colors.textSecondary} />
+                                <Octicons name="x" size={13} color={theme.colors.textSecondary} />
                             </Pressable>
                         </View>
                     </View>

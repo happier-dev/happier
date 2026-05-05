@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -8,6 +8,7 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
+import { buildSessionDetailsRouteQuery } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
 import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
@@ -17,9 +18,12 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
+import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
+import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 export default function TerminalScreenRoute() {
     const router = useRouter();
+    const pathname = usePathname();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{ id: string; serverId?: string }>();
@@ -67,14 +71,26 @@ export default function TerminalScreenRoute() {
     }, [isFocused, openRight, sessionId, setRightTab, terminalTabAvailable]);
 
     const handleNavigateToDetails = React.useCallback((key: string) => {
+        const targetQuery = buildSessionDetailsRouteQuery(
+            buildActiveDetailsRouteParams(detailsSelection.tabs, key),
+            'terminal',
+        );
+        prepareMobileSurfaceTransition({
+            currentPathname: pathname,
+            targetHref: routeScope.buildHref(sessionId, {
+                suffix: '/details',
+                query: targetQuery,
+            }),
+            operation: 'push',
+        });
         router.push({
             pathname: '/session/[id]/details',
             params: routeScope.withParams({
                 id: sessionId,
-                ...buildActiveDetailsRouteParams(detailsSelection.tabs, key),
+                ...targetQuery,
             }),
         } as any);
-    }, [detailsSelection.tabs, routeScope, router, sessionId]);
+    }, [detailsSelection.tabs, pathname, routeScope, router, sessionId]);
 
     useFullscreenDetailsRouteAutoRedirect({
         resetKey: sessionId,
@@ -100,23 +116,33 @@ export default function TerminalScreenRoute() {
     }
 
     return (
-        <View testID={cockpitEnabled ? undefined : 'session-terminal-screen'} style={{ flex: 1 }}>
+        <SessionFullscreenPaneSafeAreaView
+            testID={cockpitEnabled ? 'session-cockpit-route-screen' : 'session-terminal-screen'}
+            includeTopInset={!cockpitEnabled}
+        >
             {sessionHydrated ? (
                 cockpitEnabled ? (
                     <SessionCockpitShell
                         sessionId={sessionId}
                         scopeId={scopeId}
                         surface="terminal"
+                        safeAreaPadding={false}
                         terminalTabAvailable={terminalTabAvailable}
+                        routeServerId={routeScope.serverId}
                     />
                 ) : (
-                    <SessionRightPanel sessionId={sessionId} scopeId={scopeId} onRequestClose={onRequestClose} />
+                    <SessionRightPanel
+                        sessionId={sessionId}
+                        scopeId={scopeId}
+                        presentation="screen"
+                        onRequestClose={onRequestClose}
+                    />
                 )
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator />
                 </View>
             )}
-        </View>
+        </SessionFullscreenPaneSafeAreaView>
     );
 }

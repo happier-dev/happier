@@ -134,7 +134,7 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
     standardCleanup();
   });
 
-  it('pins to bottom when content size grows while pinned', async () => {
+  it('lets native FlashList maintain bottom position without an imperative content-growth scroll', async () => {
     await withFlashListChatListWebScrollerDom(
       {},
       async () => {
@@ -146,7 +146,7 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
 
         expect(screen.getCapturedFlashListProps()).toBeTruthy();
 
-        // Clear mount-time pin attempts; we want to assert pinning is driven by content-size growth.
+        // Initial measured correction is allowed on native; this test owns later content growth.
         scrollToOffsetSpy.mockClear();
 
         await screen.triggerInitialFill({
@@ -155,8 +155,18 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
           contentWidth: 0,
         });
 
-        expect(scrollToOffsetSpy).toHaveBeenCalled();
         expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 500, animated: false });
+        scrollToOffsetSpy.mockClear();
+
+        screen.getCapturedFlashListProps().onContentSizeChange?.(0, 1200);
+        await screen.settle({ cycles: 1, turns: 1 });
+
+        expect(scrollToOffsetSpy).not.toHaveBeenCalled();
+        expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+          startRenderingFromBottom: true,
+          animateAutoScrollToBottom: false,
+        });
+        expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition?.autoscrollToBottomThreshold).toBeGreaterThan(0);
       },
     );
   });

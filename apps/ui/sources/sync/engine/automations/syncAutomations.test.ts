@@ -90,4 +90,21 @@ describe('fetchAndApplyAutomations', () => {
             expect.objectContaining({ id: 'r1', state: 'succeeded' }),
         ]));
     });
+
+    it('drops fetched automations when the captured sync scope is stale before apply', async () => {
+        const applyAutomations = vi.fn();
+        const setAutomationRuns = vi.fn();
+
+        await fetchAndApplyAutomations({
+            credentials: { accessToken: 'token' } as any,
+            applyAutomations,
+            loadedAutomationRunIds: ['a1'],
+            setAutomationRuns,
+            shouldContinue: () => false,
+        } as Parameters<typeof fetchAndApplyAutomations>[0] & { shouldContinue: () => boolean });
+
+        expect(applyAutomations).not.toHaveBeenCalled();
+        expect(listAutomationRunsMock).not.toHaveBeenCalled();
+        expect(setAutomationRuns).not.toHaveBeenCalled();
+    });
 });

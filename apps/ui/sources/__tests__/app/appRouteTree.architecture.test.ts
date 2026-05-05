@@ -3,6 +3,11 @@ import { join, relative, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+function isSuspiciousRouteTreeModule(fileName: string): boolean {
+    const moduleName = fileName.replace(/\.(ts|tsx)$/u, '');
+    return /^(use|resolve)[A-Z]/u.test(moduleName) || /^[A-Z]/u.test(moduleName);
+}
+
 function collectSuspiciousRouteTreeModules(rootDir: string, currentDir: string, acc: string[] = []): string[] {
     for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
         if (entry.name === '__tests__') {
@@ -22,7 +27,7 @@ function collectSuspiciousRouteTreeModules(rootDir: string, currentDir: string, 
         if (/^(_layout|\+html)$/u.test(entry.name.replace(/\.(ts|tsx)$/u, ''))) {
             continue;
         }
-        if (/^(use|resolve)[A-Z]/u.test(entry.name)) {
+        if (isSuspiciousRouteTreeModule(entry.name)) {
             acc.push(relative(rootDir, fullPath));
         }
     }
@@ -30,7 +35,7 @@ function collectSuspiciousRouteTreeModules(rootDir: string, currentDir: string, 
 }
 
 describe('app route tree architecture', () => {
-    it('keeps non-route hook and resolver modules outside the Expo Router app tree', () => {
+    it('keeps non-route implementation modules outside the Expo Router app tree', () => {
         const appRoot = resolve(process.cwd(), 'sources/app');
         const suspiciousModules = collectSuspiciousRouteTreeModules(appRoot, appRoot);
 

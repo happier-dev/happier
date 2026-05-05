@@ -1,6 +1,5 @@
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { scmStatusSync } from '@/scm/scmStatusSync';
 import {
     isAtomicCommitStrategy,
     resolveCommitScopeForStrategy,
@@ -22,6 +21,7 @@ export async function executeScmCommit(input: {
     scmCommitStrategy: ScmCommitStrategy;
     commitSelectionPaths: string[];
     commitSelectionPatches: Array<{ path: string; patch: string }>;
+    refreshScmData: () => Promise<void>;
     loadCommitHistory: (opts?: { reset?: boolean }) => Promise<void>;
     setScmOperationBusy: (busy: boolean) => void;
     setScmOperationStatus: (status: string | null) => void;
@@ -80,7 +80,7 @@ export async function executeScmCommit(input: {
 
                 input.setScmOperationStatus('Refreshing repository status…');
                 try {
-                    await scmStatusSync.invalidateFromMutationAndAwait(input.sessionId);
+                    await input.refreshScmData();
                     await input.loadCommitHistory({ reset: true });
                 } catch (refreshError) {
                     const refreshMessage = getScmUserFacingError({

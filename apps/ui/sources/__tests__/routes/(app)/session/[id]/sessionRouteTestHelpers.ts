@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type { ReactTestInstance } from 'react-test-renderer';
 
 type SessionRouteModuleFactory = () => unknown | Promise<unknown>;
 type SessionRouteImportOriginal = <T = unknown>() => Promise<T>;
@@ -12,6 +13,7 @@ type InstallSessionRouteCommonModuleMocksOptions = Readonly<{
     unistyles?: SessionRouteModuleFactory;
     text?: SessionRouteModuleFactory;
     modal?: SessionRouteModuleFactory;
+    safeAreaInsets?: Readonly<{ top?: number; bottom?: number; left?: number; right?: number }>;
     storageModule?: SessionRouteStorageModuleFactory;
 }>;
 
@@ -91,6 +93,19 @@ export function installSessionRouteCommonModuleMocks(
         }).module;
     });
 
+    vi.mock('react-native-safe-area-context', () => {
+        const activeOptions = sessionRouteModuleState.options;
+        const safeAreaInsets = activeOptions.safeAreaInsets ?? {};
+        return {
+            useSafeAreaInsets: () => ({
+                top: safeAreaInsets.top ?? 0,
+                bottom: safeAreaInsets.bottom ?? 0,
+                left: safeAreaInsets.left ?? 0,
+                right: safeAreaInsets.right ?? 0,
+            }),
+        };
+    });
+
     vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         const activeOptions = sessionRouteModuleState.options;
         if (activeOptions.storageModule) {
@@ -100,4 +115,22 @@ export function installSessionRouteCommonModuleMocks(
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({});
     });
+}
+
+export function getStyleValue(node: ReactTestInstance, key: string): unknown {
+    const readStyleValue = (style: unknown): unknown => {
+        if (!style) return undefined;
+        if (Array.isArray(style)) {
+            for (const entry of style) {
+                const value = readStyleValue(entry);
+                if (value !== undefined) return value;
+            }
+            return undefined;
+        }
+        if (typeof style === 'object' && key in style) {
+            return (style as Record<string, unknown>)[key];
+        }
+        return undefined;
+    };
+    return readStyleValue(node.props.style);
 }

@@ -46,6 +46,8 @@ describe('ReviewCommentsMessageCard', () => {
         expect(textContent).toContain('Review comments (2)');
         expect(textContent).toContain('src/a.ts');
         expect(textContent).toContain('src/b.ts');
+        expect(textContent).toContain('x');
+        expect(textContent).toContain('nit');
         expect(screen.findByTestId('review-comments-jump:c1')).toBeTruthy();
     });
 });

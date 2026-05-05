@@ -12,6 +12,18 @@ const HAPPIER_ELEVENLABS_AGENT_NAME = 'Happier Voice';
 const DEFAULT_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS = 60;
 const MAX_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS = 120;
 const USER_INTERACTIVE_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS = 120;
+const HAPPIER_ELEVENLABS_CLIENT_EVENTS = [
+  'audio',
+  'interruption',
+  'agent_response',
+  'agent_response_correction',
+  'agent_chat_response_part',
+  'user_transcript',
+  'conversation_initiation_metadata',
+  'client_tool_call',
+  'agent_tool_response',
+  'guardrail_triggered',
+] as const;
 
 type ElevenLabsTool = {
   id: string;
@@ -77,6 +89,12 @@ function buildTtsConfig(input?: ElevenLabsTtsConfigInput | null): Record<string,
     voice_id: voiceId,
     ...(modelId ? { model_id: modelId } : null),
     ...(Object.keys(voiceSettings).length > 0 ? { voice_settings: voiceSettings } : null),
+  };
+}
+
+function buildConversationRuntimeConfig(): Record<string, unknown> {
+  return {
+    client_events: [...HAPPIER_ELEVENLABS_CLIENT_EVENTS],
   };
 }
 
@@ -318,6 +336,7 @@ export async function createHappierElevenLabsAgent(params: { apiKey: string; tts
       body: JSON.stringify({
         name: HAPPIER_ELEVENLABS_AGENT_NAME,
         conversation_config: {
+          conversation: buildConversationRuntimeConfig(),
           turn: { turn_timeout: -1 },
           tts,
           agent: {
@@ -362,6 +381,7 @@ export async function updateHappierElevenLabsAgent({
       method: 'PATCH',
       body: JSON.stringify({
         conversation_config: {
+          conversation: buildConversationRuntimeConfig(),
           tts: ttsConfig,
           agent: {
             prompt: {

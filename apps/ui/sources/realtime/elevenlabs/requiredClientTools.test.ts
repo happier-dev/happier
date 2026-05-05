@@ -11,7 +11,7 @@ describe('resolveElevenLabsRequiredClientTools', () => {
                     actions: {
                         'session.message.send': {
                             enabled: true,
-                            disabledSurfaces: ['voice_tool'],
+                            disabledSurfaces: ['voice'],
                             disabledPlacements: [],
                         },
                     },

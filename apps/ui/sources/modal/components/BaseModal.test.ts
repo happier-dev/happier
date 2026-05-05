@@ -139,6 +139,23 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogOverlay' as any).length).toBe(0);
     });
 
+    it('uses a full-opacity themed blurred modal backdrop on web', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal);
+
+        const overlay = screen.findAll((node) => {
+            const style = flattenStyleProp((node.props as any)?.style);
+            return style.backdropFilter === 'blur(2px)' || style.WebkitBackdropFilter === 'blur(2px)';
+        })?.[0];
+        const style = flattenStyleProp((overlay?.props as any)?.style);
+
+        expect(style.WebkitBackdropFilter).toBe('blur(2px)');
+        expect(style.backdropFilter).toBe('blur(2px)');
+        expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.52)');
+        expect(style.opacity).toBeUndefined();
+        expect(String(style.transition)).not.toContain('opacity');
+    });
+
     it('keeps transforms off the fixed-position shell while animating an inner content frame', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false });

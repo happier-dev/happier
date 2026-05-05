@@ -71,12 +71,32 @@ export function useNewSessionServerTargetState(params: Readonly<{
         params.settings.serverSelectionGroups,
     ]);
 
+    const explicitServerTargetId = React.useMemo(() => {
+        if (params.settings.serverSelectionActiveTargetKind !== 'server') return null;
+        const id = String(params.settings.serverSelectionActiveTargetId ?? '').trim();
+        if (!id || !availableServerIds.includes(id)) return null;
+        return id;
+    }, [
+        availableServerIds,
+        params.settings.serverSelectionActiveTargetId,
+        params.settings.serverSelectionActiveTargetKind,
+    ]);
+
     const selectedServerTarget = React.useMemo(() => {
+        if (explicitServerTargetId) {
+            const target = serverTargets.find((candidate) => candidate.kind === 'server' && candidate.id === explicitServerTargetId);
+            if (target) return target;
+        }
         const resolvedTargetKey = `${resolvedSettingsTarget.activeTarget.kind}:${resolvedSettingsTarget.activeTarget.id}`;
         return serverTargets.find((target) => `${target.kind}:${target.id}` === resolvedTargetKey)
             ?? serverTargets.find((target) => target.kind === 'server')
             ?? null;
-    }, [resolvedSettingsTarget.activeTarget.id, resolvedSettingsTarget.activeTarget.kind, serverTargets]);
+    }, [
+        explicitServerTargetId,
+        resolvedSettingsTarget.activeTarget.id,
+        resolvedSettingsTarget.activeTarget.kind,
+        serverTargets,
+    ]);
 
     const allowedTargetServerIds = React.useMemo(() => {
         if (!selectedServerTarget) {

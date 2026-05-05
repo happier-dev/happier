@@ -129,6 +129,8 @@ vi.mock('@/sync/domains/workspaces/files/workspaceRepositoryDirectory', () => ({
 
 const mountCount = { current: 0 };
 const reloadCount = { current: 0 };
+const workspaceRepositoryTreeRootLoading = { current: false };
+const latestWorkspaceRepositoryTreeListProps = { current: null as any };
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
     RepositoryTreeList: (props: any) => {
         React.useEffect(() => {
@@ -143,12 +145,16 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
 
 vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
     WorkspaceRepositoryTreeList: (props: any) => {
+        latestWorkspaceRepositoryTreeListProps.current = props;
         React.useEffect(() => {
             mountCount.current += 1;
         }, []);
         React.useEffect(() => {
             reloadCount.current += 1;
         }, [props?.reloadToken]);
+        React.useEffect(() => {
+            props?.onRootLoadingChange?.(workspaceRepositoryTreeRootLoading.current);
+        }, [props]);
         return React.createElement('View', { testID: 'workspace-repository-tree-list' });
     },
 }));
@@ -189,6 +195,8 @@ vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForRev
 
 describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
     afterEach(() => {
+        workspaceRepositoryTreeRootLoading.current = false;
+        latestWorkspaceRepositoryTreeListProps.current = null;
         standardCleanup();
     });
 
@@ -221,6 +229,36 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
                 'repository-tree-create-folder',
             ]),
         );
+    });
+
+    it('keeps refresh visible and uses it as the tree refresh loading indicator', async () => {
+        workspaceRepositoryTreeRootLoading.current = true;
+        const screen = await renderRepositoryTreeBrowserView();
+
+        expect(latestWorkspaceRepositoryTreeListProps.current).toBeTruthy();
+        expect(typeof latestWorkspaceRepositoryTreeListProps.current?.onRootLoadingChange).toBe('function');
+        await act(async () => {
+            latestWorkspaceRepositoryTreeListProps.current?.onRootLoadingChange?.(true);
+        });
+
+        const toolbar = screen.findByTestId('repository-tree-toolbar');
+        expect(toolbar).toBeTruthy();
+        await act(async () => {
+            toolbar?.props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 42, x: 0, y: 0 } } });
+        });
+
+        expect(screen.findAllByTestId('repository-tree-refresh').length).toBeGreaterThanOrEqual(1);
+        const overflowMenu = screen.findByType('ItemRowActions' as any);
+        expect(overflowMenu.props.actions.some((item: any) => item.id === 'repository-tree-refresh')).toBe(false);
+        expect(screen.findByTestId('repository-tree-refresh-loading')).toBeTruthy();
+    });
+
+    it('hides collapse-all when no folders are expanded', async () => {
+        const screen = await renderRepositoryTreeBrowserView();
+
+        expect(screen.findAllByTestId('repository-tree-collapse-all')).toHaveLength(0);
+        const overflowMenu = screen.findAllByType('ItemRowActions' as any)[0] ?? null;
+        expect(overflowMenu?.props.actions.some((item: any) => item.id === 'repository-tree-collapse-all') ?? false).toBe(false);
     });
 
     it('shows clear button when search is non-empty and refresh clears search cache + reloads tree', async () => {

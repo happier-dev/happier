@@ -52,7 +52,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         context: {
             defaultSessionId: args.sessionId,
             serverId: args.serverId,
-            surface: 'ui_button',
+            surface: 'ui',
             placement: args.placement,
         },
     });

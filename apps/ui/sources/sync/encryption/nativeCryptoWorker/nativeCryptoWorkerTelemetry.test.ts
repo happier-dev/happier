@@ -42,12 +42,14 @@ describe('native crypto worker telemetry', () => {
     it('encodes capability failures as numeric reasons', () => {
         const telemetry = createSyncPerformanceTelemetry({ enabled: true });
 
-        recordNativeCryptoWorkerCapability(telemetry, {
+        const capability = {
             available: false,
             failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.echoFailed,
             warmupMs: 12,
             supportedOperations: [NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1],
-        }, { mode: 'auto' });
+        } as const;
+
+        recordNativeCryptoWorkerCapability(telemetry, capability, { mode: 'auto' });
 
         expect(telemetry.snapshot().events).toEqual([
             expect.objectContaining({

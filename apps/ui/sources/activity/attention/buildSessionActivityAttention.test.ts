@@ -95,4 +95,56 @@ describe('buildSessionActivityAttention', () => {
             subtitle: '~/project/packages/app',
         });
     });
+
+    it('surfaces a recent explicit turn completion as ready attention', () => {
+        const attention = buildSessionActivityAttention({
+            session: Object.assign(createSessionFixture({
+                id: 'session-turn-complete',
+                active: false,
+                presence: 900,
+                seq: 5,
+                lastViewedSessionSeq: 5,
+                metadata: createMetadata(),
+            }), {
+                lastTurnCompletedAt: 980,
+            }),
+            nowMs: 1_000,
+        });
+
+        expect(attention).toMatchObject({
+            sessionId: 'session-turn-complete',
+            attentionState: 'pending',
+            hasAttention: true,
+            lastTurnCompletedAt: 980,
+            reasons: {
+                hasQueuedUserInput: false,
+                hasPendingPermissionRequests: false,
+                hasPendingUserActionRequests: false,
+                isThinking: false,
+            },
+        });
+    });
+
+    it('keeps stale explicit turn completion timestamps without surfacing attention', () => {
+        const attention = buildSessionActivityAttention({
+            session: Object.assign(createSessionFixture({
+                id: 'session-stale-turn-complete',
+                active: false,
+                presence: 1,
+                seq: 5,
+                lastViewedSessionSeq: 5,
+                metadata: createMetadata(),
+            }), {
+                lastTurnCompletedAt: 1_000,
+            }),
+            nowMs: 31_001,
+        });
+
+        expect(attention).toMatchObject({
+            sessionId: 'session-stale-turn-complete',
+            attentionState: 'quiet',
+            hasAttention: false,
+            lastTurnCompletedAt: 1_000,
+        });
+    });
 });

@@ -139,7 +139,7 @@ describe('buildAccountSettingsSnapshot', () => {
                     },
                     'subagents.delegate.start': {
                         enabledPlacements: ['agent_input_chips'],
-                        disabledSurfaces: ['voice_tool'],
+                        disabledSurfaces: ['voice'],
                         disabledPlacements: [],
                         approvalRequiredSurfaces: [],
                     },

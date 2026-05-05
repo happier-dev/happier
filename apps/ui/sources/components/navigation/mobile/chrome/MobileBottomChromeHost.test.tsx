@@ -6,6 +6,10 @@ import { renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import {
+    clearPendingMobileSurfaceTransition,
+    resolvePendingMobileSurfaceTransitionStackOptions,
+} from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,6 +19,8 @@ const pathState = vi.hoisted(() => ({
 const searchParamsState = vi.hoisted(() => ({
     mobileSurface: undefined as string | string[] | undefined,
     worktreeId: undefined as string | string[] | undefined,
+    serverId: undefined as string | string[] | undefined,
+    sourceSurface: undefined as string | string[] | undefined,
 }));
 
 const authState = vi.hoisted(() => ({
@@ -42,11 +48,11 @@ const featureState = vi.hoisted(() => ({
     terminalEmbeddedPtyEnabled: true,
 }));
 const storageMutators = vi.hoisted(() => ({
-    setMobileWorkspaceExperience: vi.fn(),
     setSessionLastMobileSurfaceBySessionId: vi.fn(),
     setProjectLastMobileSurfaceByWorkspaceRefId: vi.fn(),
 }));
 const routerState = vi.hoisted(() => ({
+    back: vi.fn(),
     replace: vi.fn(),
 }));
 
@@ -55,8 +61,11 @@ const expoRouterMock = createExpoRouterMock({
     params: () => ({
         mobileSurface: searchParamsState.mobileSurface,
         worktreeId: searchParamsState.worktreeId,
+        serverId: searchParamsState.serverId,
+        sourceSurface: searchParamsState.sourceSurface,
     }),
     router: {
+        back: () => routerState.back(),
         replace: (value: unknown) => routerState.replace(value),
     },
 });
@@ -72,7 +81,7 @@ vi.mock('./MainAppTabStateProvider', () => ({
 }));
 
 const storageMock = createStorageModuleStub({
-    useLocalSetting: (key: string) => React.useSyncExternalStore(
+    useSetting: (key: string) => React.useSyncExternalStore(
         (listener) => {
             storageListeners.listeners.add(listener);
             return () => {
@@ -82,17 +91,17 @@ const storageMock = createStorageModuleStub({
         () => readSettingValue(key),
         () => readSettingValue(key),
     ),
+    useLocalSetting: (key: string) => React.useSyncExternalStore(
+        (listener) => {
+            storageListeners.listeners.add(listener);
+            return () => {
+                storageListeners.listeners.delete(listener);
+            };
+        },
+        () => readLocalSettingValue(key),
+        () => readLocalSettingValue(key),
+    ),
     useLocalSettingMutable: (key: string) => {
-        if (key === 'mobileWorkspaceExperienceV1') {
-            return [
-                settingsState.mobileWorkspaceExperienceV1,
-                (value: 'classic' | 'cockpit') => {
-                    settingsState.mobileWorkspaceExperienceV1 = value;
-                    storageMutators.setMobileWorkspaceExperience(value);
-                    notifyStorageListeners();
-                },
-            ];
-        }
         if (key === 'sessionLastMobileSurfaceBySessionId') {
             return [
                 settingsState.sessionLastMobileSurfaceBySessionId,
@@ -122,6 +131,13 @@ vi.mock('@/sync/domains/state/storage', () => storageMock);
 function readSettingValue(key: string): unknown {
     if (key === 'mobileWorkspaceExperienceV1') {
         return settingsState.mobileWorkspaceExperienceV1;
+    }
+    return null;
+}
+
+function readLocalSettingValue(key: string): unknown {
+    if (key === 'mobileWorkspaceExperienceV1') {
+        throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
     }
     if (key === 'sessionLastMobileSurfaceBySessionId') {
         return settingsState.sessionLastMobileSurfaceBySessionId;
@@ -169,10 +185,15 @@ vi.mock('./bars/ProjectCockpitTabBar', () => ({
 describe('MobileBottomChromeHost', () => {
     afterEach(() => {
         routerState.replace.mockReset();
-        storageMutators.setMobileWorkspaceExperience.mockReset();
+        routerState.back.mockReset();
         storageMutators.setSessionLastMobileSurfaceBySessionId.mockReset();
         storageMutators.setProjectLastMobileSurfaceByWorkspaceRefId.mockReset();
         storageListeners.listeners.clear();
+        searchParamsState.mobileSurface = undefined;
+        searchParamsState.worktreeId = undefined;
+        searchParamsState.serverId = undefined;
+        searchParamsState.sourceSurface = undefined;
+        clearPendingMobileSurfaceTransition();
     });
 
     it('renders the main app tab bar on the authenticated home route', async () => {
@@ -192,6 +213,24 @@ describe('MobileBottomChromeHost', () => {
 
         const bar = screen.tree.findByType('MainAppTabBar' as never);
         expect(bar.props.activeTab).toBe('sessions');
+    });
+
+    it('ignores a press on the already selected main app tab', async () => {
+        pathState.pathname = '/';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'classic';
+        deviceTypeState.value = 'phone';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        const bar = screen.tree.findByType('MainAppTabBar' as never);
+        act(() => {
+            void bar.props.onTabPress('sessions');
+        });
+
+        expect(tabState.setActiveTab).not.toHaveBeenCalled();
+        expect(routerState.replace).not.toHaveBeenCalled();
     });
 
     it('does not render the main app tab bar on desktop even on the authenticated home route', async () => {
@@ -336,6 +375,90 @@ describe('MobileBottomChromeHost', () => {
             'session-1': 'chat',
         });
         expect(routerState.replace).toHaveBeenCalledWith('/session/session-1?mobileSurface=chat');
+    });
+
+    it('preserves the scoped server id when navigating between session cockpit tabs', async () => {
+        pathState.pathname = '/session/session-1/files';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+        settingsState.embeddedTerminalDockLocation = 'sidebar';
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+        searchParamsState.mobileSurface = undefined;
+        searchParamsState.worktreeId = undefined;
+        searchParamsState.serverId = 'server-b';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        const bar = screen.tree.findByType('SessionCockpitTabBar' as never);
+        await act(async () => {
+            bar.props.onSurfacePress('git');
+        });
+
+        expect(routerState.replace).toHaveBeenCalledWith('/session/session-1/git?serverId=server-b');
+        expect(resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: 'session/[id]/git',
+        })).toEqual({
+            animation: 'slide_from_right',
+            animationTypeForReplace: 'push',
+        });
+    });
+
+    it('waits for the sourced details route to collapse before replacing its source surface', async () => {
+        vi.useFakeTimers();
+        try {
+            pathState.pathname = '/session/session-1/details';
+            authState.isAuthenticated = true;
+            settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+            settingsState.sessionLastMobileSurfaceBySessionId = null;
+            settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+            settingsState.embeddedTerminalDockLocation = 'sidebar';
+            deviceTypeState.value = 'phone';
+            featureState.terminalEmbeddedPtyEnabled = true;
+            searchParamsState.mobileSurface = undefined;
+            searchParamsState.worktreeId = undefined;
+            searchParamsState.serverId = 'server-b';
+            searchParamsState.sourceSurface = 'browse';
+
+            const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+            const screen = await renderScreen(<MobileBottomChromeHost />);
+
+            const bar = screen.tree.findByType('SessionCockpitTabBar' as never);
+            await act(async () => {
+                bar.props.onSurfacePress('git');
+            });
+
+            expect(storageMutators.setSessionLastMobileSurfaceBySessionId).toHaveBeenCalledWith({
+                'session-1': 'git',
+            });
+            expect(resolvePendingMobileSurfaceTransitionStackOptions({
+                routeName: 'session/[id]/git',
+            })).toEqual({
+                animation: 'slide_from_left',
+                animationTypeForReplace: 'pop',
+            });
+            expect(routerState.back).toHaveBeenCalledTimes(1);
+            expect(routerState.replace).not.toHaveBeenCalled();
+
+            await act(async () => {
+                vi.runOnlyPendingTimers();
+            });
+            expect(routerState.replace).not.toHaveBeenCalled();
+
+            pathState.pathname = '/session/session-1/files';
+            searchParamsState.sourceSurface = undefined;
+            await act(async () => {
+                settingsState.projectLastMobileSurfaceByWorkspaceRefId = {};
+                notifyStorageListeners();
+            });
+
+            expect(routerState.replace).toHaveBeenCalledWith('/session/session-1/git?serverId=server-b');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('routes root session surface changes through an explicit mobile-surface hint', async () => {

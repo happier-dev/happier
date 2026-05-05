@@ -60,6 +60,7 @@ vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseMode
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
+    useActiveServerAccountScope: () => null,
     useSettings: () => ({
         serverSelectionGroups: [],
         serverSelectionActiveTargetKind: 'server',

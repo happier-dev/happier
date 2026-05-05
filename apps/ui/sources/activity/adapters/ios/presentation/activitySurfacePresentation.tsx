@@ -63,7 +63,7 @@ export function resolveActivitySurfaceAttentionSymbol(
         case 'action_required':
             return 'exclamationmark.bubble.fill';
         case 'thinking':
-            return 'sparkles';
+            return Math.floor(Date.now() / 1_000) % 2 === 0 ? 'sparkles' : 'sparkles.rectangle.stack.fill';
         case 'pending':
             return 'clock.badge.exclamationmark';
         case 'unread':
@@ -72,6 +72,34 @@ export function resolveActivitySurfaceAttentionSymbol(
         default:
             return 'circle.dotted';
     }
+}
+
+export function resolveActivitySurfaceAttentionTintName(
+    attentionState: ActivitySurfaceSessionViewModel['attentionState'],
+): string {
+    switch (attentionState) {
+        case 'permission_required':
+            return 'systemRed';
+        case 'action_required':
+            return 'systemOrange';
+        case 'thinking':
+            return 'systemBlue';
+        case 'pending':
+            return 'systemYellow';
+        case 'unread':
+            return 'systemIndigo';
+        case 'quiet':
+        default:
+            return 'secondaryLabel';
+    }
+}
+
+export function buildActivitySurfaceAttentionIconModifiers(
+    attentionState: ActivitySurfaceSessionViewModel['attentionState'],
+): BuiltInModifier[] {
+    return [
+        foregroundStyle(PlatformColor(resolveActivitySurfaceAttentionTintName(attentionState))),
+    ];
 }
 
 export function resolveActivitySurfacePrimaryDetailText(
@@ -236,7 +264,10 @@ export function renderActivitySurfaceHeader(
             {primary ? (
                 <>
                     <HStack spacing={8}>
-                        <Image systemName={resolveActivitySurfaceAttentionSymbol(primary.attentionState)} />
+                        <Image
+                            systemName={resolveActivitySurfaceAttentionSymbol(primary.attentionState)}
+                            modifiers={buildActivitySurfaceAttentionIconModifiers(primary.attentionState)}
+                        />
                         <Text modifiers={[font({ weight: 'semibold', design: 'rounded', size: 15 }), lineLimit(1)]}>
                             {primary.title}
                         </Text>
@@ -284,7 +315,7 @@ export function renderActivitySurfaceSessionCard(
         paddingAll?: number;
     }> = {},
 ): React.ReactElement {
-    const actionTarget = options.actionTarget ?? createActivitySurfaceSessionTarget(session.sessionId);
+    const actionTarget = options.actionTarget ?? createActivitySurfaceSessionTarget(session.sessionId, session.serverId);
     const prioritizeStatusText = isActivitySurfaceUrgentAttentionState(session.attentionState);
     const detailLines = resolveActivitySurfaceDetailLines(session, {
         prioritizeStatusText,
@@ -305,7 +336,10 @@ export function renderActivitySurfaceSessionCard(
                 spacing={6}
             >
                 <HStack spacing={8}>
-                    <Image systemName={resolveActivitySurfaceAttentionSymbol(session.attentionState)} />
+                    <Image
+                        systemName={resolveActivitySurfaceAttentionSymbol(session.attentionState)}
+                        modifiers={buildActivitySurfaceAttentionIconModifiers(session.attentionState)}
+                    />
                     <VStack spacing={2}>
                         <Text modifiers={[font({ weight: 'semibold', design: 'rounded', size: 14 }), lineLimit(1)]}>
                             {session.title}

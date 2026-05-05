@@ -35,7 +35,7 @@ describe('getDesktopUpdateBannerModel', () => {
             t: fakeT,
         });
 
-        expect(model.message).toBe('Error');
+        expect(model.message).toBe('Error: network timeout');
         expect(model.actionLabel).toBe('Retry');
         expect(model.actionDisabled).toBe(false);
     });

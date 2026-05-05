@@ -12,12 +12,17 @@ import type { NormalizedMessage } from '../typesRaw';
 import type { PermissionMode } from '../domains/permissions/permissionTypes';
 import type { Profile } from '../domains/profiles/profile';
 import type { Purchases } from '../domains/purchases/purchases';
+import type { AccountPetMetadata } from '../domains/pets/accountPetLibraryTypes';
+import type { LocalPetSourceMetadata } from '../domains/pets/localPetSourceTypes';
 import type { Settings } from '../domains/settings/settings';
+import type { AccountSettingsScope } from '../domains/settings/scope/accountSettingsScope';
+import type { ServerAccountScope } from '../domains/scope/serverAccountScope';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
 import type { ConcurrentSessionListCacheByServerId } from '../domains/session/listing/concurrentSessionListCache';
 import type { SessionListIndexItem } from '../domains/sessionList/sessionListIndex';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import type { CustomerInfo } from '../domains/purchases/types';
+import type { ApplyMachinesOptions } from './domains/machines';
 import type { SessionMessages } from './domains/messages';
 import type { SessionPending } from './domains/pending';
 import type {
@@ -40,18 +45,27 @@ export type SessionModelMode = NonNullable<Session['modelMode']>;
 export interface SettingsDomainSlice {
     settings: Settings;
     settingsVersion: number | null;
+    settingsScope: AccountSettingsScope | null;
     localSettings: LocalSettings;
     applySettings: (settings: Settings, version: number) => void;
     replaceSettings: (settings: Settings, version: number) => void;
+    activateSettingsScope: (scope: AccountSettingsScope) => void;
+    clearSettingsScope: () => void;
+    applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
+    replaceSettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     applySettingsLocal: (settings: Partial<Settings>) => void;
     applyLocalSettings: (settings: Partial<LocalSettings>, options?: { source?: SettingsAnalyticsSource }) => void;
 }
 
 export interface ProfileDomainSlice {
     profile: Profile;
+    profileScope: ServerAccountScope | null;
     purchases: Purchases;
     applyPurchases: (customerInfo: CustomerInfo) => void;
+    activateProfileScope: (scope: ServerAccountScope) => void;
+    clearProfileScope: () => void;
     applyProfile: (profile: Profile) => void;
+    applyProfileForScope: (scope: ServerAccountScope, profile: Profile) => void;
 }
 
 export interface SessionsDomainSlice {
@@ -67,7 +81,10 @@ export interface SessionsDomainSlice {
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]>;
     actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
+    sessionLocalStateScope: ServerAccountScope | null;
     isDataReady: boolean;
+    activateSessionLocalStateScope: (scope: ServerAccountScope) => void;
+    clearSessionLocalStateScope: () => void;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
     replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
     applySessionListRenderablePatches: (
@@ -86,9 +103,11 @@ export interface SessionsDomainSlice {
     clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => void;
     updateSessionDraft: (sessionId: string, draft: string | null) => void;
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
+    setSessionReviewCommentDraftIncluded: (sessionId: string, commentId: string, included: boolean) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
     clearSessionReviewCommentDrafts: (sessionId: string) => void;
     upsertWorkspaceReviewCommentDraft: (workspaceCacheKey: string, draft: ReviewCommentDraft) => void;
+    setWorkspaceReviewCommentDraftIncluded: (workspaceCacheKey: string, commentId: string, included: boolean) => void;
     deleteWorkspaceReviewCommentDraft: (workspaceCacheKey: string, commentId: string) => void;
     clearWorkspaceReviewCommentDrafts: (workspaceCacheKey: string) => void;
     createSessionActionDraft: (
@@ -106,6 +125,7 @@ export interface SessionsDomainSlice {
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionThinkingGrace: (sessionId: string) => void;
+    applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
     markSessionViewed: (sessionId: string) => void;
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode) => void;
@@ -121,8 +141,8 @@ export interface MachinesDomainSlice {
      */
     machineListByServerId: Record<string, Machine[] | null>;
     machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
-    applyMachines: (machines: Machine[], replace?: boolean) => void;
-    replaceMachineDisplays: (machines: MachineDisplayRenderable[]) => void;
+    applyMachines: (machines: Machine[], replace?: boolean, options?: ApplyMachinesOptions) => void;
+    replaceMachineDisplays: (machines: MachineDisplayRenderable[], options?: ApplyMachinesOptions) => void;
 }
 
 export interface MessagesDomainSlice {
@@ -196,6 +216,16 @@ export interface AutomationsDomainSlice {
     removeAutomation: (automationId: string) => void;
     setAutomationRuns: (automationId: string, runs: AutomationRun[]) => void;
     upsertAutomationRun: (run: AutomationRun) => void;
+}
+
+export interface PetsDomainSlice {
+    accountPetsById: Record<string, AccountPetMetadata>;
+    localPetSourcesBySourceKey: Record<string, LocalPetSourceMetadata>;
+    applyAccountPets: (pets: AccountPetMetadata[]) => void;
+    upsertAccountPet: (pet: AccountPetMetadata) => void;
+    removeAccountPet: (petId: string) => void;
+    upsertLocalPetSources: (sources: readonly LocalPetSourceMetadata[]) => void;
+    removeLocalPetSource: (sourceKey: string) => void;
 }
 
 export interface ProjectDomainSlice {
@@ -312,6 +342,7 @@ export type StorageState = SettingsDomainSlice
     & TodosDomainSlice
     & ArtifactsDomainSlice
     & AutomationsDomainSlice
+    & PetsDomainSlice
     & ProjectDomainSlice
     & FriendsDomainSlice
     & FeedDomainSlice

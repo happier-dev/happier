@@ -48,6 +48,7 @@ export type UntranslatedString = Readonly<{
 
 const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'OK',
+    'Git',
     'GitHub',
     'OAuth',
     'API',
@@ -61,6 +62,7 @@ const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'TCP',
     'UDP',
     'Happier',
+    'happier',
     // Proper nouns / product feature names that are intentionally not localized.
     'Zen',
     'Codex',

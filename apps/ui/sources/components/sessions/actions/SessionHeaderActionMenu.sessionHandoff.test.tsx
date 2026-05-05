@@ -23,6 +23,11 @@ const teleportVoiceAgentToSessionRootMock = vi.hoisted(() => vi.fn());
 const resolveSessionActionDefaultBackendMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const sessionSetManualReadStateWithServerScopeMock = vi.hoisted(() => vi.fn(async (
+  _sessionId: string,
+  _readState: 'read' | 'unread',
+  _opts?: { serverId?: string | null },
+) => ({ success: true })));
 const patchSessionMetadataWithRetryMock = vi.hoisted(() => vi.fn(async (sessionId: string, updater: (metadata: any) => any, _options?: { serverId?: string }) => {
   const session = storageState.current.sessions[sessionId];
   if (session) {
@@ -175,14 +180,14 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => {
         id: 'session.handoff',
         title: 'Hand off session',
         description: 'Move the current session',
-        surfaces: { ui_button: true },
+        surfaces: { ui: true },
         placements: ['session_action_menu'],
       },
       {
         id: 'subagents.plan.start',
         title: 'Start plan run',
         description: 'Plan changes',
-        surfaces: { ui_button: true },
+        surfaces: { ui: true },
         placements: ['session_action_menu'],
       },
     ],
@@ -257,6 +262,14 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
 }));
 
+vi.mock('@/sync/ops', () => ({
+  sessionSetManualReadStateWithServerScope: (
+    sessionId: string,
+    readState: 'read' | 'unread',
+    opts?: { serverId?: string | null },
+  ) => sessionSetManualReadStateWithServerScopeMock(sessionId, readState, opts),
+}));
+
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
   useSessionReachableMachineTarget: () => reachableMachineTargetState.current,
 }));
@@ -314,6 +327,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     resolveSessionActionDefaultBackendMock.mockReset();
     readMachineTargetForSessionMock.mockReset();
     machineRpcWithServerScopeMock.mockReset();
+    sessionSetManualReadStateWithServerScopeMock.mockReset();
     patchSessionMetadataWithRetryMock.mockReset();
     applySessionMetadataLocallyMock.mockReset();
     readMachineTargetForSessionMock.mockReturnValue(null);
@@ -435,6 +449,58 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     expect(trigger.props.testID).toBe('session-header-action-menu-trigger');
     expect(trigger.props.accessibilityLabel).toBe('session.actionMenu.openA11y');
+  });
+
+  it('surfaces manual mark-unread for read sessions and sends it through the selected server scope', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_read_header"
+          session={{
+            id: 'sess_read_header',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            serverId: 'server-header',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === 'session.mark-unread')).toBe(true);
+
+    await act(async () => {
+      dropdown.props.onSelect('session.mark-unread');
+    });
+
+    expect(sessionSetManualReadStateWithServerScopeMock).toHaveBeenCalledWith(
+      'sess_read_header',
+      'unread',
+      { serverId: 'server_a' },
+    );
+  });
+
+  it('hides manual read-state actions for archived sessions in the header menu', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_archived_header"
+          session={{
+            id: 'sess_archived_header',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            archivedAt: 10,
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === 'session.mark-unread' || item?.id === 'session.mark-read')).toBe(false);
   });
 
   it('threads the preferred session server id into the default action executor server lookup', async () => {

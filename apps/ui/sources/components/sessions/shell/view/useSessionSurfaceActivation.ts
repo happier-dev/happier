@@ -31,7 +31,6 @@ export function useSessionSurfaceActivation(
     React.useLayoutEffect(() => {
         if (!normalizedSessionId) return;
         if (!input.surfaceVisible) {
-            markSessionSurfaceHidden(normalizedSessionId);
             return;
         }
         markSessionSurfaceVisible(normalizedSessionId);

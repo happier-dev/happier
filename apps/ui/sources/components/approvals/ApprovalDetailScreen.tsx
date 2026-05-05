@@ -195,7 +195,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
         const res = await executor.execute(
           'approval.request.decide' as ActionId,
           { artifactId: props.artifactId, decision },
-          { surface: 'ui_button', ...(approvalServerId ? { serverId: approvalServerId } : {}) },
+          { surface: 'ui', ...(approvalServerId ? { serverId: approvalServerId } : {}) },
         );
         if (!res.ok) {
           throw new Error(res.errorCode);

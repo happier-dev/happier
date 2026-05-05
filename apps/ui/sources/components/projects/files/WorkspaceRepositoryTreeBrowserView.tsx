@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { ActivityIndicator, Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 
@@ -80,6 +80,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     const [showChangedOnly, setShowChangedOnly] = React.useState(false);
     const [detailsMode, setDetailsMode] = React.useState(false);
     const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
+    const [treeRootLoading, setTreeRootLoading] = React.useState(false);
     const [uploadMenuOpen, setUploadMenuOpen] = React.useState(false);
     const [uploadDestinationDir, setUploadDestinationDir] = React.useState('');
 
@@ -172,6 +173,12 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
 
     const shouldShowSearchResults = !showChangedOnly && searchQuery.trim().length > 0;
     const canClearSearch = searchQuery.length > 0;
+
+    React.useEffect(() => {
+        if (shouldShowSearchResults || showChangedOnly) {
+            setTreeRootLoading(false);
+        }
+    }, [shouldShowSearchResults, showChangedOnly]);
 
     const refresh = React.useCallback(() => {
         workspaceFileSearchCache.clearCache(props.workspaceCacheKey);
@@ -453,24 +460,30 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             },
             {
                 id: 'workspace-repository-tree-refresh',
-                priority: 0,
+                priority: 10,
                 order: 5,
-                icon: <Octicons name="sync" size={16} color={theme.colors.textSecondary} />,
+                icon: treeRootLoading ? (
+                    <ActivityIndicator testID="workspace-repository-tree-refresh-loading" size="small" color={theme.colors.textSecondary} />
+                ) : (
+                    <Octicons name="sync" size={16} color={theme.colors.textSecondary} />
+                ),
                 menuIcon: 'refresh-outline',
                 accessibilityLabel: t('common.refresh'),
                 onPress: refresh,
             },
-            {
+        ];
+
+        if (expandedPaths.length > 0) {
+            actions.push({
                 id: 'workspace-repository-tree-collapse-all',
-                priority: 7,
+                priority: 0,
                 order: 6,
                 icon: <Ionicons name="contract-outline" size={16} color={theme.colors.textSecondary} />,
                 menuIcon: 'contract-outline',
                 accessibilityLabel: t('files.repositoryCollapseAll'),
-                disabled: expandedPaths.length === 0,
                 onPress: collapseAll,
-            },
-        ];
+            });
+        }
 
         if (props.onRequestClose) {
             actions.push({
@@ -509,6 +522,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         refresh,
         setSearchQuery,
         showChangedOnly,
+        treeRootLoading,
         transferActionsAvailable,
         uploadDestinationDir.length,
         theme.colors.textLink,
@@ -694,6 +708,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                             onWebDropTargetChange={Platform.OS === 'web' ? handleWebDropTargetChange : null}
                             webDropHoverPath={props.webDropHoverPath ?? webDropState.dropHoverPath}
                             renderRowActions={props.renderRowActions ?? defaultRenderRowActions}
+                            showInlineLoadingHeader={false}
+                            onRootLoadingChange={setTreeRootLoading}
                         />
                     )}
                     <RepositoryTreeDropOverlay

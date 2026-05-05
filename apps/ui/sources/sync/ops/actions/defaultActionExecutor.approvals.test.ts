@@ -206,7 +206,7 @@ describe('createDefaultActionExecutor approvals', () => {
         const res = await executor.execute(
             'approval.request.decide' as any,
             { artifactId: 'artifact-1', decision: 'approve' },
-            { surface: 'ui_button' },
+            { surface: 'ui' },
         );
 
         expect(res.ok).toBe(true);
@@ -214,12 +214,12 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(patchSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
     });
 
-    it('routes surfaced ui_button actions through approvals when settings require approval for that surface', async () => {
+    it('routes surfaced ui actions through approvals when settings require approval for that surface', async () => {
         state.settings.actionsSettingsV1.actions['review.start'] = {
             enabledPlacements: [],
             disabledSurfaces: [],
             disabledPlacements: [],
-            approvalRequiredSurfaces: ['ui_button'],
+            approvalRequiredSurfaces: ['ui'],
         };
         sessionExecutionRunStart.mockClear();
 
@@ -229,7 +229,7 @@ describe('createDefaultActionExecutor approvals', () => {
         const res = await executor.execute(
             'review.start' as any,
             { sessionId: 's1', engineIds: ['codex'], instructions: 'Needs approval' },
-            { surface: 'ui_button' },
+            { surface: 'ui' },
         );
 
         expect(res.ok).toBe(true);
@@ -249,7 +249,7 @@ describe('createDefaultActionExecutor approvals', () => {
         const res = await executor.execute(
             'approval.request.decide' as any,
             { artifactId: 'artifact-1', decision: 'approve' },
-            { surface: 'ui_button' },
+            { surface: 'ui' },
         );
 
         expect(res.ok).toBe(true);
@@ -286,7 +286,7 @@ describe('createDefaultActionExecutor approvals', () => {
         const res = await executor.execute(
             'approval.request.decide' as any,
             { artifactId: 'artifact-stop', decision: 'approve' },
-            { surface: 'ui_button' },
+            { surface: 'ui' },
         );
 
         expect(res.ok).toBe(true);

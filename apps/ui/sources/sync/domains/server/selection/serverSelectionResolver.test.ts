@@ -72,6 +72,23 @@ describe('serverSelectionResolver', () => {
         });
     });
 
+    it('falls back to active server when an explicit server target is stale', () => {
+        const resolved = resolveActiveServerSelection({
+            activeServerId: 'server-b',
+            availableServerIds: ['server-a', 'server-b'],
+            settings: {
+                serverSelectionGroups: groupProfiles,
+                serverSelectionActiveTargetKind: 'server',
+                serverSelectionActiveTargetId: 'server-a',
+            },
+        });
+
+        expect(resolved.activeTarget).toEqual({ kind: 'server', id: 'server-b', serverId: 'server-b' });
+        expect(resolved.activeServerId).toBe('server-b');
+        expect(resolved.allowedServerIds).toEqual(['server-b']);
+        expect(resolved.explicit).toBe(false);
+    });
+
     it('preserves the active server when no server profiles are available yet', () => {
         const resolved = resolveActiveServerSelection({
             activeServerId: 'server-a',

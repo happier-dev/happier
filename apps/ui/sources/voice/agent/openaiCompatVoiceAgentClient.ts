@@ -63,7 +63,7 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
       settings,
       serverId: getActiveServerSnapshot().serverId,
       machineId: typeof sessionMetadata?.machineId === 'string' ? sessionMetadata.machineId : null,
-      surfaces: ['voice_action_block'],
+      surfaces: ['voice'],
     });
     const systemAppendBlocks = await resolveUiVoicePromptStackBlocks({
       profileId: params.profileId ?? null,

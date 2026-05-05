@@ -7,6 +7,7 @@ type NavigationShellStorageModuleFactory = (
 ) => unknown | Promise<unknown>;
 
 type InstallNavigationShellCommonModuleMocksOptions = Readonly<{
+    appPaneProvider?: NavigationShellModuleFactory;
     modal?: NavigationShellModuleFactory;
     reactNative?: NavigationShellModuleFactory;
     router?: NavigationShellModuleFactory;
@@ -17,6 +18,7 @@ type InstallNavigationShellCommonModuleMocksOptions = Readonly<{
 
 const navigationShellModuleState = vi.hoisted(() => ({
     options: {
+        appPaneProvider: undefined as NavigationShellModuleFactory | undefined,
         modal: undefined as NavigationShellModuleFactory | undefined,
         reactNative: undefined as NavigationShellModuleFactory | undefined,
         router: undefined as NavigationShellModuleFactory | undefined,
@@ -30,6 +32,7 @@ export function installNavigationShellCommonModuleMocks(
     options: InstallNavigationShellCommonModuleMocksOptions = {},
 ) {
     navigationShellModuleState.options = {
+        appPaneProvider: options.appPaneProvider,
         modal: options.modal,
         reactNative: options.reactNative,
         router: options.router,
@@ -96,5 +99,26 @@ export function installNavigationShellCommonModuleMocks(
 
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({});
+    });
+
+    vi.mock('@/components/appShell/panes/AppPaneProvider', async () => {
+        const activeOptions = navigationShellModuleState.options;
+        if (activeOptions.appPaneProvider) {
+            return await activeOptions.appPaneProvider();
+        }
+
+        return {
+            useAppPaneContext: () => ({
+                dispatch: vi.fn(),
+                state: {
+                    activeScopeId: null,
+                    focusMode: { scopeId: null },
+                    scopes: {},
+                },
+                getDriver: () => null,
+                driverRegistryVersion: 1,
+                registerDriver: () => () => {},
+            }),
+        };
     });
 }

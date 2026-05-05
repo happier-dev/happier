@@ -2,14 +2,12 @@ export type AppShellChromeHost =
     | 'none'
     | 'web-top-right'
     | 'unauth-shell'
-    | 'focus-mode-fallback'
     | 'narrow-desktop-fallback';
 
 export type ResolveAppShellChromeHostParams = Readonly<{
     isAuthenticated: boolean;
     isTauriDesktop: boolean;
     isTablet: boolean;
-    editorFocusModeEnabled: boolean;
     isTerminalConnectRoute: boolean;
 }>;
 
@@ -26,10 +24,6 @@ export function resolveAppShellChromeHost(
 
     if (!params.isAuthenticated) {
         return 'unauth-shell';
-    }
-
-    if (params.editorFocusModeEnabled) {
-        return 'focus-mode-fallback';
     }
 
     if (!params.isTablet) {

@@ -13,7 +13,7 @@ import { getTempData } from '@/utils/sessions/tempDataStore';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { resolveSessionRouteAuthRecoveryState } from '@/hooks/session/sessionRouteAuthRecovery';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useEndpointConnectivity, useLocalSetting, useSyncError } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -82,12 +82,8 @@ export default function SessionRouteIndex() {
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
 
-    const [activeServerGeneration, setActiveServerGeneration] = React.useState(() => getActiveServerSnapshot().generation);
-    React.useEffect(() => {
-        return subscribeActiveServer((snapshot) => {
-            setActiveServerGeneration(snapshot.generation);
-        });
-    }, []);
+    const activeServerSnapshot = useActiveServerSnapshot();
+    const activeServerGeneration = activeServerSnapshot.generation;
 
     const sessionHydrated = useHydrateSessionForRoute(
         sessionId,
@@ -98,11 +94,11 @@ export default function SessionRouteIndex() {
     const authRecoveryState = React.useMemo(() => {
         return resolveSessionRouteAuthRecoveryState({
             routeParams: params as Record<string, string | string[] | undefined>,
-            activeServerId: getActiveServerSnapshot().serverId,
+            activeServerId: activeServerSnapshot.serverId,
             endpointStatus: endpointConnectivity.status,
             syncError,
         });
-    }, [endpointConnectivity.status, params, syncError]);
+    }, [activeServerSnapshot.serverId, endpointConnectivity.status, params, syncError]);
     const authRecoveryActive = Boolean(authRecoveryState.authSurfaceState);
 
     if (!sessionId) {
@@ -134,6 +130,7 @@ export default function SessionRouteIndex() {
                 paneUrlState={paneUrlState ?? undefined}
                 initialAttachmentDrafts={recoverableAttachmentDrafts}
                 terminalTabAvailable={terminalTabAvailable}
+                routeServerId={routeServerId.trim() || undefined}
             />
         );
     }

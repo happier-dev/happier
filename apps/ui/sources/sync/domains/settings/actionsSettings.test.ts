@@ -18,8 +18,8 @@ describe('actionsSettings', () => {
             },
         };
 
-        expect(isActionEnabledInState(state, 'review.start' as any, { surface: 'ui_button', placement: 'command_palette' } as any)).toBe(false);
-        expect(isActionEnabledInState(state, 'subagents.plan.start' as any, { surface: 'ui_button', placement: 'command_palette' } as any)).toBe(true);
+        expect(isActionEnabledInState(state, 'review.start' as any, { surface: 'ui', placement: 'command_palette' } as any)).toBe(false);
+        expect(isActionEnabledInState(state, 'subagents.plan.start' as any, { surface: 'ui', placement: 'command_palette' } as any)).toBe(true);
         expect(isActionEnabledInState(state, 'subagents.plan.start' as any, { surface: 'mcp' } as any)).toBe(false);
     });
 
@@ -41,7 +41,7 @@ describe('actionsSettings', () => {
             },
         };
 
-        expect(isActionEnabledInState(disabledState, 'review.start' as any, { surface: 'ui_button', placement: 'command_palette' } as any)).toBe(false);
-        expect(isActionEnabledInState(enabledState, 'review.start' as any, { surface: 'ui_button', placement: 'command_palette' } as any)).toBe(true);
+        expect(isActionEnabledInState(disabledState, 'review.start' as any, { surface: 'ui', placement: 'command_palette' } as any)).toBe(false);
+        expect(isActionEnabledInState(enabledState, 'review.start' as any, { surface: 'ui', placement: 'command_palette' } as any)).toBe(true);
     });
 });

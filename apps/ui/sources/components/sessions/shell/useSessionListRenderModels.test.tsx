@@ -1,12 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 import type { VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { useSessionListRenderModels } from './useSessionListRenderModels';
 
 describe('useSessionListRenderModels', () => {
+    beforeEach(() => {
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
+    });
+
     it('reuses the same empty render model bundle for empty visible list input', async () => {
         const paneState: VisibleSessionListPaneState = {
             summary: {
@@ -65,7 +72,7 @@ describe('useSessionListRenderModels', () => {
                     type: 'session',
                     sessionId: 'session-1',
                 },
-            ] as any[],
+            ] satisfies ReadonlyArray<SessionListIndexItem>,
             hasHiddenInactiveSessions: false,
             showLoading: false,
             showEmptyState: false,
@@ -119,5 +126,57 @@ describe('useSessionListRenderModels', () => {
         expect(first).toBe(second);
         expect(first.listItems).toHaveLength(1);
         expect(first.rowViewModels).toHaveLength(1);
+    });
+
+    it('records low-volume render derivation telemetry for non-empty list models', async () => {
+        syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
+        syncPerformanceTelemetry.reset();
+        const paneState = {
+            summary: {
+                sessionsReady: true,
+                sessionCount: 1,
+            },
+            visibleSessionListIndex: [
+                {
+                    type: 'header',
+                    title: 'Active',
+                    headerKind: 'active',
+                    groupKey: 'active',
+                    serverId: 'server-1',
+                },
+                {
+                    type: 'session',
+                    sessionId: 'session-1',
+                    serverId: 'server-1',
+                    groupKey: 'active',
+                },
+            ] satisfies ReadonlyArray<SessionListIndexItem>,
+            hasHiddenInactiveSessions: false,
+            showLoading: false,
+            showEmptyState: false,
+        } as VisibleSessionListPaneState;
+
+        await renderHook(() =>
+            useSessionListRenderModels({
+                paneState,
+                collapsedGroupKeys: {},
+                allMachines: [],
+                workspaceLabels: {},
+                workspaceRefs: [],
+                pinnedKeySet: new Set<string>(),
+                sessionTags: {},
+                selectedSessionId: 'session-1',
+                showServerBadge: false,
+                showPinnedServerBadge: false,
+            }));
+
+        const events = syncPerformanceTelemetry.snapshot().events;
+        expect(events.find((event) => event.name === 'ui.sessionsList.render.collapsedFiltering')?.fields)
+            .toMatchObject({ items: 2, collapsedGroups: 0 });
+        expect(events.find((event) => event.name === 'ui.sessionsList.render.reachabilityDisplayMap')?.fields)
+            .toMatchObject({ items: 2, machines: 0, displayRows: 1 });
+        expect(events.find((event) => event.name === 'ui.sessionsList.render.selectedMapping')?.fields)
+            .toMatchObject({ items: 2, selectable: 1 });
+        syncPerformanceTelemetry.configure({ enabled: false });
     });
 });

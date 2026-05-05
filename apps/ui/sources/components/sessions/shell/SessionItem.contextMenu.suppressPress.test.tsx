@@ -3,9 +3,13 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const sessionRenameSpy = vi.fn(async () => ({ success: true }));
+const modalPromptSpy = vi.fn(async () => 'Renamed Session');
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -15,6 +19,10 @@ vi.mock('react-native-gesture-handler', () => ({
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
+vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
+    ContextMenu: (props: any) => React.createElement('ContextMenu', props),
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
@@ -75,6 +83,14 @@ installSessionShellCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: modalPromptSpy,
+            },
+        }).module;
+    },
     storage: async (_importOriginal) => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
@@ -97,10 +113,22 @@ installSessionShellCommonModuleMocks({
     },
 });
 
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionRename: sessionRenameSpy,
+        },
+    });
+});
+
 describe('SessionItem context menu press suppression', () => {
     afterEach(() => {
         standardCleanup();
         navigateToSessionSpy.mockClear();
+        modalPromptSpy.mockClear();
+        sessionRenameSpy.mockClear();
         platformOs = 'ios';
         vi.useRealTimers();
     });
@@ -258,5 +286,52 @@ describe('SessionItem context menu press suppression', () => {
             borderless: false,
             foreground: true,
         });
+    });
+
+    it('opens the rename prompt after the native context menu close turn', async () => {
+        vi.useFakeTimers();
+
+        const { SessionItem } = await import('./SessionItem');
+        const session = createSessionFixture({
+            id: 'sess_rename',
+            metadata: {
+                name: 'Old Session',
+                serverId: 'server_a',
+                path: '/repo',
+                host: 'devbox',
+            },
+        });
+        const onNativeContextMenuOpenChange = vi.fn();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                nativeContextMenuOpen={true}
+                onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
+                serverId="server_a"
+            />,
+        );
+
+        const contextMenu = screen.findByType('ContextMenu' as any);
+        await act(async () => {
+            contextMenu.props.onSelect('rename');
+        });
+
+        expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(false);
+        expect(modalPromptSpy).not.toHaveBeenCalled();
+        expect(sessionRenameSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            vi.advanceTimersByTime(0);
+        });
+
+        expect(modalPromptSpy).toHaveBeenCalled();
+        expect(sessionRenameSpy).toHaveBeenCalledWith('sess_rename', 'Renamed Session', { serverId: 'server_a' });
     });
 });

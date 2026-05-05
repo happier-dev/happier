@@ -18,45 +18,34 @@ import { SessionEmbeddedTerminalPane } from '@/components/sessions/terminal/Sess
 import { SESSION_PRIMARY_TERMINAL_INSTANCE_ID } from '@/components/sessions/terminal/embeddedTerminalDocking';
 import { readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import { t } from '@/text';
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 import { createSessionFileDetailsTab } from './details/sessionDetailsTabBuilders';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { usePaneFocusMode } from '@/components/appShell/panes/focusMode/usePaneFocusMode';
+import {
+    SessionCommitDetailsViewForPanel,
+    SessionFileDetailsViewForPanel,
+    SessionScmReviewDetailsViewForPanel,
+    SessionScmStashDetailsViewForPanel,
+    SessionSubagentDetailsViewForPanel,
+} from './SessionDetailsPanelDetailViews';
 
 export type SessionDetailsPanelProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    presentation?: 'pane' | 'screen';
     /**
      * Optional override for the close action. Used by fullscreen/mobile routes that render the same
      * surface as the desktop details pane but need to navigate back in the router stack.
      */
     onRequestClose?: () => void;
+    /**
+     * Cockpit embeds details inside the shared session chrome, so the per-panel close/focus
+     * controls would duplicate route-level navigation controls.
+     */
+    showHeaderActions?: boolean;
 }>;
-
-const LazySessionFileDetailsView = React.lazy(async () => {
-    const mod = await import('@/components/sessions/files/views/SessionFileDetailsView');
-    return { default: mod.SessionFileDetailsView };
-});
-
-const LazySessionCommitDetailsView = React.lazy(async () => {
-    const mod = await import('@/components/sessions/files/views/SessionCommitDetailsView');
-    return { default: mod.SessionCommitDetailsView };
-});
-
-const LazySessionScmReviewDetailsView = React.lazy(async () => {
-    const mod = await import('@/components/sessions/files/views/SessionScmReviewDetailsView');
-    return { default: mod.SessionScmReviewDetailsView };
-});
-
-const LazySessionScmStashDetailsView = React.lazy(async () => {
-    const mod = await import('@/components/sessions/files/views/SessionScmStashDetailsView');
-    return { default: mod.SessionScmStashDetailsView };
-});
-
-const LazySessionSubagentDetailsView = React.lazy(async () => {
-    const mod = await import('@/components/sessions/agents/details/SessionSubagentDetailsView');
-    return { default: mod.SessionSubagentDetailsView };
-});
 
 function asResource(value: unknown): { kind: string } | null {
     if (!value || typeof value !== 'object') return null;
@@ -112,9 +101,11 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
     const insets = useChromeSafeAreaInsets();
     const pane = useAppPaneScope(props.scopeId);
     const requestClose = props.onRequestClose ?? pane.closeDetails;
-    const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
-    const [, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
+    const paneFocusMode = usePaneFocusMode(props.scopeId);
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
+    const showHeaderActions = props.showHeaderActions !== false;
+    const closeButtonAtStart = showHeaderActions && props.presentation === 'screen' && Platform.OS !== 'web';
+    const panelPaddingTop = closeButtonAtStart ? 0 : insets.top;
 
     const openFileTab = React.useCallback((path: string, intent: 'default' | 'pinned' = 'default') => {
         deferOnWeb(() => {
@@ -128,7 +119,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             if (isFileResource(tab.resource)) {
                 const anchor = (tab.resource as any)?.deepLinkAnchor ?? null;
                 return (
-                    <LazySessionFileDetailsView
+                    <SessionFileDetailsViewForPanel
                         sessionId={props.sessionId}
                         filePath={tab.resource.path}
                         deepLinkAnchor={anchor}
@@ -147,7 +138,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             if (isCommitResource(tab.resource)) {
                 const sha = (tab.resource as any)?.sha ?? (tab.resource as any)?.commitHash ?? '';
                 return (
-                    <LazySessionCommitDetailsView
+                    <SessionCommitDetailsViewForPanel
                         sessionId={props.sessionId}
                         sha={String(sha)}
                         onBack={requestClose}
@@ -161,14 +152,14 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         if (resource?.kind === 'scmReview') {
             if (isScmReviewResource(tab.resource)) {
                 return (
-                    <LazySessionScmReviewDetailsView sessionId={props.sessionId} scopeId={props.scopeId} />
+                    <SessionScmReviewDetailsViewForPanel sessionId={props.sessionId} scopeId={props.scopeId} />
                 );
             }
         }
         if (resource?.kind === 'scmStash') {
             if (isScmStashResource(tab.resource)) {
                 return (
-                    <LazySessionScmStashDetailsView
+                    <SessionScmStashDetailsViewForPanel
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
                         onOpenFile={(path) => openFileTab(path, 'default')}
@@ -198,7 +189,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         if (resource?.kind === 'subagent') {
             if (isSubagentResource(tab.resource)) {
                 return (
-                    <LazySessionSubagentDetailsView
+                    <SessionSubagentDetailsViewForPanel
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
                         subagentId={tab.resource.subagentId}
@@ -256,54 +247,82 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         tabClose: (safeTabKey: string) => resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-details-tab-close-${safeTabKey}`),
     }), [sessionScreenTestIdsEnabled]);
 
-    const renderHeaderActions = React.useCallback(() => (
-        <>
-            {Platform.OS === 'web' ? (
-                <Pressable
-                    onPress={() => setEditorFocusModeEnabled(!editorFocusModeEnabled)}
-                    testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-focus-toggle')}
-                    style={iconButtonStyle}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                        editorFocusModeEnabled
-                            ? t('session.detailsPanel.exitFocusModeA11y')
-                            : t('session.detailsPanel.enterFocusModeA11y')
-                    }
-                >
-                    <Ionicons
-                        name={editorFocusModeEnabled ? 'contract-outline' : 'expand-outline'}
-                        size={18}
-                        color={theme.colors.textSecondary}
-                    />
-                </Pressable>
-            ) : null}
-            <Pressable
-                onPress={requestClose}
-                testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-close')}
-                style={iconButtonStyle}
-                accessibilityRole="button"
-                accessibilityLabel={t('session.detailsPanel.closeA11y')}
-            >
+    const closeButton = (
+        <Pressable
+            onPress={requestClose}
+            testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-close')}
+            style={closeButtonAtStart ? undefined : iconButtonStyle}
+            hitSlop={closeButtonAtStart ? 15 : undefined}
+            accessibilityRole="button"
+            accessibilityLabel={closeButtonAtStart ? t('common.back') : t('session.detailsPanel.closeA11y')}
+        >
+            {closeButtonAtStart ? (
+                <SafeIonicons
+                    name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+                    size={24}
+                    color={theme.colors.header.tint}
+                />
+            ) : (
                 <Octicons name="chevron-right" size={18} color={theme.colors.textSecondary} />
-            </Pressable>
-        </>
-    ), [
-        editorFocusModeEnabled,
+            )}
+        </Pressable>
+    );
+
+    const renderHeaderLeadingActions = React.useCallback(() => (
+        showHeaderActions && closeButtonAtStart ? closeButton : null
+    ), [closeButton, closeButtonAtStart, showHeaderActions]);
+
+    const renderHeaderActions = React.useCallback(() => {
+        if (!showHeaderActions) {
+            return null;
+        }
+
+        return (
+            <>
+                {Platform.OS === 'web' ? (
+                    <Pressable
+                        onPress={paneFocusMode.toggle}
+                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-focus-toggle')}
+                        style={iconButtonStyle}
+                        accessibilityRole="button"
+                        disabled={!paneFocusMode.canEnter}
+                        accessibilityLabel={
+                            paneFocusMode.active
+                                ? t('session.detailsPanel.exitFocusModeA11y')
+                                : t('session.detailsPanel.enterFocusModeA11y')
+                        }
+                    >
+                        <Ionicons
+                            name={paneFocusMode.active ? 'contract-outline' : 'expand-outline'}
+                            size={18}
+                            color={theme.colors.textSecondary}
+                        />
+                    </Pressable>
+                ) : null}
+                {closeButtonAtStart ? null : closeButton}
+            </>
+        );
+    }, [
+        closeButton,
+        closeButtonAtStart,
         iconButtonStyle,
-        requestClose,
+        paneFocusMode.active,
+        paneFocusMode.canEnter,
+        paneFocusMode.toggle,
         sessionScreenTestIdsEnabled,
-        setEditorFocusModeEnabled,
+        showHeaderActions,
         theme.colors.textSecondary,
     ]);
 
     return (
         <DetailsSplitWorkspace
             pane={pane}
-            paddingTop={insets.top}
+            paddingTop={panelPaddingTop}
             headerPaddingTop={10}
             testIds={testIds}
             resolveTabIconName={(tab) => resolveProviderSessionDetailsTabIconName(tab)}
             renderTabContent={renderTabContent}
+            renderHeaderLeadingActions={renderHeaderLeadingActions}
             renderHeaderActions={renderHeaderActions}
         />
     );

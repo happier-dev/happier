@@ -38,6 +38,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildActivitySurfaceSnapshot } from '@/activity/presentation/activitySurfaceSnapshot';
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import {
+    resolveActivitySurfaceAttentionTintName,
     resolveActivitySurfaceAttentionSymbol,
     resolveActivitySurfaceCompactLabel,
     renderActivitySurfaceCounts,
@@ -48,7 +49,10 @@ import {
 } from './activitySurfacePresentation';
 
 function createSessionCard(overrides: Partial<ActivitySurfaceSessionViewModel> = {}): ActivitySurfaceSessionViewModel {
+    const { serverId = null, ...rest } = overrides;
+
     return {
+        serverId,
         sessionId: 'session-1',
         title: 'Review auth flow',
         subtitle: '/Users/tester/project',
@@ -60,7 +64,7 @@ function createSessionCard(overrides: Partial<ActivitySurfaceSessionViewModel> =
         defaultTarget: 'open-session:session-1',
         updatedAt: 1_000,
         isPrimary: true,
-        ...overrides,
+        ...rest,
     };
 }
 
@@ -110,6 +114,24 @@ describe('activitySurfacePresentation helpers', () => {
         expect(resolveActivitySurfaceAttentionSymbol('action_required')).toBe('exclamationmark.bubble.fill');
     });
 
+    it('alternates the thinking symbol on a deterministic one second cadence', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-05-05T12:00:00.000Z'));
+        expect(resolveActivitySurfaceAttentionSymbol('thinking')).toBe('sparkles');
+
+        vi.setSystemTime(new Date('2026-05-05T12:00:01.000Z'));
+        expect(resolveActivitySurfaceAttentionSymbol('thinking')).toBe('sparkles.rectangle.stack.fill');
+
+        vi.useRealTimers();
+    });
+
+    it('maps attention states to stable system tint names', () => {
+        expect(resolveActivitySurfaceAttentionTintName('permission_required')).toBe('systemRed');
+        expect(resolveActivitySurfaceAttentionTintName('action_required')).toBe('systemOrange');
+        expect(resolveActivitySurfaceAttentionTintName('thinking')).toBe('systemBlue');
+        expect(resolveActivitySurfaceAttentionTintName('quiet')).toBe('secondaryLabel');
+    });
+
     it('uses a shared plain button style so the session chrome comes from the custom surface', () => {
         expect(resolveActivitySurfaceSessionCardButtonStyle('permission_required')).toBe('plain');
         expect(resolveActivitySurfaceSessionCardButtonStyle('thinking')).toBe('plain');
@@ -117,13 +139,25 @@ describe('activitySurfacePresentation helpers', () => {
 
     it('renders urgent session cards with status-first detail hierarchy', () => {
         const rendered = renderActivitySurfaceSessionCard(createSessionCard({
+            serverId: 'server-a',
             attentionState: 'permission_required',
             previewText: 'Need your approval',
             statusText: 'Permission required',
         }));
 
-        const button = rendered as React.ReactElement<{ modifiers?: unknown[]; children?: React.ReactNode }>;
+        const button = rendered as React.ReactElement<{
+            modifiers?: unknown[];
+            target?: string;
+            children?: React.ReactNode;
+        }>;
         expect(button.props.modifiers).toContain('plain');
+        expect(button.props.target).toBe('open-session:session-1?serverId=server-a');
+        const image = React.Children.toArray(
+            (React.Children.toArray(
+                (button.props.children as React.ReactElement<{ children?: React.ReactNode }>).props.children
+            )[0] as React.ReactElement<{ children?: React.ReactNode }>).props.children
+        )[0] as React.ReactElement<{ modifiers?: unknown[] }>;
+        expect(image.props.modifiers).toContain('systemRed');
         const texts = collectTextValues(button);
 
         expect(texts).toEqual([

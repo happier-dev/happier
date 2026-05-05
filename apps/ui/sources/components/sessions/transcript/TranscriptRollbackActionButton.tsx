@@ -53,7 +53,7 @@ export const TranscriptRollbackActionButton = React.memo((props: {
                 target,
             }, {
                 defaultSessionId: props.sessionId,
-                surface: 'ui_button',
+                surface: 'ui',
             });
 
             if (result.ok !== true) {

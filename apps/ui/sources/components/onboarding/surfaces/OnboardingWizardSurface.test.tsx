@@ -1461,6 +1461,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
+        expect(screen.findByTestId('welcome-hero')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-logotype')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-welcome-showcase')).toBeTruthy();

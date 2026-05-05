@@ -37,9 +37,20 @@ vi.mock('react-native-unistyles', async () => {
         theme: {
             dark: true,
             colors: {
-                surfaceHighest: '#000',
-                text: '#fff',
+                accent: { blue: '#0a84ff' },
                 divider: '#222',
+                surface: '#080808',
+                surfaceHigh: '#111',
+                surfaceHighest: '#000',
+                surfaceSelected: '#191919',
+                syntaxComment: '#6A9955',
+                syntaxDefault: '#D4D4D4',
+                syntaxFunction: '#DCDCAA',
+                syntaxKeyword: '#569CD6',
+                syntaxNumber: '#B5CEA8',
+                syntaxString: '#CE9178',
+                text: '#fff',
+                textTertiary: '#777',
             },
         },
     });

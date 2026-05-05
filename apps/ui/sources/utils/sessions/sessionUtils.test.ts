@@ -305,6 +305,40 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('waiting');
     });
 
+    it('does not return action_required when agentState user_action requests are stale relative to completedRequests', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: { q: 'continue?' },
+                        createdAt: 100,
+                    },
+                },
+                completedRequests: {
+                    req1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: { q: 'continue?' },
+                        createdAt: 100,
+                        completedAt: 200,
+                        status: 'canceled',
+                        reason: null,
+                        mode: null,
+                        allowedTools: null,
+                        decision: null,
+                    },
+                },
+            },
+        });
+
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('waiting');
+    });
+
     it('returns thinking when session.thinking is true', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({ thinking: true });
@@ -763,6 +797,59 @@ describe('listPendingUserActionRequests', () => {
                         status: 'canceled',
                         kind: 'user_action',
                         reason: 'Request interrupted',
+                    },
+                },
+            } as any,
+        ])).toEqual([
+            expect.objectContaining({
+                id: 'req1',
+                tool: 'AskUserQuestion',
+                kind: 'user_action',
+                arguments: { q: 'continue?' },
+                createdAt: 100,
+            }),
+        ]);
+    });
+
+    it('keeps requests pending when a local Request interrupted placeholder carries an abort decision', async () => {
+        const { listPendingUserActionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-aborted-transcript',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: { q: 'continue?' },
+                        createdAt: 100,
+                    },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingUserActionRequests(session, [
+            {
+                kind: 'tool-call',
+                id: 'm-tool-1',
+                localId: null,
+                createdAt: 100,
+                children: [],
+                tool: {
+                    id: 'req1',
+                    name: 'AskUserQuestion',
+                    state: 'error',
+                    input: { q: 'continue?' },
+                    createdAt: 100,
+                    completedAt: 101,
+                    result: { error: 'Request interrupted' },
+                    permission: {
+                        id: 'req1',
+                        status: 'canceled',
+                        kind: 'user_action',
+                        reason: 'Request interrupted',
+                        decision: 'abort',
                     },
                 },
             } as any,

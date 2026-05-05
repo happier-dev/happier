@@ -189,6 +189,40 @@ function createTimeoutCapture() {
     };
 }
 
+function createValidSnapshot() {
+    return {
+        fetchedAt: 1,
+        projectKey: 'm1:/repo',
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+        capabilities: {
+            readStatus: true,
+            readDiffFile: true,
+            readDiffCommit: true,
+            readLog: true,
+            writeCommit: true,
+            writeInclude: true,
+            writeExclude: true,
+            writeRemoteFetch: true,
+            writeRemotePull: true,
+            writeRemotePush: true,
+            supportedDiffAreas: ['included', 'pending'],
+        },
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+        stashCount: 0,
+        hasConflicts: false,
+        entries: [],
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 0,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+        },
+    };
+}
+
 describe('SessionRightPanelGitView (snapshot SWR)', () => {
     it('keeps retrying source-control refresh while the first snapshot is still unavailable', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
@@ -216,40 +250,27 @@ describe('SessionRightPanelGitView (snapshot SWR)', () => {
         }
     });
 
+    it('renders the first loaded snapshot without changing hook order', async () => {
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+        mockSnapshot = null;
+
+        function Wrapper(props: Readonly<{ tick: number }>) {
+            return React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: `session:s1:${props.tick}` });
+        }
+
+        const screen = await renderScreen(React.createElement(Wrapper, { tick: 0 }));
+        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(0);
+
+        mockSnapshot = createValidSnapshot();
+        await screen.update(React.createElement(Wrapper, { tick: 1 }));
+
+        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
+    });
+
     it('keeps last-known snapshot content visible while snapshot is revalidating', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
-        const validSnapshot = {
-            fetchedAt: 1,
-            projectKey: 'm1:/repo',
-            repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-            capabilities: {
-                readStatus: true,
-                readDiffFile: true,
-                readDiffCommit: true,
-                readLog: true,
-                writeCommit: true,
-                writeInclude: true,
-                writeExclude: true,
-                writeRemoteFetch: true,
-                writeRemotePull: true,
-                writeRemotePush: true,
-                supportedDiffAreas: ['included', 'pending'],
-            },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        };
+        const validSnapshot = createValidSnapshot();
 
         mockSnapshot = validSnapshot;
         lastScmOperationsInput = null;

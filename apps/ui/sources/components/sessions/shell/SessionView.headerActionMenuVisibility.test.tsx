@@ -342,7 +342,6 @@ installSessionShellCommonModuleMocks({
         if (key === 'acknowledgedCliVersions') return {};
         if (key === 'uiMultiPanePanelsEnabled') return false;
         if (key === 'detailsPaneTabsBehavior') return 'preview';
-        if (key === 'mobileWorkspaceExperienceV1') return localSettingsState.mobileWorkspaceExperienceV1;
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 1200;
         if (key === 'detailsPaneWidthPx') return 520;
@@ -350,7 +349,10 @@ installSessionShellCommonModuleMocks({
         return {};
       },
       useLocalSettingMutable: () => [null, vi.fn()],
-      useSetting: () => null,
+      useSetting: (key: string) => {
+        if (key === 'mobileWorkspaceExperienceV1') return localSettingsState.mobileWorkspaceExperienceV1;
+        return null;
+      },
       useSettings: () => ({ experiments: true, featureToggles: {} }),
       useAutomations: () => [],
     });

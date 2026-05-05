@@ -397,6 +397,10 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
             expect(dropdownTitles.some((title) => String(title).toLowerCase().includes('company'))).toBe(true);
             expect(dropdownTitles.some((title) => String(title).toLowerCase().includes('dev group'))).toBe(true);
+            expect(latestDropdown?.items?.at(-1)).toMatchObject({
+                id: 'connection-popover-manage-relay',
+                title: 'server.manageRelay',
+            });
             expect(latestDropdown?.selectedId).toBeTruthy();
             expect(actionLabels.some((label) => label.toLowerCase().includes('company'))).toBe(false);
             expect(actionLabels.some((label) => label.toLowerCase().includes('dev group'))).toBe(false);
@@ -411,6 +415,36 @@ describe('ConnectionStatusControl (native popover config)', () => {
                 process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
             }
         }
+    });
+
+    it('opens relay settings from the Manage Relay dropdown item', async () => {
+        const ConnectionStatusControl = await importConnectionStatusControl();
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        tree = screen.tree;
+
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
+        await act(async () => {
+            await pressTestInstanceAsync(trigger);
+        });
+
+        const latestDropdown = capture.dropdownMenuProps.at(-1);
+        const manageRelayItem = latestDropdown?.items?.at(-1);
+        expect(manageRelayItem).toMatchObject({
+            id: 'connection-popover-manage-relay',
+            title: 'server.manageRelay',
+        });
+
+        await act(async () => {
+            latestDropdown?.onSelect?.(manageRelayItem?.id ?? '');
+        });
+
+        expect(routerMocks.push).toHaveBeenCalledWith('/settings/server');
+
+        await act(async () => {
+            tree?.unmount();
+        });
     });
 
     it('shows the active server target row even when there is only one saved server', async () => {
@@ -483,6 +517,48 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
             expect(connectionMocks.switchConnectionToActiveServer).toHaveBeenCalledTimes(1);
             expect(authMocks.refreshFromActiveServer).toHaveBeenCalledTimes(1);
+
+            await act(async () => {
+                tree?.unmount();
+            });
+        } finally {
+            if (previousScope === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
+            }
+        }
+    });
+
+    it('selects the active server row when saved target settings point at a previous server', async () => {
+        const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        const scope = `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        try {
+            vi.resetModules();
+            const profiles = await import('@/sync/domains/server/serverProfiles');
+            const local = profiles.upsertServerProfile({ serverUrl: 'https://local.example.test', name: 'Local' });
+            const company = profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
+            profiles.setActiveServerId(company.id, { scope: 'device' });
+            settingsState.serverSelectionActiveTargetKind = 'server';
+            settingsState.serverSelectionActiveTargetId = local.id;
+
+            const ConnectionStatusControl = await importConnectionStatusControl();
+
+            let tree: renderer.ReactTestRenderer | undefined;
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
+
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
+            await act(async () => {
+                await pressTestInstanceAsync(trigger);
+            });
+
+            const latestDropdown = capture.dropdownMenuProps.at(-1);
+            expect(latestDropdown?.items?.some((item) => item.id === `target-use-server-${local.id}`)).toBe(true);
+            expect(latestDropdown?.items?.some((item) => item.id === `target-use-server-${company.id}`)).toBe(true);
+            expect(latestDropdown?.selectedId).toBe(`target-use-server-${company.id}`);
 
             await act(async () => {
                 tree?.unmount();
@@ -650,6 +726,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             expect(Array.from(actionIds).some((id) => id.startsWith('target-use-server-'))).toBe(true);
             expect(Array.from(actionIds).some((id) => id === 'server-switch-tab')).toBe(false);
             expect(Array.from(actionIds).some((id) => id === 'server-switch-device')).toBe(false);
+            expect(actionIds.has('connection-popover-manage-relay')).toBe(true);
 
             (Platform as any).OS = previousPlatform;
 

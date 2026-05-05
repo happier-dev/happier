@@ -276,6 +276,7 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
             state: 'configured_inactive',
             configuredListenerClasses: ['loopback_http', 'tailscale_serve_https'],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: ['loopback_http', 'tailscale_serve_https'],
             unavailableListenerClasses: [],
         });

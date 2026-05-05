@@ -1,4 +1,8 @@
-import type { TransferRouteViabilityRecord } from '@happier-dev/transfers';
+import {
+    resolvePeerRouteKindForEndpointMechanism,
+    type DirectPeerRouteKind,
+    type PeerRouteViabilityRecord as TransferRouteViabilityRecord,
+} from '@happier-dev/peer-mediation';
 
 export type MachineDaemonTransferListenerClassState = Readonly<{
     enabled: boolean;
@@ -35,6 +39,7 @@ export type MachineDaemonTransferDirectPeerDiagnostics = Readonly<{
     state: 'unknown' | 'unconfigured' | 'configured_inactive' | 'active';
     configuredListenerClasses: readonly MachineDaemonTransferListenerClass[];
     activeListenerClasses: readonly MachineDaemonTransferListenerClass[];
+    activeRouteKinds: readonly DirectPeerRouteKind[];
     inactiveListenerClasses: readonly MachineDaemonTransferListenerClass[];
     unavailableListenerClasses: readonly MachineDaemonTransferListenerClass[];
 }>;
@@ -121,6 +126,19 @@ function resolveUnavailableListenerClasses(
     });
 }
 
+function resolveActiveRouteKinds(
+    activeListenerClasses: readonly MachineDaemonTransferListenerClass[],
+): DirectPeerRouteKind[] {
+    const routeKinds: DirectPeerRouteKind[] = [];
+    for (const listenerClass of activeListenerClasses) {
+        const routeKind = resolvePeerRouteKindForEndpointMechanism(listenerClass);
+        if (routeKind !== 'server_relay' && !routeKinds.includes(routeKind)) {
+            routeKinds.push(routeKind);
+        }
+    }
+    return routeKinds;
+}
+
 export function readMachineDaemonTransferState(input: Readonly<{
     daemonState?: unknown | null;
 }> | null | undefined): MachineDaemonTransferState | null {
@@ -197,6 +215,7 @@ export function resolveMachineDaemonTransferDirectPeerDiagnostics(
             state: 'unknown',
             configuredListenerClasses: [],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: [],
             unavailableListenerClasses: [],
         };
@@ -204,6 +223,7 @@ export function resolveMachineDaemonTransferDirectPeerDiagnostics(
 
     const configuredListenerClasses = resolveConfiguredListenerClasses(transferState.listenerClasses);
     const activeListenerClasses = resolveActiveListenerClasses(transferState.listenerClasses);
+    const activeRouteKinds = resolveActiveRouteKinds(activeListenerClasses);
     const inactiveListenerClasses = resolveInactiveListenerClasses(transferState.listenerClasses);
     const unavailableListenerClasses = resolveUnavailableListenerClasses(transferState.listenerClasses);
 
@@ -218,6 +238,7 @@ export function resolveMachineDaemonTransferDirectPeerDiagnostics(
             state: 'unconfigured',
             configuredListenerClasses: [],
             activeListenerClasses: [],
+            activeRouteKinds: [],
             inactiveListenerClasses: [],
             unavailableListenerClasses: [],
         };
@@ -234,6 +255,7 @@ export function resolveMachineDaemonTransferDirectPeerDiagnostics(
             state: 'unconfigured',
             configuredListenerClasses,
             activeListenerClasses,
+            activeRouteKinds,
             inactiveListenerClasses,
             unavailableListenerClasses,
         };
@@ -249,6 +271,7 @@ export function resolveMachineDaemonTransferDirectPeerDiagnostics(
             state: 'active',
             configuredListenerClasses,
             activeListenerClasses,
+            activeRouteKinds,
             inactiveListenerClasses,
             unavailableListenerClasses,
         };
@@ -259,6 +282,7 @@ export function resolveMachineDaemonTransferDirectPeerDiagnostics(
         state: 'configured_inactive',
         configuredListenerClasses,
         activeListenerClasses,
+        activeRouteKinds,
         inactiveListenerClasses,
         unavailableListenerClasses,
     };

@@ -1864,6 +1864,8 @@ export const pl: TranslationStructure = {
       channelBridgesSubtitle: "Łącz zewnętrzne czaty (Telegram) z sesjami",
       featuresTitle: "Funkcje",
       featuresSubtitle: "Włącz lub wyłącz funkcje aplikacji",
+      pets: "Zwierzaki",
+      petsSubtitle: "Wybierz Blink i zwierzaki towarzyszące na urządzeniu",
     developer: "Deweloper",
     developerTools: "Narzędzia deweloperskie",
     about: "O aplikacji",
@@ -2575,6 +2577,14 @@ export const pl: TranslationStructure = {
     remoteConfirmation: {
       title: "Potwierdzanie operacji zdalnych",
       footer: "Kontroluje, czy operacje pull/push wymagają potwierdzenia.",
+      confirmBeforePulling: {
+        title: "Potwierdzaj przed pull",
+        subtitle: "Pytaj przed pobraniem i scaleniem zmian zdalnych.",
+      },
+      confirmBeforePushing: {
+        title: "Potwierdzaj przed push",
+        subtitle: "Pytaj przed wysłaniem lokalnych commitów na remote.",
+      },
       options: {
         always: {
           title: "Zawsze potwierdzaj pull/push",
@@ -2809,6 +2819,70 @@ settingsDesktop: {
     },
   },
 
+
+
+settingsPets: {
+    title: 'Zwierzaki',
+    previewTitle: 'Towarzysz Blink',
+    previewSubtitle: 'Mały towarzysz dla stanu sesji i uwagi wymaganej przy przeglądzie.',
+    disabledTitle: 'Zwierzaki są wyłączone',
+    disabledSubtitle: 'Włącz eksperyment Zwierzaki, aby używać Blink na tym urządzeniu.',
+    accountTitle: 'Domyślne ustawienie konta',
+    enabledTitle: 'Włącz zwierzaki',
+    enabledSubtitle: 'Pokazuj powierzchnie towarzysza dla tego konta.',
+    companionSizeTitle: 'Rozmiar zwierzaka',
+    companionSizeSubtitle: 'Dostosuj rozmiar towarzysza na tym urządzeniu.',
+    companionSizeValue: ({ percent }: { percent: number }) => `${percent}%`,
+    deviceOverrideTitle: 'Używaj na tym urządzeniu',
+    deviceOverrideSubtitle: 'Lokalnie nadpisz ustawienie zwierzaka z konta.',
+    sourceTitle: 'Źródło zwierzaka',
+    builtInSubtitle: 'Wbudowany w Happier.',
+    builtInBlinkSubtitle: 'Zamienia sygnały sesji w spokojne małe kontrolki statusu.',
+    builtInFurySubtitle: 'Testuje trudne przepływy, zanim trafią na produkcję.',
+    builtInMiloSubtitle: 'Pilnuje porządku w UI i drzemie na nieudanych testach.',
+    builtInOliSubtitle: 'Wysyła ciche poprawki, zanim build je zauważy.',
+    builtInTitiSubtitle: 'Triage’uje notatki release ze skupieniem staff seniora.',
+    localLibraryTitle: 'To urządzenie',
+    localLibraryFooter: 'Lokalne zwierzaki pozostają na tym urządzeniu, chyba że zaimportujesz je na konto.',
+    detectCodexPetsTitle: 'Wykrywaj zwierzaki Codex',
+    detectCodexPetsSubtitle: 'Szukaj zgodnych zwierzaków w lokalnych Codex homes.',
+    detectedCodexPetsTileSubtitle: 'Znaleziony w Codex i gotowy do dołączenia do tego urządzenia.',
+    detectedCodexPetsEmptyTitle: 'Nie znaleziono zwierzaków Codex',
+    detectedCodexPetsEmptySubtitle: 'Utwórz jednego w Codex, a potem uruchom wykrywanie ponownie.',
+    detectedCodexPetsErrorTitle: 'Nie udało się wykryć zwierzaków Codex',
+    detectedCodexPetsErrorSubtitle: 'Sprawdź, czy daemon jest połączony, i spróbuj ponownie.',
+    detectedCodexPetsNoTargetTitle: 'Brak dostępnego daemona',
+    detectedCodexPetsNoTargetSubtitle: 'Uruchom Happier na tym komputerze, a potem ponownie wykryj zwierzaki Codex.',
+    detectedCodexPetsDaemonMismatchTitle: 'Zaktualizuj daemon, aby wykrywać zwierzaki',
+    detectedCodexPetsDaemonMismatchSubtitle: 'Ten daemon nie udostępnia jeszcze wykrywania zwierzaków. Odśwież stack i spróbuj ponownie.',
+    useOnThisDeviceTitle: 'Używaj na tym urządzeniu',
+    useOnThisDeviceSubtitle: 'Wybierz lokalnego zwierzaka bez zmiany domyślnego ustawienia konta.',
+    importedLocalSubtitle: 'Zaimportowany z Codex na tym urządzeniu.',
+    removeFromDeviceTitle: 'Usuń z urządzenia',
+    removeFromDeviceSubtitle: 'Usuń tego lokalnego zwierzaka z tego urządzenia.',
+    accountLibraryTitle: 'Biblioteka konta',
+    accountLibraryFooter: 'Zsynchronizowane zwierzaki są dostępne na zalogowanych urządzeniach.',
+    accountPetTileSubtitle: 'Zsynchronizowany z Twojego konta.',
+    importToAccountTitle: 'Importuj na konto',
+    importToAccountSubtitle: 'Prześlij zgodnego lokalnego zwierzaka do użycia na wielu urządzeniach.',
+    desktopOverlayTitle: 'Nakładka pulpitu',
+    desktopOverlayEnabledTitle: 'Włącz nakładkę pulpitu',
+    desktopOverlayEnabledSubtitle: 'Pokazuj zwierzaka w przezroczystym oknie towarzysza na pulpicie.',
+    desktopOverlayDeviceOverrideTitle: 'Nakładka pulpitu na tym urządzeniu',
+    desktopOverlayVisibilityModeTitle: 'Widoczność nakładki na tym urządzeniu',
+    desktopOverlayVisibilityModeSubtitle: 'Wybierz, kiedy lokalnie pokazywać zwierzaka na pulpicie.',
+    desktopOverlayResetPositionTitle: 'Resetuj pozycję',
+    desktopOverlayResetPositionSubtitle: 'Przenieś nakładkę z powrotem do prawego dolnego rogu.',
+    overrideInherit: 'Wartość konta',
+    overrideEnabled: 'Włączone',
+    overrideDisabled: 'Wyłączone',
+    visibilityModeInherit: 'Wartość konta',
+    visibilityModeAlwaysWhenEnabled: 'Zawsze po włączeniu',
+    visibilityModeAttentionOrActive: 'Uwaga lub aktywność',
+    visibilityModeAttentionOnly: 'Tylko uwaga',
+  },
+
+
   settingsNotifications: {
     activitySurfaces: {
       title: 'Powierzchnie aktywności',
@@ -2847,6 +2921,45 @@ settingsDesktop: {
         actionButtonsTitle: 'Przyciski akcji',
         includeReadyTitle: 'Uwzględnij gotowe sesje',
         includeThinkingTitle: 'Uwzględnij sesje myślące',
+        remoteUpdates: {
+          title: 'Zdalne aktualizacje',
+          footer: 'Diagnostyka wybranego serwera do aktualizowania Live Activities, gdy aplikacja nie jest już na pierwszym planie.',
+          effectiveModeTitle: 'Rzeczywista dostawa',
+          effectiveMode: {
+            hosted_happier_relay: 'Hostowany relay',
+            direct_apns: 'Bezpośrednie APNs',
+            background_wake_best_effort: 'Wybudzanie w tle',
+            local_only: 'Tylko lokalne runtime',
+            disabled: 'Wyłączone',
+          },
+          details: {
+            available: 'Dostępne',
+            unavailable: 'Niedostępne',
+            blocked: 'Zablokowane',
+            missingCredentials: 'Brak danych uwierzytelniających',
+            bestEffort: 'Najlepsza próba',
+            selected: 'Wybrane',
+            fallback: 'Awaryjne',
+            preferred_unavailable: 'Tylko lokalnie',
+            local_only: 'Tylko lokalnie',
+            disabled: 'Wyłączone',
+            runtimeOnly: 'Tylko runtime',
+          },
+          hostedRelayTitle: 'Hostowany relay Happier',
+          hostedRelayAvailableSubtitle: 'Hostowany relay jest skonfigurowany dla tego wybranego serwera.',
+          hostedRelayDisabledSubtitle: 'Hostowany relay jest wyłączony dla tego serwera self-hosted.',
+          hostedRelayBlockedSubtitle: 'Tożsamość hostowanego relay i obsługa dostawcy nie są jeszcze zaimplementowane.',
+          hostedRelayUnavailableSubtitle: 'Hostowany relay nie jest dostępny z tego wybranego serwera.',
+          directApnsTitle: 'Bezpośrednie APNs',
+          directApnsConfiguredSubtitle: 'Dane uwierzytelniające bezpośredniego APNs są skonfigurowane bez ujawniania sekretów.',
+          directApnsMissingCredentialsSubtitle: 'Bezpośrednie APNs nie ma serwerowej konfiguracji danych uwierzytelniających.',
+          directApnsUnavailableSubtitle: 'Bezpośrednie APNs jest niedostępne dla tego wybranego serwera.',
+          backgroundWakeTitle: 'Wybudzanie w tle',
+          backgroundWakeBestEffortSubtitle: 'Wybudzanie w tle może spróbować odświeżyć dane, ale iOS może je opóźnić lub odrzucić.',
+          backgroundWakeDisabledSubtitle: 'Awaryjne wybudzanie w tle jest wyłączone na tym wybranym serwerze.',
+          localOnlyTitle: 'Aktualizacje tylko lokalne',
+          localOnlyRuntimeSubtitle: 'Aktualizacje tylko lokalne działają, gdy runtime aplikacji może się wykonywać; nie obiecują aktualizacji po zamknięciu aplikacji.',
+        },
       },
       widgets: {
         title: 'Widgety ekranu głównego',
@@ -2889,6 +3002,36 @@ settingsDesktop: {
       permissionRequestsSubtitle: 'Pokazuj lokalne powiadomienie, gdy sesja wymaga zatwierdzenia',
       userActionsTitle: 'Prośby o akcję',
       userActionsSubtitle: 'Pokazuj lokalne powiadomienie, gdy sesja wymaga Twojego wkładu',
+    },
+    quietHours: {
+      title: 'Godziny ciszy',
+      footer: 'Godziny ciszy konta domyślnie obowiązują wszędzie. Nadpisania urządzenia wpływają tylko na to urządzenie.',
+      accountOffTitle: 'Brak godzin ciszy konta',
+      accountOffSubtitle: 'Dostarczaj powiadomienia konta o każdej porze',
+      accountNightlyTitle: 'Każdej nocy od 22:00 do 7:00',
+      accountNightlySubtitle: 'Wyciszaj lub pomijaj kanały uwagi nocą',
+      deviceAccountTitle: 'To urządzenie używa godzin konta',
+      deviceAccountSubtitle: 'Użyj zsynchronizowanej polityki godzin ciszy konta',
+      deviceDisabledTitle: 'Wyłącz godziny ciszy na tym urządzeniu',
+      deviceDisabledSubtitle: 'Pozwól temu urządzeniu dostarczać powiadomienia także podczas godzin ciszy konta',
+      deviceCustomNightlyTitle: 'To urządzenie używa nocnych godzin ciszy',
+      deviceCustomNightlySubtitle: 'Nadpisz godziny konta zakresem od 22:00 do 7:00 na tym urządzeniu',
+    },
+    sounds: {
+      title: 'Dźwięki',
+      footer: 'Domyślne dźwięki konta synchronizują się wszędzie. To urządzenie może wyciszać lokalne dźwięki.',
+      accountHappierTitle: 'Dźwięki Happier',
+      accountHappierSubtitle: 'Użyj łagodniejszego tonu dla aktualizacji i jaśniejszego, gdy potrzebna jest uwaga',
+      accountDefaultTitle: 'Domyślny systemowy',
+      accountDefaultSubtitle: 'Użyj dźwięku powiadomień platformy',
+      accountSilentTitle: 'Cicho',
+      accountSilentSubtitle: 'Dostarczaj powiadomienia bez dźwięku',
+      deviceEnabledTitle: 'Odtwarzaj dźwięki na tym urządzeniu',
+      deviceEnabledSubtitle: 'Nadpisanie urządzenia dla lokalnych dźwięków powiadomień',
+      previewTitle: 'Podgląd dźwięku',
+      previewSubtitle: 'Wyślij lokalne powiadomienie testowe na tym urządzeniu',
+      previewNotificationTitle: 'Podgląd dźwięku powiadomienia',
+      previewNotificationBody: 'Tak będzie działał obecny dźwięk powiadomień.',
     },
     push: {
       title: "Powiadomienia push",
@@ -2996,6 +3139,9 @@ settingsDesktop: {
       title: "Powiadomienia w aplikacji",
       footer:
         "Kontroluje powiadomienia podczas korzystania z aplikacji. Powiadomienia dla aktualnie przeglądanej sesji są zawsze wyciszane.",
+      account: "Domyślne konto",
+      accountDescription:
+        "Użyj zachowania powiadomień w aplikacji z konta na tym urządzeniu",
       full: "Pełne",
       fullDescription: "Pokaż baner i odtwórz dźwięk",
       silent: "Ciche",
@@ -3034,6 +3180,8 @@ settingsDesktop: {
         allow: 'Zezwól',
         deny: 'Odmów',
         answer: 'Odpowiedz',
+        other: 'Inne',
+        alwaysAllowTool: ({ tool }: { tool: string }) => `Zawsze zezwalaj: ${tool}`,
       },
     activity: {
         defaultSessionTitle: "Sesja",
@@ -3454,9 +3602,6 @@ settingsDesktop: {
       preview: "Karta podglądu",
       persistent: "Trwałe karty",
     },
-    editorFocusMode: "Tryb skupienia edytora",
-    editorFocusModeDescription:
-      "Ukryj rozmowę i pasek boczny podczas przeglądania plików (web/tablet)",
     inlineToolCalls: "Wbudowane wywołania narzędzi",
     inlineToolCallsDescription:
       "Wyświetlaj wywołania narzędzi bezpośrednio w wiadomościach czatu",
@@ -3639,6 +3784,8 @@ settingsDesktop: {
         "Włącz ekrany i ustawienia lokalnego wyszukiwania pamięci",
     expSessionsDirect: "Sesje bezpośrednie",
     expSessionsDirectSubtitle: "Wyświetlaj i otwieraj na pasku bocznym bezpośrednie sesje dostawcy",
+    expPetsCompanion: "Zwierzaki",
+    expPetsCompanionSubtitle: "Włącz powierzchnie towarzysza Blink i lokalny wybór zwierzaków",
     expFriends: "Znajomi",
     expFriendsSubtitle:
       "Włącz funkcje znajomych (karta Skrzynka odbiorcza i udostępnianie sesji)",
@@ -4065,6 +4212,11 @@ settingsDesktop: {
 
   session: {
     inputPlaceholder: "Wpisz wiadomość...",
+    rightPanel: {
+      tabs: {
+        git: "Git",
+      },
+    },
     toolCalls: "Wywołania narzędzi",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} więcej…`,
     forking: {
@@ -4201,8 +4353,8 @@ settingsDesktop: {
           unpinTabA11y: "Odepnij kartę",
           pinnedTabA11y: "Przypięta karta",
           closeTabA11y: "Zamknij kartę",
-          enterFocusModeA11y: "Włącz tryb skupienia edytora",
-          exitFocusModeA11y: "Wyłącz tryb skupienia edytora",
+          enterFocusModeA11y: 'Włącz tryb skupienia panelu',
+          exitFocusModeA11y: 'Wyłącz tryb skupienia panelu',
       },
   
       actionsDraft: {
@@ -4560,6 +4712,7 @@ settingsDesktop: {
     signedOut: "Wylogowano",
     authStatusUnknown: "Nieznany stan uwierzytelnienia",
     switchToServer: "Przełącz na ten Relay",
+    manageRelay: "Zarządzaj Relay",
     active: "Aktywny",
     default: "Domyślny",
     addServerTitle: "Dodaj Relay",
@@ -4792,6 +4945,12 @@ settingsDesktop: {
     lastUpdated: "Ostatnia aktualizacja",
     sequence: "Sekwencja",
     quickActions: "Szybkie akcje",
+    newSessionSameSetup: "Nowa sesja z tą samą konfiguracją",
+    newSessionSameSetupSubtitle: "Użyj ponownie maszyny, folderu, silnika, modelu i opcji tej sesji.",
+    markSessionRead: "Oznacz jako przeczytaną",
+    markSessionReadSubtitle: "Wyczyść nieprzeczytaną uwagę dla tej sesji",
+    markSessionUnread: "Oznacz jako nieprzeczytaną",
+    markSessionUnreadSubtitle: "Zostaw tę sesję na liście nieprzeczytanych",
     executionRunsSubtitle: "Zobacz uruchomienia tej sesji",
     automationsTitle: "Automatyzacje",
     automationsSubtitle: "Zarządzaj zaplanowanymi wiadomościami dla tej sesji",
@@ -4864,6 +5023,8 @@ settingsDesktop: {
     forkSession: "Utwórz gałąź sesji",
     forkSessionSubtitle: "Utwórz nową sesję z najnowszego kontekstu",
     failedToRenameSession: "Nie udało się zmienić nazwy sesji",
+    failedToMarkSessionRead: "Nie udało się oznaczyć sesji jako przeczytanej",
+    failedToMarkSessionUnread: "Nie udało się oznaczyć sesji jako nieprzeczytanej",
     sessionRenamed: "Pomyślnie zmieniono nazwę sesji",
   },
 
@@ -5477,6 +5638,8 @@ settingsDesktop: {
       `Session-attributed changes (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Zmiany ostatniej tury (${count})`,
+    selectedForCommitChanges: ({ count }: { count: number }) =>
+      `Wybrane do commita (${count})`,
     latestTurnDescription:
       'Zmiany pochodzące od dostawcy z ostatnio zakończonej tury.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
@@ -5544,6 +5707,13 @@ settingsDesktop: {
           addCommentA11y: "Dodaj komentarz",
           closeCommentA11y: "Zamknij komentarz",
           draftsChipLabel: ({ count }: { count: number }) => `Przegląd (${count})`,
+          modalSubtitle: "Sprawdź, które komentarze zostaną wysłane z następną wiadomością.",
+          modalSummary: ({ included, count }: { included: number; count: number }) =>
+            `${included} z ${count} wybranych do następnego promptu`,
+          detachOrDiscardTitle: "Usunąć komentarze przeglądu?",
+          detachOrDiscardBody:
+            "Odłączenie zachowa komentarze, ale wykluczy je z następnego promptu. Odrzucenie je usunie.",
+          detachFromPrompt: "Odłącz od promptu",
           errors: {
             empty: "Komentarz nie może być pusty",
             couldNotMapSelection: "Nie udało się powiązać zaznaczenia z linią diffu",
@@ -5576,6 +5746,17 @@ settingsDesktop: {
 	          generateFailed: "Nie udało się wygenerować wiadomości commitu",
 	          generatorDisabled: "Generator wiadomości commitu jest wyłączony",
 	        },
+      commitAdjacentPush: {
+        accessibilityLabel: ({ target }: { target: string }) => `Push do ${target}`,
+        confirm: {
+          title: "Wysłać lokalne commity?",
+          body: ({ target }: { target: string }) =>
+            `Wyślij lokalne commity do ${target}.`,
+          push: "Tak",
+          notNow: "Nie",
+          pushAndDontAskAgain: "Push i nie pytaj ponownie",
+        },
+      },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Ładowanie ${fileName}...`,
         binaryFile: "Plik binarny",
@@ -5611,8 +5792,10 @@ settingsDesktop: {
 	      uploadFolder: "Prześlij folder",
 	      allRepositoryFiles: "Wszystkie pliki repozytorium",
       repositoryView: "Widok repozytorium",
+      selectedForCommitView: "Wybrane do commita",
       turnView: "Widok tury",
       sessionView: "Widok sesji",
+      view: "Widok",
       review: "Przegląd",
       list: "Lista",
       scm: "Git",
@@ -5696,6 +5879,51 @@ settingsDesktop: {
         commitBlocked: "Commit zablokowany",
         pullBlocked: "Pull zablokowany",
         pushBlocked: "Push zablokowany",
+      },
+      update: {
+        remotes: {
+          title: "Zdalne",
+          empty: "Dla tego repozytorium nie skonfigurowano zdalnych.",
+          addTitle: "Dodaj zdalne",
+          editTitle: ({ name }: { name: string }) => `Edytuj ${name}`,
+          add: "Dodaj zdalne",
+          remove: "Usuń",
+          nameLabel: "Nazwa zdalnego",
+          fetchUrlLabel: "URL fetch",
+          pushUrlLabel: "URL push",
+          namePlaceholder: "origin",
+          fetchUrlPlaceholder: "URL fetch",
+          pushUrlPlaceholder: "URL push (opcjonalnie)",
+          noFetchUrl: "Brak URL fetch",
+          removeConfirmTitle: "Usunąć zdalne?",
+          removeConfirmBody: ({ name }: { name: string }) =>
+            `Usunąć ${name} z tego repozytorium?`,
+          errors: {
+            nameRequired: "Wpisz nazwę zdalnego.",
+            fetchUrlRequired: "Wpisz URL fetch.",
+            addFailed: "Nie udało się dodać zdalnego.",
+            saveFailed: "Nie udało się zaktualizować zdalnego.",
+            removeFailed: "Nie udało się usunąć zdalnego.",
+          },
+        },
+        branchIntegration: {
+          title: "Merge i rebase",
+          sourceLabel: "Gałąź źródłowa",
+          sourcePlaceholder: "Gałąź lub zdalna referencja",
+          merge: "Scal",
+          rebase: "Przebazuj",
+          continue: "Kontynuuj",
+          abort: "Przerwij",
+          operationInProgress: ({ operation, source }: { operation: string; source: string }) =>
+            `${operation} w toku z ${source}`,
+          errors: {
+            sourceRequired: "Wpisz gałąź lub referencję źródłową.",
+            mergeFailed: "Nie udało się scalić gałęzi.",
+            rebaseFailed: "Nie udało się wykonać rebase gałęzi.",
+            continueFailed: "Nie udało się kontynuować operacji.",
+            abortFailed: "Nie udało się przerwać operacji.",
+          },
+        },
       },
     },
   },
@@ -5821,13 +6049,9 @@ settingsDesktop: {
                 title: 'Karty uruchomień',
                 subtitle: 'Widoczne na kartach execution run.',
             },
-            voice_tool: {
-                title: 'Narzędzie głosowe',
-                subtitle: 'Dostępne dla agenta głosowego jako wywoływalne narzędzie.',
-            },
-            voice_action_block: {
-                title: 'Blok akcji głosowej',
-                subtitle: 'Wyświetlane wewnątrz bloków akcji głosowej i ich elementów.',
+            voice: {
+                title: 'Głos',
+                subtitle: 'Dostępne dla agenta głosowego jako wywoływalna powierzchnia.',
             },
             session_agent: {
                 title: 'Agent sesji',
@@ -5868,6 +6092,23 @@ settingsSession: {
               show: 'Pokaż',
           },
       },
+      sessionCreation: {
+          title: 'Skróty nowej sesji',
+          footer: 'Wybierz, jak skróty projektu wypełniają ekran nowej sesji.',
+          rememberLastProjectSelectionsTitle: 'Pamiętaj ostatnie wybory sesji projektu',
+          rememberLastProjectSelectionsEnabledSubtitle: 'Skróty projektu używają ponownie maszyny, folderu, silnika, modelu i opcji najnowszej sesji.',
+          rememberLastProjectSelectionsDisabledSubtitle: 'Skróty projektu tylko wstępnie wybierają maszynę i folder projektu.',
+      },
+      mobileWorkspaceExperience: {
+          title: 'Mobilna przestrzeń robocza',
+          subtitle: 'Wybierz domyślny układ sesji mobilnej.',
+          options: {
+              cockpitTitle: 'Kokpit',
+              cockpitSubtitle: 'Używaj dolnego paska kart do czatu, plików, Git, kart i terminala.',
+              classicTitle: 'Klasyczny',
+              classicSubtitle: 'Używaj starszego, jednoekranowego układu mobilnego.',
+          },
+      },
       input: {
           title: 'Wprowadzanie',
           footer: 'Skonfiguruj wygląd i działanie paska wprowadzania agenta.',
@@ -5875,6 +6116,9 @@ settingsSession: {
       windows: {
           title: 'Windows',
           defaultModeTitle: 'Domyślny tryb zdalnej sesji Windows',
+          windowNameTitle: 'Nazwa okna Windows Terminal',
+          windowNamePlaceholder: 'happier',
+          windowNameHint: 'Sesje otwierane w Windows Terminal używają tego nazwanego okna, aby nowe sesje mogły pojawiać się jako karty.',
       },
       advanced: {
           title: 'Zaawansowane',
@@ -6245,7 +6489,7 @@ settingsSession: {
     hiddenSubtitle: "Uruchom sesję w tle bez otwierania okna terminala.",
     windowsTerminal: "Windows Terminal",
     shortWindowsTerminal: "WT",
-    windowsTerminalSubtitle: "Otwórz sesję w osobnym oknie Windows Terminal.",
+    windowsTerminalSubtitle: "Otwórz sesję jako kartę we współdzielonym oknie Windows Terminal.",
     console: "Konsola",
     shortConsole: "Konsola",
     consoleSubtitle: "Otwórz sesję w standardowym oknie konsoli Windows.",
@@ -7844,6 +8088,14 @@ settingsSession: {
     runtimeInventoryInstallations: 'Instalacje',
     runtimeInventoryServices: 'Usługi',
     runtimeInventoryWarnings: 'Ostrzeżenia',
+    doctorRepairSummary: 'Podsumowanie naprawy',
+    doctorRepairFindingsSummary: ({ total, warning, error, actionable }: {
+        total: number;
+        warning: number;
+        error: number;
+        actionable: number;
+    }) => `${total} ustaleń • ${warning} ostrzeżeń • ${error} błędów • ${actionable} do naprawy`,
+    localRelays: 'Lokalne Relaye',
     runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
         cliVersion: string;
         daemonVersion: string;
@@ -7936,7 +8188,6 @@ settingsSession: {
     sessionRunningLocallyAndRemotely:
       "Ta sesja jest lokalnie podłączona w OpenCode i nadal można nią sterować z aplikacji.",
     switchingToRemote: "Przełączanie na tryb zdalny…",
-    switchToLocal: "Przełącz na lokalny",
     switchToRemote: "Przełącz na zdalny",
     detachLocalTerminal: "Odłącz terminal",
     directSessionTakeoverAvailable:

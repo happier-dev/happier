@@ -198,34 +198,4 @@ describe('SourceControlBranchMenu', () => {
         });
     });
 
-    it('publishes branch when selecting publish', async () => {
-        sourceControlBranchMenuModuleState.useSettingMock.mockImplementation(() => 'always_bring');
-        sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mockResolvedValue([]);
-        sourceControlBranchMenuModuleState.sessionScmBranchCreateMock.mockResolvedValue({ success: true });
-        sourceControlBranchMenuModuleState.sessionScmRemotePublishMock.mockResolvedValue({ success: true });
-
-        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
-
-        const screen = await renderScreen(<SourceControlBranchMenu
-                    sessionId="s1"
-                    currentBranch="main"
-                    snapshot={{
-                        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-                        capabilities: { readBranches: true, writeBranchCheckout: true, writeRemotePublish: true },
-                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
-                        fetchedAt: Date.now(),
-                        projectKey: 'p1',
-                        hasConflicts: false,
-                        entries: [],
-                        stashCount: 0,
-                    } as any}
-                    disabled={false}
-                />);
-
-        await openSourceControlBranchMenu(screen);
-        await selectSourceControlBranchMenuItem(screen, 'publish');
-
-        expect(sourceControlBranchMenuModuleState.publishBranchMock).toHaveBeenCalledTimes(1);
-    });
 });

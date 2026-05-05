@@ -1,4 +1,8 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
+    buildSettingArtifacts,
+    defineSettingDefinitions,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export const SessionListDensitySchema = z.preprocess((raw) => {
@@ -72,6 +76,12 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Default Windows remote session host mode for new sessions',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionWindowsTerminalWindowName: {
+        schema: z.string(),
+        default: DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
+        description: 'Named Windows Terminal window used for Windows remote sessions',
+        storageScope: 'account',
     },
     useMachinePickerSearch: {
         schema: z.boolean(),

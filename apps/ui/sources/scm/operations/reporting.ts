@@ -10,6 +10,8 @@ export interface ScmOperationTracker {
     capture(event: string, props?: Record<string, unknown>): void;
 }
 
+type ScmOperationSurface = 'files' | 'file' | 'commit' | 'update';
+
 interface ScmOperationState {
     appendSessionProjectScmOperation: (
         sessionId: string,
@@ -28,7 +30,7 @@ export function trackBlockedScmOperation(input: {
     operation: ScmProjectOperationKind;
     reason: 'preflight' | 'lock';
     message?: string;
-    surface: 'files' | 'file' | 'commit';
+    surface: ScmOperationSurface;
     tracking?: ScmOperationTracker | null;
 }) {
     input.tracking?.capture('scm_operation_blocked', {
@@ -45,7 +47,7 @@ export function reportSessionScmOperation(input: {
     sessionId: string;
     operation: ScmProjectOperationKind;
     status: ScmProjectOperationStatus;
-    surface: 'files' | 'file' | 'commit';
+    surface: ScmOperationSurface;
     path?: string;
     detail?: string;
     rawError?: string;
@@ -81,7 +83,7 @@ export function reportWorkspaceScmOperation(input: {
     scope: WorkspaceScopeBase;
     operation: ScmProjectOperationKind;
     status: ScmProjectOperationStatus;
-    surface: 'files' | 'file' | 'commit';
+    surface: ScmOperationSurface;
     path?: string;
     detail?: string;
     rawError?: string;

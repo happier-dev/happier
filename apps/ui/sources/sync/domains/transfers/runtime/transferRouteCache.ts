@@ -3,8 +3,8 @@ import {
     createMachineTransferRouteCache,
     DEFAULT_MACHINE_TRANSFER_ROUTE_CACHE_NEGATIVE_TTL_MS,
     DEFAULT_MACHINE_TRANSFER_ROUTE_CACHE_POSITIVE_TTL_MS,
-    type TransferRouteViabilityRecord,
-} from '@happier-dev/transfers';
+    type PeerRouteViabilityRecord as TransferRouteViabilityRecord,
+} from '@happier-dev/peer-mediation';
 
 const DEFAULT_SERVER_SCOPE_ID = '__default__';
 

@@ -27,6 +27,8 @@ import {
 } from './projectScmSelectionState';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { normalizeWorkspaceScopeBase, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { normalizeMachineHost } from '@happier-dev/protocol';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 
 /**
  * Unique project identifier based on machine ID and path
@@ -37,10 +39,10 @@ export interface ProjectKey {
     rootPath: string;
 }
 
-export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null }): string {
-    const machineId = typeof metadata.machineId === 'string' ? metadata.machineId.trim() : '';
+export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null; directSessionV1?: unknown }): string {
+    const machineId = resolveSessionMachineId(metadata);
     if (machineId) return machineId;
-    const host = typeof metadata.host === 'string' ? metadata.host.trim() : '';
+    const host = normalizeMachineHost(metadata.host);
     if (host) return `host:${host}`;
     return 'unknown';
 }
@@ -54,7 +56,14 @@ export type ScmProjectOperationKind =
     | 'fetch'
     | 'pull'
     | 'push'
-    | 'revert';
+    | 'revert'
+    | 'remote_add'
+    | 'remote_set_url'
+    | 'remote_remove'
+    | 'branch_merge'
+    | 'branch_rebase'
+    | 'branch_operation_continue'
+    | 'branch_operation_abort';
 
 export type ScmProjectOperationStatus = 'success' | 'failed';
 

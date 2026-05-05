@@ -176,6 +176,22 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
+    it('keeps pets.companion disabled by default even when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('pets.companion', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables pets.companion when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('pets.companion', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'pets.companion': true },
+        })).toBe(true);
+    });
+
     it('enables sessions.direct when explicitly enabled', () => {
         expect(resolveLocalFeaturePolicyEnabled('sessions.direct', {
             ...settingsDefaults,

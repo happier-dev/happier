@@ -50,8 +50,8 @@ describe('buildSessionListRowViewModels', () => {
                 },
             ] as any,
             reachableSessionDisplayById: new Map([
-                ['sess_a', { machineId: 'machine_a', machineLabel: 'Machine A', pathSubtitle: '/repo-a' }],
-                ['sess_b', { machineId: 'machine_b', machineLabel: 'Machine B', pathSubtitle: '/repo-b' }],
+                ['sess_a', { machineId: 'machine_a', machineLabel: 'Machine A', workspaceSubtitle: '/repo-a', workspaceSubtitleEllipsizeMode: 'head' as const }],
+                ['sess_b', { machineId: 'machine_b', machineLabel: 'Machine B', workspaceSubtitle: '/repo-b', workspaceSubtitleEllipsizeMode: 'head' as const }],
             ]),
             hasMultipleMachines: true,
             pinnedSessionKeys: new Set(['server_a:sess_a']),
@@ -75,6 +75,7 @@ describe('buildSessionListRowViewModels', () => {
                 isLast: false,
                 isSingle: false,
                 subtitleOverride: 'Machine A · /repo-a',
+                subtitleEllipsizeMode: 'head',
                 pinned: true,
                 showServerBadge: false,
                 selected: false,
@@ -88,6 +89,7 @@ describe('buildSessionListRowViewModels', () => {
                 isLast: true,
                 isSingle: false,
                 subtitleOverride: 'Machine B · /repo-b',
+                subtitleEllipsizeMode: 'head',
                 pinned: false,
                 showServerBadge: true,
                 selected: true,
@@ -124,8 +126,8 @@ describe('buildSessionListRowViewModels', () => {
                 },
             ] as any,
             reachableSessionDisplayById: new Map([
-                ['sess_a', { machineId: 'machine_a', machineLabel: 'Machine A', pathSubtitle: '/repo-a' }],
-                ['sess_b', { machineId: 'machine_b', machineLabel: 'Machine B', pathSubtitle: '/repo-b' }],
+                ['sess_a', { machineId: 'machine_a', machineLabel: 'Machine A', workspaceSubtitle: '/repo-a', workspaceSubtitleEllipsizeMode: 'head' as const }],
+                ['sess_b', { machineId: 'machine_b', machineLabel: 'Machine B', workspaceSubtitle: '/repo-b', workspaceSubtitleEllipsizeMode: 'head' as const }],
             ]),
             hasMultipleMachines: true,
             pinnedSessionKeys: new Set(['server_a:sess_a']),
@@ -145,6 +147,7 @@ describe('buildSessionListRowViewModels', () => {
             isLast: false,
             isSingle: false,
             subtitleOverride: 'Machine A · /repo-a',
+            subtitleEllipsizeMode: 'head',
             pinned: true,
             showServerBadge: false,
             selected: false,
@@ -157,6 +160,7 @@ describe('buildSessionListRowViewModels', () => {
             isLast: true,
             isSingle: false,
             subtitleOverride: 'Machine B · /repo-b',
+            subtitleEllipsizeMode: 'head',
             pinned: false,
             showServerBadge: true,
             selected: true,
@@ -179,7 +183,7 @@ describe('buildSessionListRowViewModels', () => {
                 },
             ] as any,
             reachableSessionDisplayById: new Map([
-                ['sess_project', { machineId: 'machine_a', machineLabel: 'Machine A', pathSubtitle: '/repo-a' }],
+                ['sess_project', { machineId: 'machine_a', machineLabel: 'Machine A', workspaceSubtitle: '/repo-a', workspaceSubtitleEllipsizeMode: 'head' }],
             ]),
             hasMultipleMachines: false,
             pinnedSessionKeys: new Set<string>(),
@@ -194,7 +198,42 @@ describe('buildSessionListRowViewModels', () => {
             isLast: true,
             isSingle: true,
             subtitleOverride: null,
+            subtitleEllipsizeMode: 'head',
             secondaryLineMode: 'status',
+        });
+    });
+
+    it('keeps custom workspace labels as tail-truncated subtitles', () => {
+        const result = buildSessionListRowViewModels({
+            listItems: [
+                {
+                    type: 'session',
+                    sessionId: 'sess_workspace_label',
+                    groupKey: 'group:day',
+                    groupKind: 'date',
+                    serverId: 'server_a',
+                    serverName: 'Server A',
+                },
+            ] as any,
+            reachableSessionDisplayById: new Map([
+                ['sess_workspace_label', {
+                    machineId: 'machine_a',
+                    machineLabel: 'Machine A',
+                    workspaceSubtitle: 'Renamed Workspace',
+                    workspaceSubtitleEllipsizeMode: 'tail',
+                }],
+            ]),
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set<string>(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: true,
+            showPinnedServerBadge: true,
+        });
+
+        expect(result[0]).toMatchObject({
+            subtitleOverride: 'Renamed Workspace',
+            subtitleEllipsizeMode: 'tail',
         });
     });
 });

@@ -49,6 +49,11 @@ const state = vi.hoisted(() => {
         machineListStatusByServerId: {
             srv_1: 'loaded',
         } as Record<string, string>,
+        activeServerSnapshot: {
+            generation: 1,
+            serverId: 'srv_1',
+            serverUrl: 'https://api.happier.dev',
+        },
         createMachine,
         reset() {
             this.isMachineOnline = true;
@@ -58,6 +63,11 @@ const state = vi.hoisted(() => {
             };
             this.machineListStatusByServerId = {
                 srv_1: 'loaded',
+            };
+            this.activeServerSnapshot = {
+                generation: 1,
+                serverId: 'srv_1',
+                serverUrl: 'https://api.happier.dev',
             };
         },
     };
@@ -177,7 +187,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ generation: 1, serverId: 'srv_1', serverUrl: 'https://api.happier.dev' }),
+    getActiveServerSnapshot: () => state.activeServerSnapshot,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -311,6 +321,16 @@ describe('SystemStatusView runtime inventory', () => {
                         ],
                     },
                 },
+                repairSummary: {
+                    schemaVersion: 1,
+                    status: 'needs_attention',
+                    findingCounts: {
+                        total: 1,
+                        warning: 1,
+                        actionable: 1,
+                    },
+                    findingKinds: ['multiple_happier_installations_on_path'],
+                },
                 warnings: [
                     {
                         code: 'MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH',
@@ -332,6 +352,8 @@ describe('SystemStatusView runtime inventory', () => {
         const text = screen.getTextContent();
         expect(text).toContain('machine.runtimeInventory');
         expect(text).toContain('summary:1.2.3:1.2.0:stable:1:1:1');
+        expect(text).toContain('machine.doctorRepairSummary');
+        expect(text).toContain('machine.doctorRepairFindingsSummary');
         expect(text).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
     });
 
@@ -353,6 +375,66 @@ describe('SystemStatusView runtime inventory', () => {
             timeoutMs: 4000,
             serverId: 'srv_1',
         });
+    });
+
+    it('does not flag daemon attribution mismatch for loopback-equivalent Relay URLs', async () => {
+        state.activeServerSnapshot = {
+            generation: 2,
+            serverId: 'srv_1',
+            serverUrl: 'http://localhost:34567',
+        };
+        machineCollectBugReportDiagnosticsMock.mockResolvedValueOnce({
+            doctorSnapshot: {
+                capturedAt: '2026-04-07T10:11:12.000Z',
+                server: {
+                    activeServerId: 'srv_1',
+                    serverUrl: 'http://127.0.0.1:34567',
+                    publicServerUrl: 'http://127.0.0.1:34567',
+                    webappUrl: 'http://localhost:34567',
+                },
+                accountId: 'acct_1',
+                settings: {
+                    activeServerId: 'srv_1',
+                    servers: [],
+                    knownAccountIds: ['acct_1'],
+                },
+                daemonStatus: {
+                    server: {
+                        activeServerId: 'srv_1',
+                        serverUrl: 'http://127.0.0.1:34567',
+                        localServerUrl: 'http://127.0.0.1:34567',
+                        publicServerUrl: 'http://127.0.0.1:34567',
+                        webappUrl: 'http://localhost:34567',
+                        comparableKey: 'http://localhost:34567',
+                    },
+                    daemon: {
+                        running: true,
+                        pid: 4321,
+                        httpPort: 59949,
+                        startedWithCliVersion: '1.2.0',
+                        startedWithPublicReleaseChannel: 'stable',
+                    },
+                    service: { installed: false, running: false },
+                    auth: {
+                        authenticated: true,
+                        machineRegistered: true,
+                        machineId: 'machine-1',
+                        needsAuth: false,
+                        accountId: 'acct_1',
+                    },
+                },
+                installations: { happier: { installations: [] } },
+                services: { happier: { services: [] } },
+                warnings: [],
+            },
+        });
+
+        const { SystemStatusView } = await import('@/components/settings/systemStatus/SystemStatusView');
+        const screen = await renderScreen(React.createElement(SystemStatusView));
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.getTextContent()).not.toContain('systemStatus.mismatch');
     });
 
     it('refreshes a machine inventory from the row long press using the machine target', async () => {

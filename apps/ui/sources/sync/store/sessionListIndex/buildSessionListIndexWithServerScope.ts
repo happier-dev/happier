@@ -20,6 +20,34 @@ type ProjectLookupResult = {
     } | null;
 } | null;
 
+type SessionTargetProjectLookupResult = {
+    key?: {
+        machineId?: string;
+        rootPath?: string;
+    };
+} | null;
+
+function normalizeSessionTargetProjectLookupResult(
+    result: ProjectLookupResult,
+): SessionTargetProjectLookupResult {
+    if (!result?.key) {
+        return null;
+    }
+
+    const machineId = normalizeTrimmedString(result.key.machineId);
+    const rootPath = normalizeTrimmedString(result.key.rootPath);
+    if (!machineId && !rootPath) {
+        return null;
+    }
+
+    return {
+        key: {
+            ...(machineId ? { machineId } : {}),
+            ...(rootPath ? { rootPath } : {}),
+        },
+    };
+}
+
 type BuildSessionListIndexWithServerScopeParams = Readonly<{
     sessions: Record<string, SessionListRenderableSession>;
     sessionRecords?: Record<string, Session>;
@@ -62,6 +90,17 @@ export function buildSessionListIndexWithServerScope(
             groupInactiveSessionsByProject: params.groupInactiveSessionsByProject,
             activeGroupingV1: params.activeGroupingV1,
             inactiveGroupingV1: params.inactiveGroupingV1,
+            sessionTargetState: params.sessionRecords && params.machineRecords
+                ? {
+                    sessions: params.sessionRecords,
+                    sessionListRenderables: reachableSessions,
+                    machines: params.machineRecords,
+                    getProjectForSession: params.getProjectForSession
+                        ? (sessionId: string) =>
+                            normalizeSessionTargetProjectLookupResult(params.getProjectForSession?.(sessionId) ?? null)
+                        : undefined,
+                }
+                : undefined,
             serverScope,
         },
     );

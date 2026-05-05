@@ -47,6 +47,8 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     onOpenFilePinned?: (fullPath: string) => void;
     scmSnapshot?: ScmWorkingSnapshot | null;
     renderRowActions?: ((node: WorkspaceRepositoryTreeNode) => React.ReactNode) | null;
+    showInlineLoadingHeader?: boolean;
+    onRootLoadingChange?: (loading: boolean) => void;
     onLayout?: ScrollViewProps['onLayout'];
     onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
     onScroll?: ScrollViewProps['onScroll'];
@@ -106,6 +108,10 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
         reloadToken: props.reloadToken,
     });
 
+    React.useEffect(() => {
+        props.onRootLoadingChange?.(rootLoading);
+    }, [props.onRootLoadingChange, rootLoading]);
+
     const badgeIndex = useScmTreeBadgeIndex(props.scmSnapshot ?? null);
 
     if (rootError && nodes.length === 0) {
@@ -125,6 +131,7 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
         <FilesystemBrowser
             nodes={nodes}
             rootLoading={rootLoading}
+            showInlineLoadingHeader={props.showInlineLoadingHeader}
             rootError={rootError}
             retryRoot={retryRoot}
             emptyLabel={t('files.noFilesInProject')}

@@ -37,7 +37,7 @@ installPickerCommonModuleMocks({
     expoRouter: async () =>
         (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
             navigation: navigationMock,
-            params: { selectedId: '' },
+            params: { selectedId: 'secret-1' },
             router: {
                 push: routerMock.push,
                 back: routerMock.back,

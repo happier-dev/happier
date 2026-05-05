@@ -1,4 +1,10 @@
-import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protocol';
+import {
+    DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
+    DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
+    DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+    DEFAULT_PETS_CAPABILITIES,
+    type FeaturesResponse as RootLayoutFeatures,
+} from '@happier-dev/protocol';
 
 type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
     features?: Omit<
@@ -17,6 +23,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         | 'auth'
         | 'encryption'
         | 'e2ee'
+        | 'pets'
     > &
         Readonly<{
             attachments?: Partial<RootLayoutFeatures['features']['attachments']>;
@@ -33,13 +40,19 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             auth?: Partial<RootLayoutFeatures['features']['auth']>;
             encryption?: Partial<RootLayoutFeatures['features']['encryption']>;
             e2ee?: Partial<RootLayoutFeatures['features']['e2ee']>;
+            pets?: Partial<RootLayoutFeatures['features']['pets']>;
         }>;
-    capabilities?: Omit<Partial<RootLayoutFeatures['capabilities']>, 'oauth' | 'social' | 'auth' | 'encryption'> &
+    capabilities?: Omit<
+        Partial<RootLayoutFeatures['capabilities']>,
+        'oauth' | 'social' | 'auth' | 'encryption' | 'liveActivities' | 'pets'
+    > &
         Readonly<{
             oauth?: Partial<RootLayoutFeatures['capabilities']['oauth']>;
             social?: Partial<RootLayoutFeatures['capabilities']['social']>;
             auth?: Partial<RootLayoutFeatures['capabilities']['auth']>;
             encryption?: Partial<RootLayoutFeatures['capabilities']['encryption']>;
+            liveActivities?: Partial<RootLayoutFeatures['capabilities']['liveActivities']>;
+            pets?: Partial<RootLayoutFeatures['capabilities']['pets']>;
         }>;
 }>;
 
@@ -59,6 +72,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         attachments: {
             uploads: { enabled: true },
+        },
+        pets: {
+            companion: { enabled: false },
+            sync: { enabled: false },
         },
         channelBridges: {
             enabled: true,
@@ -96,6 +113,20 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
                 serverRouted: {
                     enabled: false,
                 },
+            },
+            tunnel: {
+                enabled: false,
+                directPeer: { enabled: false },
+                serverRouted: { enabled: false },
+            },
+            liveStream: {
+                enabled: false,
+                directPeer: { enabled: false },
+                serverRouted: { enabled: false },
+            },
+            rpc: {
+                enabled: false,
+                directPeer: { enabled: false },
             },
         },
         setup: {
@@ -146,6 +177,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             contextWindowMs: 30 * 60 * 1_000,
         },
         voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+        pets: DEFAULT_PETS_CAPABILITIES,
         encryption: {
             storagePolicy: 'required_e2ee',
             allowAccountOptOut: false,
@@ -158,6 +190,11 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
                 serverRouted: {
                     maxBytes: null,
                 },
+            },
+            tunnel: DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
+            liveStream: DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
+            peerMediation: {
+                grantSigningKeys: [],
             },
         },
         server: {},
@@ -198,6 +235,9 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             },
             misconfig: [],
         },
+        liveActivities: {
+            remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+        },
     },
 };
 
@@ -216,6 +256,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextChannelBridges: Partial<RootLayoutFeatures['features']['channelBridges']> = nextFeatures.channelBridges ?? {};
     const nextEncryption: Partial<RootLayoutFeatures['features']['encryption']> = nextFeatures.encryption ?? {};
     const nextE2ee: Partial<RootLayoutFeatures['features']['e2ee']> = nextFeatures.e2ee ?? {};
+    const nextPets: Partial<RootLayoutFeatures['features']['pets']> = nextFeatures.pets ?? {};
     const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> =
         nextFeatures.connectedServices ?? {};
     const nextUpdates: Partial<RootLayoutFeatures['features']['updates']> = nextFeatures.updates ?? {};
@@ -226,6 +267,9 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextCapabilitiesOauth: Partial<RootLayoutFeatures['capabilities']['oauth']> = nextCapabilities.oauth ?? {};
     const nextCapabilitiesEncryption: Partial<RootLayoutFeatures['capabilities']['encryption']> =
         nextCapabilities.encryption ?? {};
+    const nextCapabilitiesLiveActivities: Partial<RootLayoutFeatures['capabilities']['liveActivities']> =
+        nextCapabilities.liveActivities ?? {};
+    const nextCapabilitiesPets: Partial<RootLayoutFeatures['capabilities']['pets']> = nextCapabilities.pets ?? {};
     const nextCapabilitiesAuthRecovery: Partial<RootLayoutFeatures['capabilities']['auth']['recovery']> =
         nextCapabilitiesAuth.recovery ?? {};
     const nextCapabilitiesAuthUi: Partial<RootLayoutFeatures['capabilities']['auth']['ui']> =
@@ -258,6 +302,18 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             attachments: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.attachments,
                 ...nextAttachments,
+            },
+            pets: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.pets,
+                ...nextPets,
+                companion: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.pets.companion,
+                    ...(nextPets.companion ?? {}),
+                },
+                sync: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.pets.sync,
+                    ...(nextPets.sync ?? {}),
+                },
             },
             channelBridges: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.channelBridges,
@@ -292,6 +348,38 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                     serverRouted: {
                         ...BASE_ROOT_LAYOUT_FEATURES.features.machines.transfer.serverRouted,
                         ...(nextMachines.transfer?.serverRouted ?? {}),
+                    },
+                },
+                tunnel: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.machines.tunnel,
+                    ...(nextMachines.tunnel ?? {}),
+                    directPeer: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.tunnel.directPeer,
+                        ...(nextMachines.tunnel?.directPeer ?? {}),
+                    },
+                    serverRouted: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.tunnel.serverRouted,
+                        ...(nextMachines.tunnel?.serverRouted ?? {}),
+                    },
+                },
+                liveStream: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.machines.liveStream,
+                    ...(nextMachines.liveStream ?? {}),
+                    directPeer: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.liveStream.directPeer,
+                        ...(nextMachines.liveStream?.directPeer ?? {}),
+                    },
+                    serverRouted: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.liveStream.serverRouted,
+                        ...(nextMachines.liveStream?.serverRouted ?? {}),
+                    },
+                },
+                rpc: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.machines.rpc,
+                    ...(nextMachines.rpc ?? {}),
+                    directPeer: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.rpc.directPeer,
+                        ...(nextMachines.rpc?.directPeer ?? {}),
                     },
                 },
             },
@@ -366,6 +454,18 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             encryption: {
                 ...BASE_ROOT_LAYOUT_FEATURES.capabilities.encryption,
                 ...nextCapabilitiesEncryption,
+            },
+            liveActivities: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.liveActivities,
+                ...nextCapabilitiesLiveActivities,
+            },
+            pets: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.pets,
+                ...nextCapabilitiesPets,
+                limits: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.pets.limits,
+                    ...(nextCapabilitiesPets.limits ?? {}),
+                },
             },
             social: {
                 ...BASE_ROOT_LAYOUT_FEATURES.capabilities.social,

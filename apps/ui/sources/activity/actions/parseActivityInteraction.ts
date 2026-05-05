@@ -4,6 +4,7 @@ import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';
 
 import type { ParsedActivityInteraction } from './activityActionTypes';
+import { createActivitySurfaceSessionRoute, parseActivitySurfaceSessionTarget } from './activitySurfaceTargets';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -26,13 +27,19 @@ function readRequestId(data: unknown): string {
     return '';
 }
 
+function readServerId(data: unknown): string | null {
+    if (!isRecord(data)) return null;
+    const serverId = typeof data.serverId === 'string' ? data.serverId.trim() : '';
+    return serverId || null;
+}
+
 function resolveRoute(data: unknown): string | null {
     if (!isRecord(data)) return null;
     if (typeof data.url === 'string' && data.url.trim()) {
         return coerceRelativeRoute(data.url);
     }
     const sessionId = readSessionId(data);
-    return sessionId ? `/session/${encodeURIComponent(sessionId)}` : null;
+    return sessionId ? createActivitySurfaceSessionRoute(sessionId, readServerId(data)) : null;
 }
 
 function resolveServerUrl(data: unknown): string | null {
@@ -54,12 +61,14 @@ function resolveActivitySurfaceRoute(actionIdentifier: string, data: unknown): s
 
     if (actionIdentifier === 'open-primary-session') {
         const primarySessionId = readPrimarySessionId(data) || readSessionId(data);
-        return primarySessionId ? `/session/${encodeURIComponent(primarySessionId)}` : '/inbox';
+        return primarySessionId ? createActivitySurfaceSessionRoute(primarySessionId, readServerId(data)) : '/inbox';
     }
 
     if (actionIdentifier.startsWith('open-session:')) {
-        const sessionId = actionIdentifier.slice('open-session:'.length).trim();
-        return sessionId ? `/session/${encodeURIComponent(sessionId)}` : null;
+        const targetIdentity = parseActivitySurfaceSessionTarget(actionIdentifier);
+        return targetIdentity
+            ? createActivitySurfaceSessionRoute(targetIdentity.sessionId, targetIdentity.serverId ?? readServerId(data))
+            : null;
     }
 
     return null;

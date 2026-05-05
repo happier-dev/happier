@@ -7,7 +7,7 @@ import type { SessionAttributedFile, SessionAttributionReliability, ChangedFiles
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { ChangedFilesSectionHeader } from '@/components/workspaces/scm/review/ChangedFilesSectionHeader';
-import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
+import { ScmChangeRow, resolveScmChangeStatsColumnWidth } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
 
 type ChangedFilesListProps = {
@@ -26,6 +26,7 @@ type ChangedFilesListProps = {
     renderFileActions?: (file: ScmFileStatus) => React.ReactNode;
     renderFileTrailingActions?: (file: ScmFileStatus) => React.ReactNode;
     rowDensity?: 'comfortable' | 'compact';
+    showSectionHeader?: boolean;
 };
 
 export function ChangedFilesList({
@@ -42,6 +43,7 @@ export function ChangedFilesList({
     renderFileActions,
     renderFileTrailingActions,
     rowDensity = 'comfortable',
+    showSectionHeader = true,
 }: ChangedFilesListProps) {
     const repositoryChangedFiles = React.useMemo(() => {
         return filterDirectoryLikeScmFileStatuses(allRepositoryChangedFiles);
@@ -60,13 +62,27 @@ export function ChangedFilesList({
             return !isDirectoryLikeScmFileStatus(entry.file);
         });
     }, [turnAttributedFiles]);
+    const repositoryStatsColumnWidth = React.useMemo(
+        () => resolveScmChangeStatsColumnWidth(repositoryChangedFiles),
+        [repositoryChangedFiles],
+    );
+    const turnStatsColumnWidth = React.useMemo(
+        () => resolveScmChangeStatsColumnWidth(filteredTurnAttributedFiles.map((entry) => entry.file)),
+        [filteredTurnAttributedFiles],
+    );
+    const sessionStatsColumnWidth = React.useMemo(
+        () => resolveScmChangeStatsColumnWidth(filteredSessionAttributedFiles.map((entry) => entry.file)),
+        [filteredSessionAttributedFiles],
+    );
 
     if (changedFilesViewMode === 'repository') {
         return (
             <>
-                <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
-                    {t('files.repositoryChangedFiles', { count: repositoryChangedFiles.length })}
-                </ChangedFilesSectionHeader>
+                {showSectionHeader ? (
+                    <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
+                        {t('files.repositoryChangedFiles', { count: repositoryChangedFiles.length })}
+                    </ChangedFilesSectionHeader>
+                ) : null}
                 {repositoryChangedFiles.map((file, index) => (
                     <ScmChangeRow
                         key={`repo-all-${file.fullPath}-${index}`}
@@ -78,6 +94,7 @@ export function ChangedFilesList({
                         onPress={() => onFilePress(file)}
                         onPressPinned={onFilePressPinned ? () => onFilePressPinned(file) : undefined}
                         onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
+                        statsColumnWidth={repositoryStatsColumnWidth}
                         showDivider={index < repositoryChangedFiles.length - 1}
                     />
                 ))}
@@ -88,35 +105,37 @@ export function ChangedFilesList({
     if (changedFilesViewMode === 'turn') {
         return (
             <>
-                <View
-                    style={{
-                        backgroundColor: theme.colors.surfaceHigh,
-                        paddingHorizontal: 16,
-                        paddingVertical: 12,
-                        borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                        borderBottomColor: theme.colors.divider,
-                    }}
-                >
-                    <Text
+                {showSectionHeader ? (
+                    <View
                         style={{
-                            fontSize: 14,
-                            color: theme.colors.text,
-                            ...Typography.default('semiBold'),
+                            backgroundColor: theme.colors.surfaceHigh,
+                            paddingHorizontal: 16,
+                            paddingVertical: 12,
+                            borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                            borderBottomColor: theme.colors.divider,
                         }}
                     >
-                        {t('files.latestTurnChanges', { count: filteredTurnAttributedFiles.length })}
-                    </Text>
-                    <Text
-                        style={{
-                            marginTop: 4,
-                            fontSize: 12,
-                            color: theme.colors.textSecondary,
-                            ...Typography.default(),
-                        }}
-                    >
-                        {t('files.latestTurnDescription')}
-                    </Text>
-                </View>
+                        <Text
+                            style={{
+                                fontSize: 14,
+                                color: theme.colors.text,
+                                ...Typography.default('semiBold'),
+                            }}
+                        >
+                            {t('files.latestTurnChanges', { count: filteredTurnAttributedFiles.length })}
+                        </Text>
+                        <Text
+                            style={{
+                                marginTop: 4,
+                                fontSize: 12,
+                                color: theme.colors.textSecondary,
+                                ...Typography.default(),
+                            }}
+                        >
+                            {t('files.latestTurnDescription')}
+                        </Text>
+                    </View>
+                ) : null}
 
                 {filteredTurnAttributedFiles.length === 0 ? (
                     <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
@@ -136,6 +155,7 @@ export function ChangedFilesList({
                             onPress={() => onFilePress(entry.file)}
                             onPressPinned={onFilePressPinned ? () => onFilePressPinned(entry.file) : undefined}
                             onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(entry.file) : undefined}
+                            statsColumnWidth={turnStatsColumnWidth}
                             showDivider={index < filteredTurnAttributedFiles.length - 1}
                         />
                     ))
@@ -147,49 +167,37 @@ export function ChangedFilesList({
 
     return (
         <>
-            <View
-                style={{
-                    backgroundColor: theme.colors.surfaceHigh,
-                    paddingHorizontal: 16,
-                    paddingVertical: 12,
-                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                    borderBottomColor: theme.colors.divider,
-                }}
-            >
-                <Text
+            {showSectionHeader ? (
+                <View
                     style={{
-                        fontSize: 14,
-                        color: theme.colors.text,
-                        ...Typography.default('semiBold'),
+                        backgroundColor: theme.colors.surfaceHigh,
+                        paddingHorizontal: 16,
+                        paddingVertical: 12,
+                        borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                        borderBottomColor: theme.colors.divider,
                     }}
                 >
-                    {t('files.sessionAttributedChanges', { count: sessionAttributedFiles.length })}
-                </Text>
-                <Text
-                    style={{
-                        marginTop: 4,
-                        fontSize: 12,
-                        color: theme.colors.textSecondary,
-                        ...Typography.default(),
-                    }}
-                >
-                    {attributionReliability === 'high'
-                        ? t('files.attributionReliabilityHigh')
-                        : t('files.attributionReliabilityLimited')}
-                </Text>
-                <Text
-                    style={{
-                        marginTop: 2,
-                        fontSize: 11,
-                        color: theme.colors.textSecondary,
-                        ...Typography.default(),
-                    }}
-                >
-                    {attributionReliability === 'high'
-                        ? t('files.attributionLegendFull')
-                        : t('files.attributionLegendDirectOnly')}
-                </Text>
-                {suppressedInferredCount > 0 && (
+                    <Text
+                        style={{
+                            fontSize: 14,
+                            color: theme.colors.text,
+                            ...Typography.default('semiBold'),
+                        }}
+                    >
+                        {t('files.sessionAttributedChanges', { count: sessionAttributedFiles.length })}
+                    </Text>
+                    <Text
+                        style={{
+                            marginTop: 4,
+                            fontSize: 12,
+                            color: theme.colors.textSecondary,
+                            ...Typography.default(),
+                        }}
+                    >
+                        {attributionReliability === 'high'
+                            ? t('files.attributionReliabilityHigh')
+                            : t('files.attributionReliabilityLimited')}
+                    </Text>
                     <Text
                         style={{
                             marginTop: 2,
@@ -198,10 +206,24 @@ export function ChangedFilesList({
                             ...Typography.default(),
                         }}
                     >
-                        {t('files.inferredSuppressed', { count: suppressedInferredCount })}
+                        {attributionReliability === 'high'
+                            ? t('files.attributionLegendFull')
+                            : t('files.attributionLegendDirectOnly')}
                     </Text>
-                )}
-            </View>
+                    {suppressedInferredCount > 0 && (
+                        <Text
+                            style={{
+                                marginTop: 2,
+                                fontSize: 11,
+                                color: theme.colors.textSecondary,
+                                ...Typography.default(),
+                            }}
+                        >
+                            {t('files.inferredSuppressed', { count: suppressedInferredCount })}
+                        </Text>
+                    )}
+                </View>
+            ) : null}
 
             {filteredSessionAttributedFiles.length === 0 ? (
                 <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
@@ -221,6 +243,7 @@ export function ChangedFilesList({
                         onPress={() => onFilePress(entry.file)}
                         onPressPinned={onFilePressPinned ? () => onFilePressPinned(entry.file) : undefined}
                         onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(entry.file) : undefined}
+                        statsColumnWidth={sessionStatsColumnWidth}
                         showDivider={index < filteredSessionAttributedFiles.length - 1}
                     />
                 ))

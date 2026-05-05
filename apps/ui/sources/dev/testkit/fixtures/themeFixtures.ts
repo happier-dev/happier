@@ -3,6 +3,16 @@ import { lightTheme } from '@/theme';
 import type { PlainObject } from '../mocks/_shared';
 import { mergeObjects } from '../mocks/_shared';
 
+const testThemeFallbacks = {
+    colors: {
+        feed: {
+            card: {
+                background: '#f8f8f8',
+            },
+        },
+    },
+} satisfies PlainObject;
+
 export type TestThemeRuntimeFixture = Readonly<{
     themeName: string;
     colorScheme: 'light' | 'dark';
@@ -17,7 +27,10 @@ export type TestThemeRuntimeFixture = Readonly<{
 }>;
 
 export function createThemeFixture(overrides?: PlainObject): PlainObject {
-    return mergeObjects(lightTheme as PlainObject, overrides);
+    return mergeObjects(
+        mergeObjects(lightTheme as PlainObject, testThemeFallbacks),
+        overrides,
+    );
 }
 
 export function createThemeRuntimeFixture(overrides?: Partial<TestThemeRuntimeFixture>): TestThemeRuntimeFixture {

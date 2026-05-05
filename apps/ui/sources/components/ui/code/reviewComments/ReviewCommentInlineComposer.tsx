@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -46,15 +46,15 @@ export function ReviewCommentInlineComposer(props: {
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        marginLeft: 46,
+        marginLeft: 0,
         marginRight: 8,
-        marginTop: 6,
+        marginTop: 0,
         marginBottom: 8,
         padding: 10,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider ?? '#ddd',
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface ?? '#fff',
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
         gap: 10,
     },
     input: {
@@ -65,6 +65,12 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
+        ...(Platform.select({
+            web: {
+                WebkitAppearance: 'none',
+            },
+            default: {},
+        }) as object),
     },
     actions: {
         flexDirection: 'row',
@@ -75,10 +81,10 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 8,
-        backgroundColor: theme.colors.button?.primary?.background ?? theme.colors.text ?? '#000',
+        backgroundColor: theme.colors.button?.primary?.background ?? theme.colors.text,
     },
     primaryText: {
-        color: theme.colors.button?.primary?.tint ?? theme.colors.surface ?? '#fff',
+        color: theme.colors.button?.primary?.tint ?? theme.colors.surface,
         fontSize: 12,
         fontWeight: '700',
         ...Typography.default('semiBold'),
@@ -87,12 +93,12 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfacePressed ?? theme.colors.surface ?? '#fff',
+        backgroundColor: theme.colors.surfacePressed ?? theme.colors.surface,
         borderWidth: 1,
-        borderColor: theme.colors.divider ?? '#ddd',
+        borderColor: theme.colors.divider,
     },
     secondaryText: {
-        color: theme.colors.button?.secondary?.tint ?? theme.colors.textSecondary ?? '#666',
+        color: theme.colors.button?.secondary?.tint ?? theme.colors.textSecondary,
         fontSize: 12,
         fontWeight: '700',
         ...Typography.default('semiBold'),

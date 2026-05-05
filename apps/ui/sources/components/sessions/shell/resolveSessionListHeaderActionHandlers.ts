@@ -12,6 +12,14 @@ export type SessionListHeaderActionHandlers = Readonly<{
 }>;
 
 type SessionListHeaderToggleCollapseHandler = (collapseKey: string, ...args: readonly unknown[]) => void;
+type WorkspaceScopeHint = Readonly<{ serverId: string; machineId: string; rootPath: string }>;
+export type CreateSessionFromWorkspaceScopeOptions = Readonly<{
+    seedSessionId?: string | null;
+}>;
+export type CreateSessionFromWorkspaceScopeHandler = (
+    scopeHint: WorkspaceScopeHint,
+    options?: CreateSessionFromWorkspaceScopeOptions,
+) => void;
 
 const SESSION_LIST_HEADER_ACTION_HANDLERS_CACHE = new LruMap<string, SessionListHeaderActionHandlers>({
     maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
@@ -35,7 +43,7 @@ function getFunctionIdentity(fn: Function): number {
 function buildProjectHeaderActionCacheKey(input: Readonly<{
     headerViewState: Extract<SessionListHeaderViewState, { kind: 'project' }>;
     onOpenProject: (workspaceRefId: string) => void;
-    onCreateSessionFromWorkspaceScope: (scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }>) => void;
+    onCreateSessionFromWorkspaceScope: CreateSessionFromWorkspaceScopeHandler;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
@@ -56,6 +64,7 @@ function buildProjectHeaderActionCacheKey(input: Readonly<{
         headerViewState.hasCustomLabel ? '1' : '0',
         headerViewState.workspaceRefId ?? '',
         headerViewState.legacyWorkspaceKey,
+        headerViewState.seedSessionId ?? '',
         scopeHint?.serverId ?? '',
         scopeHint?.machineId ?? '',
         scopeHint?.rootPath ?? '',
@@ -83,7 +92,7 @@ function buildSectionHeaderActionCacheKey(input: Readonly<{
 export function resolveSessionListHeaderActionHandlers(input: Readonly<{
     headerViewState: SessionListHeaderViewState | null;
     onOpenProject: (workspaceRefId: string) => void;
-    onCreateSessionFromWorkspaceScope: (scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }>) => void;
+    onCreateSessionFromWorkspaceScope: CreateSessionFromWorkspaceScopeHandler;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
@@ -135,7 +144,9 @@ export function resolveSessionListHeaderActionHandlers(input: Readonly<{
                 if (!headerViewState.scopeHint) {
                     return;
                 }
-                input.onCreateSessionFromWorkspaceScope(headerViewState.scopeHint);
+                input.onCreateSessionFromWorkspaceScope(headerViewState.scopeHint, {
+                    seedSessionId: headerViewState.seedSessionId,
+                });
             },
             onRename: () => {
                 input.onRenameWorkspace({

@@ -1,14 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred } from '@/dev/testkit';
+import { createSyncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 import { runNativeCryptoWorkerQueuedBatch } from './nativeCryptoWorkerQueue';
 import {
     normalizeNativeCryptoWorkerRouting,
+    resetNativeCryptoWorkerCapabilityCacheForTests,
     runNativeCryptoWorkerBatch,
 } from './nativeCryptoWorkerRouting';
 import {
     NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON,
+    NativeCryptoWorkerUnavailableError,
     type NativeCryptoWorkerCapability,
 } from './types';
 
@@ -77,6 +80,10 @@ describe('normalizeNativeCryptoWorkerRouting', () => {
 });
 
 describe('runNativeCryptoWorkerBatch', () => {
+    beforeEach(() => {
+        resetNativeCryptoWorkerCapabilityCacheForTests();
+    });
+
     it('uses reference work without probing native when mode is off', async () => {
         const probe = vi.fn(async () => availableCapability);
         const nativeRun = vi.fn(async () => ['native']);
@@ -238,5 +245,158 @@ describe('runNativeCryptoWorkerBatch', () => {
         });
 
         expect(result).toEqual({ status: 'stale', source: 'native', items: [] });
+    });
+
+    it('records per-dispatch native capability probe duration when telemetry is enabled', async () => {
+        let now = 100;
+        const telemetry = createSyncPerformanceTelemetry({
+            enabled: true,
+            slowThresholdMs: 1,
+            now: () => now,
+        });
+
+        const result = await runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', minPayloadBytes: 0, telemetryEnabled: true },
+            telemetry,
+            now: () => now,
+            itemCount: 2,
+            payloadBytes: 2048,
+            probe: async () => {
+                now = 107;
+                return {
+                    ...availableCapability,
+                    warmupMs: 6,
+                };
+            },
+            nativeRun: async () => ['native-a', 'native-b'],
+            referenceRun: async () => ['reference'],
+        });
+
+        expect(result).toEqual({ status: 'ok', source: 'native', items: ['native-a', 'native-b'] });
+        expect(telemetry.snapshot().events).toEqual([
+            expect.objectContaining({
+                name: 'sync.crypto.worker.probe',
+                count: 1,
+                totalMs: 7,
+                p99Ms: 16,
+                fields: expect.objectContaining({
+                    operation: 2,
+                    items: 2,
+                    payloadBytes: 2048,
+                    available: 1,
+                    failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.ok,
+                    warmupMs: 6,
+                }),
+            }),
+        ]);
+    });
+
+    it('invalidates a cached capability when native dispatch reports the module unavailable', async () => {
+        const capabilityCacheKey = {};
+        let probeCount = 0;
+        let dispatchCount = 0;
+
+        const first = await runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', minPayloadBytes: 0 },
+            capabilityCacheKey,
+            itemCount: 2,
+            payloadBytes: 2048,
+            probe: async () => {
+                probeCount += 1;
+                return availableCapability;
+            },
+            nativeRun: async () => {
+                dispatchCount += 1;
+                throw new NativeCryptoWorkerUnavailableError(NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing);
+            },
+            referenceRun: async () => ['reference-after-unavailable'],
+        });
+
+        expect(first).toEqual({
+            status: 'ok',
+            source: 'reference',
+            items: ['reference-after-unavailable'],
+        });
+
+        const second = await runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', minPayloadBytes: 0 },
+            capabilityCacheKey,
+            itemCount: 2,
+            payloadBytes: 2048,
+            probe: async () => {
+                probeCount += 1;
+                return availableCapability;
+            },
+            nativeRun: async () => {
+                dispatchCount += 1;
+                return ['native-after-reprobe'];
+            },
+            referenceRun: async () => ['reference'],
+        });
+
+        expect(second).toEqual({
+            status: 'ok',
+            source: 'native',
+            items: ['native-after-reprobe'],
+        });
+        expect(dispatchCount).toBe(2);
+        expect(probeCount).toBe(2);
+    });
+
+    it('degrades a cached capability after a native decrypt failure in auto mode', async () => {
+        const capabilityCacheKey = {};
+        let probeCount = 0;
+        let dispatchCount = 0;
+
+        const first = await runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', minPayloadBytes: 0 },
+            capabilityCacheKey,
+            itemCount: 2,
+            payloadBytes: 2048,
+            probe: async () => {
+                probeCount += 1;
+                return availableCapability;
+            },
+            nativeRun: async () => {
+                dispatchCount += 1;
+                throw new Error('native bridge crashed');
+            },
+            referenceRun: async () => ['reference-after-runtime-failure'],
+        });
+
+        expect(first).toEqual({
+            status: 'ok',
+            source: 'reference',
+            items: ['reference-after-runtime-failure'],
+        });
+
+        const second = await runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', minPayloadBytes: 0 },
+            capabilityCacheKey,
+            itemCount: 2,
+            payloadBytes: 2048,
+            probe: async () => {
+                probeCount += 1;
+                return availableCapability;
+            },
+            nativeRun: async () => {
+                dispatchCount += 1;
+                return ['native-after-degrade'];
+            },
+            referenceRun: async () => ['reference-after-degrade'],
+        });
+
+        expect(second).toEqual({
+            status: 'ok',
+            source: 'reference',
+            items: ['reference-after-degrade'],
+        });
+        expect(dispatchCount).toBe(1);
+        expect(probeCount).toBe(1);
     });
 });

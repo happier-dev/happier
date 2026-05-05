@@ -8,6 +8,10 @@ import { promisify } from 'node:util';
 
 import * as preflightModule from './tauriActivitySurfacesPreflight.mjs';
 import * as qaModule from './tauriActivitySurfacesMcpQa.mjs';
+import {
+    resolvePreferredAppIdentifierFromDriverStatus,
+    tryParseDriverSessionStatus,
+} from './tauriDriverSessionSelection.mjs';
 
 const execFileAsync = promisify(execFile);
 const { resolveActivitySurfacesPreflightSelector } = preflightModule;
@@ -23,11 +27,9 @@ const canonicalActivitySurfacesRequiredProofStepIds = [
     'overlay_user_question',
     'overlay_quota_summary',
     'overlay_multi_session_list',
-];
-const canonicalActivitySurfacesProofStepIds = [
-    ...canonicalActivitySurfacesRequiredProofStepIds,
     'overlay_completion_state',
 ];
+const canonicalActivitySurfacesProofStepIds = [...canonicalActivitySurfacesRequiredProofStepIds];
 const minimalActivitySurfacesCaptureStepIds = [
     'settings_overlay',
     'overlay_route',
@@ -46,9 +48,10 @@ function createSyntheticOverlayCaptureLaneArtifacts(stepId) {
 function createExpectedOverlayCaptureLaneResult({
     includeCompletionState = false,
 } = {}) {
-    const optionalStepIds = includeCompletionState
-        ? [...deterministicOverlayCaptureOptionalStepIds, 'overlay_completion_state']
-        : deterministicOverlayCaptureOptionalStepIds;
+    const optionalStepIds = Array.from(new Set([
+        ...deterministicOverlayCaptureOptionalStepIds,
+        ...(includeCompletionState ? ['overlay_completion_state'] : []),
+    ]));
 
     return {
         settingsArtifacts: createSyntheticOverlayCaptureLaneArtifacts('settings_overlay'),
@@ -74,9 +77,10 @@ function createSyntheticQaProofArtifacts(stepId) {
 function createCompleteSyntheticQaOverlayCaptureResult({
     includeCompletionState = false,
 } = {}) {
-    const optionalStepIds = includeCompletionState
-        ? [...deterministicOverlayCaptureOptionalStepIds, 'overlay_completion_state']
-        : deterministicOverlayCaptureOptionalStepIds;
+    const optionalStepIds = Array.from(new Set([
+        ...deterministicOverlayCaptureOptionalStepIds,
+        ...(includeCompletionState ? ['overlay_completion_state'] : []),
+    ]));
 
     return {
         settingsArtifacts: createSyntheticQaProofArtifacts('settings_overlay'),
@@ -139,7 +143,7 @@ test('tauri activity-surfaces QA exposes a deterministic capture plan', async ()
             ['overlay_user_question', true],
             ['overlay_quota_summary', true],
             ['overlay_multi_session_list', true],
-            ['overlay_completion_state', false],
+            ['overlay_completion_state', true],
         ],
     );
     assert.deepEqual(payload.plan.preflight.settingsSelectors, [
@@ -191,6 +195,28 @@ test('tauri activity-surfaces QA exposes a deterministic capture plan', async ()
     );
 });
 
+test('tauri activity-surfaces QA parses driver-session status from MCP content envelopes', () => {
+    const status = tryParseDriverSessionStatus({
+        content: [
+            {
+                type: 'text',
+                text: JSON.stringify({
+                    connected: true,
+                    app: 'Tauri App (localhost:9223)',
+                    identifier: 'com.happier.stack.activity-surfaces-qa',
+                    host: 'localhost',
+                    port: 9223,
+                }),
+            },
+        ],
+    });
+
+    assert.equal(
+        resolvePreferredAppIdentifierFromDriverStatus(status, 9223),
+        'com.happier.stack.activity-surfaces-qa',
+    );
+});
+
 test('tauri activity-surfaces expands the overlay by emitting an overlay interaction', async () => {
     const calls = [];
 
@@ -218,6 +244,24 @@ test('tauri activity-surfaces expands the overlay by emitting an overlay interac
     assert.equal(scriptFlagIndex2 >= 0, true);
     const script2 = String(calls[1].args[scriptFlagIndex2 + 1] ?? '');
     assert.match(script2, /desktop_activity_overlay_set_expanded/);
+    assert.equal(calls[1].options.windowId, 'main');
+});
+
+test('tauri activity-surfaces programmatic expansion emits the canonical state interaction from main by default', async () => {
+    const calls = [];
+
+    await qaModule.setActivitySurfacesOverlayExpanded(true, {
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        runCli: async (args, options) => {
+            calls.push({ args, options });
+            return { stdout: JSON.stringify({ ok: true }) };
+        },
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].options.windowId, 'main');
     assert.equal(calls[1].options.windowId, 'main');
 });
 
@@ -3025,7 +3069,7 @@ test('tauri activity-surfaces QA injects the requested window id into webview mc
     ]);
 });
 
-test('tauri activity-surfaces QA omits the implicit main window id from webview mcp commands', async () => {
+test('tauri activity-surfaces QA explicitly targets the main window for webview mcp commands', async () => {
     assert.equal(typeof qaModule.runActivitySurfacesMcpCli, 'function');
 
     const calls = [];
@@ -3054,6 +3098,8 @@ test('tauri activity-surfaces QA omits the implicit main window id from webview 
         'structure',
         '--app-identifier',
         '9223',
+        '--window-id',
+        'main',
     ]);
 });
 
@@ -3151,8 +3197,8 @@ test('tauri activity-surfaces QA captures the full deterministic overlay proof m
             calls.push(['open-settings-page', options.windowId ?? null]);
             return true;
         },
-        captureRequired: async (stepId) => {
-            calls.push(['capture', stepId]);
+        captureRequired: async (stepId, captureOptions = {}) => {
+            calls.push(['capture', stepId, captureOptions.selectorOverride ?? null]);
             return { stepId };
         },
         enableDesktopOverlay: async (options = {}) => {
@@ -3161,6 +3207,10 @@ test('tauri activity-surfaces QA captures the full deterministic overlay proof m
         enableDesktopOverlayVisibility: async ({ visibilityMode, windowId }) => {
             calls.push(['visibility', visibilityMode, windowId ?? null]);
             return true;
+        },
+        setOverlayAutoHideEnabled: async ({ enabled, windowId }) => {
+            calls.push(['auto-hide', enabled, windowId ?? null]);
+            return { previousValue: true };
         },
         setOverlayPresentationMode: async ({ presentationMode, windowId }) => {
             calls.push(['presentation', presentationMode, windowId ?? null]);
@@ -3195,7 +3245,14 @@ test('tauri activity-surfaces QA captures the full deterministic overlay proof m
             calls.push(['delay', ms]);
         },
         isSelectorVisible: async () => false,
-        isSelectorVisibleByDomQuery: async () => false,
+        isSelectorVisibleByDomQuery: async (selector, options = {}) => {
+            if (activeCaptureStepId !== 'overlay_idle') {
+                return true;
+            }
+            idleCaptureEvents.push(`dom-query:${selector}:${options.windowId ?? null}`);
+            return selector === '[data-testid="desktop-activity-overlay-card-idle-idle"]'
+                && idleSelectorProbeCount >= 2;
+        },
         appendWarning: async () => {
             throw new Error('unexpected warning');
         },
@@ -3213,11 +3270,19 @@ test('tauri activity-surfaces QA captures the full deterministic overlay proof m
     assert.equal(visibilityModes[0], 'always_when_enabled');
     assert.equal(visibilityModes[visibilityModes.length - 1], 'active_sessions');
     assert.deepEqual(
+        calls.filter((entry) => entry[0] === 'auto-hide').map((entry) => entry.slice(1)),
+        [
+            [false, 'main'],
+            [true, 'main'],
+        ],
+    );
+    assert.deepEqual(
         calls.filter((entry) => entry[0] === 'set-expanded').map((entry) => entry.slice(1)),
         [
-            [false, 'activity_overlay'],
-            [false, 'activity_overlay'],
-            [true, 'activity_overlay'],
+            [false, 'main'],
+            [true, 'main'],
+            [false, 'main'],
+            [true, 'main'],
         ],
     );
     assert.deepEqual(
@@ -3242,20 +3307,35 @@ test('tauri activity-surfaces QA captures the full deterministic overlay proof m
             'overlay_user_question',
             'overlay_quota_summary',
             'overlay_multi_session_list',
+            'overlay_completion_state',
         ],
     );
     assert.deepEqual(
         calls.filter((entry) => entry[0] === 'seed-overlay').map((entry) => entry.slice(1)),
         [
             ['idle', 'main'],
+            ['idle', 'main'],
+            ['permission_request', 'main'],
             ['permission_request', 'main'],
             ['user_question', 'main'],
+            ['user_question', 'main'],
+            ['quota_summary', 'main'],
             ['quota_summary', 'main'],
             ['multi_session_list', 'main'],
+            ['multi_session_list', 'main'],
+            ['completion_state', 'main'],
             ['completion_state', 'main'],
         ],
     );
     assert.equal(calls.some((entry) => entry[0] === 'click' && entry[1] === '[data-testid="desktop-activity-overlay-collapsed"]'), true);
+    assert.equal(
+        calls.some((entry) => (
+            entry[0] === 'capture'
+            && entry[1] === 'overlay_collapsed'
+            && entry[2] === '[data-testid="desktop-activity-overlay-collapsed-notch"]'
+        )),
+        true,
+    );
 });
 
 test('tauri activity-surfaces QA captures deterministic seeded overlay proof states instead of opportunistic card snapshots', async () => {
@@ -3304,10 +3384,21 @@ test('tauri activity-surfaces QA captures deterministic seeded overlay proof sta
             calls.push(['click', selector, options.windowId ?? null]);
             currentExpanded = true;
         },
-        isSelectorVisible: async (selector) => selector !== '[data-testid="desktop-activity-overlay-card-completion_state-qa-completion-state"]',
-        isSelectorVisibleByDomQuery: async () => false,
+        isSelectorVisible: async () => true,
+        isSelectorVisibleByDomQuery: async (selector, options = {}) => {
+            if (activeCaptureStepId !== 'overlay_idle') {
+                return true;
+            }
+            idleCaptureEvents.push(`dom-query:${selector}:${options.windowId ?? null}`);
+            return selector === '[data-testid="desktop-activity-overlay-card-idle-idle"]'
+                && idleSelectorProbeCount >= 2;
+        },
         wait: async () => {},
-        appendWarning: async () => {},
+        appendWarning: async (artifactRoot, warning) => {
+            if (String(warning).includes('reassert expanded desktop overlay state')) {
+                throw new Error(String(warning));
+            }
+        },
     });
 
     assert.deepEqual(
@@ -3316,10 +3407,16 @@ test('tauri activity-surfaces QA captures deterministic seeded overlay proof sta
     );
     assert.deepEqual(seededModes, [
         'idle',
+        'idle',
+        'permission_request',
         'permission_request',
         'user_question',
+        'user_question',
+        'quota_summary',
         'quota_summary',
         'multi_session_list',
+        'multi_session_list',
+        'completion_state',
         'completion_state',
     ]);
     assert.deepEqual(captures, [
@@ -3334,6 +3431,438 @@ test('tauri activity-surfaces QA captures deterministic seeded overlay proof sta
         'overlay_user_question',
         'overlay_quota_summary',
         'overlay_multi_session_list',
+        'overlay_completion_state',
+    ]);
+});
+
+test('tauri activity-surfaces QA reseeds deterministic proof state while waiting for native state to catch up', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    let idleSeedCount = 0;
+    const captures = [];
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId) => {
+            captures.push(stepId);
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded) => {
+            currentExpanded = expanded === true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            if (mode === 'idle') {
+                idleSeedCount += 1;
+            }
+            return { ok: true, mode };
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode === 'idle' && idleSeedCount < 3
+                ? 'session_overview'
+                : currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        isSelectorVisible: async () => false,
+        isSelectorVisibleByDomQuery: async () => true,
+        wait: async () => {},
+        appendWarning: async () => {},
+    });
+
+    assert.equal(idleSeedCount >= 3, true);
+    assert.equal(captures.includes('overlay_idle'), true);
+    assert.equal(result.optionalStepArtifacts.overlay_idle.stepId, 'overlay_idle');
+});
+
+test('tauri activity-surfaces QA reports the last observed overlay state when deterministic proof state never matches', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+
+    await assert.rejects(
+        () => qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+            appIdentifier: 9223,
+            env: { EXISTING: 'value' },
+            driverSession: { driverSessionPort: 9223 },
+            artifactRoot: '/tmp/activity-surfaces-artifacts',
+            navigateToPath: async () => {},
+            openDesktopAppSettingsPage: async () => true,
+            captureRequired: async (stepId) => ({ stepId }),
+            enableDesktopOverlay: async () => {},
+            enableDesktopOverlayVisibility: async () => true,
+            setOverlayPresentationMode: async ({ presentationMode }) => {
+                currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+                currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+                return true;
+            },
+            setOverlayExpanded: async (expanded) => {
+                currentExpanded = expanded === true;
+            },
+            seedOverlayProofState: async ({ mode }) => {
+                currentProofMode = mode;
+                currentExpanded = true;
+                return { ok: true, mode };
+            },
+            getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+                hostMode: currentOverlayHostMode,
+                requestedHostMode: currentRequestedHostMode,
+                proofMode: currentProofMode === 'idle' ? 'session_overview' : currentProofMode,
+                expanded: currentExpanded,
+            }),
+            clickCollapsedOverlay: async () => {
+                currentExpanded = true;
+            },
+            isSelectorVisible: async () => false,
+            isSelectorVisibleByDomQuery: async () => false,
+            wait: async () => {},
+            appendWarning: async () => {},
+        }),
+        /Desktop overlay proof state never matched overlay_idle.*session_overview/s,
+    );
+});
+
+test('tauri activity-surfaces QA does not reassert expansion through the main runtime during seeded proof captures', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    let seededProofCaptureActive = false;
+    const seededModeCalls = [];
+    const permissionCaptureEvents = [];
+    let activeCaptureStepId = null;
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId, captureOptions = {}) => {
+            activeCaptureStepId = stepId;
+            if (typeof captureOptions.beforeSelectorCapture === 'function') {
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('selector:start');
+                await captureOptions.beforeSelectorCapture();
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('selector:end');
+            }
+            if (typeof captureOptions.beforeScreenshotCapture === 'function') {
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('screenshot:start');
+                await captureOptions.beforeScreenshotCapture();
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('screenshot:end');
+            }
+            if (typeof captureOptions.beforeStructureCapture === 'function') {
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('structure:start');
+                await captureOptions.beforeStructureCapture();
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('structure:end');
+            }
+            if (typeof captureOptions.beforeAccessibilityCapture === 'function') {
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('accessibility:start');
+                await captureOptions.beforeAccessibilityCapture();
+                if (stepId === 'overlay_permission_request') permissionCaptureEvents.push('accessibility:end');
+            }
+            activeCaptureStepId = null;
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded) => {
+            if (seededProofCaptureActive) {
+                throw new Error('seeded proof payload must not be overwritten by main-runtime expansion sync');
+            }
+            currentExpanded = expanded === true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            if (activeCaptureStepId === 'overlay_permission_request') {
+                permissionCaptureEvents.push(`seed:${mode}`);
+            }
+            seededModeCalls.push(mode);
+            currentProofMode = mode;
+            currentExpanded = true;
+            seededProofCaptureActive = true;
+            return { ok: true, mode };
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        isSelectorVisible: async () => true,
+        isSelectorVisibleByDomQuery: async () => true,
+        wait: async (ms) => {
+            if (activeCaptureStepId === 'overlay_permission_request') {
+                permissionCaptureEvents.push(`wait:${ms}`);
+            }
+        },
+        appendWarning: async (artifactRoot, warning) => {
+            if (String(warning).includes('reassert expanded desktop overlay state')) {
+                throw new Error(String(warning));
+            }
+        },
+    });
+
+    assert.equal(result.optionalStepArtifacts.overlay_idle.stepId, 'overlay_idle');
+    assert.equal(seededModeCalls.filter((mode) => mode === 'permission_request').length > 1, true);
+    assert.deepEqual(permissionCaptureEvents, [
+        'selector:start',
+        'seed:permission_request',
+        'wait:350',
+        'selector:end',
+        'screenshot:start',
+        'seed:permission_request',
+        'wait:350',
+        'screenshot:end',
+        'structure:start',
+        'seed:permission_request',
+        'wait:350',
+        'structure:end',
+        'accessibility:start',
+        'seed:permission_request',
+        'wait:350',
+        'accessibility:end',
+    ]);
+});
+
+test('tauri activity-surfaces QA waits for seeded overlay DOM readiness before capture hooks resolve', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    let activeCaptureStepId = null;
+    let idleSelectorProbeCount = 0;
+    const idleCaptureEvents = [];
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId, captureOptions = {}) => {
+            activeCaptureStepId = stepId;
+            try {
+                if (stepId === 'overlay_idle') {
+                    idleCaptureEvents.push('screenshot:start');
+                    assert.equal(typeof captureOptions.beforeScreenshotCapture, 'function');
+                    await captureOptions.beforeScreenshotCapture();
+                    idleCaptureEvents.push('screenshot:end');
+                    idleCaptureEvents.push('structure:start');
+                    assert.equal(typeof captureOptions.beforeStructureCapture, 'function');
+                    await captureOptions.beforeStructureCapture();
+                    idleCaptureEvents.push('structure:end');
+                }
+                return { stepId };
+            } finally {
+                activeCaptureStepId = null;
+            }
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded) => {
+            currentExpanded = expanded === true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            if (activeCaptureStepId === 'overlay_idle') {
+                idleCaptureEvents.push(`seed:${mode}`);
+            }
+            return { ok: true, mode };
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        isSelectorVisible: async (selector, options = {}) => {
+            if (activeCaptureStepId !== 'overlay_idle') {
+                return true;
+            }
+            idleCaptureEvents.push(`probe:${selector}:${options.windowId ?? null}`);
+            if (selector !== '[data-testid="desktop-activity-overlay-card-idle-idle"]') {
+                return false;
+            }
+            idleSelectorProbeCount += 1;
+            return idleSelectorProbeCount >= 2;
+        },
+        isSelectorVisibleByDomQuery: async (selector, options = {}) => {
+            if (activeCaptureStepId !== 'overlay_idle') {
+                return true;
+            }
+            idleCaptureEvents.push(`dom-query:${selector}:${options.windowId ?? null}`);
+            return selector === '[data-testid="desktop-activity-overlay-card-idle-idle"]'
+                && idleSelectorProbeCount >= 2;
+        },
+        wait: async (ms) => {
+            if (activeCaptureStepId === 'overlay_idle') {
+                idleCaptureEvents.push(`wait:${ms}`);
+            }
+        },
+        appendWarning: async () => {},
+    });
+
+    assert.equal(result.optionalStepArtifacts.overlay_idle.stepId, 'overlay_idle');
+    assert.deepEqual(idleCaptureEvents, [
+        'screenshot:start',
+        'seed:idle',
+        'wait:350',
+        'probe:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'dom-query:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'wait:250',
+        'probe:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'dom-query:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'screenshot:end',
+        'structure:start',
+        'seed:idle',
+        'wait:350',
+        'probe:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'dom-query:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'structure:end',
+    ]);
+});
+
+test('tauri activity-surfaces QA does not treat a stale selector wait as seeded overlay DOM readiness', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    let activeCaptureStepId = null;
+    let idleDomQueryCount = 0;
+    const idleCaptureEvents = [];
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId, captureOptions = {}) => {
+            activeCaptureStepId = stepId;
+            try {
+                if (stepId === 'overlay_idle') {
+                    idleCaptureEvents.push('screenshot:start');
+                    assert.equal(typeof captureOptions.beforeScreenshotCapture, 'function');
+                    await captureOptions.beforeScreenshotCapture();
+                    idleCaptureEvents.push('screenshot:end');
+                }
+                return { stepId };
+            } finally {
+                activeCaptureStepId = null;
+            }
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded) => {
+            currentExpanded = expanded === true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            if (activeCaptureStepId === 'overlay_idle') {
+                idleCaptureEvents.push(`seed:${mode}`);
+            }
+            return { ok: true, mode };
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        isSelectorVisible: async (selector, options = {}) => {
+            if (activeCaptureStepId === 'overlay_idle') {
+                idleCaptureEvents.push(`wait-for:${selector}:${options.windowId ?? null}`);
+            }
+            return selector === '[data-testid="desktop-activity-overlay-card-idle-idle"]';
+        },
+        isSelectorVisibleByDomQuery: async (selector, options = {}) => {
+            if (activeCaptureStepId !== 'overlay_idle') {
+                return true;
+            }
+            idleCaptureEvents.push(`dom-query:${selector}:${options.windowId ?? null}`);
+            if (selector !== '[data-testid="desktop-activity-overlay-card-idle-idle"]') {
+                return false;
+            }
+            idleDomQueryCount += 1;
+            return idleDomQueryCount >= 2;
+        },
+        wait: async (ms) => {
+            if (activeCaptureStepId === 'overlay_idle') {
+                idleCaptureEvents.push(`wait:${ms}`);
+            }
+        },
+        appendWarning: async () => {},
+    });
+
+    assert.equal(result.optionalStepArtifacts.overlay_idle.stepId, 'overlay_idle');
+    assert.deepEqual(idleCaptureEvents, [
+        'screenshot:start',
+        'seed:idle',
+        'wait:350',
+        'wait-for:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'dom-query:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'wait:250',
+        'wait-for:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'dom-query:[data-testid="desktop-activity-overlay-card-idle-idle"]:activity_overlay',
+        'screenshot:end',
     ]);
 });
 
@@ -3429,13 +3958,14 @@ test('tauri activity-surfaces QA accepts floating host fallback when forced notc
             ['overlay_route', null, null],
             ['overlay_collapsed', '[data-testid="desktop-activity-overlay-collapsed-floating"]', '[data-testid="desktop-activity-overlay-collapsed-floating"]'],
             ['overlay_expanded', '[data-testid="desktop-activity-overlay-expanded-floating"]', '[data-testid="desktop-activity-overlay-expanded-floating"]'],
-            ['overlay_floating_fallback', null, null],
-            ['overlay_floating_expanded', null, null],
-            ['overlay_idle', null, null],
-            ['overlay_permission_request', null, null],
-            ['overlay_user_question', null, null],
-            ['overlay_quota_summary', null, null],
-            ['overlay_multi_session_list', null, null],
+            ['overlay_floating_fallback', '[data-testid="desktop-activity-overlay-collapsed-floating"]', '[data-testid="desktop-activity-overlay-collapsed-floating"]'],
+            ['overlay_floating_expanded', '[data-testid="desktop-activity-overlay-expanded-floating"]', '[data-testid="desktop-activity-overlay-expanded-floating"]'],
+            ['overlay_idle', '[data-testid="desktop-activity-overlay-card-idle-idle"]', '[data-testid="desktop-activity-overlay-card-idle-idle"]'],
+            ['overlay_permission_request', '[data-testid="desktop-activity-overlay-card-permission_request-qa-permission-request"]', '[data-testid="desktop-activity-overlay-card-permission_request-qa-permission-request"]'],
+            ['overlay_user_question', '[data-testid="desktop-activity-overlay-card-user_question-qa-user-question"]', '[data-testid="desktop-activity-overlay-card-user_question-qa-user-question"]'],
+            ['overlay_quota_summary', '[data-testid="desktop-activity-overlay-card-quota_summary-qa-quota-summary"]', '[data-testid="desktop-activity-overlay-card-quota_summary-qa-quota-summary"]'],
+            ['overlay_multi_session_list', '[data-testid="desktop-activity-overlay-card-multi_session_list-list"]', '[data-testid="desktop-activity-overlay-card-multi_session_list-list"]'],
+            ['overlay_completion_state', '[data-testid="desktop-activity-overlay-card-completion_state-qa-completion-state"]', '[data-testid="desktop-activity-overlay-card-completion_state-qa-completion-state"]'],
         ],
     );
 });
@@ -3574,7 +4104,86 @@ test('tauri activity-surfaces QA falls back to clicking the collapsed overlay wh
     assert.equal(expandedCaptureAttempts, 2);
     assert.deepEqual(
         calls.filter((entry) => entry[0] === 'click'),
-        [['click', '[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay']],
+        [
+            ['click', '[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay'],
+            ['click', '[data-testid="desktop-activity-overlay-collapsed-floating"]', 'activity_overlay'],
+        ],
+    );
+});
+
+test('tauri activity-surfaces QA recovers notch expansion when the collapsed click leaves the overlay collapsed', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    let trueExpansionAttempts = 0;
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async (pathname) => {
+            calls.push(['navigate', pathname]);
+        },
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId) => {
+            calls.push(['capture', stepId]);
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {
+            calls.push(['enable-overlay']);
+        },
+        enableDesktopOverlayVisibility: async ({ visibilityMode }) => {
+            calls.push(['visibility', visibilityMode]);
+            return true;
+        },
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded, options = {}) => {
+            calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            if (expanded === true) {
+                trueExpansionAttempts += 1;
+                currentExpanded = trueExpansionAttempts > 1;
+            } else {
+                currentExpanded = false;
+            }
+        },
+        getOverlayWindowState: async (options = {}) => {
+            calls.push(['get-overlay-state', options.windowId ?? null]);
+            return createSyntheticOverlayWindowState({
+                hostMode: currentOverlayHostMode,
+                requestedHostMode: currentRequestedHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
+            });
+        },
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async (ms) => {
+            calls.push(['delay', ms]);
+        },
+        appendWarning: async () => {
+            throw new Error('unexpected warning');
+        },
+    });
+
+    assert.deepEqual(result.expandedArtifacts, { stepId: 'overlay_expanded' });
+    assert.equal(
+        calls.some((entry) => entry[0] === 'set-expanded' && entry[1] === true && entry[2] === 'main'),
+        true,
     );
 });
 
@@ -3707,7 +4316,7 @@ test('tauri activity-surfaces QA falls back to an unscoped expanded capture when
             currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
-            calls.push(['get-overlay-state', options.windowId ?? null]);
+            calls.push(['get-overlay-state', options.windowId ?? null, options.timeoutMs ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
                 proofMode: currentProofMode,
@@ -3735,7 +4344,10 @@ test('tauri activity-surfaces QA falls back to an unscoped expanded capture when
     assert.equal(expandedCaptureAttempts, 1);
     assert.deepEqual(
         calls.filter((entry) => entry[0] === 'click'),
-        [['click', '[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay']],
+        [
+            ['click', '[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay'],
+            ['click', '[data-testid="desktop-activity-overlay-collapsed-floating"]', 'activity_overlay'],
+        ],
     );
 });
 
@@ -3804,8 +4416,172 @@ test('tauri activity-surfaces QA retries floating expanded proof capture via the
         [
             ['click', '[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay'],
             ['click', '[data-testid="desktop-activity-overlay-collapsed-floating"]', 'activity_overlay'],
+            ['click', '[data-testid="desktop-activity-overlay-collapsed-floating"]', 'activity_overlay'],
         ],
     );
+    const firstFloatingClickIndex = calls.findIndex(
+        (entry) => entry[0] === 'click' && entry[1] === '[data-testid="desktop-activity-overlay-collapsed-floating"]',
+    );
+    const firstFloatingExpandedCaptureIndex = calls.findIndex(
+        (entry) => entry[0] === 'capture' && entry[1] === 'overlay_floating_expanded',
+    );
+    assert.ok(firstFloatingClickIndex >= 0);
+    assert.ok(firstFloatingClickIndex < firstFloatingExpandedCaptureIndex);
+});
+
+test('tauri activity-surfaces QA reasserts expanded state during expanded overlay proof captures', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId, captureOptions = {}) => {
+            calls.push([
+                'capture',
+                stepId,
+                typeof captureOptions.beforeSelectorCapture,
+                typeof captureOptions.beforeStructureCapture,
+                typeof captureOptions.beforeAccessibilityCapture,
+            ]);
+            if (stepId === 'overlay_floating_expanded') {
+                currentExpanded = false;
+                assert.equal(typeof captureOptions.beforeSelectorCapture, 'function');
+                await captureOptions.beforeSelectorCapture();
+                assert.equal(currentExpanded, true);
+                currentExpanded = false;
+                assert.equal(typeof captureOptions.beforeStructureCapture, 'function');
+                await captureOptions.beforeStructureCapture();
+                assert.equal(currentExpanded, true);
+                currentExpanded = false;
+                assert.equal(typeof captureOptions.beforeAccessibilityCapture, 'function');
+                await captureOptions.beforeAccessibilityCapture();
+                assert.equal(currentExpanded, true);
+            }
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded, options = {}) => {
+            calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async (ms) => {
+            calls.push(['delay', ms]);
+        },
+        appendWarning: async () => {},
+    });
+
+    assert.deepEqual(result.optionalStepArtifacts.overlay_floating_expanded, { stepId: 'overlay_floating_expanded' });
+    assert.equal(
+        calls.some((entry) => entry[0] === 'set-expanded' && entry[1] === true && entry[2] === 'main'),
+        true,
+    );
+    assert.deepEqual(
+        calls.filter((entry) => entry[0] === 'capture' && entry[1] === 'overlay_floating_expanded'),
+        [['capture', 'overlay_floating_expanded', 'function', 'function', 'function']],
+    );
+});
+
+test('tauri activity-surfaces QA backs up floating click expansion with the canonical main-window expanded state', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId) => {
+            calls.push(['capture', stepId]);
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded, options = {}) => {
+            calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            requestedHostMode: currentRequestedHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            if (selector === '[data-testid="desktop-activity-overlay-collapsed"]') {
+                currentExpanded = true;
+            }
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async () => {},
+        appendWarning: async () => {},
+    });
+
+    assert.deepEqual(result.optionalStepArtifacts.overlay_floating_expanded, { stepId: 'overlay_floating_expanded' });
+    const floatingClickIndex = calls.findIndex(
+        (entry) => entry[0] === 'click' && entry[1] === '[data-testid="desktop-activity-overlay-collapsed-floating"]',
+    );
+    const floatingExpandedSyncIndex = calls.findIndex(
+        (entry, index) => (
+            index > floatingClickIndex
+            && entry[0] === 'set-expanded'
+            && entry[1] === true
+            && entry[2] === 'main'
+        ),
+    );
+    const floatingCaptureIndex = calls.findIndex(
+        (entry) => entry[0] === 'capture' && entry[1] === 'overlay_floating_expanded',
+    );
+    assert.ok(floatingClickIndex >= 0);
+    assert.ok(floatingExpandedSyncIndex > floatingClickIndex);
+    assert.ok(floatingCaptureIndex > floatingExpandedSyncIndex);
 });
 
 test('tauri activity-surfaces QA writes overlay-route diagnostics and retries overlay-route capture under always_when_enabled when selectors never appear', async () => {
@@ -3899,6 +4675,93 @@ test('tauri activity-surfaces QA writes overlay-route diagnostics and retries ov
     );
     assert.equal(
         calls.some((entry) => entry[0] === 'visibility' && entry[1] === 'always_when_enabled'),
+        true,
+    );
+});
+
+test('tauri activity-surfaces QA retries overlay-route capture with a selector confirmed by root-state diagnostics', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    const warnings = [];
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async (pathname) => {
+            calls.push(['navigate', pathname]);
+        },
+        openDesktopAppSettingsPage: async () => true,
+        probeRootState: async (_options = {}) => ({
+            pathname: '/desktop/activity-overlay',
+            visibleTestIds: [
+                'desktop-activity-overlay-diagnostics',
+                'desktop-activity-overlay-collapsed',
+            ],
+        }),
+        captureRequired: async (stepId, captureOptions = {}) => {
+            calls.push(['capture', stepId, captureOptions.selectorOverride ?? null]);
+            if (stepId === 'overlay_route' && !captureOptions.selectorOverride) {
+                throw new Error('Unable to find a matching selector for step overlay_route: [data-testid="desktop-activity-overlay-collapsed"]');
+            }
+            return { stepId, selectorOverride: captureOptions.selectorOverride ?? null };
+        },
+        captureUnscoped: async (stepId) => {
+            calls.push(['capture-unscoped', stepId]);
+            return { stepId, unscoped: true };
+        },
+        writeArtifact: async () => {},
+        enableDesktopOverlay: async () => {
+            calls.push(['enable-overlay']);
+        },
+        enableDesktopOverlayVisibility: async ({ visibilityMode }) => {
+            calls.push(['visibility', visibilityMode]);
+            return true;
+        },
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded) => {
+            currentExpanded = expanded === true;
+        },
+        getOverlayWindowState: async () => createSyntheticOverlayWindowState({
+            hostMode: currentOverlayHostMode,
+            proofMode: currentProofMode,
+            expanded: currentExpanded,
+        }),
+        clickCollapsedOverlay: async () => {
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async () => {},
+        appendWarning: async (_artifactRoot, text) => {
+            warnings.push(text);
+        },
+    });
+
+    assert.deepEqual(result.overlayRouteArtifacts, {
+        stepId: 'overlay_route',
+        selectorOverride: '[data-testid="desktop-activity-overlay-collapsed"]',
+    });
+    assert.equal(
+        calls.some((entry) => (
+            entry[0] === 'capture'
+            && entry[1] === 'overlay_route'
+            && entry[2] === '[data-testid="desktop-activity-overlay-collapsed"]'
+        )),
+        true,
+    );
+    assert.equal(
+        warnings.some((text) => String(text).includes('overlay route root-state confirmed selector')),
         true,
     );
 });
@@ -4012,7 +4875,7 @@ test('tauri activity-surfaces QA probes overlay window state after requesting ex
             currentExpanded = expanded === true;
         },
         getOverlayWindowState: async (options = {}) => {
-            calls.push(['get-overlay-state', options.windowId ?? null]);
+            calls.push(['get-overlay-state', options.windowId ?? null, options.timeoutMs ?? null]);
             return createSyntheticOverlayWindowState({
                 hostMode: currentOverlayHostMode,
                 proofMode: currentProofMode,
@@ -4046,6 +4909,142 @@ test('tauri activity-surfaces QA probes overlay window state after requesting ex
     );
     assert.ok(expandRequestIndex >= 0);
     assert.ok(getStateIndex > expandRequestIndex);
+    assert.equal(calls[getStateIndex][2], 1_500);
+});
+
+test('tauri activity-surfaces QA validates expanded notch proof before slow overlay-window diagnostics can collapse it', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId) => {
+            calls.push(['capture', stepId]);
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded, options = {}) => {
+            calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
+        },
+        getOverlayWindowState: async (options = {}) => {
+            calls.push(['get-overlay-state', options.windowId ?? null]);
+            if (options.windowId === 'activity_overlay') {
+                currentExpanded = false;
+            }
+            return createSyntheticOverlayWindowState({
+                hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
+            });
+        },
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async () => {},
+        appendWarning: async () => {},
+    });
+
+    assert.equal(result.expandedArtifacts.stepId, 'overlay_expanded');
+    const expandedCaptureIndex = calls.findIndex((entry) => entry[0] === 'capture' && entry[1] === 'overlay_expanded');
+    const overlayDiagnosticIndex = calls.findIndex((entry) => entry[0] === 'get-overlay-state' && entry[1] === 'activity_overlay');
+    assert.ok(expandedCaptureIndex >= 0);
+    assert.ok(overlayDiagnosticIndex > expandedCaptureIndex);
+});
+
+test('tauri activity-surfaces QA backs up notch click expansion before probing expanded state', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentRequestedHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async () => {},
+        openDesktopAppSettingsPage: async () => true,
+        captureRequired: async (stepId) => {
+            calls.push(['capture', stepId]);
+            return { stepId };
+        },
+        enableDesktopOverlay: async () => {},
+        enableDesktopOverlayVisibility: async () => true,
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentRequestedHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded, options = {}) => {
+            calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
+        },
+        getOverlayWindowState: async (options = {}) => {
+            calls.push(['get-overlay-state', options.windowId ?? null]);
+            return createSyntheticOverlayWindowState({
+                hostMode: currentOverlayHostMode,
+                requestedHostMode: currentRequestedHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
+            });
+        },
+        clickCollapsedOverlay: async (selector, options = {}) => {
+            calls.push(['click', selector, options.windowId ?? null]);
+            if (selector === '[data-testid="desktop-activity-overlay-collapsed-floating"]') {
+                currentExpanded = true;
+            }
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async () => {},
+        appendWarning: async () => {},
+    });
+
+    assert.deepEqual(result.expandedArtifacts, { stepId: 'overlay_expanded' });
+    const notchClickIndex = calls.findIndex(
+        (entry) => entry[0] === 'click' && entry[1] === '[data-testid="desktop-activity-overlay-collapsed"]',
+    );
+    const expandedSyncIndex = calls.findIndex(
+        (entry, index) => (
+            index > notchClickIndex
+            && entry[0] === 'set-expanded'
+            && entry[1] === true
+            && entry[2] === 'main'
+        ),
+    );
+    const postClickStateProbeIndex = calls.findIndex(
+        (entry, index) => index > notchClickIndex && entry[0] === 'get-overlay-state',
+    );
+    assert.ok(notchClickIndex >= 0);
+    assert.ok(expandedSyncIndex > notchClickIndex);
+    assert.ok(postClickStateProbeIndex > expandedSyncIndex);
 });
 
 test('tauri activity-surfaces QA retries the desktop settings opener only after the initial settings capture fails', async () => {
@@ -4220,6 +5219,93 @@ test('tauri activity-surfaces QA retries the dedicated desktop settings opener w
     assert.equal(settingsCaptureAttempts, 2);
     assert.equal(calls.some((entry) => entry[0] === 'open-settings-page'), true);
     assert.equal(calls.some((entry) => entry[0] === 'enable-overlay'), true);
+});
+
+test('tauri activity-surfaces QA falls back to unscoped settings artifacts when scoped settings capture keeps missing', async () => {
+    assert.equal(typeof qaModule.runActivitySurfacesDesktopOverlayCaptureLane, 'function');
+
+    const calls = [];
+    const warnings = [];
+    let settingsCaptureAttempts = 0;
+    let currentOverlayHostMode = 'notch_integrated';
+    let currentExpanded = false;
+    let currentProofMode = 'session_overview';
+    const result = await qaModule.runActivitySurfacesDesktopOverlayCaptureLane({
+        appIdentifier: 9223,
+        env: { EXISTING: 'value' },
+        driverSession: { driverSessionPort: 9223 },
+        artifactRoot: '/tmp/activity-surfaces-artifacts',
+        navigateToPath: async (pathname) => {
+            calls.push(['navigate', pathname]);
+        },
+        openDesktopAppSettingsPage: async () => {
+            calls.push(['open-settings-page']);
+            return true;
+        },
+        probeRootState: async () => ({
+            pathname: '/settings/desktop',
+            visibleTestIds: ['settings-desktop-overlay-enabled'],
+        }),
+        captureRequired: async (stepId) => {
+            calls.push(['capture', stepId]);
+            if (stepId === 'settings_overlay') {
+                settingsCaptureAttempts += 1;
+                throw new Error('Unable to find a matching selector for step settings_overlay');
+            }
+            return { stepId };
+        },
+        captureUnscoped: async (stepId) => {
+            calls.push(['capture-unscoped', stepId]);
+            return { stepId, unscoped: true };
+        },
+        enableDesktopOverlay: async (options = {}) => {
+            calls.push(['enable-overlay', options.windowId ?? null]);
+        },
+        enableDesktopOverlayVisibility: async ({ visibilityMode, windowId }) => {
+            calls.push(['visibility', visibilityMode, windowId ?? null]);
+            return true;
+        },
+        setOverlayPresentationMode: async ({ presentationMode }) => {
+            currentOverlayHostMode = presentationMode === 'floating_overlay' ? 'floating' : 'notch_integrated';
+            return true;
+        },
+        setOverlayExpanded: async (expanded, options = {}) => {
+            calls.push(['set-expanded', expanded, options.windowId ?? null]);
+            currentExpanded = expanded === true;
+        },
+        getOverlayWindowState: async (options = {}) => {
+            calls.push(['get-overlay-state', options.windowId ?? null]);
+            return createSyntheticOverlayWindowState({
+                hostMode: currentOverlayHostMode,
+                proofMode: currentProofMode,
+                expanded: currentExpanded,
+            });
+        },
+        clickCollapsedOverlay: async (selector) => {
+            calls.push(['click', selector]);
+            currentExpanded = true;
+        },
+        seedOverlayProofState: async ({ mode }) => {
+            currentProofMode = mode;
+            currentExpanded = true;
+            return { ok: true, mode };
+        },
+        wait: async (ms) => {
+            calls.push(['delay', ms]);
+        },
+        appendWarning: async (_artifactRoot, message) => {
+            warnings.push(message);
+        },
+    });
+
+    assert.deepEqual(result.settingsArtifacts, { stepId: 'settings_overlay', unscoped: true });
+    assert.equal(settingsCaptureAttempts >= 2, true);
+    assert.equal(calls.some((entry) => entry[0] === 'capture-unscoped' && entry[1] === 'settings_overlay'), true);
+    assert.equal(calls.some((entry) => entry[0] === 'enable-overlay'), true);
+    assert.equal(
+        warnings.some((message) => String(message).includes('unable to capture scoped settings overlay snapshot')),
+        true,
+    );
 });
 
 test('tauri activity-surfaces QA recovers a main-window crash during overlay settings capture before retrying the desktop settings opener', async () => {
@@ -4912,7 +5998,7 @@ test('tauri activity-surfaces QA uses deterministic idle proof seeding instead o
     ]);
 });
 
-test('tauri activity-surfaces QA can promote optional overlay card proof steps to required proof', async () => {
+test('tauri activity-surfaces QA deduplicates explicitly required overlay card proof steps', async () => {
     assert.equal(typeof qaModule.runTauriActivitySurfacesQaCapture, 'function');
 
     const result = await qaModule.runTauriActivitySurfacesQaCapture({
@@ -4953,7 +6039,7 @@ test('tauri activity-surfaces QA can promote optional overlay card proof steps t
 
     assert.equal(result.ok, true);
     assert.equal(result.blocker, null);
-    assert.deepEqual(result.steps, [...canonicalActivitySurfacesRequiredProofStepIds, 'overlay_completion_state']);
+    assert.deepEqual(result.steps, canonicalActivitySurfacesRequiredProofStepIds);
 });
 
 test('tauri activity-surfaces QA exits non-zero when main receives incomplete proof', async () => {
@@ -6369,6 +7455,72 @@ test('tauri activity-surfaces QA scopes DOM snapshot commands to the target surf
     );
 });
 
+test('tauri activity-surfaces QA confirms selector waits against the DOM before selecting a snapshot scope', async () => {
+    assert.equal(typeof qaModule.resolveActivitySurfacesStepSnapshotSelector, 'function');
+
+    const domQueries = [];
+    const selector = await qaModule.resolveActivitySurfacesStepSnapshotSelector(
+        {
+            id: 'overlay_route',
+            windowId: 'activity_overlay',
+            selectors: [
+                '[data-testid="desktop-activity-overlay-expanded"]',
+                '[data-testid="desktop-activity-overlay-collapsed"]',
+            ],
+        },
+        {
+            appIdentifier: 9223,
+            env: {},
+            driverSession: { driverSessionPort: 9223 },
+            runCli: async () => ({ stdout: '' }),
+            isSelectorVisibleByDomQuery: async (candidate, options) => {
+                domQueries.push({ candidate, options });
+                return candidate === '[data-testid="desktop-activity-overlay-collapsed"]';
+            },
+        },
+    );
+
+    assert.equal(selector, '[data-testid="desktop-activity-overlay-collapsed"]');
+    assert.deepEqual(
+        domQueries.map((entry) => [entry.candidate, entry.options.windowId]),
+        [
+            ['[data-testid="desktop-activity-overlay-expanded"]', 'activity_overlay'],
+            ['[data-testid="desktop-activity-overlay-collapsed"]', 'activity_overlay'],
+        ],
+    );
+});
+
+test('tauri activity-surfaces QA uses root-state visible test ids when DOM-query selector confirmation is transiently unavailable', async () => {
+    assert.equal(typeof qaModule.resolveActivitySurfacesStepSnapshotSelector, 'function');
+
+    const selector = await qaModule.resolveActivitySurfacesStepSnapshotSelector(
+        {
+            id: 'overlay_route',
+            windowId: 'activity_overlay',
+            selectors: [
+                '[data-testid="desktop-activity-overlay-collapsed"]',
+            ],
+        },
+        {
+            appIdentifier: 9223,
+            env: {},
+            driverSession: { driverSessionPort: 9223 },
+            runCli: async () => ({ stdout: '' }),
+            isSelectorVisibleByDomQuery: async () => false,
+            probeRootState: async (options) => ({
+                pathname: '/desktop/activity-overlay',
+                probeWindowId: options.windowId,
+                visibleTestIds: [
+                    'desktop-activity-overlay-diagnostics',
+                    'desktop-activity-overlay-collapsed',
+                ],
+            }),
+        },
+    );
+
+    assert.equal(selector, '[data-testid="desktop-activity-overlay-collapsed"]');
+});
+
 test('tauri activity-surfaces QA retries accessibility DOM snapshots without a selector when the scoped selector is missing', async () => {
     assert.equal(typeof qaModule.captureActivitySurfacesDomSnapshot, 'function');
 
@@ -6542,6 +7694,98 @@ test('tauri activity-surfaces QA bounds screenshot capture with the same MCP tim
     assert.equal(calls[0].args[0], 'webview-screenshot');
     assert.equal(calls[0].options.windowId, 'activity_overlay');
     assert.equal(calls[0].options.timeoutMs, 20_000);
+});
+
+test('tauri activity-surfaces QA runs capture stabilization hooks between screenshot and DOM snapshots', async () => {
+    assert.equal(typeof qaModule.captureSnapshotArtifacts, 'function');
+
+    const calls = [];
+    await qaModule.captureSnapshotArtifacts({
+        screenshotPath: '/tmp/settings.png',
+        structurePath: '/tmp/settings.structure.yml',
+        a11yPath: '/tmp/settings.a11y.yml',
+        label: 'overlay_route',
+        appIdentifier: 9223,
+        windowId: 'activity_overlay',
+        beforeScreenshotCapture: async () => {
+            calls.push('before-screenshot');
+        },
+        beforeStructureCapture: async () => {
+            calls.push('before-structure');
+        },
+        beforeAccessibilityCapture: async () => {
+            calls.push('before-accessibility');
+        },
+        runCli: async (args) => {
+            if (args[0] === 'webview-screenshot') {
+                calls.push('screenshot');
+                return { stdout: 'screenshot-ok' };
+            }
+            if (args[0] === 'webview-dom-snapshot') {
+                calls.push(String(args[2]));
+                return { stdout: `${String(args[2])}-ok` };
+            }
+            throw new Error(`Unexpected command: ${String(args[0])}`);
+        },
+        writeArtifact: async () => {},
+    });
+
+    assert.deepEqual(calls, [
+        'before-screenshot',
+        'screenshot',
+        'before-structure',
+        'structure',
+        'before-accessibility',
+        'accessibility',
+    ]);
+});
+
+test('tauri activity-surfaces QA reruns DOM stabilization before retrying structure snapshots', async () => {
+    assert.equal(typeof qaModule.captureSnapshotArtifacts, 'function');
+
+    const calls = [];
+    let structureAttempts = 0;
+    await qaModule.captureSnapshotArtifacts({
+        screenshotPath: '/tmp/settings.png',
+        structurePath: '/tmp/settings.structure.yml',
+        a11yPath: '/tmp/settings.a11y.yml',
+        label: 'overlay_idle',
+        appIdentifier: 9223,
+        windowId: 'activity_overlay',
+        snapshotSelector: '[data-testid="desktop-activity-overlay-card-idle-idle"]',
+        beforeStructureCapture: async () => {
+            calls.push('before-structure');
+        },
+        runCli: async (args) => {
+            if (args[0] === 'webview-screenshot') {
+                calls.push('screenshot');
+                return { stdout: 'screenshot-ok' };
+            }
+            if (args[0] === 'webview-dom-snapshot' && args[2] === 'structure') {
+                structureAttempts += 1;
+                calls.push(`structure:${structureAttempts}`);
+                if (structureAttempts === 1) {
+                    throw new Error('No elements found matching selector "[data-testid=\\"desktop-activity-overlay-card-idle-idle\\"]"');
+                }
+                return { stdout: 'structure-ok' };
+            }
+            if (args[0] === 'webview-dom-snapshot' && args[2] === 'accessibility') {
+                calls.push('accessibility');
+                return { stdout: 'accessibility-ok' };
+            }
+            throw new Error(`Unexpected command: ${String(args[0])}`);
+        },
+        writeArtifact: async () => {},
+    });
+
+    assert.deepEqual(calls, [
+        'screenshot',
+        'before-structure',
+        'structure:1',
+        'before-structure',
+        'structure:2',
+        'accessibility',
+    ]);
 });
 
 test('tauri activity-surfaces QA appends the HMR opt-out param to navigated paths', () => {
@@ -6789,6 +8033,28 @@ test('tauri activity-surfaces QA keeps selector-presence probe timeouts bounded 
             },
         },
     ]);
+});
+
+test('tauri activity-surfaces QA parses DOM-query selector presence boolean outputs', async () => {
+    assert.equal(typeof qaModule.isSelectorPresentByDomQuery, 'function');
+
+    const cliCalls = [];
+    const visible = await qaModule.isSelectorPresentByDomQuery('[data-testid="settings-desktop-overlay-enabled"]', {
+        appIdentifier: 9224,
+        env: { EXISTING: 'value' },
+        windowId: 'main',
+        timeoutMs: 1_200,
+        runCli: async (args, options) => {
+            cliCalls.push({ args, options });
+            return { stdout: '{"text":"true"}' };
+        },
+    });
+
+    assert.equal(visible, true);
+    assert.equal(cliCalls.length, 1);
+    assert.equal(cliCalls[0].args[0], 'webview-execute-js');
+    assert.equal(cliCalls[0].options.windowId, 'main');
+    assert.equal(cliCalls[0].options.timeoutMs, 1_200);
 });
 
 test('tauri activity-surfaces QA re-establishes the driver session before a webview command when no resolved app is available', async () => {

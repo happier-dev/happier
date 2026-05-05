@@ -26,6 +26,7 @@ export type UseSessionViewBootstrapInput = Readonly<{
     surfaceFocused: boolean;
     surfaceVisible: boolean;
     routeAnchor: boolean;
+    paneUrlSyncRouteActive: boolean;
 }>;
 
 export type UseSessionViewBootstrapResult = Readonly<{
@@ -40,13 +41,13 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
     const { machineReachable, machineOnline } = useSessionMachineReachability(input.sessionId);
 
     useSessionPaneUrlSync({
-        enabled: input.multiPaneEnabled && Platform.OS === 'web',
-        routeParamSyncEnabled: input.routeAnchor,
+        enabled: input.paneUrlSyncRouteActive && input.multiPaneEnabled && Platform.OS === 'web',
+        routeParamSyncEnabled: input.paneUrlSyncRouteActive,
         scopeKey: input.paneScopeId,
         scopeState: pane.scopeState,
         urlState: input.paneUrlState,
         pane,
-        setParams: input.routeAnchor && typeof (router as any)?.setParams === 'function'
+        setParams: input.paneUrlSyncRouteActive && typeof (router as any)?.setParams === 'function'
             ? (router as any).setParams.bind(router)
             : null,
     });

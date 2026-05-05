@@ -29,23 +29,21 @@ declare module 'react-native-unistyles' {
 
 const themePreference = loadThemePreference();
 
+const normalizeColorScheme = (colorScheme: ReturnType<typeof Appearance.getColorScheme>): 'light' | 'dark' => {
+    return colorScheme === 'dark' ? 'dark' : 'light';
+};
+
 const getInitialTheme = (): 'light' | 'dark' => {
     if (themePreference === 'adaptive') {
-        const systemTheme = Appearance.getColorScheme();
-        return systemTheme === 'dark' ? 'dark' : 'light';
+        return normalizeColorScheme(Appearance.getColorScheme());
     }
     return themePreference;
 };
 
-const settings = themePreference === 'adaptive'
-    ? {
-        adaptiveThemes: true,
-        CSSVars: true,
-    }
-    : {
-        initialTheme: getInitialTheme(),
-        CSSVars: true,
-    };
+const settings = {
+    initialTheme: getInitialTheme(),
+    CSSVars: true,
+};
 
 StyleSheet.configure({
     settings,
@@ -61,27 +59,35 @@ function isDesktopActivityOverlayWindow(): boolean {
     return window.location.pathname.replace(/\/+$/u, '') === '/desktop/activity-overlay';
 }
 
-const setRootBackgroundColor = () => {
-    if (isDesktopActivityOverlayWindow()) {
-        UnistylesRuntime.setRootViewBackgroundColor('transparent');
-        return;
-    }
-
-    if (themePreference === 'adaptive') {
-        const systemTheme = Appearance.getColorScheme();
-        const color = systemTheme === 'dark'
-            ? appThemes.dark.colors.groupped.background
-            : appThemes.light.colors.groupped.background;
-        UnistylesRuntime.setRootViewBackgroundColor(color);
-        fireAndForget(SystemUI.setBackgroundColorAsync(color), { tag: 'unistyles.setRootBackgroundColor' });
-        return;
-    }
-
-    const color = themePreference === 'dark'
+const applyRootBackgroundColor = (themeName: 'light' | 'dark') => {
+    const color = themeName === 'dark'
         ? appThemes.dark.colors.groupped.background
         : appThemes.light.colors.groupped.background;
     UnistylesRuntime.setRootViewBackgroundColor(color);
     fireAndForget(SystemUI.setBackgroundColorAsync(color), { tag: 'unistyles.setRootBackgroundColor' });
 };
 
+const setRootBackgroundColor = () => {
+    if (isDesktopActivityOverlayWindow()) {
+        UnistylesRuntime.setRootViewBackgroundColor('transparent');
+        return;
+    }
+
+    applyRootBackgroundColor(getInitialTheme());
+};
+
 setRootBackgroundColor();
+
+if (themePreference === 'adaptive') {
+    Appearance.addChangeListener(({ colorScheme }) => {
+        const themeName = normalizeColorScheme(colorScheme);
+        UnistylesRuntime.setTheme(themeName);
+
+        if (isDesktopActivityOverlayWindow()) {
+            UnistylesRuntime.setRootViewBackgroundColor('transparent');
+            return;
+        }
+
+        applyRootBackgroundColor(themeName);
+    });
+}

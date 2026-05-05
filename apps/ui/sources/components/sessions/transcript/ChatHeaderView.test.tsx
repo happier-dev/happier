@@ -10,11 +10,23 @@ import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockStat
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const platformState = vi.hoisted(() => ({
+    os: 'ios' as 'ios' | 'web',
+}));
+
 installTranscriptCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
+            Platform: {
+                get OS() {
+                    return platformState.os;
+                },
+                select: (values: any) =>
+                    platformState.os === 'web'
+                        ? values?.web ?? values?.default ?? null
+                        : values?.ios ?? values?.default ?? null,
+            },
             View: 'View',
             Text: 'Text',
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
@@ -71,10 +83,19 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { headerMaxWidth: 1024 },
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!Array.isArray(style)) {
+        return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+    }
+
+    return Object.assign({}, ...style.flat().filter((entry) => entry && typeof entry === 'object'));
+}
+
 describe('ChatHeaderView', () => {
     afterEach(standardCleanup);
     afterEach(resetTranscriptCommonModuleMockState);
     afterEach(() => {
+        platformState.os = 'ios';
         safeAreaState.insets.top = 0;
         safeAreaState.insets.bottom = 0;
         safeAreaState.insets.left = 0;
@@ -202,5 +223,54 @@ describe('ChatHeaderView', () => {
         expect(screen.findAllByTestId('session-header-back')).toHaveLength(0);
         expect(screen.findAllByTestId('session-header-badge:0')).toHaveLength(0);
         expect(screen.findAllByTestId('session-header-avatar')).toHaveLength(0);
+    });
+
+    it('uses start-side overflow ellipsis for head-mode subtitles on web without reordering path text', async () => {
+        platformState.os = 'web';
+        const subtitle = '~/Documents/Development/happier/remote-dev';
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+
+        const screen = await renderScreen(
+            <ChatHeaderView
+                title="Title"
+                subtitle={subtitle}
+                subtitleEllipsizeMode="head"
+            />,
+        );
+
+        const outerSubtitleText = screen.findAllByType('Text' as any).find((node) => (
+            node.children.some((child) => typeof child === 'object' && child?.props?.children === subtitle)
+        ));
+        expect(outerSubtitleText).toBeTruthy();
+        expect(outerSubtitleText?.props.ellipsizeMode).toBeUndefined();
+        expect(flattenStyle(outerSubtitleText?.props.style)).toMatchObject({
+            writingDirection: 'rtl',
+            textAlign: 'left',
+        });
+
+        const innerSubtitleText = screen.findAllByType('Text' as any).find((node) => node.props.children === subtitle);
+        expect(innerSubtitleText).toBeTruthy();
+        expect(flattenStyle(innerSubtitleText?.props.style)).toMatchObject({
+            writingDirection: 'ltr',
+            unicodeBidi: 'isolate',
+        });
+    });
+
+    it('uses native head ellipsis for head-mode subtitles outside web', async () => {
+        platformState.os = 'ios';
+        const subtitle = '~/Documents/Development/happier/remote-dev';
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+
+        const screen = await renderScreen(
+            <ChatHeaderView
+                title="Title"
+                subtitle={subtitle}
+                subtitleEllipsizeMode="head"
+            />,
+        );
+
+        const subtitleText = screen.findAllByType('Text' as any).find((node) => node.props.children === subtitle);
+        expect(subtitleText).toBeTruthy();
+        expect(subtitleText?.props.ellipsizeMode).toBe('head');
     });
 });

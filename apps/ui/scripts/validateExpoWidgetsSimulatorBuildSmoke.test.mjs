@@ -9,6 +9,7 @@ import {
     assertExpoWidgetsSimulatorBuildSmoke,
     DEFAULT_WIDGET_TARGET_NAME,
     DEFAULT_XCODEBUILD_MAX_BUFFER_BYTES,
+    DEFAULT_XCODEBUILD_TIMEOUT_MS,
 } from './validateExpoWidgetsSimulatorBuildSmoke.mjs';
 
 async function createGeneratedIosFixture({
@@ -137,6 +138,7 @@ test('assertExpoWidgetsSimulatorBuildSmoke prefers the top-level CocoaPods works
             .slice(1)
             .every(({ options }) => options.maxBuffer === DEFAULT_XCODEBUILD_MAX_BUFFER_BYTES),
     );
+    assert.ok(recordedInvocations.slice(1).every(({ options }) => options.timeout === DEFAULT_XCODEBUILD_TIMEOUT_MS));
     const widgetBuildArgs = recordedInvocations[2].args;
     assert.ok(widgetBuildArgs.includes('id=SIM-DEVICE-UDID'));
     assert.ok(widgetBuildArgs.includes('ONLY_ACTIVE_ARCH=YES'));
@@ -254,6 +256,66 @@ test('assertExpoWidgetsSimulatorBuildSmoke uses a unique derived-data root by de
     assert.notEqual(first.derivedDataRoot, second.derivedDataRoot);
     assert.match(first.derivedDataRoot, /ios-widgets-simulator-build-smoke-/);
     assert.match(second.derivedDataRoot, /ios-widgets-simulator-build-smoke-/);
+});
+
+test('assertExpoWidgetsSimulatorBuildSmoke creates the default derived-data parent when absent', async () => {
+    const { iosDir } = await createGeneratedIosFixture({
+        includeTopLevelWorkspace: true,
+    });
+    const packageRoot = await mkdtemp(join(tmpdir(), 'expo-widgets-package-root-'));
+    const recordedInvocations = [];
+
+    let summary;
+    await assert.doesNotReject(async () => {
+        summary = await assertExpoWidgetsSimulatorBuildSmoke({
+            cwd: packageRoot,
+            iosDir,
+            spawnSyncImpl(command, args, options) {
+                recordedInvocations.push({ command, args, options });
+
+                if (command === 'xcrun') {
+                    return {
+                        status: 0,
+                        stdout: JSON.stringify({
+                            devices: {
+                                'com.apple.CoreSimulator.SimRuntime.iOS-26-4': [
+                                    {
+                                        isAvailable: true,
+                                        state: 'Shutdown',
+                                        name: 'iPhone 17 Pro',
+                                        udid: 'SIM-DEVICE-UDID',
+                                        deviceTypeIdentifier:
+                                            'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro',
+                                    },
+                                ],
+                            },
+                        }),
+                        stderr: '',
+                        error: undefined,
+                    };
+                }
+
+                if (args[0] === '-list') {
+                    return {
+                        status: 0,
+                        stdout: `Information about workspace "Happierinternaldev":\n    Schemes:\n        ${DEFAULT_WIDGET_TARGET_NAME}\n        Happierinternaldev\n`,
+                        stderr: '',
+                        error: undefined,
+                    };
+                }
+
+                return {
+                    status: 0,
+                    stdout: '',
+                    stderr: '',
+                    error: undefined,
+                };
+            },
+        });
+    });
+
+    assert.match(summary.derivedDataRoot, new RegExp(`${packageRoot}/\\.project/tmp/ios-widgets-simulator-build-smoke-`));
+    assert.equal(recordedInvocations.length, 4);
 });
 
 test('assertExpoWidgetsSimulatorBuildSmoke falls back to the generic simulator destination when simctl is unavailable', async () => {

@@ -12,6 +12,17 @@ installDropdownCommonModuleMocks();
 const useSelectableMenuSpy = vi.fn();
 let uiItemDensitySetting: 'comfortable' | 'cozy' | 'compact' = 'comfortable';
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (!style || typeof style !== 'object') return {};
+    return style as Record<string, unknown>;
+}
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) => {
         const React = require('react');
@@ -286,11 +297,39 @@ describe('DropdownMenu', () => {
         }));
 
         const popover = screen.findByType('Popover' as any);
-        expect(popover?.props?.placement).toBe('bottom');
+        expect(popover?.props?.placement).toBe('auto-vertical');
 
         const selectableResults = screen.findByType('SelectableMenuResults' as any);
         expect(selectableResults?.props?.showCategoryTitles).toBe(false);
         expect(selectableResults?.props?.rowKind).toBe('item');
+    });
+
+    it('connects top-placed popovers to the trigger at the bottom edge', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            placement: 'top',
+            connectToTrigger: true,
+        }));
+
+        const floatingOverlay = screen.findByType('FloatingOverlay' as any);
+        expect(flattenStyle(floatingOverlay?.props?.containerStyle)).toMatchObject({
+            borderBottomLeftRadius: 0,
+            borderBottomRightRadius: 0,
+            marginBottom: -1,
+            borderBottomWidth: 0,
+        });
+        expect(flattenStyle(floatingOverlay?.props?.containerStyle)).not.toMatchObject({
+            borderTopLeftRadius: 0,
+            borderTopRightRadius: 0,
+            marginTop: -1,
+            borderTopWidth: 0,
+        });
     });
 
     it('uses popoverAnchorRef when provided', async () => {

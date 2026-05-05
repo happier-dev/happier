@@ -158,7 +158,7 @@ describe('ScmChangeRow', () => {
     expect(textContent.join(' ')).not.toContain('/README.md');
   });
 
-  it('right-aligns the directory segment against the filename and truncates it from the head', async () => {
+  it('renders nested paths with the web start-ellipsis wrapper so filenames keep priority', async () => {
     const { ScmChangeRow } = await import('./ScmChangeRow');
     const theme = {
       colors: {
@@ -189,9 +189,60 @@ describe('ScmChangeRow', () => {
           onPress={() => {}}
         />)).tree;
 
-    const pathText = tree.findAllByType('Text' as any).find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
-    expect(pathText.props.ellipsizeMode).toBe('head');
-    expect(flattenStyle(pathText.props.style).textAlign).toBe('right');
+    const labels = tree.findAllByType('Text' as any);
+    const pathLabel = labels.find((node) => {
+      return labels.some((candidate) => candidate.props.children === 'apps/cli/src/api/directSessions/filePaging/' && candidate.parent === node);
+    })!;
+    const pathText = labels.find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
+
+    expect(pathLabel.props.ellipsizeMode).toBeUndefined();
+    expect(flattenStyle(pathLabel.props.style)).toMatchObject({
+      textAlign: 'right',
+      writingDirection: 'rtl',
+    });
+    expect(flattenStyle(pathText.props.style)).toMatchObject({
+      writingDirection: 'ltr',
+      unicodeBidi: 'isolate',
+    });
+  });
+
+  it('reserves the provided change stats column width', async () => {
+    const { ScmChangeRow } = await import('./ScmChangeRow');
+    const theme = {
+      colors: {
+        surface: '#fff',
+        surfaceHigh: '#f8f8f8',
+        divider: '#ddd',
+        text: '#111',
+        textSecondary: '#666',
+        success: '#0a0',
+        danger: '#a00',
+        warning: '#b60',
+        info: '#09f',
+      },
+    } as any;
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ScmChangeRow
+          theme={theme}
+          file={{
+            fileName: 'requestId.test.ts',
+            filePath: 'src/middleware',
+            fullPath: 'src/middleware/requestId.test.ts',
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 146,
+            linesRemoved: 10,
+          } as any}
+          statsColumnWidth={72}
+          onPress={() => {}}
+        />)).tree;
+
+    const statsColumn = tree.findByProps({ testID: 'scm-change-row-stats-column' });
+    expect(flattenStyle(statsColumn.props.style)).toMatchObject({
+      width: 72,
+      justifyContent: 'flex-end',
+    });
   });
 
   it('uses surfaceHigh background when highlighted', async () => {

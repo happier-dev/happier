@@ -20,12 +20,16 @@ export type SessionViewLayoutProps = Readonly<{
     isLandscape: boolean;
     deviceType: string;
     onBackPress: () => void;
+    chatBottomSpacing?: 'default' | 'none';
 }>;
 
 export function SessionViewLayout(props: SessionViewLayoutProps) {
     const { theme } = useUnistyles();
     const safeArea = useChromeSafeAreaInsets();
     const showBackButton = props.isLandscape && props.deviceType === 'phone';
+    const contentPaddingBottom = props.chatBottomSpacing === 'none'
+        ? 0
+        : safeArea.bottom + ((isRunningOnMac() || Platform.OS === 'web') ? 32 : 0);
 
     return (
         <>
@@ -56,7 +60,7 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                 </Pressable>
             )}
 
-            <View style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, paddingBottom: safeArea.bottom + ((isRunningOnMac() || Platform.OS === 'web') ? 32 : 0) }}>
+            <View style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, paddingBottom: contentPaddingBottom }}>
                 <AgentContentView
                     content={props.content}
                     input={props.input}

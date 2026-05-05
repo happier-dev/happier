@@ -80,6 +80,19 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
             serializeCurrentProperties: serializeTranscriptStorageModeByTargetKeyAnalytics,
         },
     },
+    rememberLastProjectSessionSelections: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Use the latest session in a project to seed new project sessions',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'boolean',
+            privacy: 'safe',
+            identityScope: 'person',
+        },
+    },
 });
 
 export const ACCOUNT_SESSION_CREATION_SETTING_ARTIFACTS = buildSettingArtifacts(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS);

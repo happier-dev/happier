@@ -56,9 +56,15 @@ installSessionRouteCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useLocalSetting: ((key: string) => {
+                useSetting: ((key: string) => {
                     if (key === 'mobileWorkspaceExperienceV1') {
                         return storageState.mobileWorkspaceExperience;
+                    }
+                    return null;
+                }) as any,
+                useLocalSetting: ((key: string) => {
+                    if (key === 'mobileWorkspaceExperienceV1') {
+                        throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
                     }
                     if (key === 'sessionLastMobileSurfaceBySessionId') {
                         return storageState.sessionLastMobileSurfaceBySessionId;
@@ -189,6 +195,7 @@ describe('session route index', () => {
 
     it('renders the session cockpit shell on phone when cockpit mode is enabled', async () => {
         deviceTypeState.value = 'phone';
+        routeParamsState.serverId = 'server-b';
         storageState.mobileWorkspaceExperience = 'cockpit';
         storageState.sessionLastMobileSurfaceBySessionId = { 'session-1': 'git' };
 
@@ -197,6 +204,7 @@ describe('session route index', () => {
 
         const cockpit = screen.findByType('SessionCockpitShell' as never);
         expect(cockpit.props.sessionId).toBe('session-1');
+        expect(cockpit.props.routeServerId).toBe('server-b');
         expect(cockpit.props.surface).toBe('git');
         expect(screen.findAllByType('SessionView')).toHaveLength(0);
     });

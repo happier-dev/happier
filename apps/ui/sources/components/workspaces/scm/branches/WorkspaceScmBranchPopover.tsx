@@ -7,7 +7,7 @@ import { Popover } from '@/components/ui/popover';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { SelectableMenuResults } from '@/components/ui/forms/dropdown/SelectableMenuResults';
 import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
-import { useSelectableMenu } from '@/components/ui/forms/dropdown/useSelectableMenu';
+import { CREATE_ITEM_ID, useSelectableMenu } from '@/components/ui/forms/dropdown/useSelectableMenu';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -84,8 +84,12 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
     const controls = React.useMemo<WorkspaceScmBranchPopoverControls>(() => ({ closeMenu, reopenMenu }), [closeMenu, reopenMenu]);
 
     const handleActivateItem = React.useCallback((item: SelectableMenuItem) => {
+        if (item.id === CREATE_ITEM_ID && allowCreateBranch) {
+            void allowCreateBranch(searchQuery);
+            return;
+        }
         void props.onSelectItem(item.id, controls);
-    }, [controls, props]);
+    }, [allowCreateBranch, controls, props, searchQuery]);
 
     return (
         <>

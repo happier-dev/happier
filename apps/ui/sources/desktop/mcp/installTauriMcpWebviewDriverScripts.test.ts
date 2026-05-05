@@ -244,7 +244,7 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         expect(seededModes).toEqual(['permission_request']);
     });
 
-    it('briefly pins desktop-overlay QA seed state so live runtime refresh cannot overwrite proof captures', async () => {
+    it('pins desktop-overlay QA seed state without repeatedly churning the proof payload', async () => {
         vi.useFakeTimers();
 
         const seededModes: string[] = [];
@@ -280,7 +280,7 @@ describe('installTauriMcpWebviewDriverScripts', () => {
 
         await vi.advanceTimersByTimeAsync(350);
 
-        expect(seededModes.length).toBeGreaterThan(1);
+        expect(seededModes.length).toBe(1);
         expect(new Set(seededModes)).toEqual(new Set(['quota_summary']));
     });
 
@@ -324,7 +324,87 @@ describe('installTauriMcpWebviewDriverScripts', () => {
 
         expect(seededModes).toContain('permission_request');
         expect(seededModes.at(-1)).toBe('user_question');
-        expect(seededModes.slice(2)).not.toContain('permission_request');
+        expect(seededModes).toEqual(['permission_request', 'user_question']);
+    });
+
+    it('re-syncs a pinned desktop-overlay QA seed until native state reports the seeded card', async () => {
+        const moduleExports = await import('./installTauriMcpWebviewDriverScripts');
+        const waitForSeedState = (moduleExports as {
+            waitForDesktopOverlayQaSeedState?: unknown;
+        }).waitForDesktopOverlayQaSeedState;
+        expect(typeof waitForSeedState).toBe('function');
+        if (typeof waitForSeedState !== 'function') {
+            return;
+        }
+
+        const syncCalls: unknown[] = [];
+        const delays: number[] = [];
+        let readCount = 0;
+        const payload = {
+            visible: true,
+            expanded: true,
+            policy: { enabled: true },
+            window: {
+                collapsed: { width: 336, height: 68 },
+                expanded: { width: 408, height: 232 },
+            },
+            model: {
+                visible: true,
+                isExpanded: true,
+                generatedAt: 1,
+                collapsed: {
+                    title: 'No active sessions',
+                    primaryCardKind: 'idle_state',
+                },
+                expanded: {
+                    rows: [],
+                    cards: [{ id: 'idle', kind: 'idle_state', title: 'No active sessions' }],
+                },
+                window: {
+                    collapsed: { width: 336, height: 68 },
+                    expanded: { width: 408, height: 232 },
+                },
+            },
+        };
+
+        const result = await waitForSeedState({
+            mode: 'idle',
+            payload,
+            attempts: 3,
+            delayMs: 25,
+            syncDesktopOverlayPayload: async (nextPayload: unknown) => {
+                syncCalls.push(nextPayload);
+            },
+            readDesktopOverlayWindowState: async () => {
+                readCount += 1;
+                return readCount === 1
+                    ? {
+                        expanded: true,
+                        model: {
+                            collapsed: { primaryCardKind: 'multi_session_list' },
+                            expanded: { cards: [{ kind: 'multi_session_list' }] },
+                        },
+                    }
+                    : {
+                        expanded: true,
+                        model: {
+                            collapsed: { primaryCardKind: 'idle_state' },
+                            expanded: { cards: [{ kind: 'idle_state' }] },
+                        },
+                    };
+            },
+            wait: async (ms: number) => {
+                delays.push(ms);
+            },
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            expectedCardKind: 'idle_state',
+            observedCardKind: 'idle_state',
+        });
+        expect(syncCalls).toHaveLength(2);
+        expect(delays).toEqual([25]);
     });
 
     it('maybeInstallTauriMcpBridge installs scripts only on desktop', () => {

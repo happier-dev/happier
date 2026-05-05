@@ -1,6 +1,12 @@
 import { vi } from 'vitest';
 
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import {
+    DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
+    DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
+    DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+    DEFAULT_PETS_CAPABILITIES,
+    type FeaturesResponse,
+} from '@happier-dev/protocol';
 
 type FixtureOverrides = {
     friendsEnabled?: boolean;
@@ -14,6 +20,8 @@ type FixtureOverrides = {
     connectedServicesQuotasEnabled?: boolean;
     updatesOtaEnabled?: boolean;
     pairingDesktopQrMobileScanEnabled?: boolean;
+    petsCompanionEnabled?: boolean;
+    petsSyncEnabled?: boolean;
     oauthProviders?: Record<string, { enabled: boolean; configured: boolean }>;
     authProviders?: Record<string, { enabled: boolean; configured: boolean }>;
 };
@@ -65,6 +73,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             attachments: {
                 uploads: { enabled: true },
             },
+            pets: {
+                companion: { enabled: overrides.petsCompanionEnabled ?? false },
+                sync: { enabled: overrides.petsSyncEnabled ?? false },
+            },
             automations: {
                 enabled: overrides.automationsEnabled ?? true,
             },
@@ -107,6 +119,20 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     serverRouted: {
                         enabled: false,
                     },
+                },
+                tunnel: {
+                    enabled: false,
+                    directPeer: { enabled: false },
+                    serverRouted: { enabled: false },
+                },
+                liveStream: {
+                    enabled: false,
+                    directPeer: { enabled: false },
+                    serverRouted: { enabled: false },
+                },
+                rpc: {
+                    enabled: false,
+                    directPeer: { enabled: false },
                 },
             },
             setup: {
@@ -165,6 +191,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 requested: voiceEnabled,
                 disabledByBuildPolicy: false,
             },
+            pets: DEFAULT_PETS_CAPABILITIES,
             encryption: {
                 storagePolicy: 'required_e2ee',
                 allowAccountOptOut: false,
@@ -177,6 +204,11 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     serverRouted: {
                         maxBytes: null,
                     },
+                },
+                tunnel: DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
+                liveStream: DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
+                peerMediation: {
+                    grantSigningKeys: [],
                 },
             },
             server: {},
@@ -211,6 +243,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 },
                 providers: authProvidersWithDetails,
                 misconfig: [],
+            },
+            liveActivities: {
+                remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
             },
         },
     };

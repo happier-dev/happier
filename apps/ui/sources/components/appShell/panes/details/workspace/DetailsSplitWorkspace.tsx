@@ -46,6 +46,7 @@ export type DetailsSplitWorkspaceProps = Readonly<{
     testIds?: DetailsTabGroupPanelProps['testIds'];
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
     renderTabContent: (tab: DetailsTabState) => React.ReactNode;
+    renderHeaderLeadingActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
 }>;
@@ -165,6 +166,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                     testIds={groupPanelTestIds}
                     resolveTabIconName={props.resolveTabIconName}
                     renderTabContent={props.renderTabContent}
+                    renderHeaderLeadingActions={isFocused ? props.renderHeaderLeadingActions : null}
                     renderHeaderActions={isFocused ? props.renderHeaderActions : null}
                     renderEmptyState={props.renderEmptyState}
                 />
@@ -178,6 +180,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.pane,
         props.renderEmptyState,
         props.renderHeaderActions,
+        props.renderHeaderLeadingActions,
         props.renderTabContent,
         props.resolveTabIconName,
         styles.groupFrame,
@@ -193,6 +196,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
             testIds={groupPanelTestIds}
             resolveTabIconName={props.resolveTabIconName}
             renderTabContent={props.renderTabContent}
+            renderHeaderLeadingActions={props.renderHeaderLeadingActions}
             renderHeaderActions={props.renderHeaderActions}
             renderEmptyState={props.renderEmptyState}
         />
@@ -205,6 +209,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.pane,
         props.renderEmptyState,
         props.renderHeaderActions,
+        props.renderHeaderLeadingActions,
         props.renderTabContent,
         props.resolveTabIconName,
     ]);

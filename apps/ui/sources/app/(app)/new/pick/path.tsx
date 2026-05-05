@@ -48,6 +48,13 @@ export default React.memo(function PathPickerScreen() {
     }, [params]);
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
+    const hasUsableRouteState = Boolean(
+        machineIdParam?.trim()
+        || (typeof params.dataId === 'string' && params.dataId.trim().length > 0)
+        || (typeof params.selectedPath === 'string' && params.selectedPath.trim().length > 0)
+        || (typeof params.directory === 'string' && params.directory.trim().length > 0)
+        || (typeof params.path === 'string' && params.path.trim().length > 0),
+    );
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: machineIdParam,
         serverId: spawnServerId,
@@ -157,6 +164,11 @@ export default React.memo(function PathPickerScreen() {
     const handleBackPress = React.useCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: '/new' });
     }, [navigation, router]);
+
+    React.useEffect(() => {
+        if (hasUsableRouteState) return;
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [hasUsableRouteState, navigation, router]);
 
     const headerTitle = t('newSession.selectPathTitle');
     const headerBackTitle = t('common.back');

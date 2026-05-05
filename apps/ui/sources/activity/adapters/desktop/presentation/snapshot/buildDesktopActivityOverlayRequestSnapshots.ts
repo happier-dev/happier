@@ -1,4 +1,8 @@
-import { buildAgentRequestSemanticSummary, formatPermissionRequestSummary } from '@happier-dev/protocol';
+import {
+    buildAgentRequestSemanticSummary,
+    classifyPermissionRequestRisk,
+    formatPermissionRequestSummary,
+} from '@happier-dev/protocol';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import {
     listPendingPermissionRequestsFromSession,
@@ -59,6 +63,7 @@ function buildAskUserQuestionDirectOptions(request: {
 
 export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
     candidates: readonly SessionActivityAttention[];
+    serverIdBySessionId?: ReadonlyMap<string, string>;
 }>): Readonly<{
     permissionRequests: readonly DesktopActivityOverlayRequestSnapshot[];
     userQuestions: readonly DesktopActivityOverlayRequestSnapshot[];
@@ -68,6 +73,10 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
 
     for (const candidate of params.candidates) {
         const sessionId = candidate.sessionId;
+        const serverId = typeof candidate.session.serverId === 'string'
+            && candidate.session.serverId.trim().length > 0
+            ? candidate.session.serverId.trim()
+            : params.serverIdBySessionId?.get(sessionId) ?? null;
 
         for (const request of listPendingPermissionRequestsFromSession(candidate.session)) {
             const semantic = buildAgentRequestSemanticSummary({
@@ -80,6 +89,7 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 kind: 'permission_request',
                 requestId: request.id,
                 sessionId,
+                serverId,
                 title: semantic.permissionTitle ?? formatPermissionRequestSummary({
                     toolName: request.tool,
                     toolInput: request.arguments,
@@ -94,6 +104,10 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 openActionIdentifier: createOpenActionIdentifier(sessionId),
                 allowActionIdentifier: 'session.permission.respond',
                 denyActionIdentifier: 'session.permission.respond',
+                risk: classifyPermissionRequestRisk({
+                    toolName: request.tool,
+                    toolInput: request.arguments,
+                }),
                 directOptions: [],
             });
         }
@@ -109,6 +123,7 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 kind: 'user_question',
                 requestId: request.id,
                 sessionId,
+                serverId,
                 title: semantic.firstQuestionText ?? semantic.permissionTitle ?? semantic.normalizedToolLabel,
                 summary: semantic.questionCount > 1
                     ? `${semantic.questionCount} questions`

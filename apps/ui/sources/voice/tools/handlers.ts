@@ -158,7 +158,7 @@ function listMatchingPendingRequestsAcrossSessions(
 const VOICE_TOOL_ACTION_ID_BY_TOOL_NAME: Readonly<Record<string, ActionId>> = (() => {
   const entries: Array<readonly [string, ActionId]> = [];
   for (const spec of listActionSpecs() as any[]) {
-    if (!spec?.surfaces?.voice_tool) continue;
+    if (!spec?.surfaces?.voice) continue;
     const name = String(spec?.bindings?.voiceClientToolName ?? '').trim();
     const id = String(spec?.id ?? '').trim();
     if (!name || !id) continue;
@@ -317,7 +317,7 @@ export function createVoiceToolHandlers(
     const actionId = VOICE_TOOL_ACTION_ID_BY_TOOL_NAME[toolName];
     if (!actionId) return jsonError('unsupported_action', `unsupported_action:${toolName}`);
     const res = await executor.execute(actionId, parameters, {
-      surface: 'voice_tool',
+      surface: 'voice',
       defaultSessionId: deps.resolveSessionId(null),
       ...(ctx?.serverId ? { serverId: ctx.serverId } : {}),
     });
@@ -359,7 +359,7 @@ export function createVoiceToolHandlers(
     const res = await executor.execute(
       'session.message.send',
       { sessionId, message },
-      { surface: 'voice_tool', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
+      { surface: 'voice', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
     if (!res.ok) {
       return jsonError(res.errorCode ?? 'send_failed', res.error ?? 'send_failed', { sessionId });
@@ -404,7 +404,7 @@ export function createVoiceToolHandlers(
     const res = await executor.execute(
       'session.permission.respond',
       { sessionId, decision, requestId },
-      { surface: 'voice_tool', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
+      { surface: 'voice', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
 
     if (!res.ok) {
@@ -484,7 +484,7 @@ export function createVoiceToolHandlers(
         ...(reason ? { reason } : {}),
         ...(hasUpdatedPermissions ? { updatedPermissions: data.updatedPermissions } : {}),
       },
-      { surface: 'voice_tool', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
+      { surface: 'voice', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
     if (!res.ok) {
       return jsonError(res.errorCode ?? 'permission_update_failed', res.error ?? 'permission_update_failed', { sessionId, requestId });

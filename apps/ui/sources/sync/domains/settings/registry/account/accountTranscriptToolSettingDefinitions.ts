@@ -341,6 +341,13 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
+    transcriptStreamingMarkdownRenderingEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Render repaired Markdown while assistant text is actively streaming',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
     transcriptScrollPinEnabled: {
         schema: z.boolean(),
         default: true,

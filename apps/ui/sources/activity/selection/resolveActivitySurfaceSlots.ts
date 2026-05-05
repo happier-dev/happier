@@ -5,6 +5,7 @@ import type {
     ActivitySurfaceSlots,
     ResolveActivitySurfaceSlotsParams,
 } from './activitySurfaceSelectionTypes';
+import { applyActivitySelectionDwell } from './applyActivitySelectionDwell';
 
 function isUrgentCandidate(candidate: SessionActivityAttention, selection: Pick<
     ActivitySurfaceSelectionSpec,
@@ -132,7 +133,18 @@ function resolveSelectedSessions(
 
 export function resolveActivitySurfaceSlots(params: ResolveActivitySurfaceSlotsParams): ActivitySurfaceSlots {
     const eligibleSessions = resolveEligibleSessions(params);
-    const { selectedSessions, selectionReason } = resolveSelectedSessions(eligibleSessions, params);
+    const selected = resolveSelectedSessions(eligibleSessions, params);
+    const selectedSessions = applyActivitySelectionDwell({
+        eligibleSessions,
+        selectedSessions: selected.selectedSessions,
+        selection: params.selection,
+        previousPrimary: {
+            sessionId: params.previousPrimarySessionId,
+            activityInstanceKey: params.previousPrimaryActivityInstanceKey,
+            changedAtMs: params.previousPrimaryChangedAtMs,
+        },
+        nowMs: params.nowMs,
+    });
 
     return {
         selection: params.selection,
@@ -141,6 +153,7 @@ export function resolveActivitySurfaceSlots(params: ResolveActivitySurfaceSlotsP
         selectedSessions,
         primarySession: selectedSessions[0] ?? null,
         overflowCount: Math.max(0, eligibleSessions.length - selectedSessions.length),
-        selectionReason,
+        selectionReason: selected.selectionReason,
+        sourceFingerprint: params.overview.fingerprint ?? null,
     };
 }

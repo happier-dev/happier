@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -57,9 +57,9 @@ function getScreenConfig(kind: PromptLibraryEntryListKind) {
       emptySubtitle: t('promptLibrary.noPromptsSubtitle'),
       addTitle: t('promptLibrary.addPrompt'),
       addIcon: 'add-circle-outline' as const,
-      addHref: '/(app)/settings/prompts/docs/new',
-      editHref: (artifactId: string) => `/(app)/settings/prompts/docs/${artifactId}`,
-      exportHref: (artifactId: string) => `/(app)/settings/prompts/docs/${artifactId}/export`,
+      addHref: '/settings/prompts/docs/new',
+      editHref: (artifactId: string) => `/settings/prompts/docs/${artifactId}`,
+      exportHref: (artifactId: string) => `/settings/prompts/docs/${artifactId}/export`,
       itemIcon: 'document-text-outline' as const,
       testPrefix: 'promptLibrary.entry.doc',
     };
@@ -71,9 +71,9 @@ function getScreenConfig(kind: PromptLibraryEntryListKind) {
     emptySubtitle: t('promptLibrary.noSkillsSubtitle'),
     addTitle: t('promptLibrary.addSkill'),
     addIcon: 'add-circle-outline' as const,
-    addHref: '/(app)/settings/prompts/skills/new',
-    editHref: (artifactId: string) => `/(app)/settings/prompts/skills/${artifactId}`,
-    exportHref: (artifactId: string) => `/(app)/settings/prompts/skills/${artifactId}/export`,
+    addHref: '/settings/prompts/skills/new',
+    editHref: (artifactId: string) => `/settings/prompts/skills/${artifactId}`,
+    exportHref: (artifactId: string) => `/settings/prompts/skills/${artifactId}/export`,
     itemIcon: 'sparkles-outline' as const,
     testPrefix: 'promptLibrary.entry.bundle',
   };
@@ -164,7 +164,6 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: screen.title }} />
       <ItemList containerStyle={styles.content}>
         <ItemGroup title={screen.title}>
           <TextInput

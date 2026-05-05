@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Stack } from 'expo-router';
+import { act } from 'react-test-renderer';
 
 import {
     renderScreen,
@@ -8,6 +9,7 @@ import {
 } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+let translationPrefix = 'en';
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -65,7 +67,11 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+    return createTextModuleMock({
+        translate: (key) => `${translationPrefix}:${key}`,
+        translateLoose: (key) => `${translationPrefix}:${key}`,
+        getPreferredLanguage: () => translationPrefix,
+    });
 });
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
@@ -121,6 +127,7 @@ vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
 
 afterEach(() => {
     standardCleanup();
+    translationPrefix = 'en';
 });
 
 describe('SettingsLayoutRoute stack registration', () => {
@@ -137,5 +144,35 @@ describe('SettingsLayoutRoute stack registration', () => {
         expect(screenNames).toContain('providers/[providerId]');
         expect(screenNames).toContain('plugins');
         expect(screenNames).toContain('plugins/[pluginId]');
+    });
+
+    it('refreshes stack chrome translations when the language changes and the route rerenders', async () => {
+        translationPrefix = 'en';
+        const mod = await import('@/app/(app)/settings/_layout');
+        const SettingsLayoutRoute = (mod.default as unknown as {
+            type: React.ComponentType<Record<string, never>>;
+        }).type;
+
+        const screen = await renderScreen(<SettingsLayoutRoute />);
+        const readProvidersScreen = () => (
+            screen.findAllByType(Stack.Screen).find((node) => node.props?.name === 'providers/[providerId]')
+        );
+        const readIndexScreen = () => (
+            screen.findAllByType(Stack.Screen).find((node) => node.props?.name === 'index')
+        );
+        const readStack = () => screen.findByType(Stack as never);
+
+        expect(readStack().props.screenOptions?.headerBackTitle).toBe('en:common.back');
+        expect(readProvidersScreen()?.props.options?.headerTitle).toBe('en:settingsProviders.title');
+        expect(readIndexScreen()?.props.options?.headerBackTitle).toBe('en:common.home');
+
+        translationPrefix = 'fr';
+        await act(async () => {
+            await screen.update(<SettingsLayoutRoute />);
+        });
+
+        expect(readStack().props.screenOptions?.headerBackTitle).toBe('fr:common.back');
+        expect(readProvidersScreen()?.props.options?.headerTitle).toBe('fr:settingsProviders.title');
+        expect(readIndexScreen()?.props.options?.headerBackTitle).toBe('fr:common.home');
     });
 });

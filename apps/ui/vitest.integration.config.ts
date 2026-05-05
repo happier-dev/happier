@@ -9,6 +9,7 @@ const base = baseConfig as any;
 export default defineConfig({
     define: base.define,
     optimizeDeps: base.optimizeDeps,
+    plugins: base.plugins,
     test: {
         ...(base.test ?? {}),
         // Integration tests are relatively few but heavy. Running them in a single thread is

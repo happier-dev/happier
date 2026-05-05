@@ -1,10 +1,12 @@
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
+import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerDetailContent } from './buildNewSessionAgentPickerDetailContent';
+import type { FavoriteModelTogglePayload } from './newSessionFavoriteModelsPickerOption';
 
 type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     entry: ResolvedBackendCatalogEntry;
@@ -14,6 +16,8 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     selectedPath: string | null;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
+    favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
+    onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
     getEngineSelectionForTargetKey: (targetKey: string) => NewSessionAgentPickerSelection;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
 }>;
@@ -38,6 +42,10 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 settings: params.settings,
                 refreshProbe: params.refreshProbe,
                 selection,
+                favoriteModelSelections: params.favoriteModelSelections ?? [],
+                onToggleFavoriteModel: params.onToggleFavoriteModel
+                    ? (model) => params.onToggleFavoriteModel?.(params.entry, model)
+                    : undefined,
                 onSelectionChange: (nextSelection) => {
                     params.selectEngineSelection(params.entry, nextSelection);
                 },

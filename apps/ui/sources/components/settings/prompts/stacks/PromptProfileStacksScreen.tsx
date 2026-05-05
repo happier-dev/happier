@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -25,7 +25,6 @@ export const PromptProfileStacksScreen = React.memo(() => {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: t('promptLibrary.profileStacks') }} />
       <ScrollView contentContainerStyle={{ paddingVertical: 12, maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
         <ItemGroup title={t('promptLibrary.profileStacks')}>
           {profiles.map((profile) => {
@@ -39,7 +38,7 @@ export const PromptProfileStacksScreen = React.memo(() => {
                 title={profileName}
                 subtitle={t('promptLibrary.profileStackCount', { count })}
                 icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.textSecondary} />}
-                onPress={() => router.push(`/(app)/settings/prompts/stacks/profiles/${encodeURIComponent(profileId)}`)}
+                onPress={() => router.push(`/settings/prompts/stacks/profiles/${encodeURIComponent(profileId)}`)}
               />
             );
           })}
