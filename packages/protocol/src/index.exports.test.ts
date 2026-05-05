@@ -13,6 +13,24 @@ describe('protocol package root exports', () => {
         expect(typeof protocol.normalizeScmRemoteRequest).toBe('function');
     });
 
+    it('exports SCM pull-request protocol schemas for downstream packets', () => {
+        expect(typeof (protocol as any).ScmFollowupActionSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmPullRequestReferenceSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmPullRequestRunStackedResponseSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmHostingProviderKindSchema?.safeParse).toBe('function');
+        expect((protocol as any).ScmDefaultBranchPushPolicySchema.parse('requires-feature-branch'))
+            .toBe('requires-feature-branch');
+    });
+
+    it('exports SCM repository provisioning protocol schemas for downstream packets', () => {
+        expect(typeof (protocol as any).ScmRepositoryInitRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmRepositoryRemoveIndexLockRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmRepositoryProvisioningFailureResponseSchema?.safeParse)
+            .toBe('function');
+        expect(typeof (protocol as any).ScmHostingRepositoryPublishRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmHostingRepositoryPublishResponseSchema?.safeParse).toBe('function');
+    });
+
     it('exports automation change/update schemas through root exports', () => {
         expect(protocol.ChangeKindSchema.parse('automation')).toBe('automation');
         const parsed = protocol.UpdateBodySchema.parse({
@@ -85,6 +103,14 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonVoiceInferenceSttUploadFinalizeResponseSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonVoiceInferenceSttTranscribeRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ModelPackManifestSchema?.safeParse).toBe('function');
+    });
+
+    it('exports pet package and daemon RPC schemas', () => {
+        expect((protocol as any).PET_ATLAS_V1?.width).toBe(1536);
+        expect(typeof (protocol as any).PetPackageManifestV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).PetPackageSourceV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonPetDiscoverRequestV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonPetImportResponseV1Schema?.safeParse).toBe('function');
     });
 
     it('exports direct sessions daemon RPC schemas', () => {
@@ -175,6 +201,34 @@ describe('protocol package root exports', () => {
     it('exports ACP catalog settings schemas', () => {
         expect(typeof (protocol as any).AcpCatalogSettingsV1Schema?.safeParse).toBe('function');
         expect(typeof (protocol as any).AcpBackendDefinitionV1Schema?.safeParse).toBe('function');
+    });
+
+    it('exports Live Activity remote update schemas', () => {
+        expect((protocol as any).HAPPIER_FOCUS_LIVE_ACTIVITY_NAME).toBe('HappierFocusLiveActivity');
+        expect(typeof (protocol as any).LiveActivityRemoteUpdateRequestV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).HappierFocusLiveActivityContentStateV1Schema?.safeParse).toBe('function');
+        expect((protocol as any).LiveActivityRemoteTargetKindSchema.parse('expo_push_token')).toBe('expo_push_token');
+        expect((protocol as any).LiveActivityRemoteTargetKindSchema.parse('activitykit_update_token'))
+            .toBe('activitykit_update_token');
+        expect(typeof (protocol as any).classifyLiveActivityApnsDeliveryResponse).toBe('function');
+        expect(typeof (protocol as any).buildLiveActivityRemoteUpdateCapabilityDiagnostics).toBe('function');
+        expect(typeof (protocol as any).resolveLiveActivityRemoteUpdateMode).toBe('function');
+        expect((protocol as any).classifyLiveActivityApnsDeliveryResponse({
+            status: 410,
+            reason: 'Unregistered',
+        })).toEqual({
+            action: 'permanent_drop_target',
+            reason: 'Unregistered',
+        });
+        expect((protocol as any).deriveLiveActivityApnsDeliveryFields({
+            bundleId: 'dev.happier.app',
+            activityId: 'activity-1',
+            event: 'update',
+            template: 'quietFocus',
+            nowEpochSeconds: 1_000,
+            quietHoursActive: false,
+            alertRequested: true,
+        }).priority).toBe(5);
     });
 
     it('exports configured ACP backend legacy aliases', () => {

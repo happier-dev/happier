@@ -19,6 +19,8 @@ export const ActionDefinitionBindingsV1Schema = z
   .object({
     voiceClientToolName: z.string().min(1).optional(),
     mcpToolName: z.string().min(1).optional(),
+    sdkMethod: z.string().min(1).optional(),
+    rpcMethod: z.string().min(1).optional(),
   })
   .passthrough()
   .nullable();
@@ -40,13 +42,34 @@ export const ActionDefinitionExamplesV1Schema = z
       .passthrough()
       .nullable()
       .optional(),
+    sdk: z
+      .object({
+        codeExample: z.string().min(1).optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
   })
   .passthrough()
   .nullable();
 export type ActionDefinitionExamplesV1 = z.infer<typeof ActionDefinitionExamplesV1Schema>;
 
+export const ActionExecutionHandlerRefV1Schema = z.union([
+  z.string().min(1),
+  z
+    .object({
+      target: z.enum(['host', 'plugin', 'daemon']),
+      exportName: OptionalStringSchema,
+      registrationId: OptionalStringSchema,
+    })
+    .passthrough(),
+]);
+export type ActionExecutionHandlerRefV1 = z.infer<typeof ActionExecutionHandlerRefV1Schema>;
+
 export const ActionExecutionDescriptorV1Schema = z
   .object({
+    handler: ActionExecutionHandlerRefV1Schema.optional(),
+    transport: z.enum(['host', 'plugin', 'rpc', 'sdk']).optional(),
     routing: OptionalStringSchema,
     approvalPolicy: OptionalStringSchema,
     resultSchema: LooseJsonObjectSchema.optional(),
@@ -66,6 +89,9 @@ export const ActionDefinitionSummaryV1Schema = z
     examples: ActionDefinitionExamplesV1Schema,
     surfaces: ActionSurfaceSchema,
     inputHints: ActionInputHintsSchema.nullable(),
+    outputSchema: LooseJsonObjectSchema.optional(),
+    execution: ActionExecutionDescriptorV1Schema.optional(),
+    sideEffectClass: z.enum(['none', 'read', 'write', 'external', 'danger']).optional(),
   })
   .passthrough();
 export type ActionDefinitionSummaryV1 = z.infer<typeof ActionDefinitionSummaryV1Schema>;
@@ -73,8 +99,6 @@ export type ActionDefinitionSummaryV1 = z.infer<typeof ActionDefinitionSummaryV1
 export const ActionDefinitionV1Schema = ActionDefinitionSummaryV1Schema.extend({
   kindVersion: z.literal(1).default(1),
   inputSchema: LooseJsonObjectSchema,
-  outputSchema: LooseJsonObjectSchema.optional(),
-  execution: ActionExecutionDescriptorV1Schema.optional(),
   compatibility: LooseJsonObjectSchema.optional(),
 }).passthrough();
 export type ActionDefinitionV1 = z.infer<typeof ActionDefinitionV1Schema>;

@@ -5,10 +5,10 @@ import { isMemoryRecallGuidanceSupported } from './isMemoryRecallGuidanceSupport
 describe('isMemoryRecallGuidanceSupported', () => {
   it('requires both memory actions on the same surface', () => {
     const enabled = isMemoryRecallGuidanceSupported({
-      surfaces: ['voice_tool', 'voice_action_block'],
+      surfaces: ['voice', 'mcp'],
       isActionEnabled: (actionId, surface) => {
-        if (surface === 'voice_tool') return actionId === 'memory.search';
-        if (surface === 'voice_action_block') return actionId === 'memory.get_window';
+        if (surface === 'voice') return actionId === 'memory.search';
+        if (surface === 'mcp') return actionId === 'memory.get_window';
         return false;
       },
     });
@@ -18,9 +18,9 @@ describe('isMemoryRecallGuidanceSupported', () => {
 
   it('returns true when one requested surface exposes both memory actions', () => {
     const enabled = isMemoryRecallGuidanceSupported({
-      surfaces: ['voice_tool', 'voice_action_block'],
+      surfaces: ['voice', 'mcp'],
       isActionEnabled: (actionId, surface) => {
-        if (surface !== 'voice_action_block') return false;
+        if (surface !== 'voice') return false;
         return actionId === 'memory.search' || actionId === 'memory.get_window';
       },
     });

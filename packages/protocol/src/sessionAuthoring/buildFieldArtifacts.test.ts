@@ -71,6 +71,7 @@ describe('sessionAuthoring field artifacts', () => {
       },
       windowsRemoteSessionLaunchMode: null,
       windowsRemoteSessionConsole: null,
+      windowsTerminalWindowName: null,
       codexBackendMode: 'appServer',
       acpSessionModeId: 'plan',
       sessionConfigOptionOverrides: {
@@ -145,6 +146,7 @@ describe('sessionAuthoring field artifacts', () => {
       },
       windowsRemoteSessionLaunchMode: null,
       windowsRemoteSessionConsole: null,
+      windowsTerminalWindowName: null,
       codexBackendMode: null,
       acpSessionModeId: null,
       sessionConfigOptionOverrides: null,

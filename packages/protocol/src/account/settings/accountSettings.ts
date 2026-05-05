@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '../../actions/actionSettings.js';
+import {
+  ActionsSettingsV1Schema,
+  type ActionSettingsOverride,
+  type ActionsSettingsV1,
+} from '../../actions/actionSettings.js';
 import { AcpCatalogSettingsV1Schema } from '../../acpCatalog/settingsV1.js';
 import { WorkspaceRefV1Schema } from '../../workspaces/workspaceRefV1.js';
 import {
@@ -106,13 +110,13 @@ const LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1 = Object.freeze([
 
 function isLegacyDefaultSessionAgentActionLockdownV1(settings: ActionsSettingsV1): boolean {
   const known = new Set<string>(LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1);
-  const actions = settings.actions ?? ({} as any);
+  const actions: Partial<Record<string, ActionSettingsOverride>> = settings.actions;
   const keys = Object.keys(actions);
   if (keys.length !== LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1.length) return false;
 
   for (const key of keys) {
     if (!known.has(key)) return false;
-    const override = (actions as any)[key] as any;
+    const override = actions[key];
     if (!override || typeof override !== 'object' || Array.isArray(override)) return false;
     if (override.enabled === false) return false;
     const disabledSurfaces = Array.isArray(override.disabledSurfaces) ? override.disabledSurfaces : [];
@@ -127,9 +131,10 @@ function isLegacyDefaultSessionAgentActionLockdownV1(settings: ActionsSettingsV1
 
 function migrateLegacyDefaultActionsSettingsV1(settings: ActionsSettingsV1): ActionsSettingsV1 {
   if (!isLegacyDefaultSessionAgentActionLockdownV1(settings)) return settings;
-  const actions = { ...(settings.actions as any) } as ActionsSettingsV1['actions'];
-  delete (actions as any)['session.title.set'];
-  return { ...settings, actions };
+  const actions = Object.fromEntries(
+    Object.entries(settings.actions).filter(([actionId]) => actionId !== 'session.title.set'),
+  );
+  return ActionsSettingsV1Schema.parse({ ...settings, actions });
 }
 
 const BackendEnabledByTargetKeySchema = z.record(z.string(), z.boolean()).catch({});
@@ -159,7 +164,7 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
     if (parsedChannels.success) {
       next.notificationChannelsV1 = parsedChannels.data;
     } else {
-      delete next.notificationChannelsV1;
+      next.notificationChannelsV1 = undefined;
     }
   }
 

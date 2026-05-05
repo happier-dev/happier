@@ -556,7 +556,7 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
-  it('executes approved prompt library actions even when the decision surface is ui_button', async () => {
+  it('executes approved prompt library actions even when the decision surface is ui', async () => {
     const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
       actionId: 'prompt_doc.update',
       actionArgs: {
@@ -575,7 +575,7 @@ describe('createActionExecutor (approvals)', () => {
       artifactId: 'a1',
       decision: 'approve',
     }, {
-      surface: 'ui_button',
+      surface: 'ui',
     });
 
     expect(res).toEqual({
@@ -612,7 +612,7 @@ describe('createActionExecutor (approvals)', () => {
       artifactId: 'a1',
       decision: 'approve',
     }, {
-      surface: 'ui_button',
+      surface: 'ui',
     });
 
     expect(res).toEqual({
@@ -645,7 +645,7 @@ describe('createActionExecutor (approvals)', () => {
       artifactId: 'a1',
       decision: 'approve',
     }, {
-      surface: 'ui_button',
+      surface: 'ui',
     });
 
     expect(res).toEqual({

@@ -18,9 +18,14 @@ import { BackendTargetKeySchema, buildBackendTargetKey, parseBackendTargetKey } 
 import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
 import type { SessionRollbackTarget } from '../sessionRollback.js';
 import {
+  type SessionHandoffAbortRequest,
+  type SessionHandoffCommitRequest,
+  type SessionHandoffPrepareTargetRequest,
+  type SessionHandoffStatusGetRequest,
   SessionHandoffWorkspaceTransferSchema,
   type SessionHandoffWorkspaceTransfer,
 } from '../sessionControl/handoff/handoffSchemas.js';
+import type { SessionContinueWithReplayRpcParams } from '../sessionContinueWithReplay.js';
 import { SessionControlErrorCodeSchema } from '../sessionControl/contract.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
@@ -76,6 +81,7 @@ export type ActionExecutorDeps = Readonly<{
   // Session navigation/spawn (client-side)
   sessionOpen: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
   sessionFork: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionContinueWithReplay?: (args: SessionContinueWithReplayRpcParams) => Promise<unknown>;
   sessionRollback: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget }>) => Promise<unknown>;
   sessionHandoffStart?: (args: Readonly<{
     sessionId: string;
@@ -84,6 +90,10 @@ export type ActionExecutorDeps = Readonly<{
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
     serverId?: string | null;
   }>) => Promise<unknown>;
+  sessionHandoffPrepareTarget?: (args: SessionHandoffPrepareTargetRequest) => Promise<unknown>;
+  sessionHandoffCommit?: (args: SessionHandoffCommitRequest) => Promise<unknown>;
+  sessionHandoffAbort?: (args: SessionHandoffAbortRequest) => Promise<unknown>;
+  sessionHandoffStatusGet?: (args: SessionHandoffStatusGetRequest) => Promise<unknown>;
   sessionSpawnNew: (args: Readonly<{
     tag?: string;
     agentId?: string;
@@ -265,7 +275,7 @@ function resolveSessionIdFromInput(input: any, ctx: ActionExecutorContext): stri
 }
 
 function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']): ApprovalRequestV1['createdBy']['surface'] {
-  if (surface === 'voice_tool' || surface === 'voice_action_block') return 'voice';
+  if (surface === 'voice') return 'voice';
   if (surface === 'session_agent') return 'session_agent';
   if (surface === 'mcp') return 'mcp';
   if (surface === 'cli') return 'cli';
@@ -544,7 +554,7 @@ function buildApprovalDecisionResult(request: ApprovalRequestV1): ActionExecuteR
 function resolveApprovalRequestExecutionSurface(createdBySurface: ApprovalRequestV1['createdBy']['surface']): keyof ActionSurfaces | null {
   if (createdBySurface === 'session_agent') return 'session_agent';
   if (createdBySurface === 'mcp') return 'mcp';
-  if (createdBySurface === 'voice') return 'voice_tool';
+  if (createdBySurface === 'voice') return 'voice';
   if (createdBySurface === 'cli') return 'cli';
   return null;
 }
@@ -899,6 +909,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'session.continue_with_replay') {
+          if (!deps.sessionContinueWithReplay) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.continue_with_replay' };
+          }
+          const res = await deps.sessionContinueWithReplay(parsed.data as SessionContinueWithReplayRpcParams);
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'session.rollback') {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -931,6 +949,38 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
             ...(serverId ? { serverId } : {}),
           });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.handoff.prepare_target') {
+          if (!deps.sessionHandoffPrepareTarget) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.prepare_target' };
+          }
+          const res = await deps.sessionHandoffPrepareTarget(parsed.data as SessionHandoffPrepareTargetRequest);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.handoff.commit') {
+          if (!deps.sessionHandoffCommit) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.commit' };
+          }
+          const res = await deps.sessionHandoffCommit(parsed.data as SessionHandoffCommitRequest);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.handoff.abort') {
+          if (!deps.sessionHandoffAbort) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.abort' };
+          }
+          const res = await deps.sessionHandoffAbort(parsed.data as SessionHandoffAbortRequest);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.handoff.status.get') {
+          if (!deps.sessionHandoffStatusGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.status.get' };
+          }
+          const res = await deps.sessionHandoffStatusGet(parsed.data as SessionHandoffStatusGetRequest);
           return { ok: true, result: res };
         }
 

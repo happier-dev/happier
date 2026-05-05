@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EXTENSION_HOOK_CATALOG_V1,
   ExtensionHookAggregationKindV1Schema,
+  ExtensionHookScopeV1Schema,
   getExtensionHookDefinitionV1,
 } from '../../index.js';
 
@@ -31,6 +32,7 @@ describe('extension hook catalog v1', () => {
     });
 
     expect(ExtensionHookAggregationKindV1Schema.parse('orderedList')).toBe('orderedList');
+    expect(ExtensionHookScopeV1Schema.parse('agent')).toBe('agent');
     expect(EXTENSION_HOOK_CATALOG_V1.map((entry) => entry.id)).toContain('plugin.reload.after');
   });
 

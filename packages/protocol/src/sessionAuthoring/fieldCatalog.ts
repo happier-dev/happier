@@ -5,6 +5,7 @@ import { SessionMcpSelectionV1Schema } from '../mcpServers/sessionSelectionV1.js
 import { CODEX_BACKEND_MODES } from '../providers/codex/backendMode.js';
 import { AcpConfigOptionOverridesV1Schema } from '../sessionMetadata/metadataOverridesV1.js';
 import { WindowsRemoteSessionLaunchModeSchema } from '../sessionMetadata/windowsRemoteSessionLaunchMode.js';
+import { WindowsTerminalWindowNameSchema } from '../sessionMetadata/windowsTerminalWindowName.js';
 import { defineSessionAuthoringFields } from './fieldDefinition.js';
 
 type SessionAuthoringJsonPrimitive = null | string | number | boolean;
@@ -335,6 +336,18 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
   windowsRemoteSessionConsole: {
     schema: z.enum(['hidden', 'visible']).nullable(),
     description: 'Windows console visibility setting for authored sessions.',
+    storageClass: 'template',
+    contexts: ['newSession', 'automationNewSession'],
+    defaultSurface: 'section',
+    defaultEditabilityByContext: {
+      newSession: 'editable',
+      automationNewSession: 'editable',
+    },
+    default: null,
+  },
+  windowsTerminalWindowName: {
+    schema: WindowsTerminalWindowNameSchema.nullable(),
+    description: 'Windows Terminal named window target for authored Windows remote sessions.',
     storageClass: 'template',
     contexts: ['newSession', 'automationNewSession'],
     defaultSurface: 'section',

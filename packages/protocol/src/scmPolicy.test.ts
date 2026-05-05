@@ -6,6 +6,7 @@ import {
     inferScmRemoteTarget,
     mapGitScmErrorCode,
     mapSaplingScmErrorCode,
+    normalizeScmRemoteName,
     normalizeScmRemoteRequest,
     parseScmUpstreamRef,
     SCM_OPERATION_ERROR_CODES,
@@ -224,6 +225,25 @@ describe('normalizeScmRemoteRequest', () => {
         expect(normalizeScmRemoteRequest({ branch: 'main..origin/main' })).toEqual({
             ok: false,
             error: 'Branch name contains unsupported syntax',
+        });
+    });
+
+    it('allows legacy remote requests to target remotes containing slashes', () => {
+        expect(normalizeScmRemoteRequest({ remote: ' fork/alice ', branch: ' main ' })).toEqual({
+            ok: true,
+            request: {
+                remote: 'fork/alice',
+                branch: 'main',
+            },
+        });
+    });
+});
+
+describe('normalizeScmRemoteName', () => {
+    it('accepts slash-delimited remote names consistently with legacy remote requests', () => {
+        expect(normalizeScmRemoteName(' fork/alice ')).toEqual({
+            ok: true,
+            name: 'fork/alice',
         });
     });
 });

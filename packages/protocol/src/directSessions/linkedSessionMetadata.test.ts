@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../index.js';
+import {
+  deriveDirectSessionAttentionHasUnread,
+  markDirectSessionAttentionUnreadV1,
+} from '../index.js';
 
 describe('direct session linked metadata helpers', () => {
   it('normalizes and rebuilds follow policy metadata', () => {
@@ -128,5 +132,31 @@ describe('direct session linked metadata helpers', () => {
       viewedAtMs: 20,
     });
     expect((protocol as any).deriveDirectSessionAttentionHasUnread(viewed)).toBe(false);
+  });
+
+  it('marks viewed direct-session attention unread by clearing viewed progress only', () => {
+    const unread = markDirectSessionAttentionUnreadV1({
+      observedProgressToken: '20:msg-2',
+      viewedProgressToken: '20:msg-2',
+      observedAtMs: 20,
+      viewedAtMs: 20,
+    });
+
+    expect(unread).toEqual({
+      observedProgressToken: '20:msg-2',
+      observedAtMs: 20,
+    });
+    expect(deriveDirectSessionAttentionHasUnread(unread)).toBe(true);
+  });
+
+  it('does not invent unread direct-session attention without observed progress', () => {
+    expect(markDirectSessionAttentionUnreadV1(null)).toBeNull();
+    expect(markDirectSessionAttentionUnreadV1({
+      viewedProgressToken: '20:msg-2',
+      viewedAtMs: 20,
+    })).toEqual({
+      viewedProgressToken: '20:msg-2',
+      viewedAtMs: 20,
+    });
   });
 });

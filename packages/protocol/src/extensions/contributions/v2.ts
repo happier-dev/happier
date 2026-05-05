@@ -25,6 +25,32 @@ import {
 } from '../hooks/catalog.js';
 import { LooseJsonObjectSchema, OptionalStringSchema } from '../_shared.js';
 
+const STALE_ACP_TIMEOUT_KEYS = [
+  'handshakeMs',
+  'promptMs',
+  'permissionDecisionMs',
+  'fsOperationMs',
+  'authProbeMs',
+  'shutdownMs',
+  'reconnectMs',
+] as const;
+
+function hasOwn(value: Readonly<Record<string, unknown>>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function rejectForbiddenKey(
+  ctx: z.RefinementCtx,
+  key: string,
+  message: string,
+): void {
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: [key],
+    message,
+  });
+}
+
 /**
  * Backend target provenance/source model (V2).
  *
@@ -48,10 +74,109 @@ export const ExtensionProviderContributionV2Schema = ProviderDefinitionV1Schema.
 }).strict();
 export type ExtensionProviderContributionV2 = z.infer<typeof ExtensionProviderContributionV2Schema>;
 
-export const ExtensionBackendContributionV2Schema = BackendDefinitionV1Schema.extend({
-  kind: z.literal('backend'),
-  target: ExtensionBackendTargetV2Schema.optional(),
+export const ExtensionBackendEngineLaunchV2Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('agent-cli'),
+    agentId: z.string().trim().min(1),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).optional(),
+  }).passthrough(),
+  z.object({
+    kind: z.literal('executable'),
+    command: z.string().trim().min(1),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).optional(),
+  }).passthrough(),
+]);
+export type ExtensionBackendEngineLaunchV2 = z.infer<typeof ExtensionBackendEngineLaunchV2Schema>;
+
+export const ExtensionBackendEngineAcpTimeoutsV2Schema = z.object({
+  initMs: z.number().int().positive().optional(),
+  initDelayMs: z.number().int().positive().optional(),
+  idleMs: z.number().int().positive().optional(),
+  toolCallMs: z.number().int().positive().optional(),
+  promptLivenessMs: z.number().int().positive().optional(),
+  postPromptNoUpdatesMs: z.number().int().positive().optional(),
+  postToolCallIdleMs: z.number().int().positive().optional(),
+  idleWithoutAssistantMessageMs: z.number().int().positive().optional(),
+  preToolCallIdleMs: z.number().int().positive().optional(),
+}).passthrough().superRefine((value, ctx) => {
+  for (const key of STALE_ACP_TIMEOUT_KEYS) {
+    if (hasOwn(value, key)) {
+      rejectForbiddenKey(ctx, key, `ACP transport timeouts use the V1 T.4 names; '${key}' is not supported.`);
+    }
+  }
+});
+export type ExtensionBackendEngineAcpTimeoutsV2 = z.infer<typeof ExtensionBackendEngineAcpTimeoutsV2Schema>;
+
+export const ExtensionBackendEngineAcpTransportV2Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('stdio'),
+    launch: ExtensionBackendEngineLaunchV2Schema,
+    timeouts: ExtensionBackendEngineAcpTimeoutsV2Schema.optional(),
+  }).passthrough(),
+  z.object({
+    kind: z.literal('ws'),
+    url: z.string().trim().min(1),
+    headers: z.record(z.string(), z.string()).optional(),
+    timeouts: ExtensionBackendEngineAcpTimeoutsV2Schema.optional(),
+  }).passthrough(),
+  z.object({
+    kind: z.literal('tcp'),
+    host: z.string().trim().min(1),
+    port: z.number().int().min(1).max(65535),
+    timeouts: ExtensionBackendEngineAcpTimeoutsV2Schema.optional(),
+  }).passthrough(),
+]);
+export type ExtensionBackendEngineAcpTransportV2 = z.infer<typeof ExtensionBackendEngineAcpTransportV2Schema>;
+
+export const ExtensionBackendEngineAcpV2Schema = z.object({
+  kind: z.literal('acp'),
+  transport: ExtensionBackendEngineAcpTransportV2Schema,
+  ux: z.object({
+    name: OptionalStringSchema,
+    title: OptionalStringSchema,
+    description: OptionalStringSchema,
+    defaultMode: OptionalStringSchema,
+    defaultModel: OptionalStringSchema,
+  }).passthrough().optional(),
+  launchEnv: z.record(z.string(), z.string()).optional(),
+  capabilities: z.record(z.string(), z.unknown()).optional(),
+  auth: LooseJsonObjectSchema.optional(),
+  fsEnabled: z.boolean().optional(),
+  permissionModeArgv: LooseJsonObjectSchema.optional(),
+  sessionIdHeaderName: OptionalStringSchema,
+  bootstrap: LooseJsonObjectSchema.optional(),
+  messageMeta: LooseJsonObjectSchema.optional(),
+  mcp: z.object({
+    policy: z.enum(['pass_through', 'drop']),
+  }).passthrough().optional(),
+}).passthrough();
+export type ExtensionBackendEngineAcpV2 = z.infer<typeof ExtensionBackendEngineAcpV2Schema>;
+
+export const ExtensionBackendEngineCustomV2Schema = z.object({
+  kind: z.literal('custom'),
 }).strict();
+export type ExtensionBackendEngineCustomV2 = z.infer<typeof ExtensionBackendEngineCustomV2Schema>;
+
+export const ExtensionBackendEngineV2Schema = z.discriminatedUnion('kind', [
+  ExtensionBackendEngineAcpV2Schema,
+  ExtensionBackendEngineCustomV2Schema,
+]).superRefine((value, ctx) => {
+  if (value.kind === 'acp' && hasOwn(value, 'timeouts')) {
+    rejectForbiddenKey(ctx, 'timeouts', 'ACP timeouts are transport-owned; use engine.transport.timeouts.');
+  }
+});
+export type ExtensionBackendEngineV2 = z.infer<typeof ExtensionBackendEngineV2Schema>;
+
+export const ExtensionBackendContributionV2Schema = BackendDefinitionV1Schema.omit({
+  runtimeKind: true,
+  acp: true,
+}).extend({
+  kind: z.literal('backend'),
+  engine: ExtensionBackendEngineV2Schema,
+  target: ExtensionBackendTargetV2Schema.optional(),
+}).passthrough();
 export type ExtensionBackendContributionV2 = z.infer<typeof ExtensionBackendContributionV2Schema>;
 
 export const ExtensionToolContributionV2Schema = z.object({
@@ -213,5 +338,15 @@ export const ExtensionContributionV2Schema = z.discriminatedUnion('kind', [
   ExtensionLifecycleHandlerContributionV2Schema,
   ExtensionProviderContributionV2Schema,
   ExtensionBackendContributionV2Schema,
-]);
+]).superRefine((value, ctx) => {
+  if (value.kind !== 'backend') {
+    return;
+  }
+  if (hasOwn(value, 'runtimeKind')) {
+    rejectForbiddenKey(ctx, 'runtimeKind', 'Plugin backend manifests must use backends[].engine.kind; top-level runtimeKind is not supported.');
+  }
+  if (hasOwn(value, 'acp')) {
+    rejectForbiddenKey(ctx, 'acp', 'Plugin backend manifests must use backends[].engine.kind = acp; loose .acp wire is not supported.');
+  }
+});
 export type ExtensionContributionV2 = z.infer<typeof ExtensionContributionV2Schema>;

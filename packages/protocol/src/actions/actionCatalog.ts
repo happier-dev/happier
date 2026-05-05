@@ -57,6 +57,9 @@ function actionSearchText(spec: ActionSpec): string {
     spec.inputHints?.description ?? '',
     spec.bindings?.voiceClientToolName ?? '',
     spec.bindings?.mcpToolName ?? '',
+    spec.bindings?.sdkMethod ?? '',
+    spec.bindings?.rpcMethod ?? '',
+    ...(spec.bindings?.rpcMethodAliases ?? []),
     ...(spec.slash?.tokens ?? []),
     fieldText,
   ]
@@ -96,6 +99,9 @@ export function serializeActionSpec(spec: ActionSpec): SerializedActionSpec {
     examples: spec.examples ?? null,
     surfaces: spec.surfaces,
     inputHints: spec.inputHints ?? null,
+    ...(spec.outputSchema ? { outputSchema: zodSchemaToJsonSchemaObject(spec.outputSchema) } : {}),
+    ...(spec.execution ? { execution: spec.execution } : {}),
+    ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),
   };
 }
 

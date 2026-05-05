@@ -21,6 +21,18 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  'pets.companion': {
+    description: 'Happier pet companion surfaces and local package selection.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
+  'pets.sync': {
+    description: 'Synced account pet library and cross-device pet package references.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   voice: {
     description: 'Happier voice assistant feature availability.',
     defaultFailMode: 'fail_closed',
@@ -139,6 +151,54 @@ const FEATURE_CATALOG_DEFINITION = {
     description: 'Server-routed machine transfer fallback capability.',
     defaultFailMode: 'fail_closed',
     dependencies: ['machines.transfer'],
+    representation: 'server',
+  },
+  'machines.tunnel': {
+    description: 'Machine TCP tunnel control plane.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines'],
+    representation: 'client',
+  },
+  'machines.tunnel.directPeer': {
+    description: 'Direct peer machine TCP tunnel capability.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines.tunnel'],
+    representation: 'server',
+  },
+  'machines.tunnel.serverRouted': {
+    description: 'Server-routed machine TCP tunnel fallback capability.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines.tunnel'],
+    representation: 'server',
+  },
+  'machines.liveStream': {
+    description: 'Machine live stream control plane.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines'],
+    representation: 'client',
+  },
+  'machines.liveStream.directPeer': {
+    description: 'Direct peer machine live stream capability.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines.liveStream'],
+    representation: 'server',
+  },
+  'machines.liveStream.serverRouted': {
+    description: 'Server-routed machine live stream fallback capability.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines.liveStream'],
+    representation: 'server',
+  },
+  'machines.rpc': {
+    description: 'Machine RPC direct-route control plane.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines'],
+    representation: 'client',
+  },
+  'machines.rpc.directPeer': {
+    description: 'Direct peer machine RPC capability.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines.rpc'],
     representation: 'server',
   },
   'setup.relay.allowRelaySelection': {

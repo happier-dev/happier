@@ -12,8 +12,13 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   session_lifecycle: [
     'session.open',
     'session.fork',
+    'session.continue_with_replay',
     'session.rollback',
     'session.handoff',
+    'session.handoff.prepare_target',
+    'session.handoff.commit',
+    'session.handoff.abort',
+    'session.handoff.status.get',
     'session.spawn_new',
     'session.spawn_picker',
   ],
@@ -66,6 +71,17 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.user_action.answer',
     'session.mode.set',
   ],
+  external_sessions: [
+    'sessions.external.candidates.list',
+    'sessions.external.link.ensure',
+    'sessions.external.attach',
+    'sessions.external.detach',
+    'sessions.external.followPolicy.set',
+    'sessions.external.status.get',
+    'sessions.external.transcript.page',
+    'sessions.external.transcript.readAfter',
+    'sessions.external.takeover',
+  ],
   voice_controls: [
     'ui.voice_global.reset',
     'ui.voice_agent.teleport',
@@ -85,6 +101,21 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'approval.request.create',
     'approval.request.decide',
   ],
+  scm_pull_request: [
+    'scm.pullRequest.list',
+    'scm.pullRequest.get',
+    'scm.pullRequest.openOrReuse',
+    'scm.pullRequest.openCompose',
+    'scm.pullRequest.checkout',
+    'scm.pullRequest.prepareWorktree',
+    'scm.pullRequest.runStacked',
+  ],
+  scm_repository: [
+    'scm.repository.init',
+    'scm.repository.removeIndexLock',
+    'scm.hostingRepository.describePublishTargets',
+    'scm.hostingRepository.publish',
+  ],
 } as const);
 
 export const ACTION_IDS = [
@@ -97,10 +128,13 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.execution_run_control,
   ...ACTION_ID_FAMILIES_V1.session_targeting,
   ...ACTION_ID_FAMILIES_V1.session_permissions,
+  ...ACTION_ID_FAMILIES_V1.external_sessions,
   ...ACTION_ID_FAMILIES_V1.voice_controls,
   ...ACTION_ID_FAMILIES_V1.memory,
   ...ACTION_ID_FAMILIES_V1.prompt_library,
   ...ACTION_ID_FAMILIES_V1.approvals,
+  ...ACTION_ID_FAMILIES_V1.scm_pull_request,
+  ...ACTION_ID_FAMILIES_V1.scm_repository,
 ] as const;
 
 export const ActionIdSchema = z.enum(ACTION_IDS);

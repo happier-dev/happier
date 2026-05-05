@@ -545,7 +545,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       isActionEnabled: (actionId) => actionId !== 'review.start',
     });
 
-    const res = await executor.execute('action.spec.search', { query: '', limit: 50 }, { surface: 'voice_tool' });
+    const res = await executor.execute('action.spec.search', { query: '', limit: 50 }, { surface: 'voice' });
     expect(res.ok).toBe(true);
     expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'subagents.plan.start')).toBe(true);
     expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'review.start')).toBe(false);

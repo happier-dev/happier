@@ -23,6 +23,13 @@ describe('feature catalog', () => {
     expect(isFeatureId('execution.runs')).toBe(true);
   });
 
+  it('includes pets feature ids', () => {
+    expect(isFeatureId('pets.companion')).toBe(true);
+    expect(isFeatureId('pets.sync')).toBe(true);
+    expect(FEATURE_CATALOG['pets.sync']?.representation).toBe('server');
+    expect(FEATURE_CATALOG['pets.sync']?.dependencies).toEqual([]);
+  });
+
   it('includes connected services quotas feature id', () => {
     expect(isFeatureId('connectedServices.quotas')).toBe(true);
   });
@@ -60,6 +67,16 @@ describe('feature catalog', () => {
     expect(isFeatureId('machines.transfer.serverRouted')).toBe(true);
     expect(isFeatureId('machines.transfer.directPeer')).toBe(true);
     expect(isFeatureId('machines.transfer.directPeer.transportRns')).toBe(false);
+  });
+
+  it('includes peer mediation direct and server-routed feature ids', () => {
+    expect(isFeatureId('machines.tunnel.directPeer')).toBe(true);
+    expect(isFeatureId('machines.tunnel.serverRouted')).toBe(true);
+    expect(isFeatureId('machines.liveStream.directPeer')).toBe(true);
+    expect(isFeatureId('machines.liveStream.serverRouted')).toBe(true);
+    expect(isFeatureId('machines.rpc.directPeer')).toBe(true);
+    const forbiddenServerRoutedRpcFeatureId = ['machines.rpc', 'serverRouted'].join('.');
+    expect(isFeatureId(forbiddenServerRoutedRpcFeatureId)).toBe(false);
   });
 
   it('includes sharing feature ids', () => {

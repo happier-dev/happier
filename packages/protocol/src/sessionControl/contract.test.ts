@@ -3,6 +3,22 @@ import { describe, expect, it } from 'vitest';
 import * as protocol from '../index.js';
 
 describe('sessionControl contract exports', () => {
+  it('exports the manual unread cursor boundary helper', () => {
+    expect(typeof (protocol as any).resolveManualUnreadCursorBoundary).toBe('function');
+    expect((protocol as any).resolveManualUnreadCursorBoundary({
+      sessionSeq: 8,
+      lastViewedSessionSeq: null,
+    })).toBe(7);
+    expect((protocol as any).resolveManualUnreadCursorBoundary({
+      sessionSeq: 8,
+      lastViewedSessionSeq: 4,
+    })).toBe(4);
+    expect((protocol as any).resolveManualUnreadCursorBoundary({
+      sessionSeq: 1,
+      lastViewedSessionSeq: null,
+    })).toBe(0);
+  });
+
   it('exports base and per-command envelope schemas', () => {
     expect(typeof (protocol as any).SessionControlEnvelopeBaseSchema).toBe('object');
     expect(typeof (protocol as any).AuthStatusEnvelopeSchema).toBe('object');
@@ -99,13 +115,13 @@ describe('sessionControl contract exports', () => {
             bindings: null,
             examples: null,
             surfaces: {
-              ui_button: true,
-              ui_slash_command: true,
-              voice_tool: true,
-              voice_action_block: true,
+              ui: true,
+              voice: true,
               session_agent: true,
               mcp: false,
               cli: true,
+              rpc: false,
+              sdk: false,
             },
             inputHints: null,
           },
@@ -134,14 +150,15 @@ describe('sessionControl contract exports', () => {
           },
           examples: null,
           surfaces: {
-            ui_button: false,
-            ui_slash_command: false,
-            voice_tool: false,
-            voice_action_block: false,
+            ui: false,
+            voice: false,
             session_agent: true,
             mcp: true,
             cli: true,
+            rpc: false,
+            sdk: false,
           },
+          outputSchema: {},
           inputHints: null,
         },
       },

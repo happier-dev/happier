@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type ActionSpec,
   actionSpecToActionDefinitionV1,
   getActionSpec,
   listActionDefinitionsForCatalogSurface,
 } from '../index.js';
+import { z } from 'zod';
 
 describe('actionCatalog action-definition adapter', () => {
   it('builds a serialized action definition with a JSON-schema input contract', () => {
@@ -18,6 +20,63 @@ describe('actionCatalog action-definition adapter', () => {
         type: 'string',
       },
     });
+  });
+
+  it('projects A.6 action metadata into exported action definitions when present', () => {
+    const spec = {
+      id: 'action.spec.get',
+      title: 'Get action spec',
+      description: 'Read one action spec.',
+      safety: 'safe',
+      placements: [],
+      slash: null,
+      bindings: {
+        mcpToolName: 'action_spec_get',
+        sdkMethod: 'actionSpecGet',
+        rpcMethod: 'action.spec.get',
+      },
+      examples: {
+        sdk: {
+          codeExample: 'await ctx.actions.actionSpecGet({ id: "session.list" })',
+        },
+      },
+      surfaces: {
+        ui: false,
+        voice: false,
+        session_agent: true,
+        mcp: true,
+        cli: false,
+        rpc: true,
+        sdk: true,
+      },
+      inputHints: null,
+      inputSchema: z.object({ id: z.string() }).strict(),
+      outputSchema: z.object({ spec: z.unknown() }).passthrough(),
+      execution: {
+        handler: 'actions.get',
+        transport: 'host',
+      },
+      sideEffectClass: 'read',
+    } satisfies ActionSpec;
+
+    const definition = actionSpecToActionDefinitionV1(spec);
+
+    expect(definition.outputSchema).toEqual(expect.objectContaining({}));
+    expect(definition.execution).toEqual(expect.objectContaining({
+      handler: 'actions.get',
+      transport: 'host',
+    }));
+    expect(definition.sideEffectClass).toBe('read');
+    expect(definition.bindings).toEqual(expect.objectContaining({
+      mcpToolName: 'action_spec_get',
+      sdkMethod: 'actionSpecGet',
+      rpcMethod: 'action.spec.get',
+    }));
+    expect(definition.examples).toEqual(expect.objectContaining({
+      sdk: {
+        codeExample: 'await ctx.actions.actionSpecGet({ id: "session.list" })',
+      },
+    }));
   });
 
   it('filters action definitions by surface and enabled predicate', () => {

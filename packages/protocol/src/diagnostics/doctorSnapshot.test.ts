@@ -168,4 +168,130 @@ describe('DoctorSnapshotSchema', () => {
 
     expect(result.success).toBe(true);
   });
+
+  it('preserves optional repair and local runtime diagnostic sections', () => {
+    const result = DoctorSnapshotSchema.safeParse({
+      capturedAt: '2026-02-23T00:00:00.000Z',
+      server: {
+        activeServerId: 'cloud',
+        serverUrl: 'https://api.happier.dev',
+        publicServerUrl: 'https://api.happier.dev',
+        webappUrl: 'https://app.happier.dev',
+      },
+      accountId: null,
+      settings: {
+        activeServerId: null,
+        servers: [],
+        knownAccountIds: [],
+      },
+      repairSummary: {
+        schemaVersion: 1,
+        status: 'needs_attention',
+        findingCounts: {
+          total: 3,
+          warning: 2,
+          error: 1,
+          actionable: 2,
+        },
+        findingKinds: ['background_service_not_running', 'local_relay_stale'],
+      },
+      localRelays: {
+        relays: [
+          {
+            id: 'local-relay-preview',
+            releaseChannel: 'preview',
+            relayUrl: 'http://127.0.0.1:3025/?token=secret#frag',
+            version: '1.2.3-preview.1',
+            installed: true,
+            running: true,
+            healthy: true,
+            serviceEnabled: true,
+            port: 3025,
+            installRoot: '/Users/tester/.happier/relay-preview',
+          },
+        ],
+      },
+      automaticStartup: {
+        entries: [
+          {
+            id: 'launchd:preview:default',
+            label: 'com.happier.cli.daemon.preview.default',
+            releaseChannel: 'preview',
+            targetMode: 'default-following',
+            scope: 'user',
+            installed: true,
+            running: false,
+            definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.preview.default.plist',
+            relayUrl: 'https://admin:secret@relay.example.test/path?token=abc#frag',
+          },
+        ],
+        defaultFollowingCount: 1,
+        pinnedCount: 0,
+      },
+      activeStack: {
+        activeServerId: 'cloud',
+        releaseChannel: 'preview',
+        relayUrl: 'https://relay.example.test/path?token=abc',
+        localRelayUrl: 'http://127.0.0.1:3025/?token=abc',
+        source: 'settings',
+      },
+      serviceHealth: {
+        backgroundService: {
+          installed: true,
+          running: false,
+          healthy: false,
+          serviceLabel: 'com.happier.cli.daemon.preview.default',
+          releaseChannel: 'preview',
+          relayUrl: 'https://relay.example.test/path?token=abc',
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error('expected optional diagnostic sections to parse');
+
+    const parsed = parseDoctorSnapshotSafe(JSON.stringify(result.data));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('expected parsed optional diagnostic sections');
+
+    expect(parsed.snapshot).toMatchObject({
+      repairSummary: {
+        status: 'needs_attention',
+        findingCounts: {
+          total: 3,
+          warning: 2,
+          error: 1,
+          actionable: 2,
+        },
+        findingKinds: ['background_service_not_running', 'local_relay_stale'],
+      },
+      localRelays: {
+        relays: [
+          expect.objectContaining({
+            releaseChannel: 'preview',
+            relayUrl: 'http://127.0.0.1:3025',
+            healthy: true,
+          }),
+        ],
+      },
+      automaticStartup: {
+        entries: [
+          expect.objectContaining({
+            targetMode: 'default-following',
+            relayUrl: 'https://relay.example.test/path',
+          }),
+        ],
+      },
+      activeStack: {
+        relayUrl: 'https://relay.example.test/path',
+        localRelayUrl: 'http://127.0.0.1:3025',
+      },
+      serviceHealth: {
+        backgroundService: expect.objectContaining({
+          running: false,
+          relayUrl: 'https://relay.example.test/path',
+        }),
+      },
+    });
+  });
 });

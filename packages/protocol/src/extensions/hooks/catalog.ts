@@ -15,6 +15,7 @@ export const ExtensionHookScopeV1Schema = z.enum([
   'project',
   'session',
   'backend',
+  'agent',
   'provider',
   'daemon',
   'tool',

@@ -1,22 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc.js';
 import { ExecutionRunIntentSchema } from '../executionRuns.js';
 import { ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs } from './actionSpecs.js';
+import type { ActionId } from './actionIds.js';
 
 describe('Action Spec Registry', () => {
-  it('supports session_agent as an action surface', () => {
+  it('supports broad final action surfaces and rejects implementation-specific surface keys', () => {
     const parsed = ActionSurfaceSchema.parse({
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: false,
+      voice: false,
       mcp: false,
       cli: false,
       session_agent: true,
+      rpc: false,
+      sdk: true,
     });
 
     expect(parsed.session_agent).toBe(true);
+    expect(parsed.sdk).toBe(true);
+    expect(() => ActionSurfaceSchema.parse({
+      [`ui_${'button'}`]: true,
+      session_agent: true,
+      mcp: false,
+      cli: false,
+    })).toThrow();
   });
 
   it('exposes stable action specs', () => {
@@ -28,10 +37,36 @@ describe('Action Spec Registry', () => {
     }
   });
 
+  it('rejects UI placements when the broad UI surface is disabled', () => {
+    const parsed = ActionSpecSchema.safeParse({
+      id: 'session.list',
+      title: 'List sessions',
+      safety: 'safe',
+      placements: ['command_palette'],
+      surfaces: {
+        ui: false,
+        voice: false,
+        session_agent: false,
+        mcp: false,
+        cli: false,
+        rpc: false,
+        sdk: false,
+      },
+      inputSchema: z.object({}).strict(),
+    });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: ['surfaces', 'ui'],
+      }),
+    ]));
+  });
+
   it('finds known action specs by id', () => {
     const spec = getActionSpec('execution.run.list');
     expect(spec.id).toBe('execution.run.list');
-    expect(spec.surfaces.voice_tool).toBe(true);
+    expect(spec.surfaces.voice).toBe(true);
   });
 
   it('surfaces action discovery tools on both session_agent and external mcp', () => {
@@ -79,6 +114,99 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('approval.request.decide').surfaces.cli).toBe(true);
   });
 
+  it('projects SCM pull-request actions through RPC and SDK surfaces only', () => {
+    const expected: readonly [ActionId, 'read' | 'write' | 'external' | 'danger'][] = [
+      ['scm.pullRequest.list', 'read'],
+      ['scm.pullRequest.get', 'read'],
+      ['scm.pullRequest.openOrReuse', 'external'],
+      ['scm.pullRequest.openCompose', 'read'],
+      ['scm.pullRequest.checkout', 'write'],
+      ['scm.pullRequest.prepareWorktree', 'write'],
+      ['scm.pullRequest.runStacked', 'danger'],
+    ] as const;
+
+    for (const [id, sideEffectClass] of expected) {
+      const spec = getActionSpec(id);
+      expect(spec.bindings?.rpcMethod).toBe(id);
+      expect(spec.bindings?.sdkMethod).toBe(id);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.sdk).toBe(true);
+      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.voice).toBe(false);
+      expect(spec.sideEffectClass).toBe(sideEffectClass);
+    }
+
+    expect(getActionSpec('scm.pullRequest.list').safety).toBe('safe');
+    expect(getActionSpec('scm.pullRequest.openOrReuse').safety).toBe('danger');
+    expect(getActionSpec('scm.pullRequest.runStacked').safety).toBe('danger');
+  });
+
+  it('projects SCM repository provisioning actions through RPC and SDK surfaces only', () => {
+    const expected: readonly [ActionId, 'read' | 'write' | 'external' | 'danger'][] = [
+      ['scm.repository.init', 'write'],
+      ['scm.repository.removeIndexLock', 'danger'],
+      ['scm.hostingRepository.describePublishTargets', 'read'],
+      ['scm.hostingRepository.publish', 'external'],
+    ] as const;
+
+    for (const [id, sideEffectClass] of expected) {
+      const spec = getActionSpec(id);
+      expect(spec.bindings?.rpcMethod).toBe(id);
+      expect(spec.bindings?.sdkMethod).toBe(id);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.sdk).toBe(true);
+      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.voice).toBe(false);
+      expect(spec.sideEffectClass).toBe(sideEffectClass);
+      expect(spec.outputSchema).toMatchObject({
+        parse: expect.any(Function),
+      });
+    }
+
+    expect(getActionSpec('scm.repository.init').safety).toBe('danger');
+    expect(getActionSpec('scm.repository.removeIndexLock').safety).toBe('danger');
+    expect(getActionSpec('scm.hostingRepository.describePublishTargets').safety).toBe('safe');
+    expect(getActionSpec('scm.hostingRepository.publish').safety).toBe('danger');
+    expect(getActionSpec('scm.repository.removeIndexLock').inputHints?.fields)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          path: 'confirmed',
+          required: true,
+          widget: 'checkbox',
+        }),
+      ]));
+  });
+
+  it('projects external-session actions through legacy direct-session RPC bindings and real SDK names only', () => {
+    const expected: readonly [ActionId, string, string | null, 'read' | 'write' | 'danger'][] = [
+      ['sessions.external.candidates.list', RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, 'sessions.external.listCandidates', 'read'],
+      ['sessions.external.link.ensure', RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE, null, 'write'],
+      ['sessions.external.attach', RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, null, 'write'],
+      ['sessions.external.detach', RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH, null, 'write'],
+      ['sessions.external.followPolicy.set', RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET, null, 'write'],
+      ['sessions.external.status.get', RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET, null, 'read'],
+      ['sessions.external.transcript.page', RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE, 'sessions.external.pageTranscript', 'read'],
+      ['sessions.external.transcript.readAfter', RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER, 'sessions.external.readAfterTranscript', 'read'],
+      ['sessions.external.takeover', RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER, 'sessions.external.takeover', 'danger'],
+    ];
+
+    for (const [id, rpcMethod, sdkMethod, sideEffectClass] of expected) {
+      const spec = getActionSpec(id);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+      expect(spec.bindings?.sdkMethod ?? null).toBe(sdkMethod);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.sdk).toBe(sdkMethod !== null);
+      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.voice).toBe(false);
+      expect(spec.sideEffectClass).toBe(sideEffectClass);
+    }
+
+    const takeover = getActionSpec('sessions.external.takeover');
+    expect(takeover.bindings?.rpcMethodAliases).toEqual([
+      RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
+    ]);
+  });
+
   it('accepts explicit execution.run.list filter fields in the action schema', () => {
     const spec = getActionSpec('execution.run.list');
 
@@ -95,6 +223,24 @@ describe('Action Spec Registry', () => {
       status: 'running',
       limit: 5,
     });
+  });
+
+  it('projects public execution-run actions through session RPC bindings', () => {
+    const expected: readonly [ActionId, string, 'read' | 'write'][] = [
+      ['execution.run.start', SESSION_RPC_METHODS.EXECUTION_RUN_START, 'write'],
+      ['execution.run.list', SESSION_RPC_METHODS.EXECUTION_RUN_LIST, 'read'],
+      ['execution.run.get', SESSION_RPC_METHODS.EXECUTION_RUN_GET, 'read'],
+      ['execution.run.send', SESSION_RPC_METHODS.EXECUTION_RUN_SEND, 'write'],
+      ['execution.run.stop', SESSION_RPC_METHODS.EXECUTION_RUN_STOP, 'write'],
+      ['execution.run.action', SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, 'write'],
+    ];
+
+    for (const [id, rpcMethod, sideEffectClass] of expected) {
+      const spec = getActionSpec(id);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.sideEffectClass).toBe(sideEffectClass);
+    }
   });
 
   it('requires backendTargetKey when listing models for customAcp', () => {
@@ -381,36 +527,58 @@ describe('Action Spec Registry', () => {
   it('binds voice teleport to teleportVoiceAgentToSessionRoot', () => {
     const spec = getActionSpec('ui.voice_agent.teleport');
     expect(spec.bindings?.voiceClientToolName).toBe('teleportVoiceAgentToSessionRoot');
-    expect(spec.surfaces.voice_tool).toBe(true);
-    expect(spec.surfaces.voice_action_block).toBe(true);
+    expect(spec.surfaces.voice).toBe(true);
+    expect(spec.surfaces.voice).toBe(true);
   });
 
   it('exposes memory action specs', () => {
     const spec = getActionSpec('memory.search');
     expect(spec.id).toBe('memory.search');
-    expect(spec.surfaces.voice_tool).toBe(true);
+    expect(spec.surfaces.voice).toBe(true);
   });
 
   it('exposes session fork action spec', () => {
     const spec = getActionSpec('session.fork');
     expect(spec.id).toBe('session.fork');
-    expect(spec.surfaces.ui_button).toBe(true);
+    expect(spec.surfaces.ui).toBe(true);
     expect(spec.placements).toContain('session_action_menu');
   });
 
   it('exposes session rollback action spec', () => {
     const spec = getActionSpec('session.rollback' as any);
     expect(spec.id).toBe('session.rollback');
-    expect(spec.surfaces.ui_button).toBe(true);
+    expect(spec.surfaces.ui).toBe(true);
     expect(spec.placements).toContain('session_action_menu');
   });
 
   it('exposes session open action spec', () => {
     const spec = getActionSpec('session.open');
     expect(spec.id).toBe('session.open');
-    expect(spec.surfaces.ui_button).toBe(true);
+    expect(spec.surfaces.ui).toBe(true);
     expect(spec.placements).toContain('command_palette');
     expect(spec.placements).toContain('session_info');
+  });
+
+  it('binds session lifecycle RPC wire methods to ActionSpec rows', () => {
+    const expectedBindings = new Map([
+      ['session.spawn_new', 'spawn-happy-session'],
+      ['session.stop', 'stop-session'],
+      ['session.fork', 'session.fork'],
+      ['session.continue_with_replay', 'session.continueWithReplay'],
+      ['session.rollback', 'session.rollback'],
+      ['session.handoff', 'daemon.sessionHandoff.start'],
+      ['session.handoff.prepare_target', 'daemon.sessionHandoff.prepareTarget'],
+      ['session.handoff.commit', 'daemon.sessionHandoff.commit'],
+      ['session.handoff.abort', 'daemon.sessionHandoff.abort'],
+      ['session.handoff.status.get', 'daemon.sessionHandoff.status.get'],
+    ]);
+
+    for (const [actionId, rpcMethod] of expectedBindings) {
+      const spec = getActionSpec(actionId as any);
+
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+    }
   });
 
   it('treats approval decisions as danger-class actions', () => {
@@ -468,14 +636,16 @@ describe('Action Spec Registry', () => {
         safety: 'safe',
         placements: [],
         surfaces: {
-          ui_button: true,
-          ui_slash_command: true,
-          voice_tool: true,
-          voice_action_block: true,
+          ui: true,
+          voice: true,
           session_agent: false,
           mcp: true,
           cli: true,
+          rpc: false,
+          sdk: false,
         },
+        bindings: { mcpToolName: 'review_start' },
+        outputSchema: z.unknown(),
         inputSchema: z.object({}).strict(),
         inputHints: {
           fields: [
@@ -497,14 +667,16 @@ describe('Action Spec Registry', () => {
       safety: 'safe',
       placements: [],
       surfaces: {
-        ui_button: true,
-        ui_slash_command: true,
-        voice_tool: true,
-        voice_action_block: true,
+        ui: true,
+        voice: true,
         session_agent: false,
         mcp: true,
         cli: true,
+        rpc: false,
+        sdk: false,
       },
+      bindings: { mcpToolName: 'review_start' },
+      outputSchema: z.unknown(),
       inputSchema: z.object({}).strict(),
       inputHints: {
         fields: [
@@ -535,13 +707,16 @@ describe('Action Spec Registry', () => {
         safety: 'safe',
         placements: [],
         surfaces: {
-          ui_button: true,
-          ui_slash_command: true,
-          voice_tool: true,
-          voice_action_block: true,
+          ui: true,
+          voice: true,
+          session_agent: false,
           mcp: true,
           cli: true,
+          rpc: false,
+          sdk: false,
         },
+        bindings: { mcpToolName: 'review_start' },
+        outputSchema: z.unknown(),
         inputSchema: z.object({}).strict(),
         inputHints: {
           fields: [
@@ -562,13 +737,16 @@ describe('Action Spec Registry', () => {
         safety: 'safe',
         placements: [],
         surfaces: {
-          ui_button: true,
-          ui_slash_command: true,
-          voice_tool: true,
-          voice_action_block: true,
+          ui: true,
+          voice: true,
+          session_agent: false,
           mcp: true,
           cli: true,
+          rpc: false,
+          sdk: false,
         },
+        bindings: { mcpToolName: 'review_start' },
+        outputSchema: z.unknown(),
         inputSchema: z.object({}).strict(),
         inputHints: {
           fields: [
@@ -591,13 +769,16 @@ describe('Action Spec Registry', () => {
         safety: 'safe',
         placements: [],
         surfaces: {
-          ui_button: true,
-          ui_slash_command: true,
-          voice_tool: true,
-          voice_action_block: true,
+          ui: true,
+          voice: true,
+          session_agent: false,
           mcp: true,
           cli: true,
+          rpc: false,
+          sdk: false,
         },
+        bindings: { mcpToolName: 'review_start' },
+        outputSchema: z.unknown(),
         inputSchema: z.object({}).strict(),
         inputHints: {
           fields: [
@@ -616,8 +797,8 @@ describe('Action Spec Registry', () => {
     const plan = getActionSpec('subagents.plan.start');
     const delegate = getActionSpec('subagents.delegate.start');
 
-    expect(plan.surfaces.ui_button).toBe(true);
-    expect(delegate.surfaces.ui_button).toBe(true);
+    expect(plan.surfaces.ui).toBe(true);
+    expect(delegate.surfaces.ui).toBe(true);
 
     const planFields = (plan as any).inputHints?.fields ?? null;
     const delegateFields = (delegate as any).inputHints?.fields ?? null;
@@ -651,10 +832,10 @@ describe('Action Spec Registry', () => {
   });
 
 	  it('filters action specs by surfaced availability', () => {
-	    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'voice_tool')).toBe(true);
+	    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'voice')).toBe(true);
 	    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'mcp')).toBe(true);
 	    expect(listActionSpecsForSurface('mcp').some((spec) => spec.id === 'session.mode.set')).toBe(true);
-	    expect(listActionSpecsForSurface('voice_tool').some((spec) => spec.id === 'session.mode.set')).toBe(true);
+	    expect(listActionSpecsForSurface('voice').some((spec) => spec.id === 'session.mode.set')).toBe(true);
 	  });
 
   it('derives the voice prompt hot-path inventory from ActionSpec metadata', () => {
@@ -671,7 +852,7 @@ describe('Action Spec Registry', () => {
     const all = listActionSpecs();
     const byVoiceToolName = new Map(
       all
-        .filter((spec) => spec.surfaces.voice_tool && Boolean(spec.bindings?.voiceClientToolName))
+        .filter((spec) => spec.surfaces.voice && Boolean(spec.bindings?.voiceClientToolName))
         .map((spec) => [spec.bindings!.voiceClientToolName!, spec] as const),
     );
 
@@ -699,7 +880,7 @@ describe('Action Spec Registry', () => {
   it('uses concrete schema-shaped voice args examples for all voice surfaces', () => {
     const placeholderFragments = ['...optional...', '"..."', 'allow|deny', '...|null'];
 
-    for (const spec of listActionSpecs().filter((entry) => entry.surfaces.voice_tool || entry.surfaces.voice_action_block)) {
+    for (const spec of listActionSpecs().filter((entry) => entry.surfaces.voice || entry.surfaces.voice)) {
       const argsExample = spec.examples?.voice?.argsExample;
       expect(typeof argsExample).toBe('string');
       const exampleText = String(argsExample ?? '').trim();

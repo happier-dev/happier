@@ -1,6 +1,6 @@
 import type { ActionId, ActionSurfaces } from '../actions/index.js';
 
-export type MemoryRecallGuidanceSurface = keyof Pick<ActionSurfaces, 'mcp' | 'voice_tool' | 'voice_action_block'>;
+export type MemoryRecallGuidanceSurface = keyof Pick<ActionSurfaces, 'mcp' | 'voice'>;
 
 export const MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS = [
   'memory.search',

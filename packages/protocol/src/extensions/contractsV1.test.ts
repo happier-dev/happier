@@ -60,13 +60,13 @@ describe('extension and hook contract exports', () => {
       },
       examples: null,
       surfaces: {
-        ui_button: false,
-        ui_slash_command: false,
-        voice_tool: false,
-        voice_action_block: false,
+        ui: false,
+        voice: false,
         session_agent: true,
         mcp: true,
         cli: true,
+        rpc: false,
+        sdk: false,
         futureSurfaceFlag: 'surface-extra',
       },
       prompting: {
@@ -192,7 +192,27 @@ describe('extension and hook contract exports', () => {
         },
         {
           kind: 'backend',
-          ...backendDefinition,
+          kindVersion: backendDefinition.kindVersion,
+          id: backendDefinition.id,
+          providerId: backendDefinition.providerId,
+          providerAgentId: backendDefinition.providerAgentId,
+          iconAgentId: backendDefinition.iconAgentId,
+          engine: {
+            kind: 'acp',
+            transport: {
+              kind: 'stdio',
+              launch: {
+                kind: 'executable',
+                command: 'ohmypi',
+                args: ['acp'],
+              },
+            },
+            ux: {
+              title: 'Oh My Pi',
+            },
+          },
+          capabilities: backendDefinition.capabilities,
+          runtimeAdapters: backendDefinition.runtimeAdapters,
         },
         {
           kind: 'hook',

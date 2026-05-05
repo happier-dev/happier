@@ -139,4 +139,79 @@ describe('createActionExecutor (session.handoff)', () => {
       error: 'invalid_parameters',
     });
   });
+
+  it('delegates session.handoff.prepare_target to the prepare-target dependency', async () => {
+    const sessionHandoffPrepareTarget = vi.fn(async () => ({ handoffId: 'handoff_1', status: 'prepared' }));
+    const deps = createDeps({
+      sessionHandoffPrepareTarget,
+    });
+    const executor = createActionExecutor(deps);
+    const input = {
+      handoffId: 'handoff_1',
+      sourceMachineId: 'machine_1',
+      targetMachineId: 'machine_2',
+      negotiatedTransportStrategy: 'server_routed_stream',
+      sourceSessionStorageMode: 'persisted',
+      targetPath: '/tmp/project',
+    };
+
+    const result = await executor.execute('session.handoff.prepare_target', input, { surface: 'rpc' });
+
+    expect(result).toEqual({ ok: true, result: { handoffId: 'handoff_1', status: 'prepared' } });
+    expect(sessionHandoffPrepareTarget).toHaveBeenCalledWith({
+      ...input,
+      endpointCandidates: [],
+    });
+  });
+
+  it('delegates session.handoff.commit to the commit dependency', async () => {
+    const sessionHandoffCommit = vi.fn(async () => ({ handoffId: 'handoff_1', status: 'completed' }));
+    const deps = createDeps({
+      sessionHandoffCommit,
+    });
+    const executor = createActionExecutor(deps);
+
+    const result = await executor.execute(
+      'session.handoff.commit',
+      { handoffId: 'handoff_1', mode: 'target' },
+      { surface: 'rpc' },
+    );
+
+    expect(result).toEqual({ ok: true, result: { handoffId: 'handoff_1', status: 'completed' } });
+    expect(sessionHandoffCommit).toHaveBeenCalledWith({ handoffId: 'handoff_1', mode: 'target' });
+  });
+
+  it('delegates session.handoff.abort to the abort dependency', async () => {
+    const sessionHandoffAbort = vi.fn(async () => ({ handoffId: 'handoff_1', status: 'aborted' }));
+    const deps = createDeps({
+      sessionHandoffAbort,
+    });
+    const executor = createActionExecutor(deps);
+
+    const result = await executor.execute(
+      'session.handoff.abort',
+      { handoffId: 'handoff_1', reason: 'user_requested' },
+      { surface: 'rpc' },
+    );
+
+    expect(result).toEqual({ ok: true, result: { handoffId: 'handoff_1', status: 'aborted' } });
+    expect(sessionHandoffAbort).toHaveBeenCalledWith({ handoffId: 'handoff_1', reason: 'user_requested' });
+  });
+
+  it('delegates session.handoff.status.get to the status dependency', async () => {
+    const sessionHandoffStatusGet = vi.fn(async () => ({ handoffId: 'handoff_1', status: 'pending' }));
+    const deps = createDeps({
+      sessionHandoffStatusGet,
+    });
+    const executor = createActionExecutor(deps);
+
+    const result = await executor.execute(
+      'session.handoff.status.get',
+      { handoffId: 'handoff_1' },
+      { surface: 'rpc' },
+    );
+
+    expect(result).toEqual({ ok: true, result: { handoffId: 'handoff_1', status: 'pending' } });
+    expect(sessionHandoffStatusGet).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
+  });
 });

@@ -5,6 +5,7 @@ export const HOOK_SCOPE_V1_VALUES = [
   'project',
   'session',
   'backend',
+  'agent',
   'provider',
   'daemon',
   'tool',

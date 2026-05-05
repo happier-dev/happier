@@ -1,6 +1,7 @@
-import { extractShellCommand } from './shellCommand.js';
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from './shellCommand.js';
 
 export type AgentRequestKind = 'permission' | 'user_action';
+export type AgentPermissionRisk = 'low' | 'high';
 
 export type AgentRequestSemanticSummary = Readonly<{
   kind: AgentRequestKind;
@@ -14,6 +15,11 @@ export type AgentRequestSemanticSummary = Readonly<{
 }>;
 
 type FormatPermissionRequestSummaryParams = Readonly<{
+  toolName: string;
+  toolInput: unknown;
+}>;
+
+type ClassifyPermissionRequestRiskParams = Readonly<{
   toolName: string;
   toolInput: unknown;
 }>;
@@ -126,6 +132,21 @@ function commandName(raw: string): string {
   return value.split(/\s+/).filter(Boolean)[0] ?? '';
 }
 
+function normalizedToolName(toolName: string): string {
+  return normalizeToolLabel(toolName).toLowerCase();
+}
+
+function isReadOnlyShellCommand(command: string): boolean {
+  const normalized = stripShellCommandPreludeForDisplay(command).trim();
+  if (!normalized) return false;
+  if (/[;&|`$<>]/.test(normalized)) return false;
+  if (/\b(rm|mv|cp|chmod|chown|mkdir|rmdir|touch|truncate|tee|sed|perl|python|python3|node|npm|pnpm|yarn|bun|npx|find|git\s+(?:add|commit|push|pull|fetch|merge|rebase|checkout|switch|reset|restore|clean|apply|am|branch\s+-[dD]))\b/i.test(normalized)) {
+    return false;
+  }
+
+  return /^(?:pwd|ls(?:\s|$)|cat\s|head\s|tail\s|rg\s|grep\s|git\s+(?:status|diff|log|show)(?:\s|$)|git\s+branch(?:\s+--show-current|\s+--contains)?\s*$)/i.test(normalized);
+}
+
 export function buildAgentRequestSemanticSummary(params: Readonly<{
   kind: AgentRequestKind;
   toolName: string;
@@ -145,6 +166,31 @@ export function buildAgentRequestSemanticSummary(params: Readonly<{
     firstQuestionText: questions[0] ?? null,
     questionCount: questions.length,
   };
+}
+
+export function classifyPermissionRequestRisk(
+  params: ClassifyPermissionRequestRiskParams,
+): AgentPermissionRisk {
+  const lower = normalizedToolName(params.toolName);
+
+  if (lower === 'bash' || lower === 'execute' || lower === 'shell') {
+    const command = extractShellCommand(params.toolInput);
+    return command && isReadOnlyShellCommand(command) ? 'low' : 'high';
+  }
+
+  if (
+    lower === 'read'
+    || lower === 'grep'
+    || lower === 'glob'
+    || lower === 'ls'
+    || lower === 'webfetch'
+    || lower === 'websearch'
+    || lower === 'bashoutput'
+  ) {
+    return 'low';
+  }
+
+  return 'high';
 }
 
 export function formatPermissionRequestSummary(params: FormatPermissionRequestSummaryParams): string {

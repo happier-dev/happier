@@ -52,7 +52,7 @@ function listVoiceActionSchemaEntries(): VoiceActionSchemaEntry[] {
 
 function buildVoiceAssistantActionSchema(): z.ZodType<VoiceAssistantAction> {
   // Centralized: the action block schema is derived from Action Specs.
-  // Each spec that opts into surface.voice_action_block must bind a stable voiceClientToolName and inputSchema.
+  // Each spec that opts into the voice surface must bind a stable voiceClientToolName and inputSchema.
   const voiceActionBlockOptions = listVoiceActionSchemaEntries().map(({ toolName, inputSchema }) => {
     return [
       z.object({

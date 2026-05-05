@@ -65,6 +65,22 @@
     "./workspaces": {
       "types": "./dist/workspaces/index.d.ts",
       "default": "./dist/workspaces/index.js"
+    },
+    "./sessions": {
+      "types": "./dist/sessions/index.d.ts",
+      "default": "./dist/sessions/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
+    },
+    "./backends": {
+      "types": "./dist/backends/index.d.ts",
+      "default": "./dist/backends/index.js"
+    },
+    "./pets": {
+      "types": "./dist/pets/index.d.ts",
+      "default": "./dist/pets/index.js"
     }
   },
   "files": [

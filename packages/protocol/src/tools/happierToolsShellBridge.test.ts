@@ -88,4 +88,16 @@ describe('parseHappierToolsShellBridgeCommand', () => {
   it('returns null for unrelated shell commands', () => {
     expect(parseHappierToolsShellBridgeCommand('git status --short')).toBeNull();
   });
+
+  it.each([
+    'happier tools call --source happier --tool save_memory --json; touch /tmp/happier-pwn',
+    'happier tools call --source happier --tool save_memory --json && touch /tmp/happier-pwn',
+    'happier tools call --source happier --tool save_memory --json || touch /tmp/happier-pwn',
+    'happier tools call --source happier --tool save_memory --json | cat',
+    'happier tools call --source happier --tool save_memory --json $(touch /tmp/happier-pwn)',
+    'happier tools call --source happier --tool save_memory --json `touch /tmp/happier-pwn`',
+    'happier tools call --source happier --tool save_memory --json extra-token',
+  ])('rejects shell bridge commands with trailing shell execution: %s', (command) => {
+    expect(parseHappierToolsShellBridgeCommand(command)).toBeNull();
+  });
 });

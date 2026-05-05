@@ -23,21 +23,50 @@ import {
   MachineTransferCapabilitiesSchema,
 } from './machineTransferCapabilities.js';
 import {
+  DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
+  MachineTunnelCapabilitiesSchema,
+} from './machineTunnelCapabilities.js';
+import {
+  DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
+  MachineLiveStreamCapabilitiesSchema,
+} from './machineLiveStreamCapabilities.js';
+import {
+  DEFAULT_PEER_MEDIATION_CAPABILITIES,
+  PeerMediationCapabilitiesSchema,
+} from './peerMediationCapabilities.js';
+import {
   DEFAULT_SERVER_CAPABILITIES,
   ServerCapabilitiesSchema,
 } from './serverCapabilities.js';
+import {
+  DEFAULT_PETS_CAPABILITIES,
+  PetsCapabilitiesSchema,
+} from './petsCapabilities.js';
+import {
+  DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+  LiveActivityRemoteUpdateCapabilityDiagnosticsSchema,
+} from '../../../liveActivities/remoteUpdateCapabilities.js';
 
 export const CapabilitiesSchema = z.object({
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
   voice: VoiceCapabilitiesSchema.optional().default(DEFAULT_VOICE_CAPABILITIES),
+  pets: PetsCapabilitiesSchema.optional().default(DEFAULT_PETS_CAPABILITIES),
   encryption: EncryptionCapabilitiesSchema.optional().default(DEFAULT_ENCRYPTION_CAPABILITIES),
   server: ServerCapabilitiesSchema.optional().default(DEFAULT_SERVER_CAPABILITIES),
   machines: z
     .object({
       transfer: MachineTransferCapabilitiesSchema.optional().default(DEFAULT_MACHINE_TRANSFER_CAPABILITIES),
+      tunnel: MachineTunnelCapabilitiesSchema.optional().default(DEFAULT_MACHINE_TUNNEL_CAPABILITIES),
+      liveStream: MachineLiveStreamCapabilitiesSchema.optional().default(DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES),
+      peerMediation: PeerMediationCapabilitiesSchema.optional().default(DEFAULT_PEER_MEDIATION_CAPABILITIES),
     })
     .optional()
-    .default({ transfer: DEFAULT_MACHINE_TRANSFER_CAPABILITIES }),
+    .default({
+      transfer: DEFAULT_MACHINE_TRANSFER_CAPABILITIES,
+      tunnel: DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
+      liveStream: DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
+      peerMediation: DEFAULT_PEER_MEDIATION_CAPABILITIES,
+    }),
   social: z
     .object({
       friends: SocialFriendsCapabilitiesSchema.optional().default(DEFAULT_SOCIAL_FRIENDS_CAPABILITIES),
@@ -51,6 +80,14 @@ export const CapabilitiesSchema = z.object({
     .optional()
     .default({ providers: {} }),
   auth: AuthCapabilitiesSchema.optional().default(DEFAULT_AUTH_CAPABILITIES),
+  liveActivities: z
+    .object({
+      remoteUpdates: LiveActivityRemoteUpdateCapabilityDiagnosticsSchema.optional().default(
+        DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+      ),
+    })
+    .optional()
+    .default({ remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS }),
 });
 
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;

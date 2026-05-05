@@ -41,6 +41,13 @@ export const FeatureGatesSchema = z.object({
     })
     .optional()
     .default({ uploads: DEFAULT_GATE_DISABLED }),
+  pets: z
+    .object({
+      companion: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      sync: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({ companion: DEFAULT_GATE_DISABLED, sync: DEFAULT_GATE_DISABLED }),
   automations: z
     .object({
       enabled: z.boolean(),
@@ -114,9 +121,38 @@ export const FeatureGatesSchema = z.object({
         })
         .optional()
         .default({ enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } }),
+      tunnel: z
+        .object({
+          enabled: z.boolean(),
+          directPeer: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          serverRouted: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({ enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED }),
+      liveStream: z
+        .object({
+          enabled: z.boolean(),
+          directPeer: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          serverRouted: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({ enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED }),
+      rpc: z
+        .object({
+          enabled: z.boolean(),
+          directPeer: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({ enabled: false, directPeer: DEFAULT_GATE_DISABLED }),
     })
     .optional()
-    .default({ enabled: false, transfer: { enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } } }),
+    .default({
+      enabled: false,
+      transfer: { enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } },
+      tunnel: { enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED },
+      liveStream: { enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED },
+      rpc: { enabled: false, directPeer: DEFAULT_GATE_DISABLED },
+    }),
   setup: z
     .object({
       relay: z

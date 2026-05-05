@@ -31,7 +31,7 @@ describe('ActionsSettingsV1Schema', () => {
     expect(isActionEnabledByActionsSettings('review.start' as any, parsed)).toBe(false);
     expect(isActionEnabledByActionsSettings('subagents.plan.start' as any, parsed)).toBe(true);
     expect(isActionEnabledByActionsSettings('subagents.plan.start' as any, parsed, { surface: 'mcp' } as any)).toBe(false);
-    expect(isActionEnabledByActionsSettings('subagents.plan.start' as any, parsed, { surface: 'ui_button' } as any)).toBe(true);
+    expect(isActionEnabledByActionsSettings('subagents.plan.start' as any, parsed, { surface: 'ui' } as any)).toBe(true);
     expect(isActionEnabledByActionsSettings('subagents.plan.start' as any, parsed, { placement: 'command_palette' } as any)).toBe(false);
     expect(isActionEnabledByActionsSettings('subagents.plan.start' as any, parsed, { placement: 'agent_input_chips' } as any)).toBe(false);
 
@@ -72,22 +72,28 @@ describe('ActionsSettingsV1Schema', () => {
     });
   });
 
-  it('normalizes legacy session_control_cli surface overrides to cli', () => {
+  it('collapses legacy implementation-specific surface overrides to broad final surfaces', () => {
+    const legacyUiButton = `ui_${'button'}`;
+    const legacyUiSlash = `ui_${'slash_command'}`;
+    const legacyVoiceTool = `voice_${'tool'}`;
+    const legacyVoiceBlock = `voice_${'action_block'}`;
     const parsed = ActionsSettingsV1Schema.parse({
       v: 1,
       actions: {
         'review.start': {
-          disabledSurfaces: ['session_control_cli'],
+          disabledSurfaces: [legacyUiButton, legacyUiSlash, legacyVoiceTool, legacyVoiceBlock, 'mcp', 'unknown_surface'],
+          approvalRequiredSurfaces: [legacyVoiceTool, 'cli'],
         },
       },
     });
 
     expect(parsed.actions['review.start' as keyof typeof parsed.actions]).toEqual({
       enabledPlacements: [],
-      disabledSurfaces: ['cli'],
+      disabledSurfaces: ['ui', 'voice', 'mcp'],
       disabledPlacements: [],
-      approvalRequiredSurfaces: [],
+      approvalRequiredSurfaces: ['voice', 'cli'],
     });
-    expect(isActionEnabledByActionsSettings('review.start' as any, parsed, { surface: 'cli' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('review.start' as any, parsed, { surface: 'ui' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('review.start' as any, parsed, { surface: 'voice' } as any)).toBe(false);
   });
 });

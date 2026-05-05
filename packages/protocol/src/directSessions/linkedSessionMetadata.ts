@@ -196,6 +196,26 @@ export function markDirectSessionAttentionViewedV1(
   };
 }
 
+export function markDirectSessionAttentionUnreadV1(
+  current: DirectSessionAttentionV1 | null | undefined,
+): DirectSessionAttentionV1 | null {
+  if (!current) return null;
+
+  const hasObservedProgress = Boolean(current.observedProgressToken) || current.observedAtMs !== undefined;
+  if (!hasObservedProgress) {
+    return current;
+  }
+
+  if (current.viewedProgressToken === undefined && current.viewedAtMs === undefined) {
+    return current;
+  }
+
+  return {
+    ...(current.observedProgressToken ? { observedProgressToken: current.observedProgressToken } : {}),
+    ...(current.observedAtMs !== undefined ? { observedAtMs: current.observedAtMs } : {}),
+  };
+}
+
 export function deriveDirectSessionAttentionHasUnread(
   attention: DirectSessionAttentionV1 | null | undefined,
 ): boolean | null {

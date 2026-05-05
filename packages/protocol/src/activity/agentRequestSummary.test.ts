@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildAgentRequestSemanticSummary,
+  classifyPermissionRequestRisk,
   extractFirstUserActionQuestion,
   formatPermissionRequestSummary,
   summarizeToolInputForNotification,
@@ -63,6 +64,43 @@ describe('formatPermissionRequestSummary', () => {
         toolInput: { toolCall: { content: [{ path: '/srv/data.txt' }] } },
       }),
     ).toBe('Read: /srv/data.txt');
+  });
+});
+
+describe('classifyPermissionRequestRisk', () => {
+  it('classifies mutating file tools as high risk', () => {
+    for (const toolName of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Delete']) {
+      expect(classifyPermissionRequestRisk({ toolName, toolInput: { path: 'src/app.ts' } })).toBe('high');
+    }
+  });
+
+  it('classifies read-only tools as low risk', () => {
+    for (const toolName of ['Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch', 'BashOutput']) {
+      expect(classifyPermissionRequestRisk({ toolName, toolInput: { path: 'src/app.ts' } })).toBe('low');
+    }
+  });
+
+  it('classifies obvious shell inspection commands as low risk', () => {
+    for (const command of ['git status --short', 'pwd', 'ls -la', 'rg "TODO" src', 'cat package.json']) {
+      expect(classifyPermissionRequestRisk({ toolName: 'Bash', toolInput: { command } })).toBe('low');
+    }
+  });
+
+  it('classifies mutating or unknown shell commands as high risk', () => {
+    for (const command of [
+      'npm install',
+      'rm -rf dist',
+      'git push origin main',
+      'python scripts/deploy.py',
+      'git status --short && echo done',
+    ]) {
+      expect(classifyPermissionRequestRisk({ toolName: 'Bash', toolInput: { command } })).toBe('high');
+    }
+    expect(classifyPermissionRequestRisk({ toolName: 'Bash', toolInput: {} })).toBe('high');
+  });
+
+  it('classifies unknown tools as high risk', () => {
+    expect(classifyPermissionRequestRisk({ toolName: 'RunDangerousThing', toolInput: {} })).toBe('high');
   });
 });
 

@@ -63,6 +63,7 @@ function tokenizeShellWords(command: string): string[] | null {
 
   for (let index = 0; index < command.length; index++) {
     const ch = command[index] ?? '';
+    const next = command[index + 1] ?? '';
 
     if (escaped) {
       current += ch;
@@ -83,6 +84,12 @@ function tokenizeShellWords(command: string): string[] | null {
     if (ch === '"' && !inSingle) {
       inDouble = !inDouble;
       continue;
+    }
+
+    if (!inSingle && ch === '`') return null;
+    if (!inSingle && ch === '$' && next === '(') return null;
+    if (!inSingle && !inDouble && (ch === ';' || ch === '&' || ch === '|' || ch === '<' || ch === '>')) {
+      return null;
     }
 
     if (!inSingle && !inDouble && /\s/.test(ch)) {
@@ -106,11 +113,80 @@ function stripLeadingEnvAssignmentTokens(tokens: readonly string[]): string[] {
   return tokens.slice(index);
 }
 
-function readFlagValue(tokens: readonly string[], flag: string): string | null {
-  const index = tokens.indexOf(flag);
-  if (index === -1) return null;
-  const value = tokens[index + 1];
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+type ParsedBridgeFlags = Readonly<{
+  sessionId: string | null;
+  directory: string | null;
+  source: string | null;
+  tool: string | null;
+  argsJson: string | null;
+  json: boolean;
+}>;
+
+function parseBridgeFlags(subcommand: string, tokens: readonly string[]): ParsedBridgeFlags | null {
+  let sessionId: string | null = null;
+  let directory: string | null = null;
+  let source: string | null = null;
+  let tool: string | null = null;
+  let argsJson: string | null = null;
+  let json = false;
+
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index] ?? '';
+    switch (token) {
+      case '--json':
+        json = true;
+        continue;
+      case '--session-id': {
+        const value = tokens[index + 1];
+        if (typeof value !== 'string' || value.trim().length === 0) return null;
+        sessionId = value;
+        index++;
+        continue;
+      }
+      case '--directory': {
+        const value = tokens[index + 1];
+        if (typeof value !== 'string' || value.trim().length === 0) return null;
+        directory = value;
+        index++;
+        continue;
+      }
+      case '--source': {
+        if (subcommand !== 'call') return null;
+        const value = tokens[index + 1];
+        if (typeof value !== 'string' || value.trim().length === 0) return null;
+        source = value;
+        index++;
+        continue;
+      }
+      case '--tool': {
+        if (subcommand !== 'call') return null;
+        const value = tokens[index + 1];
+        if (typeof value !== 'string' || value.trim().length === 0) return null;
+        tool = value;
+        index++;
+        continue;
+      }
+      case '--args-json': {
+        if (subcommand !== 'call') return null;
+        const value = tokens[index + 1];
+        if (typeof value !== 'string' || value.trim().length === 0) return null;
+        argsJson = value;
+        index++;
+        continue;
+      }
+      default:
+        return null;
+    }
+  }
+
+  return {
+    sessionId,
+    directory,
+    source,
+    tool,
+    argsJson,
+    json,
+  };
 }
 
 function normalizeHappierToolsTokens(tokens: readonly string[]): string[] | null {
@@ -143,27 +219,24 @@ export function parseHappierToolsShellBridgeCommand(command: string): HappierToo
   if (!tokens || tokens.length < 3) return null;
 
   const subcommand = tokens[2];
-  const json = tokens.includes('--json');
-  const sessionId = readFlagValue(tokens, '--session-id');
-  const directory = readFlagValue(tokens, '--directory');
+  if (subcommand !== 'list' && subcommand !== 'call') return null;
+
+  const flags = parseBridgeFlags(subcommand, tokens.slice(3));
+  if (!flags) return null;
 
   if (subcommand === 'list') {
     return {
       kind: 'list',
       rawCommand,
-      sessionId,
-      directory,
-      json,
+      sessionId: flags.sessionId,
+      directory: flags.directory,
+      json: flags.json,
     };
   }
 
-  if (subcommand !== 'call') return null;
+  if (!flags.source || !flags.tool) return null;
 
-  const source = readFlagValue(tokens, '--source');
-  const tool = readFlagValue(tokens, '--tool');
-  if (!source || !tool) return null;
-
-  const argsJson = readFlagValue(tokens, '--args-json');
+  const argsJson = flags.argsJson;
   let args: unknown | null = null;
   if (argsJson != null) {
     try {
@@ -176,12 +249,12 @@ export function parseHappierToolsShellBridgeCommand(command: string): HappierToo
   return {
     kind: 'call',
     rawCommand,
-    sessionId,
-    directory,
-    source,
-    tool,
+    sessionId: flags.sessionId,
+    directory: flags.directory,
+    source: flags.source,
+    tool: flags.tool,
     argsJson,
     args,
-    json,
+    json: flags.json,
   };
 }

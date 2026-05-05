@@ -12,8 +12,64 @@ import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
+import {
+  DirectSessionAttachRequestSchema,
+  DirectSessionAttachResponseSchema,
+  DirectSessionDetachRequestSchema,
+  DirectSessionDetachResponseSchema,
+  DirectSessionFollowPolicySetRequestSchema,
+  DirectSessionFollowPolicySetResponseSchema,
+  DirectSessionLinkEnsureRequestSchema,
+  DirectSessionLinkEnsureResponseSchema,
+  DirectSessionsCandidatesListRequestSchema,
+  DirectSessionsCandidatesListResponseSchema,
+  DirectSessionStatusGetRequestSchema,
+  DirectSessionStatusGetResponseSchema,
+  DirectTranscriptPageRequestSchema,
+  DirectTranscriptPageResponseSchema,
+  DirectTranscriptReadAfterRequestSchema,
+  DirectTranscriptReadAfterResponseSchema,
+} from '../directSessions/daemonRpcV1.js';
+import {
+  ScmPullRequestCheckoutRequestSchema,
+  ScmPullRequestCheckoutResponseSchema,
+  ScmPullRequestGetRequestSchema,
+  ScmPullRequestGetResponseSchema,
+  ScmPullRequestListRequestSchema,
+  ScmPullRequestListResponseSchema,
+  ScmPullRequestOpenComposeRequestSchema,
+  ScmPullRequestOpenComposeResponseSchema,
+  ScmPullRequestOpenOrReuseRequestSchema,
+  ScmPullRequestOpenOrReuseResponseSchema,
+  ScmPullRequestPrepareWorktreeRequestSchema,
+  ScmPullRequestPrepareWorktreeResponseSchema,
+  ScmPullRequestRunStackedRequestSchema,
+  ScmPullRequestRunStackedResponseSchema,
+} from '../scmPullRequests.js';
+import {
+  ScmHostingRepositoryDescribePublishTargetsRequestSchema,
+  ScmHostingRepositoryDescribePublishTargetsResponseSchema,
+  ScmHostingRepositoryPublishRequestSchema,
+  ScmHostingRepositoryPublishResponseSchema,
+  ScmRepositoryInitRequestSchema,
+  ScmRepositoryInitResponseSchema,
+  ScmRepositoryRemoveIndexLockRequestSchema,
+  ScmRepositoryRemoveIndexLockResponseSchema,
+} from '../scmRepositoryProvisioning.js';
+import {
+  ExternalSessionTakeoverInputV1Schema,
+  ExternalSessionTakeoverResultV1Schema,
+} from '../sessions/external/takeoverV1.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
-import { SessionHandoffWorkspaceTransferSchema } from '../sessionControl/handoff/handoffSchemas.js';
+import {
+  SessionHandoffAbortRequestSchema,
+  SessionHandoffCommitRequestSchema,
+  SessionHandoffPrepareTargetRequestSchema,
+  SessionHandoffStatusGetRequestSchema,
+  SessionHandoffWorkspaceTransferSchema,
+} from '../sessionControl/handoff/handoffSchemas.js';
+import { SessionContinueWithReplayRpcParamsSchema } from '../sessionContinueWithReplay.js';
+import { SESSION_RPC_METHODS } from '../rpc.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
@@ -23,13 +79,13 @@ const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
 }, { message: 'Expected a Zod schema' });
 
 export const ActionSurfaceSchema = z.object({
-  ui_button: z.boolean(),
-  ui_slash_command: z.boolean(),
-  voice_tool: z.boolean(),
-  voice_action_block: z.boolean(),
+  ui: z.boolean(),
+  voice: z.boolean(),
   session_agent: z.boolean(),
   mcp: z.boolean(),
   cli: z.boolean(),
+  rpc: z.boolean(),
+  sdk: z.boolean(),
 }).passthrough();
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
@@ -132,16 +188,31 @@ export const ActionSpecSchema = z.object({
   safety: ActionSafetySchema,
   // UI placements where the action can appear when the relevant surface is enabled.
   placements: z.array(ActionUiPlacementSchema).default([]),
-  // Optional stable slash command token for ui_slash_command.
+  // Optional stable slash command token for UI slash-command placement.
   slash: z.object({
     tokens: z.array(z.string().min(1)),
   }).passthrough().optional(),
   bindings: z.object({
-    // Tool name the voice client is allowed to expose (surface.voice_tool).
+    // Tool name the voice client is allowed to expose (surface.voice).
     voiceClientToolName: z.string().min(1).optional(),
     // Tool name for MCP surface (surface.mcp).
     mcpToolName: z.string().min(1).optional(),
+    // SDK method exposed when surface.sdk is true.
+    sdkMethod: z.string().min(1).optional(),
+    // RPC method exposed when surface.rpc is true.
+    rpcMethod: z.string().min(1).optional(),
+    // Legacy wire aliases still accepted until their owning retirement packet removes them.
+    rpcMethodAliases: z.array(z.string().min(1)).optional(),
   }).passthrough().optional(),
+  outputSchema: ZodSchemaLike.optional(),
+  execution: z
+    .object({
+      handler: z.string().min(1).optional(),
+      transport: z.enum(['host', 'plugin', 'rpc', 'sdk']).optional(),
+    })
+    .passthrough()
+    .optional(),
+  sideEffectClass: z.enum(['none', 'read', 'write', 'external', 'danger']).optional(),
   examples: z
     .object({
       voice: z
@@ -156,6 +227,12 @@ export const ActionSpecSchema = z.object({
         })
         .passthrough()
         .optional(),
+      sdk: z
+        .object({
+          codeExample: z.string().min(1).optional(),
+        })
+        .passthrough()
+        .optional(),
     })
     .passthrough()
     .optional(),
@@ -163,7 +240,50 @@ export const ActionSpecSchema = z.object({
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
   inputHints: ActionInputHintsSchema.optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if ((value.placements?.length ?? 0) > 0 && !value.surfaces.ui) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'placements require surface.ui',
+      path: ['surfaces', 'ui'],
+    });
+  }
+  if (value.surfaces.sdk && !value.bindings?.sdkMethod) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.sdk requires bindings.sdkMethod',
+      path: ['bindings', 'sdkMethod'],
+    });
+  }
+  if (value.surfaces.sdk && !value.outputSchema) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.sdk requires outputSchema',
+      path: ['outputSchema'],
+    });
+  }
+  if (value.surfaces.rpc && !value.bindings?.rpcMethod) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.rpc requires bindings.rpcMethod',
+      path: ['bindings', 'rpcMethod'],
+    });
+  }
+  if (value.surfaces.mcp && !value.bindings?.mcpToolName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.mcp requires bindings.mcpToolName',
+      path: ['bindings', 'mcpToolName'],
+    });
+  }
+  if (value.surfaces.mcp && !value.outputSchema) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.mcp requires outputSchema',
+      path: ['outputSchema'],
+    });
+  }
+});
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: readonly ActionUiPlacement[];
@@ -583,6 +703,12 @@ const PromptRegistryInstallInputSchema = z.object({
   }).optional(),
 }).passthrough();
 
+const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1Schema.extend({
+  // Current direct-session wire callers still provide machineId; keep it as adapter context
+  // until A.15.4 retires the direct-session aliases.
+  machineId: z.string().min(1).optional(),
+}).passthrough();
+
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
   {
     id: 'action.spec.search',
@@ -596,14 +722,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"query":"plan mode","limit":5}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Search action specs',
       description: 'Use this before guessing action ids or tool names.',
@@ -612,6 +738,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'limit', title: 'Limit', description: 'Maximum number of action specs to return.', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ActionSpecSearchInputSchema,
   },
   {
@@ -626,20 +753,21 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"id":"subagents.plan.start"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Get action spec',
       fields: [
         { path: 'id', title: 'Action id', description: 'The exact Happier action id.', widget: 'text', required: true },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ActionSpecGetInputSchema,
   },
   {
@@ -654,14 +782,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"actionId":"subagents.plan.start","fieldPath":"backendTargetKeys","sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Resolve action options',
       description: 'Use this when an action field has static options or an optionsSourceId.',
@@ -674,6 +802,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'limit', title: 'Limit', description: 'Maximum number of options to return.', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ActionOptionsResolveInputSchema,
   },
   {
@@ -758,14 +887,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","engineIds":["codex"],"instructions":"Review this.","changeType":"uncommitted","base":{"kind":"none"}}' },
     },
     surfaces: {
-      ui_button: true,
-      ui_slash_command: true,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: ReviewStartInputSchema,
   },
   {
@@ -801,14 +931,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Plan the changes."}' },
     },
 	    surfaces: {
-	      ui_button: true,
-	      ui_slash_command: true,
-	      voice_tool: true,
-	      voice_action_block: true,
+	      ui: true,
+	      voice: true,
 	      session_agent: true,
 	      mcp: true,
 	      cli: true,
-	    },
+	      rpc: false,
+	      sdk: false,
+	      },
+	    outputSchema: z.unknown(),
 	    inputSchema: PlanStartInputSchema,
 	  },
   {
@@ -844,14 +975,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Delegate the task."}' },
     },
 	    surfaces: {
-	      ui_button: true,
-	      ui_slash_command: true,
-	      voice_tool: true,
-	      voice_action_block: true,
+	      ui: true,
+	      voice: true,
 	      session_agent: true,
 	      mcp: true,
 	      cli: true,
-	    },
+	      rpc: false,
+	      sdk: false,
+	      },
+	    outputSchema: z.unknown(),
 	    inputSchema: DelegateStartInputSchema,
 	  },
   {
@@ -886,14 +1018,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Start the voice assistant for this workspace."}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: VoiceAgentStartInputSchema,
   },
   {
@@ -902,21 +1035,22 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Start a new execution run within a session.',
     safety: 'safe',
     placements: [],
-    bindings: { mcpToolName: 'execution_run_start' },
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_START, mcpToolName: 'execution_run_start' },
+    sideEffectClass: 'write',
     examples: {
       mcp: {
         argsExample: '{"sessionId":"{{sessionId}}","intent":"voice_agent","backendTarget":{"kind":"backend","backendId":"codex","sourceKind":"built_in"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response"}',
       },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Start a run',
       fields: [
@@ -931,6 +1065,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'initialContextMode', title: 'Initial context mode', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ExecutionRunStartInputSchema,
   },
   {
@@ -940,7 +1075,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['run_list', 'command_palette', 'slash_command', 'voice_panel'],
     prompting: { voiceHotPath: true },
     slash: { tokens: ['/h.runs'] },
-    bindings: { voiceClientToolName: 'listExecutionRuns', mcpToolName: 'execution_run_list' },
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_LIST, voiceClientToolName: 'listExecutionRuns', mcpToolName: 'execution_run_list' },
+    sideEffectClass: 'read',
     inputHints: {
       title: 'List execution runs',
       fields: [
@@ -965,14 +1101,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","status":"running","limit":10}' },
     },
 	    surfaces: {
-	      ui_button: true,
-	      ui_slash_command: true,
-	      voice_tool: true,
-	      voice_action_block: true,
+	      ui: true,
+	      voice: true,
 	      session_agent: true,
 	      mcp: true,
 	      cli: true,
-	    },
+	      rpc: true,
+	      sdk: false,
+	      },
+	    outputSchema: z.unknown(),
 	    inputSchema: ExecutionRunListRequestSchema.extend({
 	      sessionId: z.string().min(1).optional(),
 	    }),
@@ -983,19 +1120,20 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: ['run_list', 'run_card', 'command_palette'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'getExecutionRun', mcpToolName: 'execution_run_get' },
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_GET, voiceClientToolName: 'getExecutionRun', mcpToolName: 'execution_run_get' },
+    sideEffectClass: 'read',
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","includeStructured":false}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Get a run',
       fields: [
@@ -1003,6 +1141,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'includeStructured', title: 'Include structured output', widget: 'toggle' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ExecutionRunGetInputSchema,
   },
   {
@@ -1010,19 +1149,20 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Send to execution run',
     safety: 'safe',
     placements: ['run_card'],
-    bindings: { voiceClientToolName: 'sendExecutionRunMessage', mcpToolName: 'execution_run_send' },
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_SEND, voiceClientToolName: 'sendExecutionRunMessage', mcpToolName: 'execution_run_send' },
+    sideEffectClass: 'write',
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","message":"Continue and summarize what changed.","resume":false}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Send to run',
       fields: [
@@ -1031,6 +1171,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ExecutionRunSendInputSchema,
   },
   {
@@ -1038,23 +1179,25 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Stop execution run',
     safety: 'safe',
     placements: ['run_card', 'run_list'],
-    bindings: { voiceClientToolName: 'stopExecutionRun', mcpToolName: 'execution_run_stop' },
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STOP, voiceClientToolName: 'stopExecutionRun', mcpToolName: 'execution_run_stop' },
+    sideEffectClass: 'write',
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123"}' },
     },
 	    surfaces: {
-	      ui_button: true,
-	      ui_slash_command: false,
-	      voice_tool: true,
-	      voice_action_block: true,
+	      ui: true,
+	      voice: true,
 	      session_agent: true,
 	      mcp: true,
 	      cli: true,
-	    },
+	      rpc: true,
+	      sdk: false,
+	      },
 	    inputHints: {
 	      title: 'Stop a run',
 	      fields: [{ path: 'runId', title: 'Run id', widget: 'text', required: true }],
 	    },
+	    outputSchema: z.unknown(),
 	    inputSchema: ExecutionRunIdInputSchema,
 	  },
   {
@@ -1062,19 +1205,20 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Apply execution run action',
     safety: 'safe',
     placements: ['run_card'],
-    bindings: { voiceClientToolName: 'actionExecutionRun', mcpToolName: 'execution_run_action' },
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, voiceClientToolName: 'actionExecutionRun', mcpToolName: 'execution_run_action' },
+    sideEffectClass: 'write',
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","actionId":"voice_agent.commit","input":{"maxChars":1200}}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Run action',
       fields: [
@@ -1083,6 +1227,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'input', title: 'Input (JSON)', widget: 'textarea' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ExecutionRunActionInputSchema,
   },
   {
@@ -1096,14 +1241,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Wait for a run',
       fields: [
@@ -1113,6 +1258,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'pollIntervalMs', title: 'Poll interval (ms)', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ExecutionRunWaitInputSchema,
   },
   {
@@ -1125,14 +1271,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionTitle":"Session Setup"}' },
     },
     surfaces: {
-      ui_button: true,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Open a session',
       fields: [
@@ -1140,6 +1286,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'sessionTitle', title: 'Session title', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionOpenInputSchema,
   },
   {
@@ -1149,25 +1296,53 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: ['session_action_menu', 'session_info', 'command_palette', 'slash_command', 'voice_panel', 'agent_input_chips'],
     slash: { tokens: ['fork'] },
-    bindings: { voiceClientToolName: 'forkSession' },
+    bindings: { voiceClientToolName: 'forkSession', rpcMethod: 'session.fork' },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
-      ui_button: true,
-      ui_slash_command: true,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Fork a session',
       description: 'Forks from the latest message in the session.',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionForkInputSchema,
+  },
+  {
+    id: 'session.continue_with_replay',
+    title: 'Continue session with replay',
+    description: 'Create a continuation session from a replay seed while preserving the existing RPC wire contract.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'session.continueWithReplay' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Continue with replay',
+      fields: [
+        { path: 'directory', title: 'Directory', widget: 'text', required: true },
+        { path: 'backendTarget', title: 'Backend target', widget: 'text', required: true },
+        { path: 'replay', title: 'Replay seed', widget: 'textarea', required: true },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionContinueWithReplayRpcParamsSchema,
   },
   {
     id: 'session.rollback',
@@ -1175,20 +1350,22 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Roll back conversation state in the selected session.',
     safety: 'danger',
     placements: ['session_action_menu', 'session_info'],
+    bindings: { rpcMethod: 'session.rollback' },
     surfaces: {
-      ui_button: true,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Rollback a session conversation',
       description: 'Rewinds conversation state for the selected session.',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionRollbackInputSchema,
   },
   {
@@ -1197,18 +1374,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Move the current session to another machine while keeping the same session id.',
     safety: 'safe',
     placements: ['session_action_menu', 'session_info'],
+    bindings: { rpcMethod: 'daemon.sessionHandoff.start' },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","targetMachineId":"{{machineId}}"}' },
     },
     surfaces: {
-      ui_button: true,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Hand off a session',
       description: 'Moves the current session to another machine.',
@@ -1217,7 +1395,107 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'targetMachineId', title: 'Target machine id', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionHandoffInputSchema,
+  },
+  {
+    id: 'session.handoff.prepare_target',
+    title: 'Prepare session handoff target',
+    description: 'Prepare a target machine to receive an in-progress session handoff.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.sessionHandoff.prepareTarget' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Prepare handoff target',
+      fields: [
+        { path: 'handoffId', title: 'Handoff id', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'sourceMachineId', title: 'Source machine id', widget: 'text', required: true },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionHandoffPrepareTargetRequestSchema,
+  },
+  {
+    id: 'session.handoff.commit',
+    title: 'Commit session handoff',
+    description: 'Finalize a prepared session handoff.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.sessionHandoff.commit' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Commit handoff',
+      fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionHandoffCommitRequestSchema,
+  },
+  {
+    id: 'session.handoff.abort',
+    title: 'Abort session handoff',
+    description: 'Cancel an in-progress session handoff.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.sessionHandoff.abort' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Abort handoff',
+      fields: [
+        { path: 'handoffId', title: 'Handoff id', widget: 'text', required: true },
+        { path: 'reason', title: 'Reason', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionHandoffAbortRequestSchema,
+  },
+  {
+    id: 'session.handoff.status.get',
+    title: 'Get session handoff status',
+    description: 'Read scalar status for an in-progress session handoff.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.sessionHandoff.status.get' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Get handoff status',
+      fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionHandoffStatusGetRequestSchema,
   },
   {
     id: 'session.spawn_new',
@@ -1225,19 +1503,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: ['command_palette', 'session_info', 'voice_panel'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'spawnSession', mcpToolName: 'session_spawn_new' },
+    bindings: { voiceClientToolName: 'spawnSession', mcpToolName: 'session_spawn_new', rpcMethod: 'spawn-happy-session' },
     examples: {
       voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
     },
 	    surfaces: {
-	      ui_button: true,
-	      ui_slash_command: false,
-	      voice_tool: true,
-	      voice_action_block: true,
+	      ui: true,
+	      voice: true,
 	      session_agent: false,
 	      mcp: true,
 	      cli: true,
-	    },
+	      rpc: true,
+	      sdk: false,
+	      },
 	    inputHints: {
 	      title: 'Create a new session',
 	      fields: [
@@ -1251,6 +1529,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionSpawnNewInputSchema,
   },
   {
@@ -1260,19 +1539,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'spawnSessionPicker' },
+    bindings: { voiceClientToolName: 'spawnSessionPicker', mcpToolName: 'session_spawn_picker' },
     examples: {
       voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Create a new session (picker)',
       fields: [
@@ -1283,6 +1562,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionSpawnPickerInputSchema,
   },
   {
@@ -1291,19 +1571,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'List recent workspace directory handles (optionally filtered to a machine).',
     safety: 'safe',
     placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'listRecentPaths' },
+    bindings: { voiceClientToolName: 'listRecentPaths', mcpToolName: 'paths_list_recent' },
     examples: {
       voice: { argsExample: '{"limit":10}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'List recent paths',
       fields: [
@@ -1311,6 +1591,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'limit', title: 'Limit', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: PathsListRecentInputSchema,
   },
   {
@@ -1324,18 +1605,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"limit":50}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'List machines',
       fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
     },
+    outputSchema: z.unknown(),
     inputSchema: MachinesListInputSchema,
   },
   {
@@ -1349,18 +1631,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"limit":50}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'List servers',
       fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
     },
+    outputSchema: z.unknown(),
     inputSchema: ServersListInputSchema,
   },
   {
@@ -1374,14 +1657,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","includeDisabled":false}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'List review engines',
       fields: [
@@ -1389,6 +1672,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: ReviewEnginesListInputSchema,
   },
   {
@@ -1403,14 +1687,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"includeDisabled":false,"limit":10,"machineId":"{{machineId}}"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'List agent backends',
       fields: [
@@ -1419,6 +1703,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: AgentsBackendsListInputSchema,
   },
   {
@@ -1433,14 +1718,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"agentId":"claude","backendTargetKey":"backend:plugin-review-bot","machineId":"{{machineId}}","limit":10}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'List agent models',
       fields: [
@@ -1450,6 +1735,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: AgentsModelsListInputSchema,
   },
   {
@@ -1464,14 +1750,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","message":"Please inspect the latest changes."}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Send a message',
       fields: [
@@ -1483,6 +1769,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'timeoutSeconds', title: 'Timeout seconds (optional)', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionSendMessageInputSchema,
   },
   {
@@ -1491,23 +1778,24 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Request that the local daemon stops the specified session.',
     safety: 'safe',
     placements: [],
-    bindings: { mcpToolName: 'session_stop' },
+    bindings: { mcpToolName: 'session_stop', rpcMethod: 'stop-session' },
     examples: {
       mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: true,
+      sdk: false,
+      },
     inputHints: {
       title: 'Stop a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -1521,14 +1809,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","title":"Fix flaky tests"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Set title',
       fields: [
@@ -1536,6 +1824,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'title', title: 'Title', widget: 'text', required: true },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionTitleSetInputSchema,
   },
   {
@@ -1549,14 +1838,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","permissionMode":"read_only"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Set permission mode',
       fields: [
@@ -1564,6 +1853,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'permissionMode', title: 'Permission mode', widget: 'text', required: true },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionPermissionModeSetInputSchema,
   },
   {
@@ -1577,14 +1867,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","modelId":"default"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Set session model',
       fields: [
@@ -1592,6 +1882,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'modelId', title: 'Model id', widget: 'text', required: true },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionModelSetInputSchema,
   },
   {
@@ -1605,18 +1896,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Archive a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -1630,18 +1922,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Unarchive a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -1655,14 +1948,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","live":true}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Get session status',
       fields: [
@@ -1670,6 +1963,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'live', title: 'Live', widget: 'toggle' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionStatusGetInputSchema,
   },
   {
@@ -1683,14 +1977,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","limit":50,"format":"compact"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Get session history',
       fields: [
@@ -1709,6 +2003,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'includeStructuredPayload', title: 'Include structured payload', widget: 'toggle' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionHistoryGetInputSchema,
   },
   {
@@ -1722,14 +2017,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","timeoutSeconds":300}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Wait for idle',
       fields: [
@@ -1737,6 +2032,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'timeoutSeconds', title: 'Timeout seconds', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionWaitIdleInputSchema,
   },
   {
@@ -1751,14 +2047,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","decision":"allow"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Respond to permission request',
       fields: [
@@ -1776,6 +2072,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'requestId', title: 'Request id', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionPermissionRespondInputSchema,
   },
   {
@@ -1793,14 +2090,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Respond to user-action request',
       fields: [
@@ -1851,6 +2148,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionUserActionAnswerInputSchema,
   },
   {
@@ -1860,19 +2158,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'setSessionMode' },
+    bindings: { voiceClientToolName: 'setSessionMode', mcpToolName: 'session_mode_set' },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","modeId":"plan"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Set session mode',
       fields: [
@@ -1887,6 +2185,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionModeSetInputSchema,
   },
   {
@@ -1901,14 +2200,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionTitle":"Session Setup"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Set primary action session',
       fields: [
@@ -1916,6 +2215,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'sessionTitle', title: 'Session title', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionPrimaryTargetInputSchema,
   },
   {
@@ -1929,18 +2229,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionIds":["{{sessionId}}"]}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Set tracked sessions',
       fields: [{ path: 'sessionIds', title: 'Session ids', widget: 'text_list', listSeparator: 'comma', required: true }],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionTrackedTargetsInputSchema,
   },
   {
@@ -1955,14 +2256,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"limit":20,"cursor":null,"includeLastMessagePreview":true}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'List sessions',
       fields: [
@@ -1971,6 +2272,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'includeLastMessagePreview', title: 'Include last message preview', widget: 'toggle' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionListInputSchema,
   },
   {
@@ -1984,14 +2286,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Get session activity',
       fields: [
@@ -1999,6 +2301,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'windowSeconds', title: 'Window seconds', widget: 'text' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionActivityInputSchema,
   },
   {
@@ -2012,14 +2315,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":3,"cursor":null}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
     inputHints: {
       title: 'Get recent messages',
       fields: [
@@ -2030,6 +2333,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'includeAssistant', title: 'Include assistant', widget: 'toggle' },
       ],
     },
+    outputSchema: z.unknown(),
     inputSchema: SessionRecentMessagesInputSchema,
   },
   {
@@ -2048,14 +2352,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{}' },
     },
     surfaces: {
-      ui_button: true,
-      ui_slash_command: true,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: EmptyObjectSchema,
   },
   {
@@ -2074,14 +2379,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: OptionalSessionIdInputSchema,
   },
   {
@@ -2129,14 +2435,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: { argsExample: '{"machineId":"{{machineId}}","query":{"v":1,"query":"openclaw","scope":{"type":"global"},"mode":"hints"}}' },
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: MemorySearchInputSchema,
   },
   {
@@ -2157,18 +2464,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
       mcp: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
     },
+    outputSchema: z.unknown(),
     inputSchema: MemoryGetWindowInputSchema,
   },
   {
@@ -2187,18 +2495,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
+      ui: true,
+      voice: true,
       session_agent: true,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
       mcp: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
     },
+    outputSchema: z.unknown(),
     inputSchema: MemoryEnsureUpToDateInputSchema,
   },
   {
@@ -2207,15 +2516,17 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Update a prompt document stored in the Happier prompt library.',
     safety: 'danger',
     placements: [],
+    bindings: { mcpToolName: 'prompt_doc_update' },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: PromptDocUpdateInputSchema,
     inputHints: {
       title: 'Update prompt document',
@@ -2235,14 +2546,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'danger',
     placements: [],
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: PromptBundleUpdateInputSchema,
     inputHints: {
       title: 'Update prompt bundle',
@@ -2262,14 +2574,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'danger',
     placements: [],
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: PromptAssetExportInputSchema,
     inputHints: {
       title: 'Export prompt asset',
@@ -2308,15 +2621,17 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Import a skill bundle from a registry and optionally export it to an external skills location.',
     safety: 'danger',
     placements: [],
+    bindings: { mcpToolName: 'approval_request_create' },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: false,
       mcp: false,
       cli: false,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: PromptRegistryInstallInputSchema,
     inputHints: {
       title: 'Install prompt registry skill',
@@ -2355,15 +2670,17 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Create an approval request for another action to run.',
     safety: 'danger',
     placements: [],
+    bindings: { mcpToolName: 'approval_request_decide' },
     surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: ApprovalRequestCreateInputSchema,
     inputHints: {
       title: 'Request approval',
@@ -2381,15 +2698,17 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Approve or reject an approval request.',
     safety: 'danger',
     placements: [],
+    bindings: { mcpToolName: 'approval_request_decide' },
     surfaces: {
-      ui_button: true,
-      ui_slash_command: false,
-      voice_tool: false,
-      voice_action_block: false,
+      ui: true,
+      voice: false,
       session_agent: false,
       mcp: true,
       cli: true,
-    },
+      rpc: false,
+      sdk: false,
+      },
+    outputSchema: z.unknown(),
     inputSchema: ApprovalRequestDecideInputSchema,
     inputHints: {
       title: 'Approve or reject',
@@ -2405,6 +2724,778 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
             { value: 'reject', label: 'Reject' },
           ],
         },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.candidates.list',
+    title: 'List external session candidates',
+    description: 'List attachable external session candidates through the legacy direct-session machine RPC.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.candidates.list',
+      sdkMethod: 'sessions.external.listCandidates',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'read',
+    outputSchema: DirectSessionsCandidatesListResponseSchema,
+    inputSchema: DirectSessionsCandidatesListRequestSchema,
+    inputHints: {
+      title: 'List external session candidates',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'source', title: 'External source', widget: 'textarea', required: true },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+        { path: 'searchTerm', title: 'Search term', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.link.ensure',
+    title: 'Ensure external session link',
+    description: 'Create or reuse the Happier link for an external provider session.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.link.ensure',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: DirectSessionLinkEnsureResponseSchema,
+    inputSchema: DirectSessionLinkEnsureRequestSchema,
+    inputHints: {
+      title: 'Ensure external session link',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
+        { path: 'source', title: 'External source', widget: 'textarea', required: true },
+        { path: 'titleHint', title: 'Title hint', widget: 'text' },
+        { path: 'directoryHint', title: 'Directory hint', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.attach',
+    title: 'Attach external session lease',
+    description: 'Attach an ephemeral follow lease to an external session link.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.attach',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: DirectSessionAttachResponseSchema,
+    inputSchema: DirectSessionAttachRequestSchema,
+    inputHints: {
+      title: 'Attach external session lease',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
+        { path: 'source', title: 'External source', widget: 'textarea', required: true },
+        { path: 'leaseId', title: 'Lease id', widget: 'text' },
+        { path: 'ttlMs', title: 'Lease TTL milliseconds', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.detach',
+    title: 'Detach external session lease',
+    description: 'Detach an external-session follow lease.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.detach',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: DirectSessionDetachResponseSchema,
+    inputSchema: DirectSessionDetachRequestSchema,
+    inputHints: {
+      title: 'Detach external session lease',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
+        { path: 'leaseId', title: 'Lease id', widget: 'text', required: true },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.followPolicy.set',
+    title: 'Set external session follow policy',
+    description: 'Enable or disable background following for an external session.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.followPolicy.set',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: DirectSessionFollowPolicySetResponseSchema,
+    inputSchema: DirectSessionFollowPolicySetRequestSchema,
+    inputHints: {
+      title: 'Set external session follow policy',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
+        { path: 'source', title: 'External source', widget: 'textarea', required: true },
+        { path: 'enabled', title: 'Enabled', widget: 'toggle', required: true },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.status.get',
+    title: 'Get external session status',
+    description: 'Read bounded status and takeover readiness for a linked external session.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.status.get',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: DirectSessionStatusGetResponseSchema,
+    inputSchema: DirectSessionStatusGetRequestSchema,
+    inputHints: {
+      title: 'Get external session status',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
+        { path: 'source', title: 'External source', widget: 'textarea', required: true },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.transcript.page',
+    title: 'Page external session transcript',
+    description: 'Read a bounded transcript page for an external provider session.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.transcript.page',
+      sdkMethod: 'sessions.external.pageTranscript',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'read',
+    outputSchema: DirectTranscriptPageResponseSchema,
+    inputSchema: DirectTranscriptPageRequestSchema,
+    inputHints: {
+      title: 'Page external session transcript',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
+        { path: 'source', title: 'External source', widget: 'textarea', required: true },
+        { path: 'direction', title: 'Direction', widget: 'select', required: true, options: [
+          { value: 'older', label: 'Older' },
+          { value: 'newer', label: 'Newer' },
+        ] },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+        { path: 'maxBytes', title: 'Maximum bytes', widget: 'text' },
+        { path: 'maxItems', title: 'Maximum items', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.transcript.readAfter',
+    title: 'Read external session transcript after cursor',
+    description: 'Read bounded transcript deltas after a cursor for an external provider session.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.transcript.readAfter',
+      sdkMethod: 'sessions.external.readAfterTranscript',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'read',
+    outputSchema: DirectTranscriptReadAfterResponseSchema,
+    inputSchema: DirectTranscriptReadAfterRequestSchema,
+    inputHints: {
+      title: 'Read external session transcript after cursor',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
+        { path: 'source', title: 'External source', widget: 'textarea', required: true },
+        { path: 'cursor', title: 'Cursor', widget: 'text', required: true },
+        { path: 'maxBytes', title: 'Maximum bytes', widget: 'text' },
+        { path: 'maxItems', title: 'Maximum items', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.external.takeover',
+    title: 'Take over external session',
+    description: 'Move a linked external session into a Happier-managed terminal runtime.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'daemon.directSessions.takeover',
+      rpcMethodAliases: ['daemon.directSessions.takeoverPersist'],
+      sdkMethod: 'sessions.external.takeover',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: ExternalSessionTakeoverResultV1Schema,
+    inputSchema: ExternalSessionTakeoverActionInputSchema,
+    inputHints: {
+      title: 'Take over external session',
+      fields: [
+        { path: 'linkedSessionId', title: 'Linked session id', widget: 'text', required: true },
+        { path: 'machineId', title: 'Machine id', widget: 'text' },
+        { path: 'targetRuntimeMode', title: 'Target runtime mode', widget: 'select', required: true, options: [
+          { value: 'terminal', label: 'Terminal' },
+        ] },
+        { path: 'storageMode', title: 'Storage mode', widget: 'select', required: true, options: [
+          { value: 'external-linked', label: 'External linked' },
+          { value: 'persisted', label: 'Persisted' },
+        ] },
+        { path: 'forceStop', title: 'Force stop conflicting owner', widget: 'toggle' },
+      ],
+    },
+  },
+  {
+    id: 'scm.pullRequest.list',
+    title: 'List pull requests',
+    description: 'List pull requests for the current source-control repository.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.pullRequest.list',
+      sdkMethod: 'scm.pullRequest.list',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'read',
+    outputSchema: ScmPullRequestListResponseSchema,
+    inputSchema: ScmPullRequestListRequestSchema,
+    inputHints: {
+      title: 'List pull requests',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text' },
+        { path: 'providerId', title: 'Provider id', widget: 'text' },
+        { path: 'base', title: 'Base branch', widget: 'text' },
+        { path: 'head', title: 'Head branch', widget: 'text' },
+        {
+          path: 'state',
+          title: 'State',
+          widget: 'select',
+          options: [
+            { value: 'open', label: 'Open' },
+            { value: 'closed', label: 'Closed' },
+            { value: 'merged', label: 'Merged' },
+            { value: 'draft', label: 'Draft' },
+            { value: 'unknown', label: 'Unknown' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'scm.pullRequest.get',
+    title: 'Get pull request',
+    description: 'Read one pull request by number, URL, or head branch.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.pullRequest.get',
+      sdkMethod: 'scm.pullRequest.get',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'read',
+    outputSchema: ScmPullRequestGetResponseSchema,
+    inputSchema: ScmPullRequestGetRequestSchema,
+    inputHints: {
+      title: 'Get pull request',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text' },
+        { path: 'prReference.number', title: 'Pull request number', widget: 'text' },
+        { path: 'prReference.url', title: 'Pull request URL', widget: 'text' },
+        { path: 'prReference.headBranch', title: 'Head branch', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'scm.pullRequest.openOrReuse',
+    title: 'Open or reuse pull request',
+    description: 'Create a pull request or return an existing one for the current branch.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.pullRequest.openOrReuse',
+      sdkMethod: 'scm.pullRequest.openOrReuse',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'external',
+    outputSchema: ScmPullRequestOpenOrReuseResponseSchema,
+    inputSchema: ScmPullRequestOpenOrReuseRequestSchema,
+    inputHints: {
+      title: 'Open or reuse pull request',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text' },
+        { path: 'providerId', title: 'Provider id', widget: 'text' },
+        { path: 'base', title: 'Base branch', widget: 'text', required: true },
+        { path: 'head', title: 'Head branch', widget: 'text' },
+        { path: 'title', title: 'Title', widget: 'text' },
+        { path: 'body', title: 'Body', widget: 'textarea' },
+      ],
+    },
+  },
+  {
+    id: 'scm.pullRequest.openCompose',
+    title: 'Open pull-request compose URL',
+    description: 'Build a provider-approved compose URL for the current branch.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.pullRequest.openCompose',
+      sdkMethod: 'scm.pullRequest.openCompose',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'read',
+    outputSchema: ScmPullRequestOpenComposeResponseSchema,
+    inputSchema: ScmPullRequestOpenComposeRequestSchema,
+    inputHints: {
+      title: 'Open pull-request compose URL',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text' },
+        { path: 'providerId', title: 'Provider id', widget: 'text' },
+        { path: 'base', title: 'Base branch', widget: 'text', required: true },
+        { path: 'head', title: 'Head branch', widget: 'text', required: true },
+      ],
+    },
+  },
+  {
+    id: 'scm.pullRequest.checkout',
+    title: 'Check out pull request',
+    description: 'Check out a pull request reference in the current repository.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.pullRequest.checkout',
+      sdkMethod: 'scm.pullRequest.checkout',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ScmPullRequestCheckoutResponseSchema,
+    inputSchema: ScmPullRequestCheckoutRequestSchema,
+    inputHints: {
+      title: 'Check out pull request',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text' },
+        { path: 'prReference.number', title: 'Pull request number', widget: 'text' },
+        { path: 'prReference.url', title: 'Pull request URL', widget: 'text' },
+        { path: 'prReference.headBranch', title: 'Head branch', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'scm.pullRequest.prepareWorktree',
+    title: 'Prepare pull-request worktree',
+    description: 'Prepare a local worktree for a pull request reference.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.pullRequest.prepareWorktree',
+      sdkMethod: 'scm.pullRequest.prepareWorktree',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ScmPullRequestPrepareWorktreeResponseSchema,
+    inputSchema: ScmPullRequestPrepareWorktreeRequestSchema,
+    inputHints: {
+      title: 'Prepare pull-request worktree',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text' },
+        { path: 'sourcePath', title: 'Source path', widget: 'text', required: true },
+        { path: 'prReference.number', title: 'Pull request number', widget: 'text' },
+        { path: 'prReference.url', title: 'Pull request URL', widget: 'text' },
+        { path: 'prReference.headBranch', title: 'Head branch', widget: 'text' },
+        {
+          path: 'mode',
+          title: 'Mode',
+          widget: 'select',
+          options: [
+            { value: 'local', label: 'Local checkout' },
+            { value: 'worktree', label: 'Worktree' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'scm.pullRequest.runStacked',
+    title: 'Run stacked pull-request workflow',
+    description: 'Run a structured branch, commit, push, and pull-request workflow.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.pullRequest.runStacked',
+      sdkMethod: 'scm.pullRequest.runStacked',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: ScmPullRequestRunStackedResponseSchema,
+    inputSchema: ScmPullRequestRunStackedRequestSchema,
+    inputHints: {
+      title: 'Run stacked pull-request workflow',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text' },
+        {
+          path: 'action',
+          title: 'Action',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'commit', label: 'Commit' },
+            { value: 'push', label: 'Push' },
+            { value: 'openOrReuse', label: 'Open or reuse pull request' },
+            { value: 'commitAndPush', label: 'Commit and push' },
+            { value: 'pushAndOpenOrReuse', label: 'Push and open or reuse pull request' },
+            { value: 'commitPushAndOpenOrReuse', label: 'Commit, push, and open or reuse pull request' },
+          ],
+        },
+        { path: 'commitMessage', title: 'Commit message', widget: 'textarea' },
+        { path: 'featureBranch', title: 'Feature branch', widget: 'text' },
+        { path: 'filePaths', title: 'File paths', widget: 'text_list', listSeparator: 'newline' },
+        { path: 'base', title: 'Base branch', widget: 'text' },
+        { path: 'head', title: 'Head branch', widget: 'text' },
+        { path: 'title', title: 'Pull request title', widget: 'text' },
+        { path: 'body', title: 'Pull request body', widget: 'textarea' },
+        {
+          path: 'defaultBranchPushPolicy',
+          title: 'Default-branch push policy',
+          widget: 'select',
+          options: [
+            { value: 'allow', label: 'Allow' },
+            { value: 'requires-feature-branch', label: 'Require feature branch' },
+            { value: 'deny', label: 'Deny' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'scm.repository.init',
+    title: 'Initialize source-control repository',
+    description: 'Initialize source control for a directory through the SCM provisioning route.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.repository.init',
+      sdkMethod: 'scm.repository.init',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ScmRepositoryInitResponseSchema,
+    inputSchema: ScmRepositoryInitRequestSchema,
+    inputHints: {
+      title: 'Initialize source-control repository',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+        { path: 'initialBranch', title: 'Initial branch', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'scm.repository.removeIndexLock',
+    title: 'Remove stale source-control index lock',
+    description: 'Remove a confirmed stale Git index lock using backend-owned path resolution.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.repository.removeIndexLock',
+      sdkMethod: 'scm.repository.removeIndexLock',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: ScmRepositoryRemoveIndexLockResponseSchema,
+    inputSchema: ScmRepositoryRemoveIndexLockRequestSchema,
+    inputHints: {
+      title: 'Remove stale source-control index lock',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+        { path: 'confirmed', title: 'Confirm stale index-lock removal', widget: 'checkbox', required: true },
+        { path: 'confirmationToken', title: 'Confirmation token', widget: 'text', required: true },
+      ],
+    },
+  },
+  {
+    id: 'scm.hostingRepository.describePublishTargets',
+    title: 'Describe hosting repository publish targets',
+    description: 'Describe authenticated hosting-provider targets that can receive a repository publish.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.hostingRepository.describePublishTargets',
+      sdkMethod: 'scm.hostingRepository.describePublishTargets',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'read',
+    outputSchema: ScmHostingRepositoryDescribePublishTargetsResponseSchema,
+    inputSchema: ScmHostingRepositoryDescribePublishTargetsRequestSchema,
+    inputHints: {
+      title: 'Describe hosting repository publish targets',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+        {
+          path: 'providerKind',
+          title: 'Hosting provider',
+          widget: 'select',
+          options: [
+            { value: 'github', label: 'GitHub' },
+            { value: 'gitlab', label: 'GitLab' },
+            { value: 'bitbucket', label: 'Bitbucket' },
+            { value: 'custom', label: 'Custom' },
+            { value: 'unknown', label: 'Unknown' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'scm.hostingRepository.publish',
+    title: 'Publish repository to hosting provider',
+    description: 'Create or bind a hosting repository and publish the active source-control state.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.hostingRepository.publish',
+      sdkMethod: 'scm.hostingRepository.publish',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'external',
+    outputSchema: ScmHostingRepositoryPublishResponseSchema,
+    inputSchema: ScmHostingRepositoryPublishRequestSchema,
+    inputHints: {
+      title: 'Publish repository to hosting provider',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+        {
+          path: 'providerKind',
+          title: 'Hosting provider',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'github', label: 'GitHub' },
+            { value: 'gitlab', label: 'GitLab' },
+            { value: 'bitbucket', label: 'Bitbucket' },
+            { value: 'custom', label: 'Custom' },
+            { value: 'unknown', label: 'Unknown' },
+          ],
+        },
+        { path: 'owner', title: 'Owner', widget: 'text', required: true },
+        {
+          path: 'ownerKind',
+          title: 'Owner kind',
+          widget: 'select',
+          options: [
+            { value: 'user', label: 'User' },
+            { value: 'org', label: 'Organization' },
+          ],
+        },
+        { path: 'repositoryName', title: 'Repository name', widget: 'text', required: true },
+        {
+          path: 'visibility',
+          title: 'Visibility',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'private', label: 'Private' },
+            { value: 'public', label: 'Public' },
+            { value: 'internal', label: 'Internal' },
+          ],
+        },
+        { path: 'description', title: 'Description', widget: 'textarea' },
+        { path: 'remoteName', title: 'Remote name', widget: 'text' },
+        {
+          path: 'remoteUrlKind',
+          title: 'Remote URL kind',
+          widget: 'select',
+          options: [
+            { value: 'https', label: 'HTTPS' },
+            { value: 'ssh', label: 'SSH' },
+          ],
+        },
+        {
+          path: 'remoteConflictStrategy',
+          title: 'Remote conflict strategy',
+          widget: 'select',
+          options: [
+            { value: 'fail', label: 'Fail' },
+            { value: 'set-url', label: 'Set URL' },
+          ],
+        },
+        { path: 'pushCurrentBranch', title: 'Push current branch', widget: 'checkbox' },
       ],
     },
   },
@@ -2433,7 +3524,7 @@ export function listActionSpecsForSurface(surface: keyof ActionSurfaces): readon
 }
 
 export function listVoiceToolActionSpecs(): readonly ActionSpec[] {
-  return listActionSpecsForSurface('voice_tool').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
+  return listActionSpecsForSurface('voice').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
 }
 
 export function isVoicePromptHotPathSpec(spec: ActionSpec): boolean {
@@ -2445,7 +3536,7 @@ export function listVoicePromptHotPathSpecs(): readonly ActionSpec[] {
 }
 
 export function listVoiceActionBlockSpecs(): readonly ActionSpec[] {
-  return listActionSpecsForSurface('voice_action_block').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
+  return listActionSpecsForSurface('voice').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
 }
 
 export function listVoiceClientToolNames(): readonly string[] {

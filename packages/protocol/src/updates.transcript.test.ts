@@ -61,6 +61,19 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('parses update-session archivedAt changes', () => {
+    const parsed = UpdateBodySchema.safeParse({
+      t: 'update-session',
+      id: 'sess_1',
+      archivedAt: 1_700_000_000_000,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.t).toBe('update-session');
+    expect(parsed.data.archivedAt).toBe(1_700_000_000_000);
+  });
+
   it('parses execution-run-updated ephemerals', () => {
     const parsed = EphemeralUpdateSchema.safeParse({
       type: 'execution-run-updated',

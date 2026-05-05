@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import * as scmContractModule from './scm.js';
 import {
     SCM_COMMIT_PATCH_MAX_COUNT,
     SCM_COMMIT_PATCH_MAX_LENGTH,
@@ -14,6 +15,20 @@ import {
     ScmStatusSnapshotResponseSchema,
     ScmWorkingSnapshotSchema,
 } from './scm.js';
+
+type ZodLikeSchema<TValue = unknown> = {
+    parse: (value: unknown) => TValue;
+    safeParse: (value: unknown) => { success: boolean };
+};
+
+function readScmSchema<TValue = unknown>(name: string): ZodLikeSchema<TValue> {
+    const value = (scmContractModule as Record<string, unknown>)[name];
+    expect(value).toMatchObject({
+        parse: expect.any(Function),
+        safeParse: expect.any(Function),
+    });
+    return value as ZodLikeSchema<TValue>;
+}
 
 describe('scm protocol contracts', () => {
     it('parses backend describe responses with capability metadata', () => {
@@ -122,6 +137,13 @@ describe('scm protocol contracts', () => {
                         isMain: false,
                     },
                 ],
+                remotes: [
+                    {
+                        name: 'origin',
+                        fetchUrl: 'git@github.com:happier-dev/happier.git',
+                        pushUrl: 'git@github.com:happier-dev/happier.git',
+                    },
+                ],
             },
             capabilities: {
                 readStatus: true,
@@ -148,6 +170,12 @@ describe('scm protocol contracts', () => {
                 behind: 0,
                 detached: false,
             },
+            operationState: {
+                kind: 'merge',
+                sourceRef: 'feature/auth',
+                canContinue: true,
+                canAbort: true,
+            },
             hasConflicts: false,
             entries: [],
             totals: {
@@ -172,9 +200,169 @@ describe('scm protocol contracts', () => {
         expect(response.snapshot?.repo.worktrees?.[0]?.isMain).toBe(true);
         expect(response.snapshot?.repo.worktrees?.[1]?.isMain).toBe(false);
         expect(response.snapshot?.repo.worktrees?.[1]?.isPrunable).toBeUndefined();
+        expect(response.snapshot?.repo).toMatchObject({
+            remotes: [
+                {
+                    name: 'origin',
+                    fetchUrl: 'git@github.com:happier-dev/happier.git',
+                    pushUrl: 'git@github.com:happier-dev/happier.git',
+                },
+            ],
+        });
+        expect(response.snapshot?.operationState).toEqual({
+            kind: 'merge',
+            sourceRef: 'feature/auth',
+            canContinue: true,
+            canAbort: true,
+        });
         expect(response.snapshot?.totals.pendingFiles).toBe(0);
         expect(response.snapshot?.capabilities.changeSetModel).toBe('index');
         expect(response.snapshot?.capabilities.supportedDiffAreas).toEqual(['included', 'pending', 'both']);
+    });
+
+    it('defaults omitted working snapshot remotes to an empty list', () => {
+        const snapshot = ScmWorkingSnapshotSchema.parse({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: Date.now(),
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'git',
+                mode: '.git',
+            },
+            capabilities: {
+                readStatus: true,
+                readDiffFile: true,
+                readDiffCommit: true,
+                readLog: true,
+                writeInclude: true,
+                writeExclude: true,
+                writeCommit: true,
+                writeCommitPathSelection: true,
+                writeCommitLineSelection: true,
+                writeBackout: true,
+                writeRemoteFetch: true,
+                writeRemotePull: true,
+                writeRemotePush: true,
+                worktreeCreate: true,
+                changeSetModel: 'index',
+                supportedDiffAreas: ['included', 'pending', 'both'],
+            },
+            branch: {
+                head: 'main',
+                upstream: null,
+                ahead: 0,
+                behind: 0,
+                detached: false,
+            },
+            hasConflicts: false,
+            entries: [],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        });
+
+        expect(snapshot.repo).toMatchObject({ remotes: [] });
+    });
+
+    it('parses remote management requests with shared safety validation', () => {
+        const ScmRemoteAddRequestSchema = readScmSchema('ScmRemoteAddRequestSchema');
+        const ScmRemoteSetUrlRequestSchema = readScmSchema('ScmRemoteSetUrlRequestSchema');
+        const ScmRemoteRemoveRequestSchema = readScmSchema('ScmRemoteRemoveRequestSchema');
+
+        expect(ScmRemoteAddRequestSchema.parse({
+            cwd: '.',
+            name: ' origin ',
+            fetchUrl: ' /tmp/happier remote.git ',
+            pushUrl: 'git@github.com:happier-dev/happier.git',
+        })).toMatchObject({
+            name: 'origin',
+            fetchUrl: '/tmp/happier remote.git',
+            pushUrl: 'git@github.com:happier-dev/happier.git',
+        });
+        expect(ScmRemoteSetUrlRequestSchema.parse({
+            cwd: '.',
+            name: 'origin',
+            pushUrl: null,
+        })).toMatchObject({
+            name: 'origin',
+            pushUrl: null,
+        });
+        expect(ScmRemoteRemoveRequestSchema.parse({
+            cwd: '.',
+            name: 'origin',
+        })).toMatchObject({
+            name: 'origin',
+        });
+
+        expect(ScmRemoteAddRequestSchema.safeParse({
+            cwd: '.',
+            name: '--upload-pack=hack',
+            fetchUrl: '/tmp/remote.git',
+        }).success).toBe(false);
+        expect(ScmRemoteAddRequestSchema.safeParse({
+            cwd: '.',
+            name: 'origin/main',
+            fetchUrl: '/tmp/remote.git',
+        }).success).toBe(false);
+        expect(ScmRemoteAddRequestSchema.safeParse({
+            cwd: '.',
+            name: 'origin',
+            fetchUrl: '--upload-pack=hack',
+        }).success).toBe(false);
+        expect(ScmRemoteSetUrlRequestSchema.safeParse({
+            cwd: '.',
+            name: 'origin',
+        }).success).toBe(false);
+    });
+
+    it('parses branch integration and operation-control requests', () => {
+        const ScmBranchIntegrationRequestSchema = readScmSchema('ScmBranchIntegrationRequestSchema');
+        const ScmBranchOperationControlRequestSchema = readScmSchema('ScmBranchOperationControlRequestSchema');
+        const ScmBranchIntegrationResponseSchema = readScmSchema('ScmBranchIntegrationResponseSchema');
+
+        expect(ScmBranchIntegrationRequestSchema.parse({
+            cwd: '.',
+            sourceRef: ' origin/main ',
+        })).toMatchObject({
+            sourceRef: 'origin/main',
+        });
+        expect(ScmBranchOperationControlRequestSchema.parse({
+            cwd: '.',
+            operation: 'rebase',
+        })).toMatchObject({
+            operation: 'rebase',
+        });
+        expect(ScmBranchIntegrationResponseSchema.parse({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE,
+            operationState: {
+                kind: 'rebase',
+                sourceRef: 'main',
+                canContinue: true,
+                canAbort: true,
+            },
+        })).toMatchObject({
+            operationState: {
+                kind: 'rebase',
+                sourceRef: 'main',
+            },
+        });
+
+        expect(ScmBranchIntegrationRequestSchema.safeParse({
+            cwd: '.',
+            sourceRef: '--upload-pack=hack',
+        }).success).toBe(false);
+        expect(ScmBranchIntegrationRequestSchema.safeParse({
+            cwd: '.',
+            sourceRef: 'origin/feature branch',
+        }).success).toBe(false);
     });
 
     it('supports backend-native commit scope in commit create requests', () => {

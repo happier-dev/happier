@@ -23,7 +23,9 @@ const HappierServiceBackendSchema = z.enum([
 ]);
 const HappierServiceVerificationSchema = z.enum(['verified', 'candidate']);
 const HappierServiceTargetModeSchema = z.enum(['pinned', 'default-following']);
+const DoctorSnapshotAutomaticStartupTargetModeSchema = z.enum(['pinned', 'default-following', 'legacy-pinned']);
 const HappierWarningSeveritySchema = z.enum(['info', 'warning', 'error']);
+const NonNegativeInteger = z.number().int().nonnegative();
 
 function sanitizeUrl(raw: string): string {
   const sanitized = sanitizeBugReportUrl(raw) ?? raw;
@@ -128,6 +130,76 @@ export const HappierDoctorServiceInventorySchema = z.object({
   services: z.array(HappierDoctorServiceSchema),
 });
 
+export const DoctorSnapshotRepairSummarySchema = z.object({
+  schemaVersion: z.number().int().positive().optional(),
+  status: z.enum(['ok', 'needs_attention', 'blocked', 'unknown']).optional(),
+  findingCounts: z.object({
+    total: NonNegativeInteger,
+    info: NonNegativeInteger.optional(),
+    warning: NonNegativeInteger.optional(),
+    error: NonNegativeInteger.optional(),
+    actionable: NonNegativeInteger.optional(),
+    autoRepairable: NonNegativeInteger.optional(),
+  }).optional(),
+  findingKinds: z.array(NonEmptyString).optional(),
+  generatedAt: NonEmptyString.optional(),
+}).passthrough();
+
+export const DoctorSnapshotLocalRelaySchema = z.object({
+  id: NonEmptyString,
+  releaseChannel: PublicReleaseChannelLabelSchema,
+  relayUrl: NonEmptyString.nullable(),
+  version: NonEmptyString.nullable(),
+  installed: z.boolean(),
+  running: z.boolean().nullable(),
+  healthy: z.boolean().nullable(),
+  serviceEnabled: z.boolean().nullable().optional(),
+  port: z.number().int().positive().nullable().optional(),
+  installRoot: NonEmptyString.nullable().optional(),
+}).passthrough();
+
+export const DoctorSnapshotLocalRelayInventorySchema = z.object({
+  relays: z.array(DoctorSnapshotLocalRelaySchema),
+}).passthrough();
+
+export const DoctorSnapshotAutomaticStartupEntrySchema = z.object({
+  id: NonEmptyString,
+  label: NonEmptyString,
+  releaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
+  targetMode: DoctorSnapshotAutomaticStartupTargetModeSchema.optional(),
+  scope: z.enum(['user', 'system']),
+  installed: z.boolean(),
+  running: z.boolean().nullable(),
+  definitionPath: NonEmptyString.nullable().optional(),
+  relayUrl: NonEmptyString.nullable().optional(),
+}).passthrough();
+
+export const DoctorSnapshotAutomaticStartupSummarySchema = z.object({
+  entries: z.array(DoctorSnapshotAutomaticStartupEntrySchema),
+  defaultFollowingCount: NonNegativeInteger.optional(),
+  pinnedCount: NonNegativeInteger.optional(),
+}).passthrough();
+
+export const DoctorSnapshotActiveStackSummarySchema = z.object({
+  activeServerId: NonEmptyString,
+  releaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
+  relayUrl: NonEmptyString,
+  publicRelayUrl: NonEmptyString.optional(),
+  localRelayUrl: NonEmptyString.nullable().optional(),
+  source: NonEmptyString.optional(),
+}).passthrough();
+
+export const DoctorSnapshotServiceHealthSchema = z.object({
+  backgroundService: z.object({
+    installed: z.boolean(),
+    running: z.boolean(),
+    healthy: z.boolean().nullable(),
+    serviceLabel: NonEmptyString.nullable().optional(),
+    releaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
+    relayUrl: NonEmptyString.nullable().optional(),
+  }).passthrough().optional(),
+}).passthrough();
+
 export const HappierDoctorWarningSchema = z.object({
   code: NonEmptyString,
   severity: HappierWarningSeveritySchema,
@@ -156,6 +228,11 @@ export const DoctorSnapshotSchema = z.object({
   services: z.object({
     happier: HappierDoctorServiceInventorySchema.optional(),
   }).optional(),
+  repairSummary: DoctorSnapshotRepairSummarySchema.optional(),
+  localRelays: DoctorSnapshotLocalRelayInventorySchema.optional(),
+  automaticStartup: DoctorSnapshotAutomaticStartupSummarySchema.optional(),
+  activeStack: DoctorSnapshotActiveStackSummarySchema.optional(),
+  serviceHealth: DoctorSnapshotServiceHealthSchema.optional(),
   warnings: z.array(HappierDoctorWarningSchema).optional(),
 });
 
@@ -204,6 +281,49 @@ export function sanitizeDoctorSnapshotUrls(snapshot: DoctorSnapshot): DoctorSnap
                   serverUrl: entry.serverUrl ? sanitizeUrl(entry.serverUrl) : entry.serverUrl,
                   publicServerUrl: entry.publicServerUrl ? sanitizeUrl(entry.publicServerUrl) : entry.publicServerUrl,
                 })),
+              }
+            : undefined,
+        }
+      : undefined,
+    localRelays: snapshot.localRelays
+      ? {
+          ...snapshot.localRelays,
+          relays: snapshot.localRelays.relays.map((entry) => ({
+            ...entry,
+            relayUrl: entry.relayUrl ? sanitizeUrl(entry.relayUrl) : entry.relayUrl,
+          })),
+        }
+      : undefined,
+    automaticStartup: snapshot.automaticStartup
+      ? {
+          ...snapshot.automaticStartup,
+          entries: snapshot.automaticStartup.entries.map((entry) => ({
+            ...entry,
+            relayUrl: entry.relayUrl ? sanitizeUrl(entry.relayUrl) : entry.relayUrl,
+          })),
+        }
+      : undefined,
+    activeStack: snapshot.activeStack
+      ? {
+          ...snapshot.activeStack,
+          relayUrl: sanitizeUrl(snapshot.activeStack.relayUrl),
+          publicRelayUrl: snapshot.activeStack.publicRelayUrl
+            ? sanitizeUrl(snapshot.activeStack.publicRelayUrl)
+            : undefined,
+          localRelayUrl: snapshot.activeStack.localRelayUrl
+            ? sanitizeUrl(snapshot.activeStack.localRelayUrl)
+            : snapshot.activeStack.localRelayUrl,
+        }
+      : undefined,
+    serviceHealth: snapshot.serviceHealth
+      ? {
+          ...snapshot.serviceHealth,
+          backgroundService: snapshot.serviceHealth.backgroundService
+            ? {
+                ...snapshot.serviceHealth.backgroundService,
+                relayUrl: snapshot.serviceHealth.backgroundService.relayUrl
+                  ? sanitizeUrl(snapshot.serviceHealth.backgroundService.relayUrl)
+                  : snapshot.serviceHealth.backgroundService.relayUrl,
               }
             : undefined,
         }

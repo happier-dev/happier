@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import { accountSettingsParse } from './accountSettings.js';
-import { isActionEnabledByActionsSettings } from '../../actions/actionSettings.js';
+import {
+  isActionEnabledByActionsSettings,
+  type ActionEnablementContext,
+  type ActionsSettingsV1,
+} from '../../actions/actionSettings.js';
+import type { ActionId } from '../../actions/actionIds.js';
+
+type ActionSurface = NonNullable<ActionEnablementContext['surface']>;
+
+function expectActionSurfaceEnabled(
+  actionId: ActionId,
+  settings: ActionsSettingsV1,
+  surface: ActionSurface,
+  expected: boolean,
+) {
+  expect(isActionEnabledByActionsSettings(actionId, settings, { surface })).toBe(expected);
+}
 
 describe('accountSettings', () => {
   it('defaults peer mediation preferences to direct routes disabled by product posture', () => {
@@ -173,15 +189,15 @@ describe('accountSettings', () => {
     const settings = parsed.actionsSettingsV1;
 
     // External/CLI control plane remains enabled by default.
-    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'mcp' } as any)).toBe(true);
-    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'cli' } as any)).toBe(true);
+    expectActionSurfaceEnabled('session.stop', settings, 'mcp', true);
+    expectActionSurfaceEnabled('session.stop', settings, 'cli', true);
 
     // Session agents controlling other sessions is opt-in and must be fail-closed by default.
-    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+    expectActionSurfaceEnabled('session.stop', settings, 'session_agent', false);
     // Title changes are safe and are required for provider UX (auto-title on first message).
-    expect(isActionEnabledByActionsSettings('session.title.set' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
-    expect(isActionEnabledByActionsSettings('session.message.send' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
-    expect(isActionEnabledByActionsSettings('session.list' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+    expectActionSurfaceEnabled('session.title.set', settings, 'session_agent', true);
+    expectActionSurfaceEnabled('session.message.send', settings, 'session_agent', false);
+    expectActionSurfaceEnabled('session.list', settings, 'session_agent', false);
   });
 
   it('migrates legacy default session-agent action settings to keep session.title.set enabled', () => {
@@ -214,8 +230,8 @@ describe('accountSettings', () => {
     });
     const settings = parsed.actionsSettingsV1;
 
-    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
-    expect(isActionEnabledByActionsSettings('session.title.set' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
+    expectActionSurfaceEnabled('session.stop', settings, 'session_agent', false);
+    expectActionSurfaceEnabled('session.title.set', settings, 'session_agent', true);
   });
 
   it('keeps session.title.set enabled even when legacy actions settings also contain approval requirements', () => {
@@ -248,8 +264,8 @@ describe('accountSettings', () => {
       },
     });
 
-    expect(isActionEnabledByActionsSettings('session.title.set' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(true);
-    expect(isActionEnabledByActionsSettings('session.message.send' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(false);
+    expectActionSurfaceEnabled('session.title.set', parsed.actionsSettingsV1, 'session_agent', true);
+    expectActionSurfaceEnabled('session.message.send', parsed.actionsSettingsV1, 'session_agent', false);
   });
 
   it('adds the forward-compatible attention delivery policy while preserving unknown settings fields', () => {

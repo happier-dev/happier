@@ -5,6 +5,21 @@ import { readServerEnabledBit } from '../serverEnabledBit.js';
 import { FeaturesResponseSchema } from './featuresResponseSchema.js';
 
 describe('FeatureGatesSchema', () => {
+  it('preserves pets companion and sync gates', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {
+        pets: {
+          companion: { enabled: true },
+          sync: { enabled: true },
+        },
+      },
+      capabilities: {},
+    });
+
+    expect(readServerEnabledBit(parsed, 'pets.companion' as never)).toBe(true);
+    expect(readServerEnabledBit(parsed, 'pets.sync' as never)).toBe(true);
+  });
+
   it('preserves channel bridge gates', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: {
@@ -52,6 +67,39 @@ describe('FeatureGatesSchema', () => {
     expect(parsed.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
     expect((parsed as any).features.futureBridge).toBeUndefined();
     expect((parsed as any).capabilities.futureCapability).toBeUndefined();
+  });
+
+  it('preserves peer mediation gate namespace and keeps rpc server-routed absent', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {
+        machines: {
+          enabled: true,
+          tunnel: {
+            enabled: true,
+            directPeer: { enabled: true },
+            serverRouted: { enabled: false },
+          },
+          liveStream: {
+            enabled: true,
+            directPeer: { enabled: true },
+            serverRouted: { enabled: false },
+          },
+          rpc: {
+            enabled: true,
+            directPeer: { enabled: true },
+            serverRouted: { enabled: true },
+          },
+        },
+      },
+      capabilities: {},
+    });
+
+    expect(readServerEnabledBit(parsed, 'machines.tunnel.directPeer' as never)).toBe(true);
+    expect(readServerEnabledBit(parsed, 'machines.tunnel.serverRouted' as never)).toBe(false);
+    expect(readServerEnabledBit(parsed, 'machines.liveStream.directPeer' as never)).toBe(true);
+    expect(readServerEnabledBit(parsed, 'machines.liveStream.serverRouted' as never)).toBe(false);
+    expect(readServerEnabledBit(parsed, 'machines.rpc.directPeer' as never)).toBe(true);
+    expect((parsed.features.machines as unknown as { rpc?: { serverRouted?: unknown } }).rpc?.serverRouted).toBeUndefined();
   });
 
   it('treats missing voice enabled bits as disabled (and does not crash parsing)', () => {

@@ -187,43 +187,160 @@ describe('extension manifest v2 contracts', () => {
     }).success).toBe(false);
   });
 
-  it('rejects undeclared fields in new v2 manifest and contribution contracts', () => {
-    expect(ExtensionManifestV2Schema.safeParse({
-      schemaVersion: 2,
-      id: 'acme.extension',
-      version: '1.0.0',
-      displayName: 'Acme Extension',
-      engines: {
-        happier: '^0.2.0',
+  it('accepts final plugin ACP backend wire and rejects the legacy loose ACP carrier', () => {
+    const parsed = ExtensionContributionV2Schema.parse({
+      kind: 'backend',
+      kindVersion: 1,
+      id: 'acme.extension.acp',
+      providerId: 'acme.extension',
+      engine: {
+        kind: 'acp',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+            args: ['acp'],
+          },
+          timeouts: {
+            initMs: 1,
+            initDelayMs: 2,
+            idleMs: 3,
+            toolCallMs: 4,
+            promptLivenessMs: 5,
+            postPromptNoUpdatesMs: 6,
+            postToolCallIdleMs: 7,
+            idleWithoutAssistantMessageMs: 8,
+            preToolCallIdleMs: 9,
+            futureTimeoutMs: 10,
+          },
+          futureTransportHint: true,
+        },
+        ux: {
+          title: 'Acme Agent',
+          futureUxHint: 'preserved',
+        },
+        mcp: {
+          policy: 'drop',
+          futureMcpHint: 'preserved',
+        },
+        futureEngineHint: 'preserved',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['actions'],
-      },
-      targets: {
-        daemon: {
-          entry: './daemon.js',
-          runtimeLoaderPath: './private-loader.js',
+      capabilities: {},
+      runtimeAdapters: [],
+      futureBackendHint: 'preserved',
+    });
+
+    expect(parsed).toMatchObject({
+      kind: 'backend',
+      id: 'acme.extension.acp',
+      engine: {
+        kind: 'acp',
+        futureEngineHint: 'preserved',
+        transport: {
+          futureTransportHint: true,
+          timeouts: {
+            initMs: 1,
+            preToolCallIdleMs: 9,
+            futureTimeoutMs: 10,
+          },
+        },
+        ux: {
+          futureUxHint: 'preserved',
+        },
+        mcp: {
+          futureMcpHint: 'preserved',
         },
       },
-      contributions: [],
+      futureBackendHint: 'preserved',
+    });
+
+    expect(ExtensionContributionV2Schema.safeParse({
+      kind: 'backend',
+      kindVersion: 1,
+      id: 'acme.extension.acp',
+      providerId: 'acme.extension',
+      engine: {
+        kind: 'acp',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+          timeouts: {
+            handshakeMs: 20,
+          },
+        },
+        ux: {
+          title: 'Acme Agent',
+        },
+        timeouts: {
+          initMs: 1,
+        },
+      },
+      capabilities: {},
+      runtimeAdapters: [],
     }).success).toBe(false);
 
     expect(ExtensionContributionV2Schema.safeParse({
-      kind: 'action',
-      id: 'acme.extension.refresh',
-      title: 'Refresh Acme',
-      scopes: ['settings'],
-      surfaces: ['settings'],
-      placement: 'primary',
-      dangerLevel: 'safe',
-      handler: {
-        target: 'daemon',
-        exportName: 'refreshAcme',
+      kind: 'backend',
+      kindVersion: 1,
+      id: 'acme.extension.acp',
+      providerId: 'acme.extension',
+      runtimeKind: 'acp',
+      acp: {
+        command: 'acme-agent',
       },
-      runtimeHandlerPath: '/tmp/acme/daemon.js',
+      capabilities: {},
+      runtimeAdapters: [],
     }).success).toBe(false);
+  });
 
+  it('accepts minimal ACP manifest UX metadata per T.4', () => {
+    expect(ExtensionContributionV2Schema.safeParse({
+      kind: 'backend',
+      kindVersion: 1,
+      id: 'acme.extension.minimal-acp',
+      providerId: 'acme.extension',
+      engine: {
+        kind: 'acp',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+      },
+      capabilities: {},
+      runtimeAdapters: [],
+    }).success).toBe(true);
+
+    expect(ExtensionContributionV2Schema.safeParse({
+      kind: 'backend',
+      kindVersion: 1,
+      id: 'acme.extension.named-acp',
+      providerId: 'acme.extension',
+      engine: {
+        kind: 'acp',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        ux: {
+          name: 'Acme Named Agent',
+        },
+      },
+      capabilities: {},
+      runtimeAdapters: [],
+    }).success).toBe(true);
+  });
+
+  it('keeps strict validation for non-manifest executable policy records', () => {
     expect(ExtensionPermissionDeclarationV1Schema.safeParse({
       capability: 'actions.execute',
       reason: 'Run the extension action when selected by the user',

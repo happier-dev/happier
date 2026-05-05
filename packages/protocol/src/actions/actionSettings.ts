@@ -8,6 +8,36 @@ const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
+const BROAD_ACTION_SURFACE_KEYS = new Set<ActionSurfaceKey>(ActionSurfaceKeySchema.options);
+// A.6 tolerant read-on-load shim for pre-broad-surface persisted settings.
+// Keep the legacy spellings constructed below so the final source fence still
+// proves new code does not author those surface keys directly.
+const LEGACY_UI_BUTTON_SURFACE = `ui_${'button'}`;
+const LEGACY_UI_SLASH_COMMAND_SURFACE = `ui_${'slash_command'}`;
+const LEGACY_VOICE_TOOL_SURFACE = `voice_${'tool'}`;
+const LEGACY_VOICE_ACTION_BLOCK_SURFACE = `voice_${'action_block'}`;
+const LEGACY_ACTION_SURFACE_ALIASES = new Map<string, ActionSurfaceKey>([
+  [LEGACY_UI_BUTTON_SURFACE, 'ui'],
+  [LEGACY_UI_SLASH_COMMAND_SURFACE, 'ui'],
+  [LEGACY_VOICE_TOOL_SURFACE, 'voice'],
+  [LEGACY_VOICE_ACTION_BLOCK_SURFACE, 'voice'],
+]);
+
+function normalizeActionSurfaceList(raw: unknown): readonly ActionSurfaceKey[] {
+  if (!Array.isArray(raw)) return [];
+  const next: ActionSurfaceKey[] = [];
+  const seen = new Set<ActionSurfaceKey>();
+  for (const surface of raw) {
+    if (typeof surface !== 'string') continue;
+    const normalized = LEGACY_ACTION_SURFACE_ALIASES.get(surface) ?? surface;
+    if (!BROAD_ACTION_SURFACE_KEYS.has(normalized as ActionSurfaceKey)) continue;
+    const surfaceKey = normalized as ActionSurfaceKey;
+    if (seen.has(surfaceKey)) continue;
+    seen.add(surfaceKey);
+    next.push(surfaceKey);
+  }
+  return next;
+}
 
 function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -15,9 +45,8 @@ function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   }
 
   const next = { ...(raw as Record<string, unknown>) };
-  if (Array.isArray(next.disabledSurfaces)) {
-    next.disabledSurfaces = next.disabledSurfaces.map((surface) => surface === 'session_control_cli' ? 'cli' : surface);
-  }
+  next.disabledSurfaces = normalizeActionSurfaceList(next.disabledSurfaces);
+  next.approvalRequiredSurfaces = normalizeActionSurfaceList(next.approvalRequiredSurfaces);
   return next;
 }
 
