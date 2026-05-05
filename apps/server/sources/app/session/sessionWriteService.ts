@@ -10,6 +10,11 @@ import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode
 import { isDeepStrictEqual } from "node:util";
 import { parseSessionMessageSidechainId } from "./parseSessionMessageSidechainId";
 import { didSessionActivityBadgeContributionChange, type SessionActivityBadgeInputs } from "@/app/activity/accountActivityBadge";
+import {
+    resolveSessionReadCursorOperation,
+    type SessionReadCursorOperation,
+    type SessionReadCursorReadState,
+} from "./readCursor/resolveSessionReadCursorOperation";
 
 type ParticipantCursor = SessionParticipantCursor;
 type SessionMessageRow = Readonly<{
@@ -664,6 +669,28 @@ export type UpdateSessionReadCursorResult =
     | { ok: true; lastViewedSessionSeq: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal" };
 
+export type ApplySessionReadCursorOperationResult =
+    | {
+        ok: true;
+        lastViewedSessionSeq: number | null;
+        participantCursors: ParticipantCursor[];
+        badgeAttentionChanged: boolean;
+        didChange: boolean;
+        readState: SessionReadCursorReadState;
+      }
+    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal" };
+
+function isValidSessionReadCursorOperation(operation: SessionReadCursorOperation): boolean {
+    if (operation.kind === "mark-read" || operation.kind === "mark-unread") {
+        return true;
+    }
+    return (
+        operation.kind === "advance"
+        && typeof operation.lastViewedSessionSeq === "number"
+        && Number.isFinite(operation.lastViewedSessionSeq)
+    );
+}
+
 export async function updateSessionReadCursor(params: {
     actorUserId: string;
     sessionId: string;
@@ -677,6 +704,35 @@ export async function updateSessionReadCursor(params: {
             : NaN;
 
     if (!sessionId || !actorUserId || !Number.isFinite(incomingCursor)) {
+        return { ok: false, error: "invalid-params" };
+    }
+
+    const result = await applySessionReadCursorOperation({
+        actorUserId,
+        sessionId,
+        operation: { kind: "advance", lastViewedSessionSeq: incomingCursor },
+    });
+    if (!result.ok) {
+        return result;
+    }
+    return {
+        ok: true,
+        lastViewedSessionSeq: Math.max(result.lastViewedSessionSeq ?? 0, 0),
+        participantCursors: result.participantCursors,
+        badgeAttentionChanged: result.badgeAttentionChanged,
+    };
+}
+
+export async function applySessionReadCursorOperation(params: {
+    actorUserId: string;
+    sessionId: string;
+    operation: SessionReadCursorOperation;
+}): Promise<ApplySessionReadCursorOperationResult> {
+    const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
+    const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
+    const operation = params.operation;
+
+    if (!sessionId || !actorUserId || !operation || !isValidSessionReadCursorOperation(operation)) {
         return { ok: false, error: "invalid-params" };
     }
 
@@ -695,22 +751,33 @@ export async function updateSessionReadCursor(params: {
                 return { ok: false, error: "session-not-found" };
             }
 
-            const nextCursor = Math.min(incomingCursor, session.seq ?? incomingCursor);
-            const currentCursor = typeof session.lastViewedSessionSeq === "number" ? session.lastViewedSessionSeq : -1;
-            if (nextCursor <= currentCursor) {
+            const resolved = resolveSessionReadCursorOperation({
+                sessionSeq: session.seq,
+                currentLastViewedSessionSeq: session.lastViewedSessionSeq,
+                operation,
+            });
+            const nextCursor = resolved.nextLastViewedSessionSeq;
+            if (!resolved.didChange || typeof nextCursor !== "number") {
                 return {
                     ok: true,
-                    lastViewedSessionSeq: Math.max(currentCursor, 0),
+                    lastViewedSessionSeq: nextCursor,
                     participantCursors: [],
                     badgeAttentionChanged: false,
+                    didChange: false,
+                    readState: resolved.readState,
                 };
             }
 
             const { count } = await tx.session.updateMany({
-                where: {
-                    id: sessionId,
-                    OR: [{ lastViewedSessionSeq: { lt: nextCursor } }, { lastViewedSessionSeq: null }],
-                },
+                where: operation.kind === "mark-unread"
+                    ? {
+                        id: sessionId,
+                        lastViewedSessionSeq: { gt: nextCursor },
+                    }
+                    : {
+                        id: sessionId,
+                        OR: [{ lastViewedSessionSeq: { lt: nextCursor } }, { lastViewedSessionSeq: null }],
+                    },
                 data: { lastViewedSessionSeq: nextCursor },
             });
 
@@ -719,11 +786,18 @@ export async function updateSessionReadCursor(params: {
                     where: { id: sessionId },
                     select: { lastViewedSessionSeq: true },
                 });
+                const freshResolved = resolveSessionReadCursorOperation({
+                    sessionSeq: session.seq,
+                    currentLastViewedSessionSeq: fresh?.lastViewedSessionSeq,
+                    operation,
+                });
                 return {
                     ok: true,
-                    lastViewedSessionSeq: Math.max(fresh?.lastViewedSessionSeq ?? 0, 0),
+                    lastViewedSessionSeq: fresh?.lastViewedSessionSeq ?? null,
                     participantCursors: [],
                     badgeAttentionChanged: false,
+                    didChange: false,
+                    readState: freshResolved.readState,
                 };
             }
 
@@ -743,6 +817,8 @@ export async function updateSessionReadCursor(params: {
                         lastViewedSessionSeq: nextCursor,
                     },
                 ),
+                didChange: true,
+                readState: resolved.readState,
             };
         });
     } catch {

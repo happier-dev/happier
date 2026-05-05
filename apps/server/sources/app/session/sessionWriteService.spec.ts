@@ -32,6 +32,7 @@ installDbModuleMock({ db: dbMocks.db });
 
 let createSessionMessage: typeof import("./sessionWriteService").createSessionMessage;
 let patchSession: typeof import("./sessionWriteService").patchSession;
+let applySessionReadCursorOperation: typeof import("./sessionWriteService").applySessionReadCursorOperation;
 let updateSessionAgentState: typeof import("./sessionWriteService").updateSessionAgentState;
 let updateSessionMetadata: typeof import("./sessionWriteService").updateSessionMetadata;
 let updateSessionReadCursor: typeof import("./sessionWriteService").updateSessionReadCursor;
@@ -43,7 +44,14 @@ describe("sessionWriteService", () => {
     ]);
 
     beforeAll(async () => {
-        ({ createSessionMessage, patchSession, updateSessionAgentState, updateSessionMetadata, updateSessionReadCursor } = await import("./sessionWriteService"));
+        ({
+            applySessionReadCursorOperation,
+            createSessionMessage,
+            patchSession,
+            updateSessionAgentState,
+            updateSessionMetadata,
+            updateSessionReadCursor,
+        } = await import("./sessionWriteService"));
     });
 
     beforeEach(() => {
@@ -785,6 +793,44 @@ describe("sessionWriteService", () => {
             });
         });
 
+        it("clamps advances to zero for empty sessions", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 0,
+                    lastViewedSessionSeq: null,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await updateSessionReadCursor({
+                actorUserId: "u1",
+                sessionId: "s1",
+                lastViewedSessionSeq: 9,
+            });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: "s1",
+                    OR: [{ lastViewedSessionSeq: { lt: 0 } }, { lastViewedSessionSeq: null }],
+                },
+                data: { lastViewedSessionSeq: 0 },
+            });
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 0,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: false,
+            });
+        });
+
         it("returns ok without marking participants when the incoming cursor does not advance", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({ accountId: "u1" })
@@ -812,6 +858,153 @@ describe("sessionWriteService", () => {
                 lastViewedSessionSeq: 5,
                 participantCursors: [],
                 badgeAttentionChanged: false,
+            });
+        });
+    });
+
+    describe("applySessionReadCursorOperation", () => {
+        it("marks unread by lowering the cursor with a lowering-aware write", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 8,
+                    lastViewedSessionSeq: 8,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: "s1",
+                    lastViewedSessionSeq: { gt: 7 },
+                },
+                data: { lastViewedSessionSeq: 7 },
+            });
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 7,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: true,
+                didChange: true,
+                readState: "unread",
+            });
+        });
+
+        it("preserves null when marking unread is already represented by a missing cursor", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 8,
+                    lastViewedSessionSeq: null,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: null,
+                participantCursors: [],
+                badgeAttentionChanged: false,
+                didChange: false,
+                readState: "unread",
+            });
+        });
+
+        it("does not make archived sessions contribute badge attention when marked unread", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 8,
+                    lastViewedSessionSeq: 8,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: new Date(123),
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 7,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: false,
+                didChange: true,
+                readState: "unread",
+            });
+        });
+
+        it("marks read by advancing to the current sequence", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 8,
+                    lastViewedSessionSeq: 3,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-read" },
+            });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: "s1",
+                    OR: [{ lastViewedSessionSeq: { lt: 8 } }, { lastViewedSessionSeq: null }],
+                },
+                data: { lastViewedSessionSeq: 8 },
+            });
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 8,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: true,
+                didChange: true,
+                readState: "read",
             });
         });
     });

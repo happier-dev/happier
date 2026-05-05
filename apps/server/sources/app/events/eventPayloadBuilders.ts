@@ -100,6 +100,7 @@ export function buildUpdateSessionUpdate(
         lastViewedSessionSeq?: number;
         pendingPermissionRequestCount?: number;
         pendingUserActionRequestCount?: number;
+        archivedAt?: number | null;
     },
 ): UpdatePayload {
     return {
@@ -118,6 +119,9 @@ export function buildUpdateSessionUpdate(
                 : {}),
             ...(typeof projection?.pendingUserActionRequestCount === 'number'
                 ? { pendingUserActionRequestCount: projection.pendingUserActionRequestCount }
+                : {}),
+            ...(typeof projection?.archivedAt === 'number' || projection?.archivedAt === null
+                ? { archivedAt: projection.archivedAt }
                 : {}),
         },
         createdAt: Date.now()

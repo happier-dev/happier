@@ -13,6 +13,11 @@ export function isServerFeatureEnabledForRequest(featureId: FeatureId, env: Node
     return readServerEnabledBit(payload, featureId) === true;
 }
 
+export function isPeerMediationGrantSigningAdvertisedForRequest(env: NodeJS.ProcessEnv): boolean {
+    const payload = resolveServerFeaturesForGating(env);
+    return payload.capabilities.machines.peerMediation.grantSigningKeys.length > 0;
+}
+
 type RouteHandler = (request: any, reply: any) => unknown | Promise<unknown>;
 type RoutePreHandler = (request: any, reply: any) => unknown | Promise<unknown>;
 

@@ -1,10 +1,24 @@
 import { parseBooleanEnv, parseIntEnv } from '../../../config/env';
 import {
   DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES,
+  DEFAULT_MACHINE_TUNNEL_MAX_DURATION_MS,
+  DEFAULT_MACHINE_TUNNEL_MAX_IDLE_MS,
+  DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET,
+  DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_BYTES,
+  DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES,
   MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
   MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX,
+  MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX,
+  MACHINE_TUNNEL_SERVER_ROUTED_MAX_BYTES_HARD_MAX,
+  MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX,
+  MachineLiveStreamRelayCapsV1Schema,
+  normalizeMachineTunnelAllowedPorts,
+  normalizeMachineTunnelPositiveInt,
   normalizeMachineTransferServerRoutedMaxBytes,
+  PET_PACKAGE_LIMITS_V1,
+  type MachineLiveStreamRelayCaps,
 } from '@happier-dev/protocol';
+import { resolvePeerMediationGrantSigningConfig } from '@/app/machines/peer/mediation/mintDirectRouteGrantV1';
 import { resolveEffectiveWebappBaseUrl } from '../../serverUrls/effectiveServerUrls';
 import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 
@@ -45,6 +59,17 @@ export type AttachmentsUploadsFeatureEnv = Readonly<{
   enabled: boolean;
 }>;
 
+export type PetsFeatureEnv = Readonly<{
+  companionEnabled: boolean;
+  syncEnabled: boolean;
+  maxManifestBytes: number;
+  maxCanonicalSpritesheetBytes: number;
+  maxCanonicalPackageBytes: number;
+  maxImportedPetsPerAccount: number;
+  maxImportedPetBytesPerAccount: number;
+  encryptedCustomPetSyncPolicy: "disabled";
+}>;
+
 export type SessionHandoffFeatureEnv = Readonly<{
   handoffEnabled: boolean;
 }>;
@@ -54,6 +79,38 @@ export type MachineTransferFeatureEnv = Readonly<{
   serverRoutedEnabled: boolean;
   serverRoutedMaxBytes: number | null;
   serverRoutedMaxActiveTransfersPerSocket: number;
+}>;
+
+export type MachineTunnelFeatureEnv = Readonly<{
+  directPeerEnabled: boolean;
+  serverRoutedEnabled: boolean;
+  allowedPorts: readonly number[];
+  maxIdleMs: number;
+  maxDurationMs: number;
+  serverRoutedMaxBytes: number;
+  serverRoutedMaxActiveTunnelsPerSocket: number;
+  serverRoutedMaxFrameBytes: number;
+}>;
+
+export type MachineRpcFeatureEnv = Readonly<{
+  directPeerEnabled: boolean;
+}>;
+
+export type MachineLiveStreamFeatureEnv = Readonly<{
+  directPeerEnabled: boolean;
+  serverRoutedEnabled: boolean;
+  serverRoutedCaps: MachineLiveStreamRelayCaps | null;
+  serverRoutedDisabledReason: 'relay_not_enabled' | 'relay_caps_missing';
+}>;
+
+export type PeerMediationGrantSigningKeyCapabilityEnv = Readonly<{
+  keyId: string;
+  publicKey: string;
+  expiresAt: number | null;
+}>;
+
+export type PeerMediationFeatureEnv = Readonly<{
+  grantSigningKeys: readonly PeerMediationGrantSigningKeyCapabilityEnv[];
 }>;
 
 export type TerminalFeatureEnv = Readonly<{
@@ -125,6 +182,16 @@ function parseCommaList(raw: string | undefined): string[] {
     .split(/[,\n]+/g)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function parsePortList(raw: string | undefined): readonly number[] {
+  if (typeof raw !== "string") return [];
+  const rawPorts = raw
+    .split(/[,\s]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => Number.parseInt(entry, 10));
+  return normalizeMachineTunnelAllowedPorts(rawPorts);
 }
 
 function normalizeIssuerDnLower(raw: string): string {
@@ -243,6 +310,44 @@ export function readAttachmentsUploadsFeatureEnv(env: NodeJS.ProcessEnv): Attach
   };
 }
 
+export function readPetsFeatureEnv(env: NodeJS.ProcessEnv): PetsFeatureEnv {
+  return {
+    companionEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.petsCompanionEnabled], true),
+    syncEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.petsSyncEnabled], false),
+    maxManifestBytes: parseIntEnv(env[FEATURE_ENV_KEYS.petsSyncMaxManifestBytes], PET_PACKAGE_LIMITS_V1.maxManifestBytes, { min: 1 }),
+    maxCanonicalSpritesheetBytes: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxCanonicalSpritesheetBytes],
+      PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes,
+      { min: 1 },
+    ),
+    maxCanonicalPackageBytes: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxCanonicalPackageBytes],
+      PET_PACKAGE_LIMITS_V1.maxCanonicalPackageBytes,
+      { min: 1 },
+    ),
+    maxImportedPetsPerAccount: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxImportedPetsPerAccount],
+      PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount,
+      { min: 1 },
+    ),
+    maxImportedPetBytesPerAccount: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxImportedPetBytesPerAccount],
+      PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount,
+      { min: 1 },
+    ),
+    encryptedCustomPetSyncPolicy: "disabled",
+  };
+}
+
+export function readPeerMediationFeatureEnv(env: NodeJS.ProcessEnv): PeerMediationFeatureEnv {
+  const signing = resolvePeerMediationGrantSigningConfig(env);
+  if (!signing.ok) return { grantSigningKeys: [] };
+
+  return {
+    grantSigningKeys: [signing.capability],
+  };
+}
+
 export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHandoffFeatureEnv {
   return {
     handoffEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsHandoffEnabled], true),
@@ -267,6 +372,85 @@ export function readMachineTransferFeatureEnv(env: NodeJS.ProcessEnv): MachineTr
       128,
       { min: 1, max: 10_000 },
     ),
+  };
+}
+
+export function readMachineTunnelFeatureEnv(env: NodeJS.ProcessEnv): MachineTunnelFeatureEnv {
+  return {
+    directPeerEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTunnelDirectPeerEnabled], true),
+    serverRoutedEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled], false),
+    allowedPorts: parsePortList(env[FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]),
+    maxIdleMs: normalizeMachineTunnelPositiveInt(
+      env[FEATURE_ENV_KEYS.machinesTunnelMaxIdleMs],
+      DEFAULT_MACHINE_TUNNEL_MAX_IDLE_MS,
+    ),
+    maxDurationMs: normalizeMachineTunnelPositiveInt(
+      env[FEATURE_ENV_KEYS.machinesTunnelMaxDurationMs],
+      DEFAULT_MACHINE_TUNNEL_MAX_DURATION_MS,
+    ),
+    serverRoutedMaxBytes: normalizeMachineTunnelPositiveInt(
+      env[FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxBytes],
+      DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_BYTES,
+      { max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_BYTES_HARD_MAX },
+    ),
+    serverRoutedMaxActiveTunnelsPerSocket: normalizeMachineTunnelPositiveInt(
+      env[FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxActiveTunnelsPerSocket],
+      DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET,
+      { max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX },
+    ),
+    serverRoutedMaxFrameBytes: normalizeMachineTunnelPositiveInt(
+      env[FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxFrameBytes],
+      DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES,
+      { max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX },
+    ),
+  };
+}
+
+export function readMachineRpcFeatureEnv(env: NodeJS.ProcessEnv): MachineRpcFeatureEnv {
+  return {
+    directPeerEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesRpcDirectPeerEnabled], true),
+  };
+}
+
+function parseOptionalPositiveIntFromEnv(env: NodeJS.ProcessEnv, key: string): number | null {
+  const raw = env[key];
+  if (typeof raw !== 'string' || raw.trim().length === 0) return null;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function readMachineLiveStreamFeatureEnv(env: NodeJS.ProcessEnv): MachineLiveStreamFeatureEnv {
+  const serverRoutedRequested = parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedEnabled], false);
+  const capsCandidate = {
+    maxBitrateBps: parseOptionalPositiveIntFromEnv(env, FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxBitrateBps),
+    maxFramesPerSecond: parseOptionalPositiveIntFromEnv(
+      env,
+      FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxFramesPerSecond,
+    ),
+    maxFrameBytes: parseOptionalPositiveIntFromEnv(env, FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxFrameBytes),
+    maxDurationMs: parseOptionalPositiveIntFromEnv(env, FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxDurationMs),
+    maxTotalBytes: parseOptionalPositiveIntFromEnv(env, FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxTotalBytes),
+    maxConcurrentStreamsPerAccount: parseOptionalPositiveIntFromEnv(
+      env,
+      FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxConcurrentStreamsPerAccount,
+    ),
+    maxConcurrentStreamsPerSocket: parseOptionalPositiveIntFromEnv(
+      env,
+      FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxConcurrentStreamsPerSocket,
+    ),
+    maxConcurrentStreamsPerMachine: parseOptionalPositiveIntFromEnv(
+      env,
+      FEATURE_ENV_KEYS.machinesLiveStreamServerRoutedMaxConcurrentStreamsPerMachine,
+    ),
+  };
+  const parsedCaps = MachineLiveStreamRelayCapsV1Schema.safeParse(capsCandidate);
+  const serverRoutedCaps = serverRoutedRequested && parsedCaps.success ? parsedCaps.data : null;
+
+  return {
+    directPeerEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesLiveStreamDirectPeerEnabled], true),
+    serverRoutedEnabled: serverRoutedRequested && serverRoutedCaps !== null,
+    serverRoutedCaps,
+    serverRoutedDisabledReason: serverRoutedRequested ? 'relay_caps_missing' : 'relay_not_enabled',
   };
 }
 

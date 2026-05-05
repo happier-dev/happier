@@ -63,4 +63,21 @@ describe('features/serverFeatureRegistry', () => {
             ]),
         ).toThrow(/features/i);
     });
+
+    it('exposes Live Activity direct APNs diagnostics without APNs credential material', () => {
+        const privateKey = '-----BEGIN PRIVATE KEY-----\nSECRET-PRIVATE-KEY\n-----END PRIVATE KEY-----';
+        const res = resolveServerFeaturePayload({
+            HAPPIER_LIVE_ACTIVITY_REMOTE_UPDATES_ENABLED: '1',
+            HAPPIER_LIVE_ACTIVITY_REMOTE_UPDATE_MODE: 'direct_apns',
+            HAPPIER_LIVE_ACTIVITY_APNS_TEAM_ID: 'TEAMID1234',
+            HAPPIER_LIVE_ACTIVITY_APNS_PRIVATE_KEY: privateKey,
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        const directDiagnostics = res.capabilities.liveActivities.remoteUpdates.modes.direct_apns;
+        expect(directDiagnostics.available).toBe(false);
+        expect(directDiagnostics.configurationDiagnostics).toContain('apns_key_id_missing');
+        expect(directDiagnostics.configurationDiagnostics).toContain('apns_bundle_id_allowlist_missing');
+        expect(JSON.stringify(res)).not.toContain('SECRET-PRIVATE-KEY');
+        expect(JSON.stringify(res)).not.toContain(privateKey);
+    });
 });

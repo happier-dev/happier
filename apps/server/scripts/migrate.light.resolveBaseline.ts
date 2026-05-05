@@ -1,21 +1,6 @@
-import { spawn } from 'node:child_process';
 import { mkdir, readdir } from 'node:fs/promises';
 import { applyLightDefaultEnv } from '../sources/flavors/light/env';
-
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: 'inherit',
-            shell: false,
-        });
-        child.on('error', reject);
-        child.on('exit', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
+import { runCommand } from './runCommand';
 
 async function findBaselineMigrationDir(): Promise<string> {
     const entries = await readdir('prisma/sqlite/migrations', { withFileTypes: true });
@@ -37,10 +22,10 @@ async function main() {
     const dataDir = env.HAPPY_SERVER_LIGHT_DATA_DIR ?? env.HAPPIER_SERVER_LIGHT_DATA_DIR!;
     await mkdir(dataDir, { recursive: true });
 
-    await run('yarn', ['-s', 'schema:sync', '--quiet'], env);
+    await runCommand('yarn', ['-s', 'schema:sync', '--quiet'], env);
 
     const baseline = await findBaselineMigrationDir();
-    await run(
+    await runCommand(
         'yarn',
         ['-s', 'prisma', 'migrate', 'resolve', '--schema', 'prisma/sqlite/schema.prisma', '--applied', baseline],
         env

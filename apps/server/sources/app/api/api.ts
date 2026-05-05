@@ -30,6 +30,10 @@ import { sessionPendingRoutes } from "./routes/session/pendingRoutes";
 import { bugReportDiagnosticsRoutes } from "./routes/diagnostics/bugReportDiagnosticsRoutes";
 import { automationRoutes } from "./routes/automations/automationRoutes";
 import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
+import { liveActivityTargetsRoutes } from "./routes/activity/liveActivityTargetsRoutes";
+import { liveActivityRemoteUpdateRoutes } from "./routes/activity/liveActivityRemoteUpdateRoutes";
+import { liveActivityHostedRelayRoutes } from "./routes/activity/liveActivityHostedRelayRoutes";
+import { registerPeerMediationGrantRoutes } from "./routes/machines/peer/mediation/registerPeerMediationGrantRoutes";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -91,6 +95,10 @@ export async function startApi() {
     shareRoutes(typed);
     publicShareRoutes(typed);
     automationRoutes(typed);
+    liveActivityTargetsRoutes(typed);
+    liveActivityRemoteUpdateRoutes(typed);
+    liveActivityHostedRelayRoutes(typed);
+    registerPeerMediationGrantRoutes(typed);
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;

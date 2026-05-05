@@ -90,6 +90,14 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             query: { limit: 2 },
         });
 
+        expect(sessionFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    archivedAt: null,
+                }),
+            }),
+        );
+
         expect(res).toEqual({
             sessions: [
                 expect.objectContaining({
@@ -116,5 +124,18 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             nextCursor: encodeV2SessionListCursorV1("s2"),
             hasNext: true,
         });
+    });
+
+    it("does not expose diagnostic route timing headers on successful paged listing responses", async () => {
+        sessionFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { reply } = await route.invoke({
+            query: { limit: 10 },
+        });
+
+        expect(
+            Object.keys(reply.headers).some((header) => header.toLowerCase() === "server-timing"),
+        ).toBe(false);
     });
 });

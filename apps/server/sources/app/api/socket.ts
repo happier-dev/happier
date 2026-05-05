@@ -26,7 +26,9 @@ import { pingHandler } from "./socket/pingHandler";
 import { sessionUpdateHandler } from "./socket/sessionUpdateHandler";
 import { machineUpdateHandler } from "./socket/machineUpdateHandler";
 import { machineTransferHandler } from "./socket/machineTransferHandler";
+import { machineLiveStreamRelayHandler } from "./socket/machineLiveStreamRelayHandler";
 import { transferRelayV2Handler } from "./socket/transferRelayV2Handler";
+import { registerPeerTcpTunnelRelaySocketHandler } from "./socket/peer/mediation/tunnel/registerRelay";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
@@ -37,7 +39,7 @@ import { randomUUID } from "node:crypto";
 import { readSocketAdapterRuntimeConfigFromEnv } from "@/config/socketAdapter";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
-import { readMachineTransferFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMachineTunnelFeatureEnv, readPeerMediationFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 import { createMachineSocketOwnershipRegistry } from "./socket/machineSocketOwnershipRegistry";
 import { activityCache } from "@/app/presence/sessionCache";
@@ -97,7 +99,18 @@ export function startSocket(app: Fastify) {
         'machines.transfer.serverRouted',
         process.env,
     );
+    const serverRoutedLiveStreamEnabled = isServerFeatureEnabledForRequest(
+        'machines.liveStream.serverRouted',
+        process.env,
+    );
+    const serverRoutedTunnelEnabled = isServerFeatureEnabledForRequest(
+        'machines.tunnel.serverRouted',
+        process.env,
+    );
     const machineTransferFeatureEnv = readMachineTransferFeatureEnv(process.env);
+    const machineLiveStreamFeatureEnv = readMachineLiveStreamFeatureEnv(process.env);
+    const machineTunnelFeatureEnv = readMachineTunnelFeatureEnv(process.env);
+    const peerMediationFeatureEnv = readPeerMediationFeatureEnv(process.env);
     const fastDisconnectLogThresholdMs = resolveSocketFastDisconnectLogThresholdMsFromEnv(process.env);
 
     const instanceId = process.env.HAPPIER_INSTANCE_ID?.trim() || process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
@@ -543,11 +556,30 @@ export function startSocket(app: Fastify) {
             serverRoutedTransferMaxBytes: machineTransferFeatureEnv.serverRoutedMaxBytes,
             serverRoutedTransferMaxActiveTransfersPerSocket: machineTransferFeatureEnv.serverRoutedMaxActiveTransfersPerSocket,
         });
+        machineLiveStreamRelayHandler(userId, socket, {
+            io,
+            serverRoutedLiveStreamEnabled,
+            relayCaps: machineLiveStreamFeatureEnv.serverRoutedCaps,
+            relayAuthorizationTrustRoots: peerMediationFeatureEnv.grantSigningKeys.map((key) => ({
+                keyId: key.keyId,
+                publicKeyBase64Url: key.publicKey,
+            })),
+        });
         transferRelayV2Handler(userId, socket, {
             io,
             serverRelayTransferEnabled: serverRoutedTransferEnabled,
             serverRelayTransferMaxBytes: machineTransferFeatureEnv.serverRoutedMaxBytes,
             serverRelayTransferMaxActiveTransfersPerSocket: machineTransferFeatureEnv.serverRoutedMaxActiveTransfersPerSocket,
+        });
+        registerPeerTcpTunnelRelaySocketHandler(userId, socket, {
+            io,
+            serverRoutedEnabled: serverRoutedTunnelEnabled,
+            maxBytes: machineTunnelFeatureEnv.serverRoutedMaxBytes,
+            maxActiveTunnelsPerSocket: machineTunnelFeatureEnv.serverRoutedMaxActiveTunnelsPerSocket,
+            maxFrameBytes: machineTunnelFeatureEnv.serverRoutedMaxFrameBytes,
+            maxIdleMs: machineTunnelFeatureEnv.maxIdleMs,
+            maxDurationMs: machineTunnelFeatureEnv.maxDurationMs,
+            allowedPorts: machineTunnelFeatureEnv.allowedPorts,
         });
         artifactUpdateHandler(userId, socket);
         accessKeyHandler(userId, socket);

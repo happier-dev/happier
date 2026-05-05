@@ -10,7 +10,7 @@
     "build:shared": "node ./scripts/buildSharedDeps.mjs",
     "prebuild": "yarn -s build:shared",
     "pretest": "yarn -s build:shared && yarn -s schema:sync:check --quiet",
-    "build": "tsc --noEmit",
+    "build": "node ./scripts/runTypeScriptCli.mjs --noEmit",
     "build:runtime": "node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./scripts/runtime/buildRuntime.ts --out-dir ./dist/runtime",
     "typecheck": "yarn -s build",
     "start": "node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./sources/main.ts",

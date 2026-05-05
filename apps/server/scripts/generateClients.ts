@@ -1,9 +1,9 @@
-import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 
 import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
+import { runCommand } from "./runCommand";
 
 export type BuildDbProvider = "postgres" | "mysql" | "sqlite";
 
@@ -81,22 +81,6 @@ export function prismaGenerateDatabaseUrlForProvider(provider: BuildDbProvider):
     }
     // Any syntactically valid SQLite URL works for `prisma generate` (no file access required).
     return "file:./.happier-prisma-generate.sqlite";
-}
-
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: "inherit",
-            shell: false,
-            cwd: resolveServerWorkspaceRoot(import.meta.url),
-        });
-        child.on("error", reject);
-        child.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
 }
 
 type OutputStatusParams = Readonly<{
@@ -200,7 +184,7 @@ async function main(): Promise<void> {
     const serverRoot = resolveServerWorkspaceRoot(import.meta.url);
     const providers = resolveBuildDbProvidersFromEnv(env);
 
-    await run("yarn", ["-s", "schema:sync", "--quiet"], env);
+    await runCommand("yarn", ["-s", "schema:sync", "--quiet"], env, { cwd: serverRoot });
     if (await areRequestedPrismaOutputsCurrent({ serverRoot, providers })) {
         return;
     }

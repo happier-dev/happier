@@ -37,6 +37,7 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "share.public.messages": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "ip" },
     "share.public.manage": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "user" },
     "share.session.create": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "user" },
+    "liveActivity.hostedRelay": { defaultMax: 120, defaultWindow: "1 minute", keyMode: "ip" },
 } as const satisfies Record<string, ApiRateLimitDefaults>;
 
 export type ApiHotEndpointRateLimitId = keyof typeof API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS;

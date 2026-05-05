@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { applyLightDefaultEnv, resolveLightSqliteDatabaseUrl } from "../sources/flavors/light/env";
@@ -6,22 +5,7 @@ import { resolveSqliteDatabaseFilePath } from "../sources/flavors/light/sqliteMi
 import { requireLightDataDir } from "./migrate.light.deployPlan";
 import { applySqliteMigrations } from "./prismaMigrations";
 import { resolveServerWorkspaceRoot } from "./prismaCli";
-
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: "inherit",
-            shell: false,
-            cwd: resolveServerWorkspaceRoot(import.meta.url),
-        });
-        child.on("error", reject);
-        child.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
+import { runCommand } from "./runCommand";
 
 function ensureSqliteDatabaseUrl(env: NodeJS.ProcessEnv): void {
     const raw = env.DATABASE_URL?.trim();
@@ -46,7 +30,7 @@ async function main() {
     const dataDir = requireLightDataDir(env);
     await mkdir(dataDir, { recursive: true });
 
-    await run("yarn", ["-s", "schema:sync", "--quiet"], env);
+    await runCommand("yarn", ["-s", "schema:sync", "--quiet"], env, { cwd: serverRoot });
 
     ensureSqliteDatabaseUrl(env);
     await ensureSqliteDbDir(env);

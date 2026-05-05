@@ -32,7 +32,7 @@ export type LightSqliteHarnessOptions = Readonly<{
 function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
     const res = spawnSync(
         "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
+        ["-s", "migrate:sqlite:deploy"],
         {
             cwd: params.cwd,
             env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
@@ -43,7 +43,7 @@ function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv }): v
     if (res.status !== 0) {
         const spawnErr = res.error ? ` Spawn error: ${res.error.message}.` : "";
         const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}).${spawnErr} ${out}`.trim());
+        throw new Error(`sqlite migration deploy failed (status=${res.status}).${spawnErr} ${out}`.trim());
     }
 }
 

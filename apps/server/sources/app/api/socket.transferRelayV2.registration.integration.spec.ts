@@ -57,6 +57,10 @@ const transferRelayV2HandlerMock = vi.hoisted(() => vi.fn());
 vi.mock('./socket/transferRelayV2Handler', () => ({
   transferRelayV2Handler: (...args: unknown[]) => transferRelayV2HandlerMock(...args),
 }));
+const peerTcpTunnelRelayHandlerMock = vi.hoisted(() => vi.fn());
+vi.mock('./socket/peer/mediation/tunnel/registerRelay', () => ({
+  registerPeerTcpTunnelRelaySocketHandler: (...args: unknown[]) => peerTcpTunnelRelayHandlerMock(...args),
+}));
 const artifactUpdateHandlerMock = vi.hoisted(() => vi.fn());
 vi.mock('./socket/artifactUpdateHandler', () => ({
   artifactUpdateHandler: (...args: unknown[]) => artifactUpdateHandlerMock(...args),
@@ -121,6 +125,13 @@ describe('startSocket transfer relay v2 registration', () => {
     expect(machineTransferHandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({ io: fakeServer }));
     expect(transferRelayV2HandlerMock).toHaveBeenCalledTimes(1);
     expect(transferRelayV2HandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({ io: fakeServer }));
+    expect(peerTcpTunnelRelayHandlerMock).toHaveBeenCalledTimes(1);
+    expect(peerTcpTunnelRelayHandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({
+      io: fakeServer,
+      serverRoutedEnabled: false,
+      maxActiveTunnelsPerSocket: 8,
+      maxFrameBytes: 64 * 1024,
+    }));
   });
 
   it('waits for the socket room join before publishing machine online status', async () => {

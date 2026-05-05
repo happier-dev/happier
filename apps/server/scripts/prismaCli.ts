@@ -5,7 +5,11 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveServerScriptCommandInvocation } from "./runCommand";
+
 type PrismaCliEntrypointState = "healthy" | "missing" | "recursive_shell_wrapper";
+
+const PRISMA_CLI_REPAIR_INSTALL_ARGS = ["install", "--force", "--ignore-scripts", "--production=false"] as const;
 
 type EnsurePrismaCliReadyParams = Readonly<{
     serverRoot: string;
@@ -23,6 +27,14 @@ type RunPrismaCliParams = Readonly<{
     env?: NodeJS.ProcessEnv;
     quiet?: boolean;
 }>;
+
+type ResolveCommandOptions = Readonly<{
+    platform?: NodeJS.Platform;
+    processExecPath?: string;
+    comspec?: string | null;
+}>;
+
+type CommandInvocation = ReturnType<typeof resolveServerScriptCommandInvocation>;
 
 export function resolveServerWorkspaceRoot(importMetaUrl: string): string {
     return resolve(dirname(fileURLToPath(importMetaUrl)), "..");
@@ -91,13 +103,26 @@ async function readPrismaCliEntrypointState(params: Readonly<{
     return classifyPrismaCliEntrypointSource({ entryPath: params.entryPath, source });
 }
 
-function run(command: string, args: string[], options: Readonly<{ cwd: string; env: NodeJS.ProcessEnv; quiet: boolean }>): Promise<void> {
+export function resolvePrismaCliRepairInstallInvocation(
+    env: NodeJS.ProcessEnv,
+    options: ResolveCommandOptions = {},
+): CommandInvocation {
+    return resolveServerScriptCommandInvocation("yarn", PRISMA_CLI_REPAIR_INSTALL_ARGS, env, options);
+}
+
+function runInvocation(
+    invocation: CommandInvocation,
+    options: Readonly<{ cwd: string; env: NodeJS.ProcessEnv; quiet: boolean; errorCommand: string }>,
+): Promise<void> {
     return new Promise((resolvePromise, reject) => {
-        const child = spawn(command, args, {
+        const child = spawn(invocation.command, invocation.args, {
             cwd: options.cwd,
             env: options.env as Record<string, string>,
             stdio: options.quiet ? "ignore" : "inherit",
             shell: false,
+            ...(invocation.windowsVerbatimArguments
+                ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+                : {}),
         });
         child.on("error", reject);
         child.on("exit", (code) => {
@@ -105,9 +130,14 @@ function run(command: string, args: string[], options: Readonly<{ cwd: string; e
                 resolvePromise();
                 return;
             }
-            reject(new Error(`${command} exited with code ${code}`));
+            reject(new Error(`${options.errorCommand} exited with code ${code}`));
         });
     });
+}
+
+function run(command: string, args: string[], options: Readonly<{ cwd: string; env: NodeJS.ProcessEnv; quiet: boolean }>): Promise<void> {
+    const invocation = resolveServerScriptCommandInvocation(command, args, options.env);
+    return runInvocation(invocation, { ...options, errorCommand: command });
 }
 
 function resolvePrismaCliEntrypoint(serverRoot: string): string {
@@ -116,10 +146,11 @@ function resolvePrismaCliEntrypoint(serverRoot: string): string {
 }
 
 async function defaultInstallFn(params: Readonly<{ repoRoot: string; env: NodeJS.ProcessEnv; quiet: boolean }>): Promise<void> {
-    await run("yarn", ["install", "--force", "--ignore-scripts", "--production=false"], {
+    await runInvocation(resolvePrismaCliRepairInstallInvocation(params.env), {
         cwd: params.repoRoot,
         env: params.env,
         quiet: params.quiet,
+        errorCommand: "yarn",
     });
 }
 

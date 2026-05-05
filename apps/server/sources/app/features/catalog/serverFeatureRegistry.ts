@@ -11,7 +11,11 @@ import { resolveConnectedServicesFeature } from '../connectedServicesFeature';
 import { resolveChannelBridgesFeature } from '../channelBridgesFeature';
 import { resolveUpdatesFeature } from '../updatesFeature';
 import { resolveAttachmentsUploadsFeature } from '../attachmentsUploadsFeature';
+import { resolvePetsFeature } from '../petsFeature';
 import { resolveMachineTransferFeature } from '../machineTransferFeature';
+import { resolveMachineTunnelFeature } from '../machineTunnelFeature';
+import { resolveMachineLiveStreamFeature } from '../machineLiveStreamFeature';
+import { resolveMachineRpcFeature } from '../machineRpcFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveTerminalFeature } from '../terminalFeature';
 import { resolveEncryptionFeature } from '../encryptionFeature';
@@ -19,6 +23,7 @@ import { resolveE2eeFeature } from '../e2eeFeature';
 import { resolveServerUrlCapabilitiesFeature } from '../serverUrlCapabilitiesFeature';
 import { resolveServerRetentionCapabilitiesFeature } from '../serverRetentionCapabilitiesFeature';
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from '../serverUsageAnalyticsCapabilitiesFeature';
+import { resolveLiveActivityRemoteUpdatesFeature } from '../liveActivityRemoteUpdatesFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
@@ -26,6 +31,7 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveServerUrlCapabilitiesFeature(env),
     (env) => resolveServerRetentionCapabilitiesFeature(env),
     () => resolveServerUsageAnalyticsCapabilitiesFeature(),
+    (env) => resolveLiveActivityRemoteUpdatesFeature(env),
     (env) => resolveBugReportsFeature(env),
     (env) => resolveAutomationsFeature(env),
     (_env) => resolveSharingFeature(),
@@ -34,7 +40,11 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveChannelBridgesFeature(env),
     (env) => resolveUpdatesFeature(env),
     (env) => resolveAttachmentsUploadsFeature(env),
+    (env) => resolvePetsFeature(env),
     (env) => resolveMachineTransferFeature(env),
+    (env) => resolveMachineTunnelFeature(env),
+    (env) => resolveMachineLiveStreamFeature(env),
+    (env) => resolveMachineRpcFeature(env),
     (env) => resolveSessionHandoffFeature(env),
     (env) => resolveTerminalFeature(env),
     (env) => resolveFriendsFeature(env),

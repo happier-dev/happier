@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPrismaCliEnv, classifyPrismaCliEntrypointSource, ensurePrismaCliReady } from "./prismaCli";
+import {
+    buildPrismaCliEnv,
+    classifyPrismaCliEntrypointSource,
+    ensurePrismaCliReady,
+    resolvePrismaCliRepairInstallInvocation,
+} from "./prismaCli";
 
 describe("classifyPrismaCliEntrypointSource", () => {
     it("detects recursive shell wrappers that exec the same prisma entrypoint", () => {
@@ -57,6 +62,28 @@ describe("ensurePrismaCliReady", () => {
 
         expect(res.entryPath).toBe(entryPath);
         expect(res.repaired).toBe(true);
+    });
+});
+
+describe("resolvePrismaCliRepairInstallInvocation", () => {
+    it("wraps Windows Yarn repair installs through cmd.exe", () => {
+        const invocation = resolvePrismaCliRepairInstallInvocation(
+            {
+                npm_execpath: "C:\\npm\\node_modules\\npm\\bin\\npm-cli.js",
+                COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+            },
+            {
+                platform: "win32",
+                processExecPath: "C:\\node\\node.exe",
+                comspec: "C:\\Windows\\System32\\cmd.exe",
+            },
+        );
+
+        expect(invocation.command).toBe("C:\\Windows\\System32\\cmd.exe");
+        expect(invocation.windowsVerbatimArguments).toBe(true);
+        expect(invocation.args.join(" ")).toContain("yarn.cmd");
+        expect(invocation.args.join(" ")).toContain("install");
+        expect(invocation.args.join(" ")).not.toContain("npm-cli.js");
     });
 });
 

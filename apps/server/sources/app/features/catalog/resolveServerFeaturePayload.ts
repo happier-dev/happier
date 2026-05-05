@@ -3,12 +3,14 @@ import {
     evaluateFeatureBuildPolicy,
     FEATURE_CATALOG,
     FEATURE_IDS,
+    FeatureGatesSchema,
     readServerEnabledBit,
     tryWriteServerEnabledBitInPlace,
 } from '@happier-dev/protocol';
 
 import type { ServerFeatureResolver } from './serverFeatureRegistry';
 import { resolveServerFeatureBuildPolicy } from './serverFeatureBuildPolicy';
+import { readPeerMediationFeatureEnv } from './readFeatureEnv';
 
 const DEPENDENCIES_BY_ID = new Map(FEATURE_IDS.map((featureId) => [featureId, FEATURE_CATALOG[featureId].dependencies] as const));
 
@@ -68,6 +70,22 @@ export function resolveServerFeaturePayload(
             const patch = partial.capabilities as Record<string, unknown>;
             Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, patch));
         }
+    }
+
+    const peerMediationEnv = readPeerMediationFeatureEnv(env);
+    if (peerMediationEnv.grantSigningKeys.length > 0) {
+        Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, {
+            machines: {
+                peerMediation: {
+                    grantSigningKeys: peerMediationEnv.grantSigningKeys,
+                },
+            },
+        }));
+    }
+
+    const parsedFeatureGates = FeatureGatesSchema.safeParse(mergedFeatures);
+    if (!parsedFeatureGates.success) {
+        throw new Error(`Invalid /v1/features feature gates: ${parsedFeatureGates.error.message}`);
     }
 
     const parsed = featuresSchema.safeParse({ features: mergedFeatures, capabilities: mergedCapabilities });

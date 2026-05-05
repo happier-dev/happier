@@ -5,6 +5,8 @@ import {
     resetSessionRouteMocks,
     checkSessionAccess,
     getSessionParticipantUserIds,
+    buildUpdateSessionUpdate,
+    emitUpdate,
     txSessionFindUnique,
     txSessionUpdate,
     markAccountChanged,
@@ -28,6 +30,15 @@ describe("sessionRoutes v2 archive", () => {
         expect(reply.code).not.toHaveBeenCalledWith(403);
         expect(res).toEqual({ success: true, archivedAt: now.getTime() });
         expect(markAccountChanged).toHaveBeenCalledTimes(2);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledWith(
+            "s1",
+            expect.any(Number),
+            expect.any(String),
+            undefined,
+            undefined,
+            { archivedAt: now.getTime() },
+        );
+        expect(emitUpdate).toHaveBeenCalledTimes(2);
     });
 
     it("returns 409 when attempting to archive an active session", async () => {
@@ -63,5 +74,14 @@ describe("sessionRoutes v2 archive", () => {
 
         expect(res).toEqual({ success: true, archivedAt: null });
         expect(markAccountChanged).toHaveBeenCalledTimes(1);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledWith(
+            "s1",
+            expect.any(Number),
+            expect.any(String),
+            undefined,
+            undefined,
+            { archivedAt: null },
+        );
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
     });
 });

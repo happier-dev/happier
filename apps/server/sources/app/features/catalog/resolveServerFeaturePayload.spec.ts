@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import tweetnacl from "tweetnacl";
 
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
+import { resolveMachineLiveStreamFeature } from "../machineLiveStreamFeature";
 import { resolveChannelBridgesFeature } from "../channelBridgesFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from "../serverUsageAnalyticsCapabilitiesFeature";
@@ -36,6 +38,15 @@ function readOptionalPath(root: unknown, path: ReadonlyArray<string>): unknown {
     } catch {
         return undefined;
     }
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+    return Buffer.from(bytes).toString("base64url");
+}
+
+async function loadMachineTunnelFeatureModule(): Promise<Record<string, any> | null> {
+    const modulePath = "../machineTunnelFeature";
+    return import(modulePath).catch(() => null) as Promise<Record<string, any> | null>;
 }
 
 describe("resolveServerFeaturePayload", () => {
@@ -106,6 +117,25 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.connectedServices.quotas.enabled).toBe(false);
     });
 
+    it("keeps pets.sync enabled when pets.companion is disabled", () => {
+        const payload = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [
+                fromPartial({
+                    features: {
+                        pets: {
+                            companion: { enabled: false },
+                            sync: { enabled: true },
+                        },
+                    },
+                }),
+            ],
+        );
+
+        expect(readOptionalPath(payload, ["features", "pets", "companion", "enabled"])).toBe(false);
+        expect(readOptionalPath(payload, ["features", "pets", "sync", "enabled"])).toBe(true);
+    });
+
     it("annotates capabilities when build policy denies Happier Voice", () => {
         const env = {
             HAPPIER_BUILD_FEATURES_DENY: "voice.happierVoice",
@@ -148,6 +178,21 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
         // Must be bounded even when env is unset (prevents implicit unlimited server-routed streaming).
         expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(2 * 1024 * 1024 * 1024);
+    });
+
+    it("keeps server-routed tunnel relay disabled by default while advertising capped diagnostics", async () => {
+        const mod = await loadMachineTunnelFeatureModule();
+        expect(mod?.resolveMachineTunnelFeature).toBeTypeOf("function");
+
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [mod!.resolveMachineTunnelFeature]);
+
+        expect(payload.features.machines.tunnel.directPeer.enabled).toBe(true);
+        expect(payload.features.machines.tunnel.serverRouted.enabled).toBe(false);
+        expect(payload.capabilities.machines.tunnel.serverRouted).toMatchObject({
+            maxActiveTunnelsPerSocket: 8,
+            maxFrameBytes: 64 * 1024,
+            disabledReason: "relay_disabled_by_server_policy",
+        });
     });
 
     it("enables channel bridges by default so the experimental UI toggle can appear", () => {
@@ -197,6 +242,79 @@ describe("resolveServerFeaturePayload", () => {
 
         expect(payload.features.machines.transfer.serverRouted.enabled).toBe(true);
         expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(16384);
+    });
+
+    it("does not advertise peer mediation signing capability without a usable private signing key", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "key_1",
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: "public_key_1",
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: "1900000000000",
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+
+        expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([]);
+        expect((payload.features.machines as unknown as { peerMediation?: unknown }).peerMediation).toBeUndefined();
+    });
+
+    it("does not advertise peer mediation signing capability when the configured public key mismatches", () => {
+        const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "key_1",
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: toBase64Url(keyPair.secretKey),
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: "mismatched_public_key",
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: "1900000000000",
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+
+        expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([]);
+    });
+
+    it("advertises peer mediation signing capability when the configured public key matches", () => {
+        const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "key_1",
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: toBase64Url(keyPair.secretKey),
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: toBase64Url(keyPair.publicKey),
+            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: "1900000000000",
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+
+        expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([
+            {
+                keyId: "key_1",
+                publicKey: toBase64Url(keyPair.publicKey),
+                expiresAt: 1_900_000_000_000,
+            },
+        ]);
+    });
+
+    it("advertises live-stream relay caps only when server-routed live stream is configured", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED: "true",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_BITRATE_BPS: "64000",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_FRAMES_PER_SECOND: "12",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_FRAME_BYTES: "32000",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_DURATION_MS: "60000",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_TOTAL_BYTES: "128000",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_CONCURRENT_STREAMS_PER_ACCOUNT: "2",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_CONCURRENT_STREAMS_PER_SOCKET: "1",
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__MAX_CONCURRENT_STREAMS_PER_MACHINE: "1",
+        } as NodeJS.ProcessEnv, [resolveMachineLiveStreamFeature]);
+
+        expect(payload.features.machines.liveStream.serverRouted.enabled).toBe(true);
+        expect(payload.capabilities.machines.liveStream.serverRouted.caps).toMatchObject({
+            maxBitrateBps: 64_000,
+            maxFramesPerSecond: 12,
+            maxFrameBytes: 32_000,
+            maxDurationMs: 60_000,
+            maxTotalBytes: 128_000,
+        });
+    });
+
+    it("keeps server-routed live stream disabled by default even when direct live stream is server-allowed", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveMachineLiveStreamFeature]);
+
+        expect(payload.features.machines.liveStream.directPeer.enabled).toBe(true);
+        expect(payload.features.machines.liveStream.serverRouted.enabled).toBe(false);
+        expect(payload.capabilities.machines.liveStream.serverRouted.caps).toBeNull();
+        expect(payload.capabilities.machines.liveStream.serverRouted.disabledReason).toBe("relay_not_enabled");
     });
 
     it("merges sibling capabilities.server fields from different resolvers", () => {

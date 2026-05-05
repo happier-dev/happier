@@ -1,8 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { markAccountChanged } from "./markAccountChanged";
 
 describe("markAccountChanged", () => {
+    const originalDbProvider = process.env.HAPPIER_DB_PROVIDER;
+
+    afterEach(() => {
+        process.env.HAPPIER_DB_PROVIDER = originalDbProvider;
+    });
+
     it("uses the atomic postgres fast path when raw query execution is available", async () => {
         process.env.HAPPIER_DB_PROVIDER = "postgres";
         const tx: any = {
@@ -72,6 +78,46 @@ describe("markAccountChanged", () => {
                 cursor: 7,
                 changedAt: expect.any(Date),
                 hint: { lastMessageSeq: 123 },
+            },
+        });
+    });
+
+    it("links pet changes to account pet packages in the Prisma fallback path", async () => {
+        process.env.HAPPIER_DB_PROVIDER = "sqlite";
+        const tx: any = {
+            account: {
+                update: vi.fn().mockResolvedValue({ seq: 8 }),
+            },
+            accountChange: {
+                upsert: vi.fn().mockResolvedValue({}),
+            },
+        };
+
+        const cursor = await markAccountChanged(tx, {
+            accountId: "a1",
+            kind: "pet",
+            entityId: "pet-package-1",
+        });
+
+        expect(cursor).toBe(8);
+        expect(tx.accountChange.upsert).toHaveBeenCalledWith({
+            where: {
+                accountId_kind_entityId: { accountId: "a1", kind: "pet", entityId: "pet-package-1" },
+            },
+            create: {
+                accountId: "a1",
+                kind: "pet",
+                entityId: "pet-package-1",
+                accountPetPackageId: "pet-package-1",
+                cursor: 8,
+                changedAt: expect.any(Date),
+                hint: undefined,
+            },
+            update: {
+                accountPetPackageId: "pet-package-1",
+                cursor: 8,
+                changedAt: expect.any(Date),
+                hint: undefined,
             },
         });
     });

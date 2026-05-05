@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
@@ -8,22 +7,6 @@ import { acquirePgliteDirLock } from '../sources/storage/locks/pgliteLock';
 import { applyPostgresMigrations } from './prismaMigrations';
 import { resolveServerWorkspaceRoot } from './prismaCli';
 import { join } from 'node:path';
-
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: 'inherit',
-            shell: false,
-            cwd: resolveServerWorkspaceRoot(import.meta.url),
-        });
-        child.on('error', reject);
-        child.on('exit', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
 
 async function main() {
     const env: NodeJS.ProcessEnv = { ...process.env };

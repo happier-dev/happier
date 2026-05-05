@@ -86,6 +86,25 @@ vi.mock("@/app/features/catalog/serverFeatureGate", () => ({
 
 vi.mock("@/app/features/catalog/readFeatureEnv", () => ({
     readMachineTransferFeatureEnv: vi.fn(() => ({ allowDaemonTakeover: true })),
+    readMachineLiveStreamFeatureEnv: vi.fn(() => ({
+        directPeerEnabled: true,
+        serverRoutedEnabled: false,
+        serverRoutedCaps: null,
+        serverRoutedDisabledReason: "relay_not_enabled",
+    })),
+    readMachineTunnelFeatureEnv: vi.fn(() => ({
+        directPeerEnabled: true,
+        serverRoutedEnabled: false,
+        serverRoutedMaxBytes: 1_000_000,
+        serverRoutedMaxActiveTunnelsPerSocket: 1,
+        serverRoutedMaxFrameBytes: 65_536,
+        maxIdleMs: 30_000,
+        maxDurationMs: 60_000,
+        allowedPorts: [],
+    })),
+    readPeerMediationFeatureEnv: vi.fn(() => ({
+        grantSigningKeys: [],
+    })),
 }));
 
 vi.mock("@/storage/db", () => ({

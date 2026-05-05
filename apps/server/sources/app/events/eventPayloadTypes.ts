@@ -96,6 +96,7 @@ export type UpdateEvent = {
     lastViewedSessionSeq?: number | undefined;
     pendingPermissionRequestCount?: number | undefined;
     pendingUserActionRequestCount?: number | undefined;
+    archivedAt?: number | null | undefined;
 } | {
     type: 'pending-changed';
     sessionId: string;

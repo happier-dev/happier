@@ -1,10 +1,12 @@
 import { z } from "zod";
 
+import { buildUpdateSessionUpdate, eventRouter } from "@/app/events/eventRouter";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
 import { markSessionParticipantsChanged } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { inTx } from "@/storage/inTx";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { type Fastify } from "../../types";
 
 export function registerSessionArchiveRoutes(app: Fastify) {
@@ -82,6 +84,21 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             badgeAttentionChanged: res.badgeAttentionChanged,
             participantCursors: res.participantCursors,
         });
+        await Promise.all(res.participantCursors.map(async ({ accountId, cursor }) => {
+            const payload = buildUpdateSessionUpdate(
+                sessionId,
+                cursor,
+                randomKeyNaked(12),
+                undefined,
+                undefined,
+                { archivedAt: res.archivedAt },
+            );
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload,
+                recipientFilter: { type: "all-interested-in-session", sessionId },
+            });
+        }));
         return reply.send({ success: true, archivedAt: res.archivedAt });
     });
 
@@ -147,6 +164,21 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             badgeAttentionChanged: res.badgeAttentionChanged,
             participantCursors: res.participantCursors,
         });
+        await Promise.all(res.participantCursors.map(async ({ accountId, cursor }) => {
+            const payload = buildUpdateSessionUpdate(
+                sessionId,
+                cursor,
+                randomKeyNaked(12),
+                undefined,
+                undefined,
+                { archivedAt: null },
+            );
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload,
+                recipientFilter: { type: "all-interested-in-session", sessionId },
+            });
+        }));
         return reply.send({ success: true, archivedAt: null });
     });
 }

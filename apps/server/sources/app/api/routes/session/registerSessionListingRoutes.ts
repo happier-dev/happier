@@ -82,7 +82,7 @@ export function registerSessionListingRoutes(app: Fastify) {
 
         const [ownedSessions, shares] = await Promise.all([
             db.session.findMany({
-                where: { accountId: userId },
+                where: { accountId: userId, archivedAt: null },
                 orderBy: { updatedAt: 'desc' },
                 take: 150,
                 select: {
@@ -107,7 +107,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 }
             }),
             db.sessionShare.findMany({
-                where: { sharedWithUserId: userId },
+                where: { sharedWithUserId: userId, session: { archivedAt: null } },
                 orderBy: { session: { updatedAt: 'desc' } },
                 take: 150,
                 select: {
@@ -217,6 +217,7 @@ export function registerSessionListingRoutes(app: Fastify) {
             userId,
             where: {
                 active: true,
+                archivedAt: null,
                 lastActiveAt: { gt: new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS) },
             },
             orderBy: { lastActiveAt: 'desc' },
@@ -253,7 +254,9 @@ export function registerSessionListingRoutes(app: Fastify) {
             cursorSessionId = decoded;
         }
 
-        const where: Prisma.SessionWhereInput = {};
+        const where: Prisma.SessionWhereInput = {
+            archivedAt: null,
+        };
         if (cursorSessionId) {
             where.id = { lt: cursorSessionId };
         }

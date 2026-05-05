@@ -52,6 +52,7 @@ export async function markAccountChanged(
     const sessionId = kind === "session" || kind === "share" ? entityId : null;
     const machineId = kind === "machine" ? entityId : null;
     const artifactId = kind === "artifact" ? entityId : null;
+    const accountPetPackageId = kind === "pet" ? entityId : null;
 
     // Cursor strategy (locked in a.project.md):
     // - allocate a unique per-account cursor by incrementing Account.seq once per call,
@@ -76,7 +77,8 @@ export async function markAccountChanged(
                 "hint",
                 "sessionId",
                 "machineId",
-                "artifactId"
+                "artifactId",
+                "accountPetPackageId"
             )
             SELECT
                 $1,
@@ -87,7 +89,8 @@ export async function markAccountChanged(
                 $5::jsonb,
                 $6,
                 $7,
-                $8
+                $8,
+                $9
             FROM next
             ON CONFLICT ("accountId", "kind", "entityId")
             DO UPDATE SET
@@ -96,7 +99,8 @@ export async function markAccountChanged(
                 "hint" = EXCLUDED."hint",
                 "sessionId" = EXCLUDED."sessionId",
                 "machineId" = EXCLUDED."machineId",
-                "artifactId" = EXCLUDED."artifactId"
+                "artifactId" = EXCLUDED."artifactId",
+                "accountPetPackageId" = EXCLUDED."accountPetPackageId"
             RETURNING "cursor"`,
             accountId,
             kind,
@@ -106,6 +110,7 @@ export async function markAccountChanged(
             sessionId,
             machineId,
             artifactId,
+            accountPetPackageId,
         );
         const cursorValue = rows[0]?.cursor;
         const cursor = typeof cursorValue === "bigint" ? Number(cursorValue) : cursorValue;
@@ -124,6 +129,9 @@ export async function markAccountChanged(
         }
         if (artifactId) {
             return { artifactId };
+        }
+        if (accountPetPackageId) {
+            return { accountPetPackageId };
         }
         return {};
     })();

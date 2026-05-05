@@ -58,6 +58,7 @@ function applyOidcOffboardingEnv(providersConfig: unknown, strict?: string): voi
         AUTH_OFFBOARDING_ENABLED: "true",
         AUTH_OFFBOARDING_INTERVAL_SECONDS: "60",
         AUTH_OFFBOARDING_STRICT: strict,
+        AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
         AUTH_PROVIDERS_CONFIG_JSON: JSON.stringify(providersConfig),
         HAPPIER_WEBAPP_URL: "https://app.example.test",
     });
