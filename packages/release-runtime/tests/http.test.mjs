@@ -160,3 +160,44 @@ test('requestBytes supports data urls without global fetch', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('requestBytes retries bounded transient HTTP failures', async () => {
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount += 1;
+    if (requestCount < 3) {
+      res.writeHead(503, { 'content-type': 'text/plain' });
+      res.end('try again');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('ok');
+  }, async (baseUrl) => {
+    const result = await requestBytes({
+      url: `${baseUrl}/asset`,
+      retryAttempts: 3,
+      retryDelayMs: 1,
+    });
+    assert.equal(result.toString('utf8'), 'ok');
+    assert.equal(requestCount, 3);
+  });
+});
+
+test('requestBytes does not retry permanent HTTP failures', async () => {
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount += 1;
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('missing');
+  }, async (baseUrl) => {
+    await assert.rejects(
+      () => requestBytes({
+        url: `${baseUrl}/missing`,
+        retryAttempts: 3,
+        retryDelayMs: 1,
+      }),
+      /\(404\)/,
+    );
+    assert.equal(requestCount, 1);
+  });
+});
