@@ -299,7 +299,7 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
   - `backends/` is **reserved** for `apps/cli` only — do not introduce new `backends/**` folders in `packages/*` or `apps/ui`.
   - **Protocol layout invariant**: provider-specific executable logic/policy/defaults must live under `packages/protocol/src/providers/<providerId>/**` (avoid scattering provider folders inside other protocol domains).
   - **Protocol structure rule**: never add `packages/protocol/src/**/providers/<providerId>/**` or `packages/protocol/src/**/backends/<providerId>/**`. Keep a single `packages/protocol/src/providers/<providerId>/**` tree and re-export provider wire/schema from there when domain code needs it.
-  - **Extension unification wave (2026-04-19)**: first-party bundled agent/provider/backend families are migrating into `packages/extensions/<extensionId>/src/**` as the final authored owner model. During migration, the existing provider folders above remain valid **transitional bridges**, but new long-lived ownership must follow the packetized plans in `.project/plans/2026-04-19-*-packetized-execution-spec.md`.
+  - **Plugin-platform migration (runtime-unification-v2)**: first-party bundled agent/provider/backend families are migrating onto the canonical plugin platform. Final authored owners are `packages/plugins/<pluginId>/src/**`, with host plugin substrate under `apps/cli/src/plugins/**` and shared plugin protocol under `packages/protocol/src/plugins/**`. During migration, the existing provider folders above and legacy `packages/extensions/**` trees remain valid **transitional bridges** / source evidence, but new long-lived ownership must follow the accepted runtime-unification-v2 plugin corpus.
 - Avoid compatibility shims for renames/moves by default. When restructuring, update all imports directly so the final structure is canonical.
 - Split crowded folders by domain (for example: `runtime/`, `session/`, `spawn/`, `permission/`) instead of accumulating many cross-cutting files at one level.
 - Keep files single-purpose. If a file starts owning multiple responsibilities, extract cohesive modules with explicit names.
@@ -326,7 +326,7 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
   - shared/provider-agnostic support facts in `packages/agents/*`
   - CLI executable backend wiring in `apps/cli/src/backends/catalog.ts` + `apps/cli/src/backends/<provider>/index.ts`
   - UI provider composition in `apps/ui/sources/agents/registry/*` + `apps/ui/sources/agents/providers/<provider>/*`
-- Executable provider-specific behavior MUST stay inside the provider-owned module. During the 2026-04-19 extension-unification migration, the owner for first-party bundled families may be the bundled extension package (`packages/extensions/<extensionId>/src/agent/**`) instead of the historical host-local provider folders.
+- Executable provider-specific behavior MUST stay inside the provider-owned module. During the runtime-unification-v2 plugin-platform migration, the owner for first-party bundled families may be the bundled plugin package (`packages/plugins/<pluginId>/src/agent/**`) instead of the historical host-local provider folders; legacy `packages/extensions/<extensionId>/src/**` remains transitional/source evidence until the owning packet migrates it.
 - Core/shared layers MUST stay provider-agnostic. Do not add provider-name branching (`codex`, `claude`, `opencode`, etc.) in core orchestration when the behavior can be obtained through the existing catalog/registry hook surface.
 - When a new cross-provider feature needs provider-specific behavior, extend the existing catalog/entry type with a new hook/field and implement that hook in each provider's `index.ts`/provider module; do not add a new ad-hoc registry in unrelated core code.
 - Before adding provider-specific logic anywhere outside a provider folder, stop and check whether it belongs as:
@@ -944,3 +944,14 @@ Implementation rule of thumb:
 - In `plain` sessions, bypass encrypt/decrypt for `metadata`, `agentState`, messages, and pending rows.
 
 Core e2e coverage lives under `packages/tests/suites/core-e2e/` and includes plaintext roundtrip scenarios (including public share + pending queue v2).
+
+## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- When the `graphify` MCP server is available, use its tools (`query_graph`, `shortest_path`, `get_node`, `get_neighbors`, `graph_stats`) before shelling out to the CLI
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
