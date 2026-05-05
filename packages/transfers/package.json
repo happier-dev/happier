@@ -24,6 +24,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@happier-dev/peer-mediation": "0.0.0",
     "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {
