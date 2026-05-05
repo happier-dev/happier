@@ -107,8 +107,8 @@ test('resolveWorkspaceDependencyBuildOrder deduplicates shared internal dependen
   assert.deepEqual(ordered, ['protocol', 'agents', 'release-runtime', 'cli-common']);
 });
 
-test('resolveBundledWorkspaceDependencyBuildOrder resolves extension workspaces from packages/extensions/<extensionId>', async (t) => {
-  const repoRoot = await mkdtemp(join(tmpdir(), 'happier-workspace-build-order-extensions-'));
+test('resolveBundledWorkspaceDependencyBuildOrder resolves plugin workspaces from packages/plugins/<pluginId>', async (t) => {
+  const repoRoot = await mkdtemp(join(tmpdir(), 'happier-workspace-build-order-plugins-'));
   t.after(async () => {
     await rm(repoRoot, { recursive: true, force: true });
   });
@@ -116,7 +116,7 @@ test('resolveBundledWorkspaceDependencyBuildOrder resolves extension workspaces 
   await mkdir(join(repoRoot, 'apps', 'cli'), { recursive: true });
   await writeJson(join(repoRoot, 'apps', 'cli', 'package.json'), {
     bundledDependencies: [
-      '@happier-dev/extensions-acme',
+      '@happier-dev/plugins-acme',
     ],
   });
 
@@ -125,9 +125,9 @@ test('resolveBundledWorkspaceDependencyBuildOrder resolves extension workspaces 
     name: '@happier-dev/protocol',
   });
 
-  await mkdir(join(repoRoot, 'packages', 'extensions', 'acme'), { recursive: true });
-  await writeJson(join(repoRoot, 'packages', 'extensions', 'acme', 'package.json'), {
-    name: '@happier-dev/extensions-acme',
+  await mkdir(join(repoRoot, 'packages', 'plugins', 'acme'), { recursive: true });
+  await writeJson(join(repoRoot, 'packages', 'plugins', 'acme', 'package.json'), {
+    name: '@happier-dev/plugins-acme',
     dependencies: {
       '@happier-dev/protocol': '0.0.0',
     },
@@ -138,5 +138,5 @@ test('resolveBundledWorkspaceDependencyBuildOrder resolves extension workspaces 
     hostPackageDir: join(repoRoot, 'apps', 'cli'),
   });
 
-  assert.deepEqual(ordered, ['protocol', 'extensions-acme']);
+  assert.deepEqual(ordered, ['protocol', 'plugins-acme']);
 });

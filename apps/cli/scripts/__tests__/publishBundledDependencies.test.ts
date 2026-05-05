@@ -7,21 +7,25 @@ describe('apps/cli package publish contract', () => {
   const cliRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const repoRoot = resolve(cliRoot, '..', '..');
 
-  function readBundledExtensionWorkspacePackageNames(): readonly string[] {
-    const extensionsRoot = resolve(repoRoot, 'packages', 'extensions');
-    if (!existsSync(extensionsRoot)) return [];
+  function readBundledPluginWorkspacePackageNames(): readonly string[] {
+    const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
+    if (!existsSync(pluginsRoot)) return [];
 
     const packageNames: string[] = [];
-    for (const dirent of readdirSync(extensionsRoot, { withFileTypes: true })) {
+    for (const dirent of readdirSync(pluginsRoot, { withFileTypes: true })) {
       if (!dirent.isDirectory()) continue;
       // Template/scaffold workspaces are not shipped in published artifacts.
       if (dirent.name.startsWith('_')) continue;
-      const extensionId = dirent.name;
-      const pkgJsonPath = resolve(extensionsRoot, extensionId, 'package.json');
+      const pluginId = dirent.name;
+      const pkgJsonPath = resolve(pluginsRoot, pluginId, 'package.json');
       if (!existsSync(pkgJsonPath)) continue;
 
-      const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as { name?: unknown };
-      const expectedPackageName = `@happier-dev/extensions-${extensionId}`;
+      const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as {
+        name?: unknown;
+        happier?: { pluginScaffold?: { shipping?: unknown } };
+      };
+      if (pkgJson.happier?.pluginScaffold?.shipping === 'reservation_only') continue;
+      const expectedPackageName = `@happier-dev/plugins-${pluginId}`;
       expect(pkgJson.name).toBe(expectedPackageName);
       packageNames.push(expectedPackageName);
     }
@@ -56,17 +60,18 @@ describe('apps/cli package publish contract', () => {
     expect(bundled).toContain('@happier-dev/agents');
     expect(bundled).toContain('@happier-dev/cli-common');
     expect(bundled).toContain('@happier-dev/connection-supervisor');
-    expect(bundled).toContain('@happier-dev/extension-sdk');
+    expect(bundled).toContain('@happier-dev/plugin-sdk');
+    expect(bundled).toContain('@happier-dev/peer-mediation');
     expect(bundled).toContain('@happier-dev/protocol');
     expect(bundled).toContain('@happier-dev/transfers');
     expect(bundled).toContain('@happier-dev/release-runtime');
     expect(bundled).toContain('tweetnacl');
 
-    for (const extensionPackageName of readBundledExtensionWorkspacePackageNames()) {
-      expect(bundled).toContain(extensionPackageName);
+    for (const pluginPackageName of readBundledPluginWorkspacePackageNames()) {
+      expect(bundled).toContain(pluginPackageName);
       // Bundled dependencies should also be declared as dependencies so local tooling and
       // type/build steps can resolve the workspace packages deterministically.
-      expect(cliPackageJson.dependencies?.[extensionPackageName]).toBeTruthy();
+      expect(cliPackageJson.dependencies?.[pluginPackageName]).toBeTruthy();
     }
 
     // External runtime deps used by protocol should be declared on protocol itself
@@ -83,7 +88,8 @@ describe('apps/cli package publish contract', () => {
     expect(cliPackageJson.dependencies?.['tweetnacl']).toBeTruthy();
     expect(cliPackageJson.dependencies?.['base64-js']).toBeFalsy();
     expect(cliPackageJson.dependencies?.['@noble/hashes']).toBeFalsy();
-    expect(cliPackageJson.dependencies?.['@happier-dev/extension-sdk']).toBeTruthy();
+    expect(cliPackageJson.dependencies?.['@happier-dev/plugin-sdk']).toBeTruthy();
+    expect(cliPackageJson.dependencies?.['@happier-dev/peer-mediation']).toBeTruthy();
 
   });
 

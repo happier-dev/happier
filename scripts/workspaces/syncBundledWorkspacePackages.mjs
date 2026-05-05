@@ -3,7 +3,7 @@ import { basename, dirname, resolve } from 'node:path';
 
 import { vendorBundledPackageRuntimeDependenciesFallback } from './vendorBundledWorkspaceRuntimeDependenciesFallback.mjs';
 
-const EXTENSIONS_WORKSPACE_PREFIX = 'extensions-';
+const EXTENSIONS_WORKSPACE_PREFIX = 'plugins-';
 
 function stripInternalBundledWorkspaceDependencies(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
@@ -256,7 +256,7 @@ function resolveBundledWorkspaceSourceDir({ repoRoot, workspaceLeaf }) {
   if (leaf.startsWith(EXTENSIONS_WORKSPACE_PREFIX)) {
     const extensionId = leaf.slice(EXTENSIONS_WORKSPACE_PREFIX.length);
     if (extensionId) {
-      return resolve(repoRoot, 'packages', 'extensions', extensionId);
+      return resolve(repoRoot, 'packages', 'plugins', extensionId);
     }
   }
   return resolve(repoRoot, 'packages', leaf);

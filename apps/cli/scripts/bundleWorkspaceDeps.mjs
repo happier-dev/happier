@@ -10,7 +10,7 @@ import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBu
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_REPO_ROOT = findRepoRoot(__dirname);
-const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
+const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 function findRepoRoot(startDir) {
   let dir = startDir;
@@ -66,25 +66,41 @@ function readBundledDependencyNames(rawPackageJson) {
     .filter((value) => value.length > 0);
 }
 
-function resolveDeclaredBundledExtensionWorkspacePackageNames({ repoRoot }) {
-  const extensionsRoot = resolve(repoRoot, 'packages', 'extensions');
-  if (!existsSync(extensionsRoot)) return [];
+function isReservationOnlyPluginPackage(rawPackageJson) {
+  return rawPackageJson?.happier?.pluginScaffold?.shipping === 'reservation_only';
+}
+
+function resolveDeclaredBundledPluginWorkspacePackageNames({ repoRoot }) {
+  const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
+  if (!existsSync(pluginsRoot)) return [];
 
   const packageNames = [];
-  for (const entry of readdirSync(extensionsRoot, { withFileTypes: true })) {
+  for (const entry of readdirSync(pluginsRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const extensionId = entry.name;
+    const pluginId = entry.name;
     // Reserve underscore-prefixed directories for scaffolding/non-shippable templates.
-    if (extensionId.startsWith('_')) continue;
-    const pkgJsonPath = resolve(extensionsRoot, extensionId, 'package.json');
+    if (pluginId.startsWith('_')) continue;
+    const pkgJsonPath = resolve(pluginsRoot, pluginId, 'package.json');
     if (!existsSync(pkgJsonPath)) continue;
-
-    const expectedPackageName = `${EXTENSIONS_PACKAGE_PREFIX}${extensionId}`;
     const raw = readJsonSync(pkgJsonPath);
+    if (isReservationOnlyPluginPackage(raw)) continue;
+
+    const manifestPath = resolve(pluginsRoot, pluginId, 'src/manifest.ts');
+    if (!existsSync(manifestPath)) {
+      throw new Error(
+        [
+          `[bundle-workspace-deps] Missing required plugin manifest for shippable plugin package`,
+          `path: ${manifestPath}`,
+          `package: ${PLUGINS_PACKAGE_PREFIX}${pluginId}`,
+        ].join('\n'),
+      );
+    }
+
+    const expectedPackageName = `${PLUGINS_PACKAGE_PREFIX}${pluginId}`;
     if (raw?.name !== expectedPackageName) {
       throw new Error(
         [
-          `[bundle-workspace-deps] Invalid bundled extension workspace package name`,
+          `[bundle-workspace-deps] Invalid bundled plugin workspace package name`,
           `path: ${pkgJsonPath}`,
           `expected: ${expectedPackageName}`,
           `actual: ${String(raw?.name ?? '')}`,
@@ -100,9 +116,9 @@ function resolveDeclaredBundledExtensionWorkspacePackageNames({ repoRoot }) {
 }
 
 function resolveBundledWorkspaceSrcDir({ repoRoot, packageName }) {
-  if (packageName.startsWith(EXTENSIONS_PACKAGE_PREFIX)) {
-    const extensionId = packageName.slice(EXTENSIONS_PACKAGE_PREFIX.length);
-    return resolve(repoRoot, 'packages', 'extensions', extensionId);
+  if (packageName.startsWith(PLUGINS_PACKAGE_PREFIX)) {
+    const pluginId = packageName.slice(PLUGINS_PACKAGE_PREFIX.length);
+    return resolve(repoRoot, 'packages', 'plugins', pluginId);
   }
 
   const workspaceName = packageName.split('/').at(-1);
@@ -132,23 +148,23 @@ export async function bundleWorkspaceDeps(opts = {}) {
     const hostPackageJsonRaw = readJsonSync(hostPackageJsonPath);
     const bundledDependencyNames = readBundledDependencyNames(hostPackageJsonRaw);
 
-    // Guardrail: if extension workspaces exist under `packages/extensions/*`, they must be explicitly
+    // Guardrail: if plugin workspaces exist under `packages/plugins/*`, they must be explicitly
     // declared as bundled dependencies in `apps/cli/package.json`. Otherwise, they will not ship in
     // the packed artifact even if we can bundle them locally.
-    const discoveredBundledExtensionPackageNames = resolveDeclaredBundledExtensionWorkspacePackageNames({
+    const discoveredBundledPluginPackageNames = resolveDeclaredBundledPluginWorkspacePackageNames({
       repoRoot: targetRepoRoot,
     });
-    const missingExtensionPackages = discoveredBundledExtensionPackageNames.filter(
+    const missingPluginPackages = discoveredBundledPluginPackageNames.filter(
       (packageName) => !bundledDependencyNames.includes(packageName),
     );
-    if (missingExtensionPackages.length > 0) {
+    if (missingPluginPackages.length > 0) {
       throw new Error(
         [
-          `[bundle-workspace-deps] Missing bundled extension workspace dependencies`,
-          `These packages exist under packages/extensions/* but are not declared in apps/cli/package.json#bundledDependencies:`,
-          ...missingExtensionPackages.map((name) => `- ${name}`),
+          `[bundle-workspace-deps] Missing bundled plugin workspace dependencies`,
+          `These packages exist under packages/plugins/* but are not declared in apps/cli/package.json#bundledDependencies:`,
+          ...missingPluginPackages.map((name) => `- ${name}`),
           ``,
-          `Fix: node apps/cli/scripts/syncBundledExtensionWorkspaces.mjs`,
+          `Fix: node apps/cli/scripts/syncBundledPluginWorkspaces.mjs`,
         ].join('\n'),
       );
     }

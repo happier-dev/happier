@@ -1,7 +1,8 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { rename as renameFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -64,6 +65,7 @@ describe('cli-common atomic build contract', () => {
 
     const buildPlan = buildScript.createPackageDistBuildPlan({
       packageDir: '/tmp/happier/packages/cli-common',
+      packageName: '@happier-dev/cli-common',
       pid: 1234,
       now: 1700000000000,
     });
@@ -72,9 +74,77 @@ describe('cli-common atomic build contract', () => {
       packageDir: '/tmp/happier/packages/cli-common',
       distDir: '/tmp/happier/packages/cli-common/dist',
       backupDir: '/tmp/happier/packages/cli-common/.dist.hstack-backup.1234.1700000000000',
+      lockPath: '/tmp/happier/.project/tmp/workspace-dist-builds/happier-dev-cli-common.lock',
       stageRootPrefix: '/tmp/happier/packages/cli-common/.dist.hstack-stage-',
     });
     expect(Object.isFrozen(buildPlan)).toBe(true);
+  });
+
+  it('waits for the workspace dist build lock before staging a package build', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-build-lock-'));
+    try {
+      const packageDir = join(root, 'packages', 'cli-common');
+      const distDir = join(packageDir, 'dist');
+      const lockDir = join(root, '.project', 'tmp', 'workspace-dist-builds');
+      const lockPath = join(lockDir, 'happier-dev-cli-common.lock');
+      const packageJson = {
+        name: '@happier-dev/cli-common',
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        types: './dist/index.d.ts',
+        exports: {
+          '.': {
+            default: './dist/index.js',
+            types: './dist/index.d.ts',
+          },
+        },
+      };
+
+      mkdirSync(distDir, { recursive: true });
+      writeFileSync(join(packageDir, 'package.json'), JSON.stringify(packageJson, null, 2), 'utf8');
+      writeFileSync(join(distDir, 'index.js'), 'export const version = "old";\n', 'utf8');
+      writeFileSync(join(distDir, 'index.d.ts'), 'export declare const version: string;\n', 'utf8');
+
+      mkdirSync(lockDir, { recursive: true });
+      writeFileSync(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+        'utf8',
+      );
+
+      let enteredBuild = false;
+      const buildPromise = buildPackageDistAtomically({
+        packageDir,
+        packageJson,
+        env: {
+          ...process.env,
+          HAPPIER_PACKAGE_DIST_BUILD_LOCK_TIMEOUT_MS: '1000',
+          HAPPIER_PACKAGE_DIST_BUILD_LOCK_POLL_MS: '10',
+        },
+        buildIntoDistDir: async ({ stagingDistDir }) => {
+          enteredBuild = true;
+          mkdirSync(stagingDistDir, { recursive: true });
+          writeFileSync(join(stagingDistDir, 'index.js'), 'export const version = "new";\n', 'utf8');
+          writeFileSync(join(stagingDistDir, 'index.d.ts'), 'export declare const version: string;\n', 'utf8');
+        },
+      });
+
+      await delay(30);
+      expect(enteredBuild).toBe(false);
+
+      unlinkSync(lockPath);
+      await buildPromise;
+
+      expect(enteredBuild).toBe(true);
+      expect(readFileSync(join(distDir, 'index.js'), 'utf8')).toContain('"new"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps the previous dist visible while staging a new build', async () => {

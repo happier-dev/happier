@@ -89,7 +89,7 @@ test('syncBundledWorkspacePackages derives the default bundled workspace set fro
   assert.equal(cpCalls[0][0], '/repo/packages/custom-bundle/dist');
 });
 
-test('syncBundledWorkspacePackages syncs extension workspaces from packages/extensions/<extensionId>', () => {
+test('syncBundledWorkspacePackages syncs extension workspaces from packages/plugins/<extensionId>', () => {
   const cpCalls = [];
 
   syncBundledWorkspacePackages({
@@ -99,10 +99,10 @@ test('syncBundledWorkspacePackages syncs extension workspaces from packages/exte
       const text = String(candidate);
       return (
         text.endsWith('/apps/cli/package.json') ||
-        text.endsWith('/packages/extensions/acme/package.json') ||
-        text.endsWith('/packages/extensions/acme/dist') ||
-        text.endsWith('/apps/cli/node_modules/@happier-dev/extensions-acme/package.json') ||
-        text.endsWith('/apps/cli/node_modules/@happier-dev/extensions-acme/dist')
+        text.endsWith('/packages/plugins/acme/package.json') ||
+        text.endsWith('/packages/plugins/acme/dist') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/plugins-acme/package.json') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/plugins-acme/dist')
       );
     },
     mkdirSync: () => {},
@@ -113,13 +113,13 @@ test('syncBundledWorkspacePackages syncs extension workspaces from packages/exte
       const text = String(path);
       if (text.endsWith('/apps/cli/package.json')) {
         return JSON.stringify({
-          bundledDependencies: ['@happier-dev/extensions-acme'],
+          bundledDependencies: ['@happier-dev/plugins-acme'],
         });
       }
 
-      if (text.endsWith('/packages/extensions/acme/package.json')) {
+      if (text.endsWith('/packages/plugins/acme/package.json')) {
         return JSON.stringify({
-          name: '@happier-dev/extensions-acme',
+          name: '@happier-dev/plugins-acme',
           version: '0.0.0',
           type: 'module',
           exports: { '.': { default: './dist/index.js' } },
@@ -132,7 +132,7 @@ test('syncBundledWorkspacePackages syncs extension workspaces from packages/exte
   });
 
   assert.equal(cpCalls.length, 1);
-  assert.equal(cpCalls[0][0], '/repo/packages/extensions/acme/dist');
+  assert.equal(cpCalls[0][0], '/repo/packages/plugins/acme/dist');
 });
 
 test('rmDirSafeSync retries transient ENOTEMPTY errors before removing a directory', () => {

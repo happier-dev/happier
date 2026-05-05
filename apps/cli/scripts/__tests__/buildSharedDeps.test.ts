@@ -89,9 +89,9 @@ describe('buildSharedDeps', () => {
     });
   });
 
-  it('resolves extension workspace tsconfig paths from packages/extensions/<extensionId>', () => {
-    expect(resolveBundledWorkspaceTsconfigPath({ repoRoot: '/repo', workspaceName: 'extensions-acme' })).toBe(
-      '/repo/packages/extensions/acme/tsconfig.json',
+  it('resolves plugin workspace tsconfig paths from packages/plugins/<pluginId>', () => {
+    expect(resolveBundledWorkspaceTsconfigPath({ repoRoot: '/repo', workspaceName: 'plugins-acme' })).toBe(
+      '/repo/packages/plugins/acme/tsconfig.json',
     );
   });
 

@@ -70,16 +70,16 @@ const {
   vendorBundledPackageRuntimeDependencies,
 } = await loadCliCommonWorkspacesModule();
 const CLI_BUNDLED_HOST_APPS = ['cli'];
-const EXTENSIONS_WORKSPACE_PREFIX = 'extensions-';
+const PLUGINS_WORKSPACE_PREFIX = 'plugins-';
 
 export function resolveBundledWorkspacePackageDir({ repoRoot, workspaceName }) {
   const name = String(workspaceName ?? '').trim();
   if (!name) return '';
 
-  if (name.startsWith(EXTENSIONS_WORKSPACE_PREFIX)) {
-    const extensionId = name.slice(EXTENSIONS_WORKSPACE_PREFIX.length);
-    if (extensionId) {
-      return resolve(repoRoot, 'packages', 'extensions', extensionId);
+  if (name.startsWith(PLUGINS_WORKSPACE_PREFIX)) {
+    const pluginId = name.slice(PLUGINS_WORKSPACE_PREFIX.length);
+    if (pluginId) {
+      return resolve(repoRoot, 'packages', 'plugins', pluginId);
     }
   }
 

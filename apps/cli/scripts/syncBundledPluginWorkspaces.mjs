@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
+const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 function findRepoRoot(startDir) {
   let dir = startDir;
@@ -27,25 +27,41 @@ function writeJsonSync(path, value, { writeFileSyncImpl = writeFileSync } = {}) 
   writeFileSyncImpl(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-function resolveBundledExtensionPackageNames({ repoRoot, existsSyncImpl = existsSync, readdirSyncImpl = readdirSync, readFileSyncImpl = readFileSync }) {
-  const extensionsRoot = resolve(repoRoot, 'packages', 'extensions');
-  if (!existsSyncImpl(extensionsRoot)) return [];
+function isReservationOnlyPluginPackage(rawPackageJson) {
+  return rawPackageJson?.happier?.pluginScaffold?.shipping === 'reservation_only';
+}
+
+function resolveBundledPluginPackageNames({ repoRoot, existsSyncImpl = existsSync, readdirSyncImpl = readdirSync, readFileSyncImpl = readFileSync }) {
+  const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
+  if (!existsSyncImpl(pluginsRoot)) return [];
 
   const packageNames = [];
-  for (const entry of readdirSyncImpl(extensionsRoot, { withFileTypes: true })) {
+  for (const entry of readdirSyncImpl(pluginsRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const extensionId = entry.name;
+    const pluginId = entry.name;
     // Reserve underscore-prefixed directories for scaffolding/non-shippable templates.
-    if (extensionId.startsWith('_')) continue;
-    const pkgJsonPath = resolve(extensionsRoot, extensionId, 'package.json');
+    if (pluginId.startsWith('_')) continue;
+    const pkgJsonPath = resolve(pluginsRoot, pluginId, 'package.json');
     if (!existsSyncImpl(pkgJsonPath)) continue;
-
-    const expectedPackageName = `${EXTENSIONS_PACKAGE_PREFIX}${extensionId}`;
     const pkgJson = readJsonSync(pkgJsonPath, { readFileSyncImpl });
+    if (isReservationOnlyPluginPackage(pkgJson)) continue;
+
+    const manifestPath = resolve(pluginsRoot, pluginId, 'src/manifest.ts');
+    if (!existsSyncImpl(manifestPath)) {
+      throw new Error(
+        [
+          `[sync-bundled-plugin-workspaces] missing required plugin manifest for shippable plugin package`,
+          `path: ${manifestPath}`,
+          `package: ${PLUGINS_PACKAGE_PREFIX}${pluginId}`,
+        ].join('\n'),
+      );
+    }
+
+    const expectedPackageName = `${PLUGINS_PACKAGE_PREFIX}${pluginId}`;
     if (pkgJson?.name !== expectedPackageName) {
       throw new Error(
         [
-          `[sync-bundled-extension-workspaces] invalid extension package.json name`,
+          `[sync-bundled-plugin-workspaces] invalid plugin package.json name`,
           `path: ${pkgJsonPath}`,
           `expected: ${expectedPackageName}`,
           `actual: ${String(pkgJson?.name ?? '')}`,
@@ -71,34 +87,41 @@ function normalizeBundledDependencyNames(raw) {
     .filter((value) => value.length > 0);
 }
 
-function upsertBundledDependencies({ current, extensionPackageNames }) {
+function upsertBundledDependencies({ current, pluginPackageNames }) {
   const currentList = normalizeBundledDependencyNames(current);
   const internal = currentList.filter((name) => name.startsWith('@happier-dev/'));
   const external = currentList.filter((name) => !name.startsWith('@happier-dev/'));
 
   const internalSet = new Set(internal);
-  for (const name of extensionPackageNames) {
+  for (const name of pluginPackageNames) {
     internalSet.add(name);
   }
 
-  const existingNonExtensionInternal = internal.filter((name) => !name.startsWith(EXTENSIONS_PACKAGE_PREFIX));
-  const nextExtensions = extensionPackageNames.slice();
+  const existingNonPluginInternal = internal.filter((name) => !name.startsWith(PLUGINS_PACKAGE_PREFIX));
+  const nextPlugins = pluginPackageNames.slice();
 
-  return [...existingNonExtensionInternal, ...nextExtensions, ...external];
+  return [...existingNonPluginInternal, ...nextPlugins, ...external];
 }
 
-function upsertDependencies({ current, extensionPackageNames }) {
+function upsertDependencies({ current, pluginPackageNames }) {
   const depsRaw = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
-  const deps = { ...depsRaw };
+  const deps = {};
 
-  for (const name of extensionPackageNames) {
+  for (const [name, value] of Object.entries(depsRaw)) {
+    if (name.startsWith(PLUGINS_PACKAGE_PREFIX) && !pluginPackageNames.includes(name)) {
+      continue;
+    }
+    deps[name] = value;
+  }
+
+  for (const name of pluginPackageNames) {
     deps[name] = '0.0.0';
   }
 
   return deps;
 }
 
-export function syncBundledExtensionWorkspaces(options = {}) {
+export function syncBundledPluginWorkspaces(options = {}) {
   const repoRoot = resolve(String(options.repoRoot ?? findRepoRoot(__dirname)));
   const happyCliDir = resolve(String(options.happyCliDir ?? resolve(repoRoot, 'apps', 'cli')));
   const cliPackageJsonPath = resolve(happyCliDir, 'package.json');
@@ -106,29 +129,31 @@ export function syncBundledExtensionWorkspaces(options = {}) {
   const readFileSyncImpl = options.readFileSync ?? readFileSync;
   const writeFileSyncImpl = options.writeFileSync ?? writeFileSync;
   const readdirSyncImpl = options.readdirSync ?? readdirSync;
+  const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
 
   if (!existsSyncImpl(cliPackageJsonPath)) {
-    throw new Error(`[sync-bundled-extension-workspaces] missing CLI package.json: ${cliPackageJsonPath}`);
+    throw new Error(`[sync-bundled-plugin-workspaces] missing CLI package.json: ${cliPackageJsonPath}`);
   }
 
-  const extensionPackageNames = resolveBundledExtensionPackageNames({
+  if (!existsSyncImpl(pluginsRoot)) {
+    return { changed: false, pluginPackageNames: [] };
+  }
+
+  const pluginPackageNames = resolveBundledPluginPackageNames({
     repoRoot,
     existsSyncImpl,
     readdirSyncImpl,
     readFileSyncImpl,
   });
-  if (extensionPackageNames.length === 0) {
-    return { changed: false, extensionPackageNames };
-  }
 
   const cliRaw = readJsonSync(cliPackageJsonPath, { readFileSyncImpl });
   const nextBundledDependencies = upsertBundledDependencies({
     current: cliRaw,
-    extensionPackageNames,
+    pluginPackageNames,
   });
   const nextDependencies = upsertDependencies({
     current: cliRaw?.dependencies,
-    extensionPackageNames,
+    pluginPackageNames,
   });
 
   const next = {
@@ -140,11 +165,11 @@ export function syncBundledExtensionWorkspaces(options = {}) {
   const before = JSON.stringify(cliRaw);
   const after = JSON.stringify(next);
   if (before === after) {
-    return { changed: false, extensionPackageNames };
+    return { changed: false, pluginPackageNames };
   }
 
   writeJsonSync(cliPackageJsonPath, next, { writeFileSyncImpl });
-  return { changed: true, extensionPackageNames };
+  return { changed: true, pluginPackageNames };
 }
 
 const invokedAsMain = (() => {
@@ -155,9 +180,9 @@ const invokedAsMain = (() => {
 
 if (invokedAsMain) {
   try {
-    const res = syncBundledExtensionWorkspaces();
+    const res = syncBundledPluginWorkspaces();
     if (res.changed) {
-      console.log(`[sync-bundled-extension-workspaces] updated apps/cli/package.json for ${res.extensionPackageNames.length} extension workspaces`);
+      console.log(`[sync-bundled-plugin-workspaces] updated apps/cli/package.json for ${res.pluginPackageNames.length} plugin workspaces`);
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

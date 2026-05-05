@@ -10,6 +10,7 @@ import {
     swapStagedPackageDistIntoPlace,
     verifyStagedPackageDistExports,
 } from './packageDistBuildPhases.mjs';
+import { withPackageDistBuildLock } from './packageDistBuildLock.mjs';
 import { createPackageDistBuildPlan } from './packageDistBuildPlan.mjs';
 
 const buildScriptFilePath = fileURLToPath(import.meta.url);
@@ -81,7 +82,28 @@ export async function buildPackageDistAtomically({
         throw new Error('buildPackageDistAtomically requires packageDir');
     }
 
-    const buildPlan = createPackageDistBuildPlan({ packageDir });
+    const buildPlan = createPackageDistBuildPlan({ packageDir, packageName: packageJson?.name });
+
+    return await withPackageDistBuildLock(
+        () => buildPackageDistAtomicallyUnderLock({
+            buildIntoDistDir,
+            buildPlan,
+            env,
+            packageJson,
+        }),
+        {
+            env,
+            lockPath: buildPlan.lockPath,
+        },
+    );
+}
+
+async function buildPackageDistAtomicallyUnderLock({
+    buildIntoDistDir,
+    buildPlan,
+    env,
+    packageJson,
+}) {
     let stageRoot;
     let stageDistDir;
     let distMovedToBackup = false;

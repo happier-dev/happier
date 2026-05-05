@@ -39,9 +39,10 @@ describe('bundleWorkspaceDeps', () => {
           '@happier-dev/agents',
           '@happier-dev/cli-common',
           '@happier-dev/connection-supervisor',
-          '@happier-dev/extension-sdk',
-          '@happier-dev/extensions-claude',
-          '@happier-dev/protocol',
+	          '@happier-dev/plugin-sdk',
+	          '@happier-dev/plugins-claude',
+	          '@happier-dev/peer-mediation',
+	          '@happier-dev/protocol',
           '@happier-dev/transfers',
           '@happier-dev/release-runtime',
         ],
@@ -87,8 +88,8 @@ describe('bundleWorkspaceDeps', () => {
     });
     writeWorkspacePackageFixture({
       repoRoot,
-      workspacePath: 'packages/extension-sdk',
-      packageName: '@happier-dev/extension-sdk',
+      workspacePath: 'packages/plugin-sdk',
+      packageName: '@happier-dev/plugin-sdk',
       manifestOverrides: {
         scripts: { postinstall: 'echo should-not-run' },
         devDependencies: { typescript: '^5' },
@@ -97,10 +98,27 @@ describe('bundleWorkspaceDeps', () => {
     });
     writeWorkspacePackageFixture({
       repoRoot,
-      workspacePath: 'packages/extensions/claude',
-      packageName: '@happier-dev/extensions-claude',
+      workspacePath: 'packages/peer-mediation',
+      packageName: '@happier-dev/peer-mediation',
+      manifestOverrides: {
+        scripts: { postinstall: 'echo should-not-run' },
+        dependencies: {
+          '@happier-dev/peer-mediation': '0.0.0',
+          '@happier-dev/protocol': '0.0.0',
+        },
+      },
+      files: { 'dist/index.js': 'export const peer = true;\n' },
+    });
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/plugins/claude',
+      packageName: '@happier-dev/plugins-claude',
       manifestOverrides: { scripts: { postinstall: 'echo should-not-run' } },
-      files: { 'dist/index.js': 'export const bundledExtension = true;\n' },
+      files: {
+        'dist/index.js': 'export const bundledPlugin = true;\n',
+        'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+        'src/agent/definition.ts': 'export const AGENT_DEFINITION = Object.freeze({ id: "claude" });\n',
+      },
     });
     writeWorkspacePackageFixture({
       repoRoot,
@@ -160,11 +178,14 @@ describe('bundleWorkspaceDeps', () => {
     const bundledConnectionSupervisorPkgJson = JSON.parse(
       readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'connection-supervisor', 'package.json'), 'utf8'),
     );
-    const bundledExtensionSdkPkgJson = JSON.parse(
-      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'extension-sdk', 'package.json'), 'utf8'),
+    const bundledPluginSdkPkgJson = JSON.parse(
+      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'plugin-sdk', 'package.json'), 'utf8'),
     );
-    const bundledExtensionPkgJson = JSON.parse(
-      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'extensions-claude', 'package.json'), 'utf8'),
+    const bundledPluginPkgJson = JSON.parse(
+      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'plugins-claude', 'package.json'), 'utf8'),
+    );
+    const bundledPeerMediationPkgJson = JSON.parse(
+      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'peer-mediation', 'package.json'), 'utf8'),
     );
     const bundledTransfersPkgJson = JSON.parse(
       readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'transfers', 'package.json'), 'utf8'),
@@ -186,17 +207,22 @@ describe('bundleWorkspaceDeps', () => {
     expect(bundledConnectionSupervisorPkgJson.scripts).toBeUndefined();
     expect(bundledConnectionSupervisorPkgJson.name).toBe('@happier-dev/connection-supervisor');
 
-    expect(bundledExtensionSdkPkgJson.scripts).toBeUndefined();
-    expect(bundledExtensionSdkPkgJson.devDependencies).toBeUndefined();
-    expect(bundledExtensionSdkPkgJson.name).toBe('@happier-dev/extension-sdk');
-    expect(bundledExtensionSdkPkgJson.dependencies?.['@happier-dev/agents']).toBeUndefined();
-    expect(bundledExtensionSdkPkgJson.dependencies?.['@happier-dev/protocol']).toBeUndefined();
+    expect(bundledPluginSdkPkgJson.scripts).toBeUndefined();
+    expect(bundledPluginSdkPkgJson.devDependencies).toBeUndefined();
+    expect(bundledPluginSdkPkgJson.name).toBe('@happier-dev/plugin-sdk');
+    expect(bundledPluginSdkPkgJson.dependencies?.['@happier-dev/agents']).toBeUndefined();
+    expect(bundledPluginSdkPkgJson.dependencies?.['@happier-dev/protocol']).toBeUndefined();
 
-    expect(bundledExtensionPkgJson.scripts).toBeUndefined();
-    expect(bundledExtensionPkgJson.name).toBe('@happier-dev/extensions-claude');
+    expect(bundledPluginPkgJson.scripts).toBeUndefined();
+    expect(bundledPluginPkgJson.name).toBe('@happier-dev/plugins-claude');
+
+    expect(bundledPeerMediationPkgJson.scripts).toBeUndefined();
+    expect(bundledPeerMediationPkgJson.name).toBe('@happier-dev/peer-mediation');
+    expect(bundledPeerMediationPkgJson.dependencies?.['@happier-dev/protocol']).toBeUndefined();
 
     expect(bundledTransfersPkgJson.scripts).toBeUndefined();
     expect(bundledTransfersPkgJson.name).toBe('@happier-dev/transfers');
+    expect(bundledTransfersPkgJson.dependencies?.['@happier-dev/peer-mediation']).toBeUndefined();
     expect(bundledTransfersPkgJson.dependencies?.['@happier-dev/protocol']).toBeUndefined();
     expect(bundledTransfersPkgJson.dependencies?.['base64-js']).toBeUndefined();
 
@@ -254,9 +280,10 @@ describe('bundleWorkspaceDeps', () => {
     // Minimal stubs for other bundled workspace packages.
     for (const pkg of [
       { name: '@happier-dev/agents', workspacePath: 'packages/agents' },
-      { name: '@happier-dev/cli-common', workspacePath: 'packages/cli-common' },
-      { name: '@happier-dev/extension-sdk', workspacePath: 'packages/extension-sdk' },
-      { name: '@happier-dev/transfers', workspacePath: 'packages/transfers' },
+	      { name: '@happier-dev/cli-common', workspacePath: 'packages/cli-common' },
+	      { name: '@happier-dev/plugin-sdk', workspacePath: 'packages/plugin-sdk' },
+	      { name: '@happier-dev/peer-mediation', workspacePath: 'packages/peer-mediation' },
+	      { name: '@happier-dev/transfers', workspacePath: 'packages/transfers' },
     ]) {
       writeWorkspacePackageFixture({
         repoRoot,
@@ -336,8 +363,8 @@ describe('bundleWorkspaceDeps', () => {
     }
   });
 
-  it('fails fast if packages/extensions contains extension workspaces that are not declared as bundledDependencies', async () => {
-    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-extension-dep-');
+  it('fails fast if packages/plugins contains plugin workspaces that are not declared as bundledDependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-plugin-dep-');
 
     try {
       writeCliBundledHostPackage({
@@ -347,22 +374,26 @@ describe('bundleWorkspaceDeps', () => {
 
       writeWorkspacePackageFixture({
         repoRoot,
-        workspacePath: 'packages/extensions/acme',
-        packageName: '@happier-dev/extensions-acme',
+        workspacePath: 'packages/plugins/acme',
+        packageName: '@happier-dev/plugins-acme',
         manifestOverrides: { exports: { '.': { default: './dist/index.js' } } },
-        files: { 'dist/index.js': 'export const bundledExtension = true;\n' },
+        files: {
+          'dist/index.js': 'export const bundledPlugin = true;\n',
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "acme", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+          'src/agent/definition.ts': 'export const AGENT_DEFINITION = Object.freeze({ id: "acme" });\n',
+        },
       });
 
       await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).rejects.toThrow(
-        'Missing bundled extension workspace dependencies',
+        'Missing bundled plugin workspace dependencies',
       );
     } finally {
       cleanup();
     }
   });
 
-  it('ignores underscore-prefixed extension workspace directories when validating bundledDependencies', async () => {
-    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-extension-dep-underscore-');
+  it('ignores underscore-prefixed plugin workspace directories when validating bundledDependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-plugin-dep-underscore-');
 
     try {
       writeCliBundledHostPackage({
@@ -370,14 +401,88 @@ describe('bundleWorkspaceDeps', () => {
         bundledDependencies: [],
       });
 
-      // `_template` is a scaffolding directory and must never be treated as a shippable bundled extension.
+      // `_template` is a scaffolding directory and must never be treated as a shippable bundled plugin.
       writeWorkspacePackageFixture({
         repoRoot,
-        workspacePath: 'packages/extensions/_template',
-        packageName: '@happier-dev/extensions-_template',
+        workspacePath: 'packages/plugins/_template',
+        packageName: '@happier-dev/plugins-_template',
       });
 
       await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).resolves.toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('ignores reservation-only plugin workspace directories when validating bundledDependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-plugin-definition-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: [],
+      });
+
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugins/acme',
+        packageName: '@happier-dev/plugins-acme',
+        manifestOverrides: {
+          happier: {
+            pluginScaffold: {
+              shipping: 'reservation_only',
+              plannedStage: 'E.99',
+            },
+          },
+        },
+      });
+
+      await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).resolves.toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('allows non-agent plugin workspace directories without agent definitions when validating bundledDependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-non-agent-plugin-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: ['@happier-dev/plugins-scm-github'],
+      });
+
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugins/scm-github',
+        packageName: '@happier-dev/plugins-scm-github',
+        files: {
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "scm-github", runtime: { capabilities: ["scmHostingProviders"] } });\n',
+        },
+      });
+
+      await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).resolves.toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails for unmarked plugin workspace directories without manifests when validating bundledDependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-unmarked-missing-plugin-definition-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: [],
+      });
+
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugins/acme',
+        packageName: '@happier-dev/plugins-acme',
+      });
+
+      await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).rejects.toThrow('Missing required plugin manifest');
     } finally {
       cleanup();
     }

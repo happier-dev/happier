@@ -1,7 +1,7 @@
 import { existsSync as defaultExistsSync, readFileSync as defaultReadFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const EXTENSIONS_WORKSPACE_PREFIX = 'extensions-';
+const EXTENSIONS_WORKSPACE_PREFIX = 'plugins-';
 
 function normalizeWorkspacePackageName(raw) {
   const value = String(raw ?? '').trim();
@@ -39,7 +39,7 @@ function resolveWorkspacePackageJsonPath({ repoRoot, workspaceName, existsSync }
   if (workspaceName.startsWith(EXTENSIONS_WORKSPACE_PREFIX)) {
     const extensionId = workspaceName.slice(EXTENSIONS_WORKSPACE_PREFIX.length);
     if (extensionId) {
-      const extensionCandidate = resolve(repoRoot, 'packages', 'extensions', extensionId, 'package.json');
+      const extensionCandidate = resolve(repoRoot, 'packages', 'plugins', extensionId, 'package.json');
       if (existsSync(extensionCandidate)) return extensionCandidate;
     }
   }
