@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, SessionId, StartSessionResult } from '@/agent/core/AgentBackend';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
-import { sendBackendLongLivedRun } from './backendLongLivedSend';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
+import { sendBackendLongLivedRun } from '@/agent/runtime/bridges/executionRun/send/backendLongLivedPrompt';
 
 function createResumableBackendHarness(): Readonly<{
   backend: AgentBackend;

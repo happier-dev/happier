@@ -14,16 +14,16 @@ type AgentBackendLike = Readonly<{
     waitForTurnCompletion?: (timeoutMs: number) => Promise<void>;
 }>;
 
-type RuntimeBindingsLike = Readonly<{
+type RuntimeCoreLike = Readonly<{
     createExecutionRunBackend: (params: unknown) => AgentBackendLike;
     createSessionRuntime: (params: unknown) => Promise<unknown>;
 }>;
 
-async function resolveBindings(agent: Readonly<{ getBindings?: () => Promise<unknown> }>, providerId: string): Promise<RuntimeBindingsLike> {
-    const getBindings = agent.getBindings;
-    expect(getBindings).toBeTypeOf('function');
+async function resolveBindings(agent: Readonly<{ getRuntimeCore?: () => Promise<unknown> }>, providerId: string): Promise<RuntimeCoreLike> {
+    const getRuntimeCore = agent.getRuntimeCore;
+    expect(getRuntimeCore).toBeTypeOf('function');
 
-    const bindingFactoryOrCreator = await getBindings!.call(agent);
+    const bindingFactoryOrCreator = await getRuntimeCore!.call(agent);
     expect(bindingFactoryOrCreator).toBeTypeOf('function');
 
     const bindingParams = {
@@ -56,60 +56,60 @@ async function resolveBindings(agent: Readonly<{ getBindings?: () => Promise<unk
             ? await bindingFactory(bindingParams)
             : maybeResolved;
 
-    const bindings = (
+    const runtimeCore = (
         resolvedBinding &&
         typeof resolvedBinding === 'object' &&
-        'bindings' in resolvedBinding
+        'runtimeCore' in resolvedBinding
     )
-        ? (resolvedBinding as { bindings: RuntimeBindingsLike }).bindings
-        : resolvedBinding as RuntimeBindingsLike;
+        ? (resolvedBinding as { runtimeCore: RuntimeCoreLike }).runtimeCore
+        : resolvedBinding as RuntimeCoreLike;
 
-    expect(bindings.createExecutionRunBackend).toBeTypeOf('function');
-    expect(bindings.createSessionRuntime).toBeTypeOf('function');
-    return bindings;
+    expect(runtimeCore.createExecutionRunBackend).toBeTypeOf('function');
+    expect(runtimeCore.createSessionRuntime).toBeTypeOf('function');
+    return runtimeCore;
 }
 
 const createdAcpBackendOptions: unknown[] = [];
 const createdPiRpcBackendOptions: unknown[] = [];
 const sessionRunnerCalls: Array<{ id: string; params: unknown }> = [];
 
-vi.mock('@/backends/pi/bindings/session', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/backends/pi/bindings/session')>()),
+vi.mock('@/backends/pi/runtimeCore/session', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/backends/pi/runtimeCore/session')>()),
     runPiSessionRuntime: vi.fn(async (params: unknown) => {
         sessionRunnerCalls.push({ id: 'pi', params });
     }),
 }));
 
-vi.mock('@/backends/qwen/bindings/session', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/backends/qwen/bindings/session')>()),
+vi.mock('@/backends/qwen/runtimeCore/session', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/backends/qwen/runtimeCore/session')>()),
     runQwenSessionRuntime: vi.fn(async (params: unknown) => {
         sessionRunnerCalls.push({ id: 'qwen', params });
     }),
 }));
 
-vi.mock('@/backends/kimi/bindings/session', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/backends/kimi/bindings/session')>()),
+vi.mock('@/backends/kimi/runtimeCore/session', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/backends/kimi/runtimeCore/session')>()),
     runKimiSessionRuntime: vi.fn(async (params: unknown) => {
         sessionRunnerCalls.push({ id: 'kimi', params });
     }),
 }));
 
-vi.mock('@/backends/kilo/bindings/session', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/backends/kilo/bindings/session')>()),
+vi.mock('@/backends/kilo/runtimeCore/session', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/backends/kilo/runtimeCore/session')>()),
     runKiloSessionRuntime: vi.fn(async (params: unknown) => {
         sessionRunnerCalls.push({ id: 'kilo', params });
     }),
 }));
 
-vi.mock('@/backends/copilot/bindings/session', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/backends/copilot/bindings/session')>()),
+vi.mock('@/backends/copilot/runtimeCore/session', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/backends/copilot/runtimeCore/session')>()),
     runCopilotSessionRuntime: vi.fn(async (params: unknown) => {
         sessionRunnerCalls.push({ id: 'copilot', params });
     }),
 }));
 
-vi.mock('@/backends/auggie/bindings/session', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/backends/auggie/bindings/session')>()),
+vi.mock('@/backends/auggie/runtimeCore/session', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/backends/auggie/runtimeCore/session')>()),
     runAuggieSessionRuntime: vi.fn(async (params: unknown) => {
         sessionRunnerCalls.push({ id: 'auggie', params });
     }),
@@ -157,7 +157,7 @@ vi.mock('@/backends/pi/rpc/PiRpcBackend', () => {
     return { PiRpcBackend: MockPiRpcBackend };
 });
 
-vi.mock('@/runtime/managedTools/requireProviderCliLaunchSpec', () => ({
+vi.mock('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec', () => ({
     requireProviderCliLaunchSpec: vi.fn((_agentId: string) => ({
         command: '/usr/bin/env',
         args: [],
@@ -173,18 +173,18 @@ const providers = Object.freeze([
     { id: 'auggie', expectsAcpBackend: true, importAgent: async () => (await import('@/backends/auggie')).agent },
 ] as const);
 
-describe('ACP catalog family bindings regressions', () => {
+describe('ACP catalog family runtimeCore regressions', () => {
     it('emits runtime identity events for each ACP execution-run-capable provider', async () => {
         for (const provider of providers) {
             createdAcpBackendOptions.length = 0;
             createdPiRpcBackendOptions.length = 0;
             const agent = await provider.importAgent();
-            const bindings = await resolveBindings(
-                agent as { getBindings?: () => Promise<unknown> },
+            const runtimeCore = await resolveBindings(
+                agent as { getRuntimeCore?: () => Promise<unknown> },
                 provider.id,
             );
 
-            const backend = bindings.createExecutionRunBackend({
+            const backend = runtimeCore.createExecutionRunBackend({
                 cwd: process.cwd(),
                 backendId: provider.id,
                 permissionMode: 'read_only',
@@ -217,13 +217,13 @@ describe('ACP catalog family bindings regressions', () => {
     });
 });
 
-describe('ACP catalog family bindings (sessions)', () => {
+describe('ACP catalog family runtimeCore (sessions)', () => {
     it('constructs a host-owned session runtime plan for each ACP execution-run-capable provider', async () => {
         for (const provider of providers) {
             sessionRunnerCalls.length = 0;
             const agent = await provider.importAgent();
-            const bindings = await resolveBindings(
-                agent as { getBindings?: () => Promise<unknown> },
+            const runtimeCore = await resolveBindings(
+                agent as { getRuntimeCore?: () => Promise<unknown> },
                 provider.id,
             );
 
@@ -231,7 +231,7 @@ describe('ACP catalog family bindings (sessions)', () => {
                 credentials: { token: 'test-token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
                 marker: provider.id,
             };
-            await expect(bindings.createSessionRuntime(sessionParams)).resolves.toEqual(expect.objectContaining({
+            await expect(runtimeCore.createSessionRuntime(sessionParams)).resolves.toEqual(expect.objectContaining({
                     kind: 'hostSessionRuntimePlan',
                     providerId: provider.id,
                     opts: sessionParams,

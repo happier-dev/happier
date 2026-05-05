@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDirectSessionTranscriptProviderOps } from './providerOps';
 
 describe('createDirectSessionTranscriptProviderOps', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('normalizes transcript page and follow-lease payloads from provider leaf callbacks', async () => {
     const release = vi.fn(async () => {});
     const subscribe = vi.fn((listener: (update: Readonly<{
@@ -80,5 +84,68 @@ describe('createDirectSessionTranscriptProviderOps', () => {
     unsubscribe?.();
     await followLease?.release();
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a polling follow lease from readAfter when no native follow lease is supplied', async () => {
+    vi.useFakeTimers();
+    let pollCount = 0;
+    const readAfter = vi.fn(async ({ cursor }: { cursor: string }) => {
+      if (cursor === 'tail') {
+        return {
+          items: [],
+          nextCursor: 'cursor-tail',
+          truncated: false,
+        };
+      }
+      pollCount += 1;
+      if (pollCount === 1) {
+        return {
+          items: [],
+          nextCursor: 'cursor-tail',
+          truncated: false,
+        };
+      }
+      return {
+        items: ['newer-1'],
+        nextCursor: 'cursor-newer-1',
+        truncated: false,
+      };
+    });
+
+    const ops = createDirectSessionTranscriptProviderOps<string>({
+      pageOlder: async () => ({
+        items: [],
+        nextCursor: null,
+        tailCursor: 'cursor-tail',
+        hasMore: false,
+        truncated: false,
+      }),
+      readAfter,
+    });
+
+    const lease = await ops.acquireFollowLease?.({
+      source: { kind: 'codexHome', home: 'user' },
+      remoteSessionId: 'remote-1',
+      reason: 'attached_view',
+    });
+
+    expect(lease).toBeDefined();
+    expect(lease?.getTailCursor?.()).toBe('cursor-tail');
+
+    const delivered: string[][] = [];
+    lease?.subscribeToTranscriptUpdates?.((update) => {
+      delivered.push([...update.items]);
+    });
+
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(readAfter).toHaveBeenCalledWith(expect.objectContaining({
+      cursor: 'cursor-tail',
+      maxBytes: expect.any(Number),
+      maxItems: expect.any(Number),
+    }));
+    expect(delivered).toEqual([['newer-1']]);
+
+    await lease?.release();
   });
 });

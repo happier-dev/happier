@@ -387,6 +387,46 @@ describe('maybeAutoUpdateNotice', () => {
     });
   });
 
+  it('does not print a stable update notice for a preview candidate cached from a rolling tag', () => {
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        const cachePath = join(cacheDir, 'update.json');
+        writeJson(cachePath, {
+          checkedAt: 99_000,
+          latest: '9.9.9-preview.1',
+          current: '1.0.0',
+          runtimeVersion: null,
+          invokerVersion: '1.0.0',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
+
+        const spawnDetached = vi.fn();
+
+        maybeAutoUpdateNotice({
+          argv: ['start'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          publicReleaseRing: 'stable',
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 1_000_000,
+        });
+
+        expect(output.lines).toHaveLength(0);
+        expect(spawnDetached).not.toHaveBeenCalled();
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
   it('scopes update cache + background checks by public release ring (dev lane)', () => {
     withUpdateHomeDir((homeDir) => {
       const output = captureConsoleText();

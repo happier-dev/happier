@@ -63,7 +63,7 @@ export async function evaluateCurrentDaemonOwner(): Promise<DaemonOwnerEvaluatio
     currentPublicReleaseChannel,
     versionMatches,
     releaseChannelMatches,
-    serviceManaged: resolveDaemonStartupSourceServiceManagedState(state.startupSource),
+    serviceManaged: resolveDaemonStartupSourceServiceManagedState(state.startupSource, state.serviceLabel),
     startupSource,
   };
 

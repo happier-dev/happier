@@ -31,6 +31,7 @@ import {
   UpdateBodySchema as ProtocolUpdateBodySchema,
   UpdateContainerSchema as ProtocolUpdateContainerSchema,
 } from '@happier-dev/protocol/updates'
+import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol'
 import type {
   EphemeralUpdate,
   MessageAckResponse,
@@ -183,8 +184,14 @@ export interface ClientToServerEvents {
   }, cb: (answer: UpdateStateAckResponse) => void) => void,
   'update-read-cursor': (data: {
     sid: string,
-    lastViewedSessionSeq: number,
-  }, cb: (answer: { result: 'success' | 'forbidden' | 'error', lastViewedSessionSeq?: number }) => void) => void,
+    lastViewedSessionSeq?: number,
+    operation?: 'mark-read' | 'mark-unread',
+  }, cb: (answer: {
+    result: 'success' | 'forbidden' | 'error',
+    lastViewedSessionSeq?: number,
+    didChange?: boolean,
+    readState?: 'read' | 'unread' | 'empty',
+  }) => void) => void,
   'ping': (callback: () => void) => void
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
@@ -264,6 +271,21 @@ export const DaemonTransferRuntimeStateSchema = z.object({
 
 export type DaemonTransferRuntimeState = z.infer<typeof DaemonTransferRuntimeStateSchema>
 
+const DaemonPeerMediationMachineRpcFlowStateSchema = z.object({
+  active: z.boolean(),
+}).passthrough()
+
+const DaemonPeerMediationLoopbackStateSchema = z.object({
+  endpoint: PeerLoopbackEndpointCandidateV1Schema.optional(),
+  flows: z.object({
+    machine_rpc: DaemonPeerMediationMachineRpcFlowStateSchema.optional(),
+  }).passthrough().optional(),
+}).passthrough()
+
+const DaemonPeerMediationStateSchema = z.object({
+  loopback: DaemonPeerMediationLoopbackStateSchema.optional(),
+}).passthrough()
+
 /**
  * Daemon state - dynamic runtime information (frequently updated)
  */
@@ -288,6 +310,7 @@ export const DaemonStateSchema = z.object({
       z.string() // Forward compatibility
     ]).optional(),
   transfer: DaemonTransferRuntimeStateSchema.optional(),
+  peerMediation: DaemonPeerMediationStateSchema.optional(),
 })
 
 export type DaemonState = z.infer<typeof DaemonStateSchema>
@@ -463,7 +486,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   claudeSessionId?: string, // Claude Code session ID
   claudeTranscriptPath?: string | null, // Claude Code transcript path (hooks)
   claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
-  claudeLastAssistantUuid?: string | null, // Claude SDK assistant message UUID (resume anchoring)
+  claudeLastAssistantUuid?: string | null, // Legacy Claude SDK assistant message UUID metadata (not used for normal resume)
   codexSessionId?: string, // Codex session/conversation ID (uuid)
   codexBackendMode?: 'mcp' | 'acp' | 'appServer',
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
@@ -673,6 +696,23 @@ export type AgentState = {
     canAttach?: boolean | null | undefined
     canDetach?: boolean | null | undefined
   } | null | undefined
+  terminalControl?: {
+    pendingHandoffV1?: {
+      v: 1,
+      status:
+        | 'none'
+        | 'deferred_until_terminal_turn_finishes'
+        | 'switching_to_remote'
+        | 'blocked_waiting_for_resume_identity'
+        | 'switch_failed'
+        | 'manual_action_required',
+      pendingCount: number,
+      updatedAtMs: number,
+      lastTerminalState?: unknown,
+      interruptRequired?: boolean,
+      detail?: string,
+    } | null | undefined
+  } | null | undefined
   capabilities?: {
     askUserQuestionAnswersInPermission?: boolean | null | undefined
     inFlightSteer?: boolean | null | undefined
@@ -696,6 +736,17 @@ export type AgentState = {
            */
           permissionSuggestions?: unknown
           /**
+           * Optional response forwarding target for host-owned permission routers.
+           * The store treats the kind as provider-neutral routing metadata.
+           */
+          responseTarget?: { kind: string, [key: string]: unknown }
+          /** Optional subagent/run reference carried for later permission routers. */
+          subagentRef?: unknown
+          /** Optional sidechain identifier carried for later permission routers. */
+          sidechainId?: string
+          /** Optional request source identifier for host-side correlation. */
+          source?: string
+          /**
            * Timestamp (ms) when a push notification was sent for this permission request.
            * Used to avoid duplicate notifications across restarts/resumes.
            */
@@ -716,6 +767,11 @@ export type AgentState = {
         allowedTools?: string[]
         allowTools?: string[] // legacy alias
         updatedPermissions?: unknown
+        responseTarget?: { kind: string, [key: string]: unknown }
+        subagentRef?: unknown
+        sidechainId?: string
+        source?: string
+        permissionSuggestions?: unknown
       }
     }
   }

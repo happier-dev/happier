@@ -21,6 +21,7 @@ import {
     resolveConfiguredSelfHostBaseUrl,
 } from './selfHostServerEnv.js';
 import { copyDirectoryTreePreservingSymlinks } from './copyDirectoryTreePreservingSymlinks.js';
+import { resolveNonCollidingRelayPort } from './resolveNonCollidingRelayPort.js';
 
 const RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES = new Set([
     'config',
@@ -907,8 +908,24 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         const uiDir = platform === 'win32'
             ? win32Path.join(defaults.installRoot, 'ui-web', 'current')
             : join(defaults.installRoot, 'ui-web', 'current');
+        const existingEnvText = existsSync(configEnvPath) ? await readFile(configEnvPath, 'utf8').catch(() => '') : '';
+        const existingPortRaw = existingEnvText ? String(parseEnvText(existingEnvText).PORT ?? '').trim() : '';
+        const overridePortRaw = String((params.env ?? {}).PORT ?? '').trim();
+        const configuredPortRaw = overridePortRaw || existingPortRaw;
+        const configuredPort = configuredPortRaw && Number.isInteger(Number.parseInt(configuredPortRaw, 10))
+            ? Number.parseInt(configuredPortRaw, 10)
+            : null;
+        const resolvedPort = await resolveNonCollidingRelayPort({
+            platform,
+            mode,
+            channel: params.channel,
+            homeDir,
+            defaultPort: defaults.serverPort,
+            configuredPort,
+            explicitConfiguredPort: Boolean(overridePortRaw),
+        });
         const baseEnvText = renderSelfHostServerEnvText({
-            port: defaults.serverPort,
+            port: resolvedPort,
             host: defaults.serverHost,
             dataDir: defaults.dataDir,
             filesDir,
@@ -918,11 +935,13 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
             arch,
             platform,
         });
-        const existingEnvText = existsSync(configEnvPath) ? await readFile(configEnvPath, 'utf8').catch(() => '') : '';
         const envText = mergeSelfHostServerEnvText({
             baseEnvText,
             existingEnvText,
-            overrides: params.env,
+            overrides: {
+                ...(params.env ?? {}),
+                PORT: String(resolvedPort),
+            },
         });
         await writeFile(configEnvPath, envText, 'utf8');
         const env = parseEnvText(envText);

@@ -52,7 +52,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: true }),
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     const runtime = createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -107,7 +107,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: false, errorMessage: 'codex-acp is not available on PATH' }),
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -163,7 +163,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       },
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -212,7 +212,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       },
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     const runtime = createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -267,7 +267,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: true }),
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     const runtime = createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -308,7 +308,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       },
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -366,7 +366,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       validateCodexAcpSpawnAvailability: () => ({ ok: true }),
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -406,7 +406,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
       },
     }));
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',
@@ -460,7 +460,7 @@ describe('createCodexExecutionRunBackend (codex)', () => {
 
     appServerAvailabilityMock.mockReturnValue(false);
 
-    const { createCodexExecutionRunBackend } = await import('../bindings/executionRuns');
+    const { createCodexExecutionRunBackend } = await import('../runtimeCore/executionRuns');
 
     await createCodexExecutionRunBackend({
       cwd: '/tmp/happier-worktree',

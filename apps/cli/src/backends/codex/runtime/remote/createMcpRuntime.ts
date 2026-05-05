@@ -1,6 +1,7 @@
 import { configuration } from '@/configuration';
 import type {
     RuntimeTurnConfigUpdate,
+    RuntimeTurnMessageHandler,
     RuntimeTurnStartOrLoadOptions,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { logger } from '@/ui/logger';
@@ -38,6 +39,13 @@ export async function createCodexMcpRuntime(
     let first = true;
     let turnInFlight = false;
     let currentModelId: string | null = null;
+    const runtimeMessageSubscribers = new Set<RuntimeTurnMessageHandler>();
+
+    const notifyRuntimeMessageSubscribers = (message: unknown): void => {
+        for (const subscriber of runtimeMessageSubscribers) {
+            subscriber(message);
+        }
+    };
 
     const publishCodexThreadIdToMetadata = (): void => {
         publishCodexSessionIdMetadata({
@@ -75,6 +83,7 @@ export async function createCodexMcpRuntime(
     });
     client.setPermissionHandler(params.permissionHandler);
     client.setHandler((message) => {
+        notifyRuntimeMessageSubscribers(message);
         handleMcpMessage(message);
         void requestUserInputBridge.onCodexEvent(message);
     });
@@ -181,8 +190,11 @@ export async function createCodexMcpRuntime(
         async waitForTurnCompletion() {
             flushTurn();
         },
-        subscribeRuntimeMessages() {
-            return () => undefined;
+        subscribeRuntimeMessages(handler: RuntimeTurnMessageHandler) {
+            runtimeMessageSubscribers.add(handler);
+            return () => {
+                runtimeMessageSubscribers.delete(handler);
+            };
         },
         async respondToPermission() {},
         async cancelTurn() {

@@ -5,7 +5,7 @@ import { mkdir } from 'node:fs/promises';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import * as managedPnpm from '@/runtime/managedTools/pnpm/managedPnpm';
+import * as managedPnpm from '@/packagedRuntime/managedTools/pnpm/managedPnpm';
 
 import { normalizePackageRunnerInvocation } from './normalizePackageRunnerInvocation';
 

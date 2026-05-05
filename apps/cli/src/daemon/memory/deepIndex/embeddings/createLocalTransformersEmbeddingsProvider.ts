@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 
 import type { MemoryEmbeddingsLocalTransformersConfig } from '@happier-dev/protocol';
 
-import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import {
   createInferenceRuntimeLoader,
   readInferenceRuntimeModuleFieldWithRecoverableRetry,

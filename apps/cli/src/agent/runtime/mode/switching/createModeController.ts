@@ -14,7 +14,7 @@ type SessionSwitchHandler = (params: unknown) => Promise<boolean>;
 export type TerminalRemoteModeControllerSession = {
   sendSessionEvent: (event: { type: 'switch'; mode: TerminalRemoteMode }) => void;
   updateAgentState: (updater: (state: AgentState) => AgentState) => Promise<void> | void;
-  keepAlive: (thinking: boolean, mode: TerminalRemoteMode) => void;
+  keepAlive: (activityActive: boolean, mode: TerminalRemoteMode) => void;
   rpcHandlerManager: {
     registerHandler: (name: 'switch', handler: SessionSwitchHandler) => void;
   };
@@ -22,7 +22,7 @@ export type TerminalRemoteModeControllerSession = {
 
 export function createTerminalRemoteModeController(params: {
   session: TerminalRemoteModeControllerSession;
-  getThinking: () => boolean;
+  getKeepAliveActive: () => boolean;
   resolveTerminalSwitchAvailability: () => Promise<TerminalSwitchAvailabilityResult>;
   requestSwitchToTerminalIfSupported: () => Promise<boolean>;
   mountRemoteUi: () => void;
@@ -61,7 +61,7 @@ export function createTerminalRemoteModeController(params: {
       '[runtime/mode/switching]',
       'publish_mode_state',
     );
-    params.session.keepAlive(params.getThinking(), nextMode);
+    params.session.keepAlive(params.getKeepAliveActive(), nextMode);
 
     if (nextMode === 'remote') {
       params.setRemoteUiAllowsSwitchToTerminal(canSwitchToTerminalFromRemote);

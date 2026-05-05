@@ -7,14 +7,15 @@ import type {
 } from './types';
 
 type BackgroundServiceRepairRemovedService = Extract<BackgroundServiceRepairAction, Readonly<{ kind: 'remove-service' }>>['service'];
-type BackgroundServiceRepairInstallDefaultFollowingService = Extract<
-  BackgroundServiceRepairAction,
-  Readonly<{ kind: 'install-default-following-service' }>
->;
+type BackgroundServiceRepairDefaultInstall = Extract<BackgroundServiceRepairAction, Readonly<{ kind: 'install-default-following-service' }>>;
+type AttemptedDefaultInstall = Readonly<{
+  action: BackgroundServiceRepairDefaultInstall;
+  rollbackUninstall: boolean;
+}>;
 
 function hasPreexistingExactDefaultTarget(
   plan: BackgroundServiceRepairPlan,
-  action: BackgroundServiceRepairInstallDefaultFollowingService,
+  action: BackgroundServiceRepairDefaultInstall,
 ): boolean {
   return plan.existingServices.some((service) =>
     service.serverId === 'default'
@@ -29,7 +30,7 @@ export async function applyBackgroundServiceRepairPlan(
 ): Promise<Readonly<{ executedActions: readonly string[] }>> {
   const executedActions: string[] = [];
   const removedServices: BackgroundServiceRepairRemovedService[] = [];
-  const installedDefaultFollowingServices: BackgroundServiceRepairInstallDefaultFollowingService[] = [];
+  const attemptedDefaultInstalls: AttemptedDefaultInstall[] = [];
 
   try {
     for (const action of plan.actions) {
@@ -53,15 +54,16 @@ export async function applyBackgroundServiceRepairPlan(
 
       const hadPreexistingExactDefaultTarget = hasPreexistingExactDefaultTarget(plan, action);
       if (!hadPreexistingExactDefaultTarget) {
-        installedDefaultFollowingServices.push(action);
+        attemptedDefaultInstalls.push({
+          action,
+          rollbackUninstall: true,
+        });
       }
       await installDaemonService({
         platform: runtime.platform,
         uid: runtime.uid ?? undefined,
         userHomeDir: runtime.userHomeDir,
         happierHomeDir: runtime.happierHomeDir,
-        nodePath: runtime.nodePath,
-        entryPath: runtime.entryPath,
         mode: action.mode,
         systemUser: runtime.systemUser || undefined,
         channel: action.releaseChannel,
@@ -70,7 +72,10 @@ export async function applyBackgroundServiceRepairPlan(
         runCommands: true,
       });
       if (hadPreexistingExactDefaultTarget) {
-        installedDefaultFollowingServices.push(action);
+        attemptedDefaultInstalls.push({
+          action,
+          rollbackUninstall: false,
+        });
       }
       executedActions.push(`install-default:${action.releaseChannel}`);
     }
@@ -78,22 +83,27 @@ export async function applyBackgroundServiceRepairPlan(
     return { executedActions };
   } catch (error) {
     const rollbackErrors: unknown[] = [];
-    for (const action of [...installedDefaultFollowingServices].reverse()) {
+    for (const attemptedInstall of [...attemptedDefaultInstalls].reverse()) {
+      if (!attemptedInstall.rollbackUninstall) {
+        continue;
+      }
       try {
         await uninstallDaemonService({
           platform: runtime.platform,
           uid: runtime.uid ?? undefined,
           userHomeDir: runtime.userHomeDir,
           happierHomeDir: runtime.happierHomeDir,
-          mode: action.mode,
-          channel: action.releaseChannel,
+          mode: attemptedInstall.action.mode,
+          channel: attemptedInstall.action.releaseChannel,
           targetMode: 'default-following',
+          instanceId: 'default',
           runCommands: true,
         });
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
     }
+
     for (const service of [...removedServices].reverse()) {
       try {
         await installDaemonService({
@@ -101,8 +111,6 @@ export async function applyBackgroundServiceRepairPlan(
           uid: runtime.uid ?? undefined,
           userHomeDir: runtime.userHomeDir,
           happierHomeDir: runtime.happierHomeDir,
-          nodePath: runtime.nodePath,
-          entryPath: runtime.entryPath,
           mode: service.mode,
           systemUser: runtime.systemUser || undefined,
           channel: service.releaseChannel,

@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
+const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 export function findRepoRoot(startDir: string): string {
   let dir = startDir;
@@ -383,7 +384,9 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
 
     const srcDir = packageName.startsWith(EXTENSIONS_PACKAGE_PREFIX)
       ? resolve(params.repoRoot, 'packages', 'extensions', packageName.slice(EXTENSIONS_PACKAGE_PREFIX.length))
-      : resolve(params.repoRoot, 'packages', workspaceName);
+      : packageName.startsWith(PLUGINS_PACKAGE_PREFIX)
+        ? resolve(params.repoRoot, 'packages', 'plugins', packageName.slice(PLUGINS_PACKAGE_PREFIX.length))
+        : resolve(params.repoRoot, 'packages', workspaceName);
 
     return {
       packageName,

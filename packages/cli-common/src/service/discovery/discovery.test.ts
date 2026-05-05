@@ -189,6 +189,9 @@ describe('service status readers', () => {
           'LoadState=loaded',
           'ActiveState=active',
           'SubState=running',
+          'Result=success',
+          'ExecMainStatus=0',
+          'NRestarts=3',
           'UnitFileState=enabled',
           'FragmentPath=/home/me/.config/systemd/user/happier-daemon.cloud.service',
           'MainPID=456',
@@ -199,9 +202,38 @@ describe('service status readers', () => {
       loadState: 'loaded',
       activeState: 'active',
       subState: 'running',
+      result: 'success',
+      execMainStatus: 0,
+      nRestarts: 3,
       unitFileState: 'enabled',
       fragmentPath: '/home/me/.config/systemd/user/happier-daemon.cloud.service',
       mainPid: 456,
+    });
+  });
+
+  it('treats blank or omitted numeric systemd fields as unknown', () => {
+    expect(
+      readSystemdUnitStatus({
+        output: [
+          'LoadState=loaded',
+          'ActiveState=inactive',
+          'SubState=dead',
+          'Result=exit-code',
+          'ExecMainStatus=',
+          'UnitFileState=disabled',
+          '',
+        ].join('\n'),
+      }),
+    ).toEqual({
+      loadState: 'loaded',
+      activeState: 'inactive',
+      subState: 'dead',
+      result: 'exit-code',
+      execMainStatus: null,
+      nRestarts: null,
+      unitFileState: 'disabled',
+      fragmentPath: null,
+      mainPid: null,
     });
   });
 

@@ -94,6 +94,61 @@ async function waitForPermissionRequestMessage(
   }
 }
 
+type TestResponseTarget = Readonly<{ kind: string } & Record<string, unknown>>;
+type TestPublishedRequest = Readonly<{
+  requestId: string;
+  toolName: string;
+  toolInput: unknown;
+  createdAt: number;
+  source?: string;
+  responseTarget?: TestResponseTarget | null;
+  sidechainId?: string | null;
+}>;
+type TestResponseTargetDispatch = Readonly<{
+  requestId: string;
+  responseTarget: TestResponseTarget;
+  completedRequest: Readonly<Record<string, unknown>>;
+}>;
+
+function createTestPermissionRequestStore(): Readonly<{
+  published: TestPublishedRequest[];
+  handlers: Map<string, (dispatch: TestResponseTargetDispatch) => void | PromiseLike<void>>;
+  store: Readonly<{
+    publishRequest: ReturnType<typeof vi.fn>;
+    registerResponseTargetHandler: ReturnType<typeof vi.fn>;
+  }>;
+}> {
+  const published: TestPublishedRequest[] = [];
+  const handlers = new Map<string, (dispatch: TestResponseTargetDispatch) => void | PromiseLike<void>>();
+  return {
+    published,
+    handlers,
+    store: {
+      publishRequest: vi.fn((params: TestPublishedRequest) => {
+        published.push(params);
+      }),
+      registerResponseTargetHandler: vi.fn((
+        kind: string,
+        handler: (dispatch: TestResponseTargetDispatch) => void | PromiseLike<void>,
+      ) => {
+        handlers.set(kind, handler);
+        return vi.fn();
+      }),
+    },
+  };
+}
+
+async function waitForPublishedRequest(
+  published: ReadonlyArray<TestPublishedRequest>,
+  timeoutMs = 500,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (published.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
   backendId: string;
   runtimeKind: string;
@@ -243,7 +298,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
     }));
   });
 
-  it('routes prompt-capable permission requests through the parent-session envelope', async () => {
+  it('publishes prompt-capable permission requests through AgentStateRequestStore', async () => {
     const sent: Array<{
       provider: string;
       body: AgentMessage;
@@ -258,6 +313,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
     });
 
     mockRuntimeCore(createExecutionRunHostRuntimeFromRuntimeTurnOperations(operations));
+    const permissionRequests = createTestPermissionRequestStore();
     const { ExecutionRunHostBridge } = await import('./ExecutionRunHostBridge');
     const bridge = new ExecutionRunHostBridge({
       parentProvider: 'acme.runtime.provider' as never,
@@ -266,6 +322,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
         sent.push({ provider, body: body as AgentMessage, opts });
       },
       getNowMs: () => 1_700_000_000_000,
+      getPermissionRequestStore: () => permissionRequests.store,
     });
 
     const started = await bridge.start({
@@ -279,18 +336,29 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
       ioMode: 'streaming',
     });
 
-    await waitForPermissionRequestMessage(sent);
+    await waitForPublishedRequest(permissionRequests.published);
 
-    const permissionRequest = sent.find((entry) => entry.body.type === 'permission-request');
-    expect(permissionRequest).toBeDefined();
-    expect(permissionRequest).toEqual(expect.objectContaining({
-      provider: 'acme.runtime.provider',
-      body: expect.objectContaining({
-        type: 'permission-request',
-        permissionId: 'provider-request-1',
-        toolName: 'write',
-        description: 'write',
-        options: expect.objectContaining({
+    expect(sent.filter((entry) => entry.body.type === 'permission-request')).toHaveLength(0);
+    expect(permissionRequests.store.registerResponseTargetHandler).toHaveBeenCalledWith(
+      'execution_run_host_bridge',
+      expect.any(Function),
+    );
+    expect(permissionRequests.store.publishRequest).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'provider-request-1',
+      toolName: 'write',
+      source: 'execution_run',
+      sidechainId: started.sidechainId,
+      responseTarget: expect.objectContaining({
+        kind: 'execution_run_host_bridge',
+        sessionId: 'parent-session-1',
+        runId: started.runId,
+        callId: started.callId,
+        sidechainId: started.sidechainId,
+        backendId: 'acme.runtime.backend',
+        runtimeKind: 'native',
+        providerRequestId: 'provider-request-1',
+      }),
+      toolInput: expect.objectContaining({
           input: {
             path: '/tmp/execution-run-permission.txt',
           },
@@ -314,7 +382,6 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
               providerRequestId: 'provider-request-1',
             }),
           }),
-        }),
       }),
     }));
   });
@@ -512,7 +579,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
     ]);
   });
 
-  it('routes parent-session permission responses back through the execution-run runtime', async () => {
+  it('routes AgentStateRequestStore response-target dispatches back through the execution-run runtime', async () => {
     const calls: string[] = [];
     const handlers = new Set<RuntimeTurnMessageHandler>();
     const operations: RuntimeTurnOperations = {
@@ -555,6 +622,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
     }> = [];
 
     mockRuntimeCore(createExecutionRunHostRuntimeFromRuntimeTurnOperations(operations));
+    const permissionRequests = createTestPermissionRequestStore();
     const { ExecutionRunHostBridge } = await import('./ExecutionRunHostBridge');
     const bridge = new ExecutionRunHostBridge({
       parentProvider: 'acme.runtime.provider' as never,
@@ -563,6 +631,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
         sent.push({ provider, body: body as AgentMessage, opts });
       },
       getNowMs: () => 1_700_000_000_000,
+      getPermissionRequestStore: () => permissionRequests.store,
     });
 
     const started = await bridge.start({
@@ -576,25 +645,25 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
       ioMode: 'streaming',
     });
 
-    await waitForPermissionRequestMessage(sent);
+    await waitForPublishedRequest(permissionRequests.published);
 
-    await expect(bridge.applyAction(started.runId, {
-      actionId: 'permission.respond',
-      input: {
-        requestId: 'provider-request-1',
-        approved: true,
-        responseTarget: {
-          kind: 'execution_run_host_bridge',
-          sessionId: 'parent-session-1',
-          runId: started.runId,
-          callId: started.callId,
-          sidechainId: started.sidechainId,
-          backendId: 'runtime-turn.backend',
-          runtimeKind: 'native',
-          providerRequestId: 'provider-request-1',
-        },
+    const published = permissionRequests.published[0];
+    expect(published?.responseTarget).toEqual(expect.objectContaining({
+      kind: 'execution_run_host_bridge',
+      runId: started.runId,
+      providerRequestId: 'provider-request-1',
+    }));
+    const handler = permissionRequests.handlers.get('execution_run_host_bridge');
+    expect(handler).toBeTypeOf('function');
+    await handler!({
+      requestId: 'provider-request-1',
+      responseTarget: published.responseTarget!,
+      completedRequest: {
+        status: 'approved',
+        decision: 'approved',
+        responseTarget: published.responseTarget!,
       },
-    })).resolves.toEqual({ ok: true });
+    });
 
     expect(calls).toContain('respondToPermission:provider-request-1:true');
     expect(sent.some((entry) => entry.body.type === 'permission-response')).toBe(true);

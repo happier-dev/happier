@@ -1220,6 +1220,68 @@ describe('happier session send (integration)', () => {
     }
   });
 
+  it('falls back to committed socket send when active-session RPC reports session_not_found', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const sessionId = 'sess_integration_send_123';
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    sessionActive = true;
+    sessionActiveAt = 2;
+
+    const rpcSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [, ack] = args as [unknown, ((answer: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) {
+          throw new Error(`Unexpected socket event: ${event}`);
+        }
+        ack?.({ ok: false, error: 'stale active session rpc', errorCode: 'session_not_found' });
+      },
+    });
+    const committedSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [payload, ack] = args as [any, ((answer: any) => void) | undefined];
+        if (event !== 'message') {
+          throw new Error(`Unexpected socket event: ${event}`);
+        }
+        const content = payload?.message;
+        if (content?.t === 'encrypted') {
+          const decrypted = decryptWithDataKeyFn!(
+            decodeBase64Fn!(String(content?.c ?? ''), 'base64'),
+            dek!,
+          );
+          receivedMessages.push(decrypted);
+        }
+        ack?.({ ok: true, id: 'm1', seq: 2, localId: payload?.localId ?? null, didWrite: true });
+      },
+    });
+    bindApiSessionSocketSequenceMock(mockIo, [rpcSocket, committedSocket]);
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(['send', sessionId, 'Fallback after session_not_found', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_send');
+      expect(receivedMessages.at(-1)).toMatchObject({
+        role: 'user',
+        content: { type: 'text', text: 'Fallback after session_not_found' },
+      });
+    } finally {
+      output.restore();
+    }
+  });
+
   it('does not retry via committed socket send after an active-session RPC timeout', async () => {
     const { handleSessionCommand } = await import('./index');
 

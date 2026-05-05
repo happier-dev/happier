@@ -27,7 +27,6 @@ export type ClaudeSdkRuntimeState = {
   pendingTurn: PendingClaudeTurn | null;
   pendingTurnCompletion: Promise<void> | null;
   ignoreNextNonSuccessResult: boolean;
-  didSendChangeTitleInstructionForSession: boolean;
   currentTurnOrdinal: number;
   settledTurnOrdinal: number;
   toolNameByCallId: Map<string, string>;
@@ -64,7 +63,6 @@ export function createClaudeSdkRuntimeState(): ClaudeSdkRuntimeState {
     pendingTurn: null,
     pendingTurnCompletion: null,
     ignoreNextNonSuccessResult: false,
-    didSendChangeTitleInstructionForSession: false,
     currentTurnOrdinal: 0,
     settledTurnOrdinal: 0,
     toolNameByCallId: new Map<string, string>(),

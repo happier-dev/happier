@@ -14,7 +14,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { projectPath } from '@/projectPath';
-import { resolvePackagedRuntimeEntrypoint } from '@/runtime/resolvePackagedRuntimeEntrypoint';
+import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
 import { materializeMcpServerConfigRecord } from './materializeMcpServerConfigRecord';

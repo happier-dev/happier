@@ -5,6 +5,7 @@ import type {
 
 import { resolveCodexAppServerCollaborationModeSelection } from '../sessionControlsMetadata';
 import {
+    isCodexAppServerAuthAccountChangedError,
     readTurnId,
     trimSessionId,
     trimStringValue,
@@ -18,6 +19,9 @@ type PendingTurn = Readonly<{
     resolve: () => void;
     reject: (error: Error) => void;
 }>;
+
+const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_RECOVERY_STATUS_MESSAGE =
+    'Codex detected that the signed-in account changed and refused to continue in the current process. Restarting the Codex process and resuming this session...';
 
 export function createCodexAppServerRuntimeOperations(params: Readonly<{
     ensureClient: () => Promise<Readonly<{
@@ -53,6 +57,7 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
     setThinking: (value: boolean) => void;
     publishSessionControls: () => Promise<void>;
     disposeClient: () => Promise<void>;
+    sendSessionStatusMessage: (message: string) => void;
 }>): Readonly<{
     setSessionMode: (mode: string) => Promise<void>;
     setSessionModel: (model: string) => Promise<void>;
@@ -154,59 +159,73 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
     };
 
     const sendPrompt = async (prompt: string): Promise<void> => {
-        const activeThreadId = params.getThreadId();
-        if (!activeThreadId) {
-            throw new Error('Codex app-server sendPrompt requires an active thread');
-        }
-        if (params.getPendingTurn()) {
-            throw new Error('Codex app-server already has a turn in flight');
-        }
-        const client = await params.ensureClient();
-        params.setPendingTurnStartSeqInclusive(params.readLastObservedMessageSeq());
-        params.beginTurnDiffProjection();
-        const activeTurn = params.createPendingTurn(activeThreadId);
-        params.setPendingTurn(activeTurn);
-        params.setLatestPendingTurnId(null);
-        params.setTurnInFlight(true);
-        params.setThinking(true);
-        try {
-            // null policy (Happier 'default') → omit approvalPolicy/sandboxPolicy so Codex uses ~/.codex/config.toml.
-            const policy = params.resolveCurrentPolicy();
-            const policyFields = policy
-                ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy }
-                : {};
-            const currentModeId = params.getCurrentModeId();
-            const collaborationMode = currentModeId
-                ? resolveCodexAppServerCollaborationModeSelection({
-                    modesResponse: await client.request('collaborationMode/list', {}),
-                    modelsResponse: await client.request('model/list', {}),
-                    modeId: currentModeId,
-                    currentModelId: params.getCurrentModelId(),
-                    currentReasoningEffort: params.getCurrentReasoningEffort(),
-                })?.payload
-                : null;
-            const currentServiceTier = params.getCurrentServiceTier();
-            const response = await client.request('turn/start', {
-                threadId: activeThreadId,
-                input: [{ type: 'text', text: prompt }],
-                ...(params.getCurrentModelId() ? { model: params.getCurrentModelId() } : {}),
-                ...(params.getCurrentReasoningEffort() ? { effort: params.getCurrentReasoningEffort() } : {}),
-                ...(params.hasServiceTierOverride()
-                    ? (currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null })
-                    : {}),
-                ...policyFields,
-                ...(collaborationMode ? { collaborationMode } : {}),
-            });
-            const startedTurnId = readTurnId(response);
-            if (startedTurnId) {
-                params.setPendingTurn({ ...activeTurn, turnId: startedTurnId });
-                params.setLatestPendingTurnId(startedTurnId);
+        let recoveredAuthAccountChange = false;
+        while (true) {
+            const activeThreadId = params.getThreadId();
+            if (!activeThreadId) {
+                throw new Error('Codex app-server sendPrompt requires an active thread');
             }
-            await (params.getPendingTurn() ?? activeTurn).promise;
-        } catch (error) {
-            const failure = error instanceof Error ? error : new Error(String(error));
-            await params.finishPendingTurn({ error: failure, flushReason: 'abort' });
-            throw failure;
+            if (params.getPendingTurn()) {
+                throw new Error('Codex app-server already has a turn in flight');
+            }
+            const client = await params.ensureClient();
+            params.setPendingTurnStartSeqInclusive(params.readLastObservedMessageSeq());
+            params.beginTurnDiffProjection();
+            const activeTurn = params.createPendingTurn(activeThreadId);
+            params.setPendingTurn(activeTurn);
+            params.setLatestPendingTurnId(null);
+            params.setTurnInFlight(true);
+            params.setThinking(true);
+            try {
+                // null policy (Happier 'default') → omit approvalPolicy/sandboxPolicy so Codex uses ~/.codex/config.toml.
+                const policy = params.resolveCurrentPolicy();
+                const policyFields = policy
+                    ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy }
+                    : {};
+                const currentModeId = params.getCurrentModeId();
+                const collaborationMode = currentModeId
+                    ? resolveCodexAppServerCollaborationModeSelection({
+                        modesResponse: await client.request('collaborationMode/list', {}),
+                        modelsResponse: await client.request('model/list', {}),
+                        modeId: currentModeId,
+                        currentModelId: params.getCurrentModelId(),
+                        currentReasoningEffort: params.getCurrentReasoningEffort(),
+                    })?.payload
+                    : null;
+                const currentServiceTier = params.getCurrentServiceTier();
+                const response = await client.request('turn/start', {
+                    threadId: activeThreadId,
+                    input: [{ type: 'text', text: prompt }],
+                    ...(params.getCurrentModelId() ? { model: params.getCurrentModelId() } : {}),
+                    ...(params.getCurrentReasoningEffort() ? { effort: params.getCurrentReasoningEffort() } : {}),
+                    ...(params.hasServiceTierOverride()
+                        ? (currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null })
+                        : {}),
+                    ...policyFields,
+                    ...(collaborationMode ? { collaborationMode } : {}),
+                });
+                const startedTurnId = readTurnId(response);
+                if (startedTurnId) {
+                    params.setPendingTurn({ ...activeTurn, turnId: startedTurnId });
+                    params.setLatestPendingTurnId(startedTurnId);
+                }
+                await (params.getPendingTurn() ?? activeTurn).promise;
+                return;
+            } catch (error) {
+                const failure = error instanceof Error ? error : new Error(String(error));
+                await params.finishPendingTurn({ error: failure, flushReason: 'abort' });
+                if (!recoveredAuthAccountChange && isCodexAppServerAuthAccountChangedError(failure)) {
+                    recoveredAuthAccountChange = true;
+                    params.sendSessionStatusMessage(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_RECOVERY_STATUS_MESSAGE);
+                    await params.disposeClient();
+                    await params.startOrLoad({
+                        existingSessionId: activeThreadId,
+                        preserveRequestedThreadId: true,
+                    });
+                    continue;
+                }
+                throw failure;
+            }
         }
     };
 

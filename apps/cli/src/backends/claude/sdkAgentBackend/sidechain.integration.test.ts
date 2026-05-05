@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { SessionId } from '@/agent/core/AgentBackend';
-import { ExecutionRunManager } from '@/agent/executionRuns/runtime/ExecutionRunManager';
+import { ExecutionRunHostBridge as ExecutionRunManager } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};

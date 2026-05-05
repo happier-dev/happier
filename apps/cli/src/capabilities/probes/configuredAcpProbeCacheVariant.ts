@@ -6,8 +6,8 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { resolveConfiguredAcpBackendFromPluginBackendDefinition } from '@/agent/acp/catalog/configured/resolveBackend';
 import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { CatalogAgentLookupId } from '@/backends/types';
-import { resolveLocalPathPluginSource } from '@/extensions/sources/localPath';
-import { createPluginStateStore } from '@/extensions/store/state';
+import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
+import { createPluginStateStore } from '@/plugins/store/state';
 import { isConfiguredAcpProbeTarget } from './isConfiguredAcpProbeTarget';
 
 function sortJsonValue(value: unknown): unknown {
@@ -51,7 +51,7 @@ async function resolveConfiguredAcpBackendFromPluginState(params: Readonly<{
       continue;
     }
 
-    const rawBackend = resolvedSource.manifest.contributions.backends.find((entry) => entry.id === params.backendId) ?? null;
+    const rawBackend = resolvedSource.manifest.contributes.backends.find((entry) => entry.id === params.backendId) ?? null;
     const backend = resolveConfiguredAcpBackendFromPluginBackendDefinition(rawBackend, params.backendId);
     if (backend) {
       return backend;

@@ -238,11 +238,21 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
   return recovered;
 }
 
+type OrphanedDeadDaemonSession = Readonly<{
+  sessionId: string;
+  pid: number;
+}>;
+
+export type ReattachTrackedSessionsFromMarkersResult = Readonly<{
+  orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
+}>;
+
 export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   credentials?: Credentials | null;
-}>): Promise<void> {
+}>): Promise<ReattachTrackedSessionsFromMarkersResult> {
   const { pidToTrackedSession, credentials } = params;
+  const orphanedDeadDaemonSessions: OrphanedDeadDaemonSession[] = [];
 
   // On daemon restart, reattach to still-running sessions via disk markers (stack-scoped by HAPPIER_HOME_DIR).
   try {
@@ -254,6 +264,13 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         process.kill(marker.pid, 0);
         aliveMarkers.push(marker);
       } catch {
+        const sessionId = typeof marker.happySessionId === 'string' ? marker.happySessionId.trim() : '';
+        if (marker.startedBy === 'daemon' && sessionId) {
+          orphanedDeadDaemonSessions.push({
+            sessionId,
+            pid: marker.pid,
+          });
+        }
         await removeSessionMarker(marker.pid);
         continue;
       }
@@ -298,4 +315,21 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   } catch (e) {
     logger.debug('[DAEMON RUN] Failed to reattach sessions from disk markers', e);
   }
+
+  const recoveredDaemonSessionIds = new Set(
+    Array.from(pidToTrackedSession.values())
+      .filter((trackedSession) => trackedSession.startedBy === 'daemon')
+      .map((trackedSession) => trackedSession.happySessionId)
+      .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0),
+  );
+
+  return {
+    orphanedDeadDaemonSessions: Array.from(
+      new Map(
+        orphanedDeadDaemonSessions
+          .filter((session) => !recoveredDaemonSessionIds.has(session.sessionId))
+          .map((session) => [session.sessionId, session] as const),
+      ).values(),
+    ),
+  };
 }

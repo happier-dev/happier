@@ -1,15 +1,18 @@
 import chalk from 'chalk';
 import { spawn } from 'node:child_process';
+import { hostname } from 'node:os';
 
-import { inferAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
+import { getAgentLocalControlCapability, inferAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
+import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { configuration } from '@/configuration';
 import { readCredentials, readSettings, type Credentials, type Settings } from '@/persistence';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
-import { createProviderAttachStatePublisher } from '@/agent/runtimeSwitching/createAttachStatePublisher';
+import { createAgentAttachStatePublisher } from '@/agent/runtime/mode/switching/createAttachStatePublisher';
 import {
   readTerminalAttachmentInfo,
   type TerminalAttachmentInfo,
@@ -20,7 +23,8 @@ import { focusWindowsTerminalWindow } from '@/terminal/attachment/windowsTermina
 import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleAttach';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
-import { buildAttachSelectionModel } from './attachInteractiveSelection';
+import { buildAttachSelectionModel, formatAttachIneligibilityFooter } from './attachInteractiveSelection';
+import { explainAttachIneligibility, type AgentAttachStrategyForExplainer } from '@/session/attach/explainAttachIneligibility';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -60,6 +64,7 @@ type AttachCommandDeps = Readonly<{
   runTmuxAttachFn?: (params: {
     sessionId: string;
     terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
+    refreshRemoteControl?: boolean;
   }) => Promise<number>;
   runWindowsTerminalAttachFn?: (params: {
     sessionId: string;
@@ -71,13 +76,15 @@ type AttachCommandDeps = Readonly<{
   }) => Promise<number>;
   runProviderAttachFn?: (params: {
     agentId: AgentId;
+    backendId: string;
     sessionId: string;
     metadata: Record<string, unknown>;
   }) => Promise<number | false>;
-  createProviderAttachStatePublisherFn?: typeof createProviderAttachStatePublisher;
+  createProviderAttachStatePublisherFn?: typeof createAgentAttachStatePublisher;
   canUseInkSelectorFn?: () => boolean;
   selectAttachableSessionIdFn?: (params: {
     rows: SessionActionSelectorRow[];
+    footerHint?: string | null;
     probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
   }) => Promise<
     | { type: 'selected'; sessionId: string }
@@ -97,6 +104,7 @@ type ResolvedAttachContext = Readonly<{
 async function defaultRunTmuxAttach(params: {
   sessionId: string;
   terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
+  refreshRemoteControl?: boolean;
 }, deps?: Readonly<{
   isTmuxAvailableFn?: typeof isTmuxAvailable;
 }>): Promise<number> {
@@ -136,6 +144,14 @@ async function defaultRunTmuxAttach(params: {
   if (selectExit !== 0) {
     console.error(chalk.red('Error:'), `Failed to select tmux window (${plan.target}).`);
     return selectExit;
+  }
+
+  if (params.refreshRemoteControl === true) {
+    await spawnTmux({
+      args: ['send-keys', '-t', plan.target, 'C-l'],
+      env,
+      stdio: 'ignore',
+    });
   }
 
   if (!plan.shouldAttach) return 0;
@@ -182,6 +198,10 @@ function printMissingAttachInfo(sessionId: string): void {
   console.error(chalk.gray('This usually means the session was not started with an attachable terminal host, or it was started on another machine.'));
 }
 
+function shouldRefreshRemoteControlOnAttach(metadata: Record<string, unknown> | null): boolean {
+  return metadata?.startedBy === 'daemon';
+}
+
 async function resolveAttachContext(
   sessionIdOrPrefix: string,
   deps: AttachCommandDeps,
@@ -219,6 +239,7 @@ function isAttachSuccess(exitCode: number | false): boolean {
 
 async function selectAttachableSessionId(params: Readonly<{
   rows: SessionActionSelectorRow[];
+  footerHint?: string | null;
   probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
 }>): Promise<
   | { type: 'selected'; sessionId: string }
@@ -229,10 +250,17 @@ async function selectAttachableSessionId(params: Readonly<{
   return await runSessionActionSelector({
     title: 'Attach to a running session',
     actionVerb: 'attach',
-    footerHint: 'Use `happier resume` for stopped sessions.',
+    footerHint: params.footerHint ?? 'Use `happier resume` for stopped sessions.',
     rows: params.rows,
     onProbe: params.probeSessionIdFn,
   });
+}
+
+function resolveAgentAttachStrategy(agentId: AgentId | string | null | undefined): AgentAttachStrategyForExplainer {
+  if (!agentId) return null;
+  const capability = getAgentLocalControlCapability(agentId as AgentId);
+  if (!capability) return 'unsupported';
+  return capability.attachStrategy;
 }
 
 export async function handleAttachCommand(
@@ -260,13 +288,13 @@ export async function handleAttachCommand(
   }));
   const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;
   const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
-  const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ agentId, sessionId, metadata }) => {
-    const providerAttachOps = (await getSessionHostBridge().resolveExecutionSurfaces(agentId)).attach;
+  const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ backendId, sessionId, metadata }) => {
+    const providerAttachOps = (await getSessionHostBridge().resolveExecutionSurfaces(backendId)).attach;
     if (!providerAttachOps) return 1;
     return await providerAttachOps.runAttach({ sessionId, metadata });
   });
   const createProviderAttachStatePublisherFn =
-    deps.createProviderAttachStatePublisherFn ?? createProviderAttachStatePublisher;
+    deps.createProviderAttachStatePublisherFn ?? createAgentAttachStatePublisher;
   const canUseInkSelectorFn = deps.canUseInkSelectorFn ?? canUseInkSelector;
   const selectAttachableSessionIdFn = deps.selectAttachableSessionIdFn ?? selectAttachableSessionId;
 
@@ -292,18 +320,21 @@ export async function handleAttachCommand(
     currentMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
       ? settings.machineId.trim()
       : null;
-    if (!currentMachineId) {
-      console.error(chalk.red('Error:'), 'Current machine id is unavailable. Start the daemon or reconnect this machine first.');
-      process.exit(1);
-    }
     const selectionModel = await buildAttachSelectionModel({
       credentials: credentialsForInteractive,
       currentMachineId,
+      currentMachineHost: hostname(),
       fetchSessionsPageFn,
       readTerminalAttachmentInfoFn,
+      isTmuxAvailableFn: deps.isTmuxAvailableFn ?? isTmuxAvailable,
+      accountSettings: await bootstrapAccountSettingsContext({
+        credentials: credentialsForInteractive,
+        mode: 'fast',
+      }).then((ctx) => ctx.settings).catch(() => accountSettingsParse({})),
     });
     const selected = await selectAttachableSessionIdFn({
       rows: selectionModel.rows,
+      footerHint: formatAttachIneligibilityFooter(selectionModel.hint) ?? 'Use `happier resume` for stopped sessions.',
       probeSessionIdFn: selectionModel.probeSessionIdFn,
     });
     if (selected.type === 'cancelled') {
@@ -311,8 +342,8 @@ export async function handleAttachCommand(
       return;
     }
     if (selected.type === 'none') {
-      console.log('No active local sessions found.');
-      console.log('Hint: use `happier resume` for stopped sessions.');
+      console.log('No active sessions on this machine.');
+      console.log('Hint: use `happier resume` for stopped sessions, or `happier session list --active` to see remote sessions.');
       return;
     }
     sessionIdOrPrefix = selected.sessionId;
@@ -341,13 +372,22 @@ export async function handleAttachCommand(
       credentials: context.credentials,
       rawSession: context.rawSession,
       currentMachineId: effectiveMachineId,
+      currentMachineHost: hostname(),
       localAttachmentInfo: localInfo,
       insideTmux: Boolean(process.env.TMUX),
       currentTmuxSocketPath: typeof process.env.TMUX === 'string' ? process.env.TMUX.split(',')[0]?.trim() || null : null,
     });
 
     if (!eligibility.eligible) {
-      console.error(chalk.red('Error:'), eligibility.reason);
+      const explanation = explainAttachIneligibility({
+        eligibility,
+        metadata: eligibility.metadata,
+        currentMachineHost: hostname(),
+        tmuxAvailable: await (deps.isTmuxAvailableFn ?? isTmuxAvailable)(),
+        agentAttachStrategy: resolveAgentAttachStrategy(eligibility.agentId ?? context.agentId),
+      });
+      console.error(chalk.red('Error:'), explanation.fullReason);
+      if (explanation.nextStepHint) console.error(chalk.gray(explanation.nextStepHint));
       process.exit(1);
     }
 
@@ -365,6 +405,7 @@ export async function handleAttachCommand(
       try {
         exitCode = await runProviderAttachFn({
           agentId: eligibility.agentId,
+          backendId: eligibility.backendId,
           sessionId: resolvedSessionId,
           metadata: eligibility.metadata,
         });
@@ -383,6 +424,7 @@ export async function handleAttachCommand(
         exitCode = await runTmuxAttachFn({
           sessionId: resolvedSessionId,
           terminal: eligibility.terminal,
+          refreshRemoteControl: shouldRefreshRemoteControlOnAttach(eligibility.metadata),
         });
         break;
       case 'windows_terminal_host':

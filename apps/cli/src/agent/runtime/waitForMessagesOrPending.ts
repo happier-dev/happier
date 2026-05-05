@@ -11,6 +11,7 @@ export type MessageBatch<Mode, Message> = {
 export async function waitForMessagesOrPending<Mode, Message>(opts: {
   messageQueue: MessageQueue2<Mode, Message>;
   abortSignal: AbortSignal;
+  beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   popPendingMessage: () => Promise<boolean>;
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   onMetadataUpdate?: (() => void | Promise<void>) | null;
@@ -27,7 +28,11 @@ export async function waitForMessagesOrPending<Mode, Message>(opts: {
     }
 
     // Give pending queue a chance to materialize a message before we park.
-    await opts.popPendingMessage();
+    // Terminal-mode handoff policy can veto this so server-owned pending rows
+    // stay queued until the shared remote loop is the delivery owner.
+    if (await (opts.beforePendingMaterialize?.() ?? true)) {
+      await opts.popPendingMessage();
+    }
 
     // If queue is still empty, wait for either:
     // - a new transcript message (via normal update delivery), OR

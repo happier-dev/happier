@@ -21,7 +21,7 @@ type RawSessionLike = Readonly<{
   encryptionMode?: unknown;
 }>;
 
-type ProviderAttachPublisher = Readonly<{
+type AgentAttachPublisher = Readonly<{
   publishAttached: (attached: boolean) => Promise<void>;
 }>;
 
@@ -32,9 +32,8 @@ type SocketLike = Readonly<{
   on: (event: string, handler: (...args: any[]) => void) => void;
 }>;
 
-export function createProviderAttachStatePublisher(params: Readonly<{
+export function createAgentAttachStatePublisher(params: Readonly<{
   agentId: AgentId;
-  backendId?: string;
   sessionId: string;
   credentials: Credentials;
   rawSession: RawSessionLike;
@@ -42,7 +41,7 @@ export function createProviderAttachStatePublisher(params: Readonly<{
   waitForSocketConnectFn?: typeof waitForSocketConnect;
   updateSessionAgentStateWithAckFn?: typeof updateSessionAgentStateWithAck;
   connectTimeoutMs?: number;
-}>): ProviderAttachPublisher | null {
+}>): AgentAttachPublisher | null {
   const capability = getAgentLocalControlCapability(params.agentId);
   if (!capability || capability.attachStrategy !== 'provider_attach') return null;
 

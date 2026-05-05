@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { CapabilitiesDescribeResponse, CapabilitiesInvokeResponse } from '@/capabilities/types';
 import { reloadConfiguration } from '@/configuration';
-import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/extensions/testkit/marketplaceCatalog';
-import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/extensions/testkit/samplePackage';
+import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/plugins/testkit/marketplaceCatalog';
+import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 

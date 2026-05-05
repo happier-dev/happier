@@ -350,13 +350,13 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
     queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
 
     const runtime = {
-      beginTurn: vi.fn(),
-      startOrLoad: vi.fn(async () => {}),
-      sendPrompt: vi.fn(async () => {}),
+      beginTurnLifecycle: vi.fn(),
+      startOrLoadSession: vi.fn(async () => {}),
+      sendTurnPrompt: vi.fn(async () => {}),
       sendPromptWithMeta: vi.fn(async () => {}),
-      flushTurn: vi.fn(),
-      reset: vi.fn(async () => {}),
-      getSessionId: vi.fn(() => 'remote-session-1'),
+      waitForTurnCompletion: vi.fn(async () => {}),
+      resetOrDisposeRuntime: vi.fn(async () => {}),
+      readSessionIdentity: vi.fn(() => ({ sessionId: 'remote-session-1' })),
       shouldResumeAfterPermissionModeChange: vi.fn(() => true),
     } as any;
 

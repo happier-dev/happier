@@ -1,5 +1,5 @@
-import { createPluginStateStore } from '@/extensions/store/state';
-import { pluginReloadController } from '@/extensions/reload/singleton';
+import { createPluginStateStore } from '@/plugins/store/state';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 import type { HappierBuiltInToolDispatchResult } from './types';
 

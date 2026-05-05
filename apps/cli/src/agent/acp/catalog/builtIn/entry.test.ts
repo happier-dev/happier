@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   CliEngineAdapter,
-  CliRuntimeBindings,
+  CliRuntimeCore,
 } from '@/agent/runtime/registry/engineRegistryTypes';
 
 const { loadBuiltInRuntimeOwnersMock } = vi.hoisted(() => ({
@@ -15,12 +15,12 @@ vi.mock('./runtimeOwners', () => ({
 
 import { createBuiltInEntry } from './entry';
 
-function readBoundBindings(value: CliEngineAdapter | null | undefined): CliRuntimeBindings | null | undefined {
-  return value?.bindings;
+function readBoundRuntimeCore(value: CliEngineAdapter | null | undefined): CliRuntimeCore | null | undefined {
+  return value?.runtimeCore;
 }
 
 describe('createBuiltInEntry', () => {
-  it('resolves host bindings through the built-in runtime owner', async () => {
+  it('resolves host runtimeCore through the built-in runtime owner', async () => {
     const createRuntime = vi.fn(() => ({ kind: 'kiro-backend' }));
     const createHostSessionRuntimePlan = vi.fn(async (sessionParams: unknown) => ({
       kind: 'hostSessionRuntimePlan' as const,
@@ -36,10 +36,10 @@ describe('createBuiltInEntry', () => {
     });
 
     const entry = createBuiltInEntry('kiro');
-    const bindingFactory = await entry.getBindings?.();
+    const bindingFactory = await entry.getRuntimeCore?.();
     expect(bindingFactory).toBeTypeOf('function');
 
-    const bindings = readBoundBindings(await bindingFactory?.({
+    const runtimeCore = readBoundRuntimeCore(await bindingFactory?.({
       backend: {
         id: 'kiro',
         providerId: 'kiro',
@@ -65,7 +65,7 @@ describe('createBuiltInEntry', () => {
       credentials: { token: 'token' },
       marker: 'kiro',
     };
-    await expect(bindings?.createSessionRuntime(sessionParams)).resolves.toEqual(expect.objectContaining({
+    await expect(runtimeCore?.createSessionRuntime(sessionParams)).resolves.toEqual(expect.objectContaining({
       kind: 'hostSessionRuntimePlan',
       providerId: 'kiro',
       opts: sessionParams,

@@ -10,7 +10,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('./cli/capability')).cliCapability,
   getCliDetect: async () => (await import('./cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('./cli/auth/piCliAuthSpec')).piCliAuthSpec,
-  getBindings: async () => (await import('./bindings/index')).createPiBindings(),
+  getRuntimeCore: async () => (await import('./runtimeCore/index')).createPiRuntimeCore(),
   getConnectedServicesMaterializer: async () =>
     (await import('./connectedServices/createPiConnectedServicesMaterializer'))
       .createPiConnectedServicesMaterializer(),

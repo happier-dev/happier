@@ -1,12 +1,15 @@
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
+    ScmBranchIntegrationRequest,
+    ScmBranchIntegrationResponse,
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
     ScmBranchCreateResponse,
     ScmBranchListRequest,
     ScmBranchListResponse,
+    ScmBranchOperationControlRequest,
     ScmCapabilities,
     ScmChangeApplyRequest,
     ScmChangeApplyResponse,
@@ -22,10 +25,16 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmRemoteAddRequest,
+    ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
     ScmRemotePublishResponse,
+    ScmRemoteRemoveRequest,
     ScmRemoteRequest,
     ScmRemoteResponse,
+    ScmRemoteSetUrlRequest,
+    ScmRepositoryInitRequest,
+    ScmRepositoryInitResponse,
     ScmRepoMode,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
@@ -230,6 +239,22 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmBranchCheckoutRequest;
     }): Promise<ScmBranchCheckoutResponse>;
+    branchMerge(input: {
+        context: ScmBackendContext;
+        request: ScmBranchIntegrationRequest;
+    }): Promise<ScmBranchIntegrationResponse>;
+    branchRebase(input: {
+        context: ScmBackendContext;
+        request: ScmBranchIntegrationRequest;
+    }): Promise<ScmBranchIntegrationResponse>;
+    branchOperationContinue(input: {
+        context: ScmBackendContext;
+        request: ScmBranchOperationControlRequest;
+    }): Promise<ScmBranchIntegrationResponse>;
+    branchOperationAbort(input: {
+        context: ScmBackendContext;
+        request: ScmBranchOperationControlRequest;
+    }): Promise<ScmBranchIntegrationResponse>;
     worktreeCreate(input: {
         context: ScmBackendContext;
         request: ScmWorktreeCreateRequest;
@@ -242,6 +267,18 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmWorktreePruneRequest;
     }): Promise<ScmWorktreePruneResponse>;
+    remoteAdd(input: {
+        context: ScmBackendContext;
+        request: ScmRemoteAddRequest;
+    }): Promise<ScmRemoteManagementResponse>;
+    remoteSetUrl(input: {
+        context: ScmBackendContext;
+        request: ScmRemoteSetUrlRequest;
+    }): Promise<ScmRemoteManagementResponse>;
+    remoteRemove(input: {
+        context: ScmBackendContext;
+        request: ScmRemoteRemoveRequest;
+    }): Promise<ScmRemoteManagementResponse>;
     remoteFetch(input: {
         context: ScmBackendContext;
         request: ScmRemoteRequest;
@@ -258,6 +295,10 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmRemotePublishRequest;
     }): Promise<ScmRemotePublishResponse>;
+    repositoryInit?(input: {
+        context: ScmBackendContext;
+        request: ScmRepositoryInitRequest;
+    }): Promise<ScmRepositoryInitResponse>;
     stashList(input: {
         context: ScmBackendContext;
         request: ScmStashListRequest;

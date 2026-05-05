@@ -3,7 +3,7 @@ import os from 'os';
 import { randomUUID } from 'node:crypto';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
-import type { Machine, MachineMetadata } from '@/api/types';
+import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
 import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/sessionHandoff/handlers';
 import { createFileTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { DirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
@@ -22,6 +22,17 @@ import { logger } from '@/ui/logger';
 import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { bindPluginDaemonConnectionStateSource } from '@/agent/runtime/registry/pluginConnectionStateSource';
+import type { Credentials } from '@/persistence';
+import { configuration } from '@/configuration';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
+import type { FeaturesResponse, PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol';
+import {
+  startPeerMediationLoopback,
+  type StartPeerMediationLoopbackInput,
+  type StartedPeerMediationLoopback,
+} from '../peer/mediation/rpc/startLoopback';
 
 type ConnectedServiceRefreshLoopHandle = Readonly<{
   stop: () => void;
@@ -29,10 +40,132 @@ type ConnectedServiceRefreshLoopHandle = Readonly<{
   resume: () => void;
 }>;
 
+type PeerMediationMachineRpcBootstrapConfig = Readonly<{
+  accountId?: string | null;
+  accountSigningSeed?: Uint8Array | null;
+  serverFeatures?: FeaturesResponse | null;
+  nowMs?: () => number;
+  endpointFingerprint?: () => string;
+  endpointTtlMs?: number;
+  host?: string;
+  port?: number;
+  localPerPeerMaxConcurrentCalls?: number;
+  stream?: StartPeerMediationLoopbackInput['stream'];
+  startPeerMediationLoopbackServer?: StartPeerMediationLoopbackInput['startPeerMediationLoopbackServer'];
+}>;
+
 type SavePreparedTargetLocalMetadataInput = Readonly<{
   remoteSessionId: string;
   exportMetadataOverlay: Record<string, unknown>;
 }>;
+
+const PEER_MEDIATION_MACHINE_RPC_FEATURES_TIMEOUT_MS = 1_500;
+
+function normalizeNonEmptyString(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? '';
+  return normalized ? normalized : null;
+}
+
+function resolveAccountIdFromCredentials(credentials: Credentials | undefined): string | null {
+  if (!credentials) return null;
+  const payload = decodeJwtPayload(credentials.token);
+  return typeof payload?.sub === 'string' ? normalizeNonEmptyString(payload.sub) : null;
+}
+
+function resolveAccountSigningSeed(params: Readonly<{
+  config: PeerMediationMachineRpcBootstrapConfig | undefined;
+  credentials: Credentials | undefined;
+  machine: Machine;
+}>): Uint8Array | null {
+  if (params.config?.accountSigningSeed && params.config.accountSigningSeed.length > 0) {
+    return params.config.accountSigningSeed;
+  }
+  if (params.credentials?.encryption.type === 'legacy') {
+    return params.credentials.encryption.secret;
+  }
+  if (params.machine.encryptionVariant === 'legacy' && params.machine.encryptionKey.length > 0) {
+    return params.machine.encryptionKey;
+  }
+  return null;
+}
+
+async function resolvePeerMediationMachineRpcServerFeatures(
+  config: PeerMediationMachineRpcBootstrapConfig | undefined,
+): Promise<FeaturesResponse | null> {
+  if (config?.serverFeatures !== undefined) {
+    return config.serverFeatures;
+  }
+  const snapshot = await fetchServerFeaturesSnapshot({
+    serverUrl: configuration.serverUrl,
+    timeoutMs: PEER_MEDIATION_MACHINE_RPC_FEATURES_TIMEOUT_MS,
+  });
+  return snapshot.status === 'ready' ? snapshot.features : null;
+}
+
+function mergePeerMediationLoopbackEndpoint(
+  state: DaemonState | null,
+  endpoint: PeerLoopbackEndpointCandidateV1,
+  activeFlows: StartedPeerMediationLoopback['activeFlows'],
+): DaemonState {
+  const base: DaemonState = state ?? { status: 'running' };
+  return {
+    ...base,
+    peerMediation: {
+      ...base.peerMediation,
+      loopback: {
+        ...base.peerMediation?.loopback,
+        endpoint,
+        flows: {
+          ...base.peerMediation?.loopback?.flows,
+          ...(activeFlows.machine_rpc ? { machine_rpc: { active: true } } : {}),
+          ...(activeFlows.live_stream ? { live_stream: { active: true } } : {}),
+          ...(activeFlows.tcp_tunnel ? { tcp_tunnel: { active: true } } : {}),
+        },
+      },
+    },
+  };
+}
+
+async function maybeStartPeerMediationLoopback(params: Readonly<{
+  config: PeerMediationMachineRpcBootstrapConfig | undefined;
+  connectedApiMachine: ApiMachineClient;
+  credentials: Credentials | undefined;
+  machine: Machine;
+  machineId: string;
+}>): Promise<StartedPeerMediationLoopback | null> {
+  const serverFeatures = await resolvePeerMediationMachineRpcServerFeatures(params.config);
+  if (!serverFeatures) return null;
+  const accountId = normalizeNonEmptyString(params.config?.accountId)
+    ?? resolveAccountIdFromCredentials(params.credentials);
+  if (!accountId) return null;
+  const accountSigningSeed = resolveAccountSigningSeed({
+    config: params.config,
+    credentials: params.credentials,
+    machine: params.machine,
+  });
+  if (!accountSigningSeed) return null;
+
+  return await startPeerMediationLoopback({
+    accountId,
+    machineId: params.machineId,
+    accountSigningSeed,
+    serverFeatures,
+    rpcHandlerManager: params.connectedApiMachine.getPeerMediationMachineRpcHandlerManager(),
+    tunnel: {},
+    ...(params.config?.nowMs ? { nowMs: params.config.nowMs } : {}),
+    ...(params.config?.endpointFingerprint ? { endpointFingerprint: params.config.endpointFingerprint } : {}),
+    ...(params.config?.endpointTtlMs ? { endpointTtlMs: params.config.endpointTtlMs } : {}),
+    ...(params.config?.host ? { host: params.config.host } : {}),
+    ...(typeof params.config?.port === 'number' ? { port: params.config.port } : {}),
+    ...(params.config?.stream ? { stream: params.config.stream } : {}),
+    ...(typeof params.config?.localPerPeerMaxConcurrentCalls === 'number'
+      ? { localPerPeerMaxConcurrentCalls: params.config.localPerPeerMaxConcurrentCalls }
+      : {}),
+    ...(params.config?.startPeerMediationLoopbackServer
+      ? { startPeerMediationLoopbackServer: params.config.startPeerMediationLoopbackServer }
+      : {}),
+  });
+}
 
 export type BootstrapMachineSyncRuntimeResult = Readonly<{
   apiMachine: ApiMachineClient | null;
@@ -42,12 +175,14 @@ export type BootstrapMachineSyncRuntimeResult = Readonly<{
   voiceInferenceWorker: VoiceInferenceWorkerHandle | null;
   daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null;
   machineConnectionStateCleanup: (() => void) | null;
+  stopPeerMediationLoopbackServer: () => Promise<void>;
 }>;
 
 export type BootstrapMachineSyncRuntimeParams = Readonly<{
   cliVersion: string;
   machineId: string;
   machine: Machine;
+  credentials?: Credentials;
   preferredHost: string;
   happyHomeDir: string;
   happyLibDir: string;
@@ -71,6 +206,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   connectedServiceRefreshLoopHandle: ConnectedServiceRefreshLoopHandle | null;
   connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null;
   startVoiceInferenceWorkerForMachine: (machineId: string) => Promise<VoiceInferenceWorkerHandle | null>;
+  peerMediationMachineRpc?: PeerMediationMachineRpcBootstrapConfig;
 }>;
 
 export async function bootstrapMachineSyncRuntime(
@@ -85,6 +221,7 @@ export async function bootstrapMachineSyncRuntime(
       voiceInferenceWorker: null,
       daemonConnectivityCoordinator: null,
       machineConnectionStateCleanup: null,
+      stopPeerMediationLoopbackServer: async () => {},
     };
   }
 
@@ -212,6 +349,8 @@ export async function bootstrapMachineSyncRuntime(
 
   let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
   let machineConnectionStateCleanup: (() => void) | null = null;
+  let peerMediationLoopback: StartedPeerMediationLoopback | null = null;
+  let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
 
   if (connectedApiMachine) {
     automationWorker = params.startAutomationWorkerForMachine(params.machineId);
@@ -263,6 +402,20 @@ export async function bootstrapMachineSyncRuntime(
         emitDirectSessionTranscriptUpdate: (payload) => connectedApiMachine.emitDirectSessionTranscriptUpdate(payload),
       },
     );
+
+    peerMediationLoopback = await maybeStartPeerMediationLoopback({
+      config: params.peerMediationMachineRpc,
+      connectedApiMachine,
+      credentials: params.credentials,
+      machine: params.machine,
+      machineId: params.machineId,
+    }).catch((error) => {
+      logger.warn('[DAEMON RUN] Failed to start peer mediation loopback route', error);
+      return null;
+    });
+    if (peerMediationLoopback) {
+      stopPeerMediationLoopbackServer = peerMediationLoopback.stop;
+    }
 
     connectedApiMachine.onUpdate((update) => {
       if (!activeAutomationWorker) return false;
@@ -316,17 +469,40 @@ export async function bootstrapMachineSyncRuntime(
       ],
     });
 
-    machineConnectionStateCleanup = connectedApiMachine.onConnectionStateChange((state) => {
+    const cleanupPluginConnectionStateSource = bindPluginDaemonConnectionStateSource(connectedApiMachine);
+    const cleanupDaemonConnectivityState = connectedApiMachine.onConnectionStateChange((state) => {
       void daemonConnectivityCoordinator!.applyState(state).catch((error) => {
         logger.warn('[DAEMON RUN] Failed to apply daemon connectivity state', error);
       });
     });
+    let didCleanupMachineConnectionState = false;
+    machineConnectionStateCleanup = () => {
+      if (didCleanupMachineConnectionState) {
+        return;
+      }
+      didCleanupMachineConnectionState = true;
+      cleanupDaemonConnectivityState();
+      cleanupPluginConnectionStateSource();
+    };
 
     let didRefreshMachineMetadata = false;
     connectedApiMachine.connect({
       takeover: params.takeoverRequested,
       onConnect: async () => {
         if (params.isShuttingDown()) return;
+
+        const activePeerMediationLoopback = peerMediationLoopback;
+        if (activePeerMediationLoopback) {
+          await connectedApiMachine
+            .updateDaemonState((state) => mergePeerMediationLoopbackEndpoint(
+              state,
+              activePeerMediationLoopback.endpoint,
+              activePeerMediationLoopback.activeFlows,
+            ))
+            .catch((error) => {
+              logger.warn('[DAEMON RUN] Failed to publish peer mediation loopback endpoint', error);
+            });
+        }
 
         if (activeAutomationWorker) {
           const automationWorkerHandle = activeAutomationWorker;
@@ -387,5 +563,6 @@ export async function bootstrapMachineSyncRuntime(
     voiceInferenceWorker,
     daemonConnectivityCoordinator,
     machineConnectionStateCleanup,
+    stopPeerMediationLoopbackServer,
   };
 }

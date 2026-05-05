@@ -37,10 +37,10 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
 
   it('returns true when memory search is enabled for the requested surface and the active index exists', async () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
-      surfaces: ['voice_tool', 'voice_action_block'],
+      surfaces: ['voice'],
       deps: {
         isActionEnabledByEnv: (actionId, ctx) =>
-          ctx?.surface === 'voice_tool' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
+          ctx?.surface === 'voice' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
         readMemorySettingsFromDisk: async () => buildMemorySettings({
           enabled: true,
           indexMode: 'hints',
@@ -58,13 +58,12 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
     expect(enabled).toBe(true);
   });
 
-  it('returns false when required memory actions are split across different surfaces', async () => {
+  it('returns false when a required memory action is disabled for the requested surface', async () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
-      surfaces: ['voice_tool', 'voice_action_block'],
+      surfaces: ['voice'],
       deps: {
         isActionEnabledByEnv: (actionId, ctx) => {
-          if (ctx?.surface === 'voice_tool') return actionId === 'memory.search';
-          if (ctx?.surface === 'voice_action_block') return actionId === 'memory.get_window';
+          if (ctx?.surface === 'voice') return actionId === 'memory.search';
           return false;
         },
         readMemorySettingsFromDisk: async () => buildMemorySettings({

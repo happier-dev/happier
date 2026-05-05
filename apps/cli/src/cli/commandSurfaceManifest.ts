@@ -3,7 +3,7 @@ import {
   type CommandSurfaceCatalog,
   type CommandSurfaceDescriptorInput,
 } from '@/agent/runtime/registry/commandContracts';
-import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 export type CliCommandSurfaceEntry = CommandSurfaceDescriptorInput;
 

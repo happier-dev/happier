@@ -1,4 +1,4 @@
-import type { AcpTransportSpecV1 } from '@happier-dev/extension-sdk';
+import type { AcpTransportSpecV1 } from '@happier-dev/plugin-sdk';
 
 import type { CatalogAgentLookupId } from '@/backends/types';
 import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';

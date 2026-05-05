@@ -27,8 +27,8 @@ vi.mock('@/api/api', () => ({
   },
 }));
 
-vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
   return {
     ...actual,
     resolveMergedContributionRegistry: vi.fn(async () => ({

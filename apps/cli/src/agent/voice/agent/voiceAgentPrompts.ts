@@ -8,7 +8,7 @@ type VoiceAgentTurn = { role: 'user' | 'assistant'; text: string };
 function resolveDisabledVoicePromptActionIds(disabledActionIds?: readonly string[]): readonly string[] {
   return Array.from(
     new Set([
-      ...listDisabledActionIdsForSurfaceFromEnv('voice_tool'),
+      ...listDisabledActionIdsForSurfaceFromEnv('voice'),
       ...((disabledActionIds ?? []).map((value) => String(value ?? '').trim()).filter(Boolean)),
     ]),
   );

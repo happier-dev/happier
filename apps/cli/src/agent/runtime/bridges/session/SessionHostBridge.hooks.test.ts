@@ -8,7 +8,7 @@ const { dispatchBridgeLifecycleHookEvent } = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock('@/extensions/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
+vi.mock('@/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
   dispatchBridgeLifecycleHookEvent,
 }));
 

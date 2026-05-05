@@ -10,16 +10,16 @@ import {
 } from './customAcp';
 
 export function createCustomAcpCompatEntry(): AgentCatalogEntry {
-  const getBindings: AgentCatalogEntry['getBindings'] = async () => {
+  const getRuntimeCore: AgentCatalogEntry['getRuntimeCore'] = async () => {
     const [
-      { createCatalogBindings },
+      { createCatalogRuntimeCore },
       { createBuiltInSessionPlan },
     ] = await Promise.all([
-      import('@/agent/runtime/registry/bindings/catalog'),
+      import('@/agent/runtime/registry/runtimeCore/catalog'),
       import('../builtIn/sessionPlan'),
     ]);
 
-    return createCatalogBindings({
+    return createCatalogRuntimeCore({
       providerId: LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID,
       createHostSessionRuntimePlan: (sessionParams) =>
         createBuiltInSessionPlan(
@@ -50,7 +50,7 @@ export function createCustomAcpCompatEntry(): AgentCatalogEntry {
     getCliDetect: async () => createBuiltInCliDetect(LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID),
     getCliAuthSpec: async () => createBuiltInCliAuthSpec(LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID),
     getAcpBackendFactory,
-    getBindings,
+    getRuntimeCore,
     vendorResumeSupport: LEGACY_CUSTOM_ACP_COMPAT_VENDOR_RESUME_SUPPORT,
   };
 }

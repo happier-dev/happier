@@ -1,5 +1,5 @@
-import { discardQueuedAndPendingForTerminalSwitch } from '../../../agent/runtimeSwitching/discardQueuedAndPendingForSwitch';
-import { discardPendingBeforeSwitchToTerminal } from '../../../agent/runtimeSwitching/discardPendingBeforeSwitch';
+import { discardQueuedAndPendingForTerminalSwitch } from '@/agent/runtime/mode/switching/discardQueuedAndPendingForSwitch';
+import { discardPendingBeforeSwitchToTerminal } from '@/agent/runtime/mode/switching/discardPendingBeforeSwitch';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';

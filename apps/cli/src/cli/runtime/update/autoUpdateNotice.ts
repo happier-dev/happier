@@ -9,11 +9,12 @@ import {
   spawnDetachedNode,
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
+import { resolveManagedCliToolNameForRing } from '@happier-dev/cli-common/firstPartyRuntime';
 import {
-  resolveCliInvokerNameForPublicRing,
   resolvePublicReleaseRingLabelForId,
   type PublicReleaseRingId,
 } from '@happier-dev/release-runtime/releaseRings';
+import { doesVersionMatchChannel } from './doesVersionMatchChannel';
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CHECK_LOCK_TTL_MS = 2 * 60 * 1000;
@@ -46,7 +47,7 @@ function resolveSelfChannelArgs(ring: PublicReleaseRingId): string[] {
 }
 
 function resolveUpdateCommand(ring: PublicReleaseRingId): string {
-  return `${resolveCliInvokerNameForPublicRing(ring)} self update`;
+  return `${resolveManagedCliToolNameForRing(ring)} self update`;
 }
 
 const LONG_FLAGS_WITH_VALUE = new Set([
@@ -143,11 +144,12 @@ export function maybeAutoUpdateNotice(params: Readonly<{
   const latest = typeof cached?.latest === 'string' ? cached.latest : null;
   const current = typeof cached?.current === 'string' ? cached.current : null;
   const notifiedAt = typeof cached?.notifiedAt === 'number' ? cached.notifiedAt : null;
+  const candidateMatchesChannel = !latest || doesVersionMatchChannel(latest, publicReleaseRing);
 
   const shouldNotify = shouldNotifyUpdate({
     isTTY: params.isTTY,
     cmd,
-    updateAvailable,
+    updateAvailable: updateAvailable && candidateMatchesChannel,
     latest,
     notifiedAt,
     notifyIntervalMs: notifyInterval,
@@ -157,7 +159,7 @@ export function maybeAutoUpdateNotice(params: Readonly<{
   if (shouldNotify && cached) {
     const from = current || cached.runtimeVersion || cached.invokerVersion || 'current';
     const msg = formatUpdateNotice({
-      toolName: resolveCliInvokerNameForPublicRing(publicReleaseRing),
+      toolName: resolveManagedCliToolNameForRing(publicReleaseRing),
       from,
       to: latest ?? 'latest',
       updateCommand: resolveUpdateCommand(publicReleaseRing),

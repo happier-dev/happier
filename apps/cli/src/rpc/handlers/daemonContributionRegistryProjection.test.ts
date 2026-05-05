@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
-import type { ResolvedContributionInputs } from '@/extensions/registry/types';
-import type { ResolvedExecutablePluginRuntimeRegistry } from '@/extensions/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ResolvedContributionInputs } from '@/plugins/projection/registry/types';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 function createRegistrar() {
     const handlers = new Map<string, (payload: unknown) => Promise<unknown>>();
@@ -52,7 +52,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             backends: [],
         });
         const runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
-            contributions: createResolvedContributionRegistry({
+            contributes: createResolvedContributionRegistry({
                 providers: [
                     {
                         id: 'runtime.provider',
@@ -118,12 +118,13 @@ describe('daemon contribution registry projection rpc handler', () => {
                                 runtimeKind: 'native',
                                 capabilities: {},
                                 runtimeAdapters: [],
+                                runtimeCoreHooks: [],
                                 title: 'Runtime Backend',
                             },
                         },
                         runtimeKind: 'native',
                         capabilities: {},
-                        runtimeAdapters: [],
+                        runtimeCoreHooks: [],
                     },
                 ],
                 resources: [
@@ -264,8 +265,9 @@ describe('daemon contribution registry projection rpc handler', () => {
             }),
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
-            runtimeAdapterHandlersByBackendId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
             backendEnginesByBackendId: new Map(),
+            scmHostingProvidersById: new Map(),
             pluginDiagnosticsByPluginId: Object.freeze({
                 'runtime.plugin': Object.freeze([
                     {
@@ -403,11 +405,12 @@ describe('daemon contribution registry projection rpc handler', () => {
                             runtimeKind: 'x',
                             capabilities: {},
                             runtimeAdapters: [],
+                            runtimeCoreHooks: [],
                         },
                     },
                     runtimeKind: 'x',
                     capabilities: {},
-                    runtimeAdapters: [],
+                    runtimeCoreHooks: [],
                 },
             ],
             hookRegistrations: [],

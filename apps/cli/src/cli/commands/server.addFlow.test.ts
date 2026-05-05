@@ -1,14 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { reloadConfiguration } from '@/configuration';
 import { readSettings } from '@/persistence';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { buildLaunchAgentPlistXml } from '@/daemon/service/darwin';
+import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths, type DaemonServiceListEntry } from '@/daemon/service/cli';
+import { renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 let promptAnswers: string[] = [];
 let promptQuestions: string[] = [];
+const { resolveInstalledDaemonServiceInventoryForCurrentRelayMock } = vi.hoisted(() => ({
+  resolveInstalledDaemonServiceInventoryForCurrentRelayMock: vi.fn<(...args: unknown[]) => Promise<readonly DaemonServiceListEntry[]>>(async () => []),
+}));
 
 vi.mock('node:readline', () => ({
   createInterface: () => ({
@@ -33,6 +41,15 @@ vi.mock('@/features/serverFeaturesClient', () => ({
   fetchServerFeaturesSnapshot: (params: Readonly<{ serverUrl: string; timeoutMs?: number }>) =>
     fetchServerFeaturesSnapshotMock(params),
 }));
+
+vi.mock('@/daemon/ownership/daemonServiceInventory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/daemon/ownership/daemonServiceInventory')>();
+  return {
+    ...actual,
+    resolveInstalledDaemonServiceInventoryForCurrentRelay: (...args: Parameters<typeof actual.resolveInstalledDaemonServiceInventoryForCurrentRelay>) =>
+      resolveInstalledDaemonServiceInventoryForCurrentRelayMock(...args),
+  };
+});
 
 import { handleServerCommand } from './server';
 import { runServerSubcommand } from './server/subcommands';
@@ -61,6 +78,78 @@ function setTtyMode(stdinIsTTY: boolean, stdoutIsTTY: boolean): () => void {
   };
 }
 
+afterEach(() => {
+  resolveInstalledDaemonServiceInventoryForCurrentRelayMock.mockReset();
+});
+
+function installDefaultFollowingServiceFixture(homeDir: string): void {
+  process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
+    ? process.platform
+    : 'linux';
+  process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = homeDir;
+  process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = join(homeDir, '.happier');
+  process.env.HAPPIER_DAEMON_SERVICE_TARGET_MODE = 'default-following';
+  reloadConfiguration();
+
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+  const paths = resolveDaemonServicePaths(runtime);
+  mkdirSync(dirname(paths.installedPath), { recursive: true });
+
+  if (runtime.platform === 'darwin') {
+    writeFileSync(
+      paths.installedPath,
+      buildLaunchAgentPlistXml({
+        label: paths.label,
+        programArgs: [runtime.nodePath, runtime.entryPath, 'daemon', 'start-sync'].filter(Boolean),
+        env: {
+          HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+          HAPPIER_PUBLIC_RELEASE_CHANNEL: runtime.channel,
+          HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+          HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        },
+        stdoutPath: paths.stdoutPath,
+        stderrPath: paths.stderrPath,
+        workingDirectory: '/tmp',
+      }),
+      'utf8',
+    );
+    return;
+  }
+
+  if (runtime.platform === 'linux') {
+    writeFileSync(
+      paths.installedPath,
+      renderSystemdServiceUnit({
+        description: 'Happier Daemon',
+        execStart: [runtime.nodePath, runtime.entryPath, 'daemon', 'start-sync'].filter(Boolean),
+        env: {
+          HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+          HAPPIER_PUBLIC_RELEASE_CHANNEL: runtime.channel,
+          HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+          HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        },
+        wantedBy: 'default.target',
+      }),
+      'utf8',
+    );
+    return;
+  }
+
+  writeFileSync(
+    paths.installedPath,
+    renderWindowsScheduledTaskWrapperPs1({
+      programArgs: [runtime.nodePath, runtime.entryPath, 'daemon', 'start-sync'].filter(Boolean),
+      env: {
+        HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: runtime.channel,
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+      },
+    }),
+    'utf8',
+  );
+}
+
 describe('happier server add guided flow', () => {
   it('guides for missing required values in interactive mode', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-guided-'));
@@ -81,7 +170,12 @@ describe('happier server add guided flow', () => {
       delete process.env.HAPPIER_WEBAPP_URL;
       reloadConfiguration();
 
-      await handleServerCommand(['add']);
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleServerCommand(['add']);
+      } finally {
+        output.restore();
+      }
 
       const settings = await readSettings();
       expect(settings.activeServerId).toBe('Company');
@@ -125,7 +219,12 @@ describe('happier server add guided flow', () => {
       delete process.env.HAPPIER_WEBAPP_URL;
       reloadConfiguration();
 
-      await handleServerCommand(['add']);
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleServerCommand(['add']);
+      } finally {
+        output.restore();
+      }
 
       const settings = await readSettings();
       expect(settings.activeServerId).toBe('Local');
@@ -240,6 +339,35 @@ describe('happier server add guided flow', () => {
     }
   });
 
+  it('rejects unknown flags for server add while still accepting legacy --public-server-url', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-unknown-flag-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await expect(handleServerCommand([
+        'add',
+        '--name',
+        'Company',
+        '--server-url',
+        'http://127.0.0.1:53545',
+        '--public-server-url',
+        'https://company.example.test',
+        '--bogus-flag',
+      ])).rejects.toThrow('--bogus-flag');
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
   it('defaults webapp URL to Happier Cloud webapp when --server-url points at the cloud API', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-cloud-webapp-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
@@ -302,7 +430,7 @@ describe('happier server add guided flow', () => {
 
       expect(spawnHappyCLIMock).toHaveBeenCalledTimes(1);
       expect(spawnHappyCLIMock).toHaveBeenCalledWith(
-        ['--server', 'Company', 'service', 'install'],
+        ['--server', 'Company', 'daemon', 'service', 'install'],
         expect.objectContaining({ stdio: 'inherit' }),
       );
     } finally {
@@ -315,7 +443,7 @@ describe('happier server add guided flow', () => {
     }
   });
 
-  it('rejects unknown flags (example: --public-server-url)', async () => {
+  it('treats legacy --public-server-url as canonical serverUrl and legacy --server-url as localServerUrl', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-public-url-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
     const restoreTty = setTtyMode(false, false);
@@ -324,7 +452,7 @@ describe('happier server add guided flow', () => {
       process.env.HAPPIER_HOME_DIR = home;
       reloadConfiguration();
 
-      await expect(handleServerCommand([
+      await handleServerCommand([
         'add',
         '--name',
         'Company',
@@ -335,7 +463,11 @@ describe('happier server add guided flow', () => {
         '--webapp-url',
         'https://app.company.example',
         '--use',
-      ])).rejects.toThrow(/Unknown flag: --public-server-url/);
+      ]);
+
+      const raw = JSON.parse(await readFile(join(home, 'settings.json'), 'utf-8'));
+      expect(raw?.servers?.Company?.serverUrl).toBe('https://company.example.test');
+      expect(raw?.servers?.Company?.localServerUrl).toBe('http://127.0.0.1:53545');
     } finally {
       restoreTty();
       if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
@@ -346,35 +478,7 @@ describe('happier server add guided flow', () => {
     }
   });
 
-  it('rejects unknown flags for `happier server set` (example: --public-server-url)', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-server-set-public-url-'));
-    const prevHome = process.env.HAPPIER_HOME_DIR;
-    const restoreTty = setTtyMode(false, false);
-
-    try {
-      process.env.HAPPIER_HOME_DIR = home;
-      reloadConfiguration();
-
-      await expect(handleServerCommand([
-        'set',
-        '--server-url',
-        'https://company.example.test',
-        '--public-server-url',
-        'https://company.example.test',
-        '--webapp-url',
-        'https://app.company.example',
-      ])).rejects.toThrow(/Unknown flag: --public-server-url/);
-    } finally {
-      restoreTty();
-      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
-      else process.env.HAPPIER_HOME_DIR = prevHome;
-      reloadConfiguration();
-      await rm(home, { recursive: true, force: true });
-      spawnHappyCLIMock.mockReset();
-    }
-  });
-
-  it('auto-detects canonical URL from Tailscale Serve when serverUrl is loopback and --local-server-url is omitted', async () => {
+  it('auto-detects public URL from Tailscale Serve when serverUrl is loopback and --public-server-url is omitted', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-auto-public-url-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
     const restoreTty = setTtyMode(false, false);
@@ -412,6 +516,33 @@ describe('happier server add guided flow', () => {
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
       runTailscaleServeStatusMock.mockReset();
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('rejects unknown flags for server set while still accepting legacy --public-server-url', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-set-unknown-flag-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await expect(runServerSubcommand('set', [
+        'set',
+        '--server-url',
+        'http://127.0.0.1:53545',
+        '--public-server-url',
+        'https://company.example.test',
+        '--bogus-flag',
+      ])).rejects.toThrow('--bogus-flag');
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
       spawnHappyCLIMock.mockReset();
     }
   });
@@ -458,6 +589,88 @@ describe('happier server add guided flow', () => {
       fetchServerFeaturesSnapshotMock.mockReset();
       runTailscaleServeStatusMock.mockReset();
       spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('guides to restart a default-following background service after adding and using a new server', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-use-followup-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const prevDaemonPlatform = process.env.HAPPIER_DAEMON_SERVICE_PLATFORM;
+    const prevDaemonUserHomeDir = process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR;
+    const prevDaemonHappierHomeDir = process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR;
+    const prevDaemonTargetMode = process.env.HAPPIER_DAEMON_SERVICE_TARGET_MODE;
+    const restoreTty = setTtyMode(false, false);
+    const output = captureConsoleLogAndMuteStdout();
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'A',
+        '--server-url',
+        'https://a.example.test',
+        '--webapp-url',
+        'https://a.example.test',
+        '--use',
+      ]);
+      await handleServerCommand([
+        'add',
+        '--name',
+        'B',
+        '--server-url',
+        'https://b.example.test',
+        '--webapp-url',
+        'https://b.example.test',
+      ]);
+
+      resolveInstalledDaemonServiceInventoryForCurrentRelayMock.mockResolvedValueOnce([
+        {
+          serverId: 'default',
+          name: 'Default background service',
+          installed: true,
+          path: '/tmp/happier-daemon.default.service',
+          platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
+            ? process.platform
+            : 'linux',
+          releaseChannel: 'stable',
+          label: 'happier-daemon.default',
+          targetMode: 'default-following',
+        },
+      ]);
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'Company',
+        '--server-url',
+        'https://company.example.test',
+        '--webapp-url',
+        'https://company.example.test',
+        '--use',
+      ]);
+
+      const out = output.logs.join('\n');
+      expect(out).toContain('Authenticate Happier against https://company.example.test');
+      expect(out).toContain('happier auth login');
+      expect(out).toContain('happier service restart');
+    } finally {
+      output.restore();
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      if (prevDaemonPlatform === undefined) delete process.env.HAPPIER_DAEMON_SERVICE_PLATFORM;
+      else process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = prevDaemonPlatform;
+      if (prevDaemonUserHomeDir === undefined) delete process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR;
+      else process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = prevDaemonUserHomeDir;
+      if (prevDaemonHappierHomeDir === undefined) delete process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = prevDaemonHappierHomeDir;
+      if (prevDaemonTargetMode === undefined) delete process.env.HAPPIER_DAEMON_SERVICE_TARGET_MODE;
+      else process.env.HAPPIER_DAEMON_SERVICE_TARGET_MODE = prevDaemonTargetMode;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
     }
   });
 });

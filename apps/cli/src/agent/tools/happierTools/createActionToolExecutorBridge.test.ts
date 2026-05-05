@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 
@@ -140,13 +140,13 @@ describe('createActionToolExecutorBridge', () => {
               },
               examples: null,
               surfaces: {
-                ui_button: false,
-                ui_slash_command: false,
-                voice_tool: false,
-                voice_action_block: false,
+                ui: false,
+                voice: false,
                 session_agent: true,
                 mcp: true,
                 cli: true,
+                rpc: false,
+                sdk: false,
               },
               inputHints: null,
               inputSchema: {

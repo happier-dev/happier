@@ -371,6 +371,41 @@ describe('AgentStateRequestStore', () => {
         );
     });
 
+    it('clears response target handlers when disposed', () => {
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+        });
+        const dispatches: unknown[] = [];
+
+        store.registerResponseTargetHandler('test_target', (dispatch) => {
+            dispatches.push(dispatch);
+        });
+        store.publishRequest({
+            requestId: 'req-after-dispose',
+            toolName: 'Bash',
+            toolInput: { command: ['bash', '-lc', 'echo hi'] },
+            createdAt: 123,
+            responseTarget: { kind: 'test_target' },
+        });
+
+        store.dispose();
+        store.completeRequest({
+            requestId: 'req-after-dispose',
+            status: 'approved',
+            decision: 'approved',
+        });
+
+        expect(dispatches).toEqual([]);
+        expect(session.agentState.completedRequests!['req-after-dispose']).toEqual(
+            expect.objectContaining({
+                status: 'approved',
+                decision: 'approved',
+            }),
+        );
+    });
+
     it('cancels all outstanding requests', () => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({

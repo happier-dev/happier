@@ -26,7 +26,7 @@ import {
     type EngineResolutionSelectedSource,
     type ResolvedCliEngineRegistry,
 } from './engineRegistryTypes';
-import { createMissingCliEngineAdapter } from './createCliRuntimeCore';
+import { createDescriptorBackedCliEngineAdapter, createMissingCliEngineAdapter } from './createCliRuntimeCore';
 import {
     readPluginDaemonConnectionStateSource,
     type PluginDaemonConnectionStateSource,
@@ -38,7 +38,10 @@ import {
     type ConnectionRuntimeServiceV1,
     type ConnectionStateV1,
     type FetchRuntimeServiceV1,
+    type PluginAuthMaterializedServiceV1,
+    type PluginAuthMaterializeRequestV1,
     type PluginContextV1,
+    type PluginSettingsFieldDescriptorV1,
     type PluginSessionGetParamsV1,
     type PluginSessionRefV1,
     type PluginSessionWatchEventV1,
@@ -53,6 +56,7 @@ import { logger } from '@/ui/logger';
 import { readCredentials } from '@/persistence';
 import { resolveProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import type { CatalogAgentLookupId } from '@/backends/types';
+import { readBuiltInHostCatalogEntry } from '@/backends/builtInHostCatalogEntries';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import {
     createExecutionRunPermissionHandler,
@@ -70,6 +74,15 @@ import {
 } from '@/agent/acp/runtime/definition';
 import { createBuiltInNotificationRegistry, createNotificationsService } from '@/notifications/service';
 import { createNotificationRegistryFromPluginRuntime } from '@/notifications/pluginRuntimeRegistry';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { createPluginAuthService } from '@/plugins/runtime/context/auth';
+import { canPluginSubscribeToEvent, createPluginEventsService } from '@/plugins/runtime/context/events';
+import { createPluginSecretsService } from '@/plugins/runtime/context/secrets';
+import { createPluginSettingsService } from '@/plugins/runtime/context/settings';
+import {
+    createAccountSettingsBackedPluginStorageScope,
+    createPluginStorageService,
+} from '@/plugins/runtime/context/storage';
 import { createPluginFetchService } from '@/plugins/runtime/fetch/service';
 import {
     getActiveAccountSettingsSnapshot,
@@ -82,6 +95,7 @@ import {
     createProjectsService,
     type WorkspaceRefScopeV1,
 } from '@/settings/accountSettings/workspaceRefsV1';
+import { getExecutionRunBackendDescriptor } from '@/agent/executionRuns/registry/executionRunBackendRegistry';
 
 const PLUGIN_CONTEXT_V1_BINDER = Symbol('happier.pluginContextV1.binder');
 
@@ -362,6 +376,16 @@ function createUnavailablePluginExternalSessionsService(): PluginContextV1['sess
         }),
         followTranscript: () => createNoopPluginSubscription(),
     });
+}
+
+function readPluginSettingsDescriptors(params: Readonly<{
+    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry | null;
+    pluginId: string;
+}>): readonly PluginSettingsFieldDescriptorV1[] {
+    const settings = params.runtimeRegistry?.contributes.settings ?? [];
+    return Object.freeze(settings
+        .filter((contribution) => contribution.pluginId === params.pluginId)
+        .flatMap((contribution) => contribution.definition.fields));
 }
 
 type BoundContextScope =
@@ -770,6 +794,50 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         adapter: params?.fetchAdapter ?? null,
         interceptors: Object.freeze((params?.runtimeRegistry?.requestInterceptors ?? []).map((entry) => entry.registration)),
     });
+    const pluginId = contextPluginId ?? backendId;
+    const pluginStorePaths = resolvePluginStorePaths({ happyHomeDir: params?.happyHomeDir });
+    const storage = createPluginStorageService({
+        pluginId,
+        paths: pluginStorePaths,
+        sessionId: () => currentScope?.kind === 'hostSession' ? currentScope.getSession().sessionId : null,
+        synced: createAccountSettingsBackedPluginStorageScope({
+            pluginId,
+            getSettings: getCurrentAccountSettings,
+            updateSettings: updateCurrentAccountSettings,
+        }),
+    });
+    const settings = createPluginSettingsService({
+        pluginId,
+        storage: storage.local,
+        descriptors: readPluginSettingsDescriptors({
+            runtimeRegistry: params?.runtimeRegistry,
+            pluginId,
+        }),
+    });
+    const secrets = createPluginSecretsService({
+        pluginId,
+        paths: pluginStorePaths,
+    });
+    const eventSubscriptionPermissions = contextPluginId
+        ? params?.runtimeRegistry?.eventSubscriptionPermissionsByPluginId?.get(contextPluginId)
+        : undefined;
+    const events = createPluginEventsService({
+        pluginId,
+        canSubscribe: (eventName) => canPluginSubscribeToEvent({
+            pluginId,
+            eventName,
+            permissions: eventSubscriptionPermissions,
+        }),
+    });
+    const auth = createPluginAuthService({
+        getIdentity: async () => {
+            const credentials = await readCredentials();
+            return credentials
+                ? Object.freeze({ accountId: null })
+                : null;
+        },
+        materialize: params?.authMaterializeAdapter,
+    });
 
     return Object.freeze({
         logger: Object.freeze({
@@ -800,6 +868,11 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
             source: params?.connectionStateSource ?? null,
         }),
         fetch: fetchService,
+        storage,
+        settings,
+        secrets,
+        events,
+        auth,
         projects: createProjectsService({
             getSettings: getCurrentAccountSettings,
             getActiveScope: getActiveProjectScope,
@@ -927,6 +1000,7 @@ type ResolveEngineRegistryParams = Readonly<{
     connectionStateSource?: PluginDaemonConnectionStateSource | null;
     fetchAdapter?: FetchRuntimeServiceV1 | null;
     runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry | null;
+    authMaterializeAdapter?: (request: PluginAuthMaterializeRequestV1) => Promise<PluginAuthMaterializedServiceV1 | null>;
 }>;
 
 function toEngineSelectedSource(
@@ -946,16 +1020,22 @@ function toEngineSelectedSource(
 }
 
 async function resolveCatalogExecutionSurfacesForEntry(entry: ResolvedCatalogEntry): Promise<BackendExecutionSurfaces> {
+    const hostEntry = readBuiltInHostCatalogEntry(entry.id);
+    const getDirectSessionProviderOps = entry.getDirectSessionProviderOps ?? hostEntry?.getDirectSessionProviderOps;
+    const getTerminalRuntimeOps = entry.getTerminalRuntimeOps ?? hostEntry?.getTerminalRuntimeOps;
+    const getProviderAttachOps = entry.getProviderAttachOps ?? hostEntry?.getProviderAttachOps;
+    const getSessionHandoffProviderOps = entry.getSessionHandoffProviderOps ?? hostEntry?.getSessionHandoffProviderOps;
+
     const directSessions = DirectSessionsProviderIdSchema.safeParse(entry.id).success
-        && entry.getDirectSessionProviderOps
-        ? await entry.getDirectSessionProviderOps()
+        && getDirectSessionProviderOps
+        ? await getDirectSessionProviderOps()
         : null;
 
     return {
-        terminalRuntime: entry.getTerminalRuntimeOps ? await entry.getTerminalRuntimeOps() : null,
+        terminalRuntime: getTerminalRuntimeOps ? await getTerminalRuntimeOps() : null,
         directSessions,
-        attach: entry.getProviderAttachOps ? await entry.getProviderAttachOps() : null,
-        sessionHandoff: entry.getSessionHandoffProviderOps ? await entry.getSessionHandoffProviderOps() : null,
+        attach: getProviderAttachOps ? await getProviderAttachOps() : null,
+        sessionHandoff: getSessionHandoffProviderOps ? await getSessionHandoffProviderOps() : null,
     };
 }
 
@@ -963,6 +1043,18 @@ function resolveRuntimeCoreGetter(entry: Readonly<{
     getRuntimeCore?: CliRuntimeCoreGetter | undefined;
 }>): CliRuntimeCoreGetter | null {
     return typeof entry.getRuntimeCore === 'function' ? entry.getRuntimeCore : null;
+}
+
+function resolveContributionRuntimeCoreGetter(params: Readonly<{
+    backend: ResolvedBackendContribution;
+    catalogEntry?: ResolvedCatalogEntry | null;
+}>): CliRuntimeCoreGetter | null {
+    if (params.backend.provenance !== 'first_party') {
+        return resolveRuntimeCoreGetter(params.backend);
+    }
+    return resolveRuntimeCoreGetter(params.catalogEntry ?? {})
+        ?? resolveRuntimeCoreGetter(readBuiltInHostCatalogEntry(params.backend.id) ?? {})
+        ?? resolveRuntimeCoreGetter(params.backend);
 }
 
 function bindPluginContextToRuntimeCore(
@@ -1043,15 +1135,16 @@ function resolveManifestOnlyAcpBackendAdapter(params: Readonly<{
 
 async function resolveBackendRuntimeCore(params: Readonly<{
     backend: ResolvedBackendContribution;
+    catalogEntry?: ResolvedCatalogEntry | null;
     provider: ResolvedProviderContribution;
     executionSurfaces: BackendExecutionSurfaces;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
     pluginContext: PluginContextV1;
 }>): Promise<CliEngineAdapter | null> {
-    const backendWithRuntimeCore = params.backend as ResolvedBackendContribution & Readonly<{
-        getRuntimeCore?: CliRuntimeCoreGetter | undefined;
-    }>;
-    const getRuntimeCore = resolveRuntimeCoreGetter(backendWithRuntimeCore);
+    const getRuntimeCore = resolveContributionRuntimeCoreGetter({
+        backend: params.backend,
+        catalogEntry: params.catalogEntry,
+    });
     if (!getRuntimeCore) {
         const runtimeRegistry = params.runtimeRegistry;
         if (!runtimeRegistry) {
@@ -1119,6 +1212,57 @@ function createMissingProviderContribution(params: Readonly<{
     };
 }
 
+function createDescriptorBackedBackendContribution(backendId: string): ResolvedBackendContribution {
+    return {
+        id: backendId,
+        providerId: backendId,
+        provenance: 'first_party',
+        source: { kind: 'bundled' },
+        definition: {
+            kindVersion: 1,
+            id: backendId,
+            providerId: backendId,
+        },
+        runtimeKind: 'native',
+    };
+}
+
+function createDescriptorBackedProviderContribution(backendId: string): ResolvedProviderContribution {
+    return {
+        id: backendId,
+        provenance: 'first_party',
+        source: { kind: 'bundled' },
+        definition: {
+            kindVersion: 1,
+            id: backendId,
+            ownedBackendIds: Object.freeze([backendId]),
+        },
+    };
+}
+
+function resolveDescriptorBackedExecutionRunEngineResolution(
+    backendId: string,
+): EngineAdapterResolution | null {
+    if (!getExecutionRunBackendDescriptor(backendId)) {
+        return null;
+    }
+
+    const backend = createDescriptorBackedBackendContribution(backendId);
+    const provider = createDescriptorBackedProviderContribution(backendId);
+
+    return {
+        backendId,
+        providerId: provider.id,
+        provenance: backend.provenance,
+        selectedSource: undefined,
+        backend,
+        provider,
+        engineAdapter: createDescriptorBackedCliEngineAdapter({ backend }),
+        executionSurfaces: createEmptyBackendExecutionSurfaces(),
+        diagnostics: Object.freeze([]),
+    };
+}
+
 async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
     backendId: string;
     contributions: ResolvedContributionRegistry;
@@ -1157,10 +1301,13 @@ async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
         const executionSurfaces = entry
             ? await resolveCatalogExecutionSurfacesForEntry(entry)
             : createEmptyBackendExecutionSurfaces();
-        const backendWithRuntimeCore = backend as ResolvedBackendContribution & Readonly<{ getRuntimeCore?: CliRuntimeCoreGetter | undefined }>;
-        const hasExplicitRuntimeCore = Boolean(resolveRuntimeCoreGetter(backendWithRuntimeCore));
+        const hasExplicitRuntimeCore = Boolean(resolveContributionRuntimeCoreGetter({
+            backend,
+            catalogEntry: entry ?? null,
+        }));
         const engineAdapter = await resolveBackendRuntimeCore({
             backend,
+            catalogEntry: entry ?? null,
             provider,
             executionSurfaces,
             runtimeRegistry: params.runtimeRegistry,
@@ -1263,10 +1410,33 @@ export async function resolveCliEngineRegistry(
                 let backend = resolutionContributions.backendDefinitionsById.get(backendId) ?? null;
                 let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
-                const backendWithRuntimeCore = backend as (ResolvedBackendContribution & Readonly<{ getRuntimeCore?: CliRuntimeCoreGetter | undefined }>) | null;
-                const hasExplicitRuntimeCore = backendWithRuntimeCore ? Boolean(resolveRuntimeCoreGetter(backendWithRuntimeCore)) : false;
+                const catalogEntry = backend ? resolutionContributions.catalogEntriesById[backend.id] : undefined;
+                const hasExplicitRuntimeCore = backend
+                    ? Boolean(resolveContributionRuntimeCoreGetter({ backend, catalogEntry }))
+                    : false;
+                let descriptorResolution: EngineAdapterResolution | null | undefined;
+                const getDescriptorResolution = (): EngineAdapterResolution | null => {
+                    descriptorResolution ??= resolveDescriptorBackedExecutionRunEngineResolution(backendId);
+                    return descriptorResolution;
+                };
+                const requiresExecutablePluginRuntimeRegistry = Boolean(
+                    backend
+                    && (
+                        backend.provenance === 'external'
+                        || backend.pluginId
+                        || backend.daemonEntryPath
+                        || (backend.provenance === 'first_party' && !hasExplicitRuntimeCore)
+                    ),
+                );
 
-                if (!backend || backend.provenance === 'external' || !hasExplicitRuntimeCore) {
+                if (!backend) {
+                    const descriptorBackedResolution = getDescriptorResolution();
+                    if (descriptorBackedResolution) {
+                        return descriptorBackedResolution;
+                    }
+                }
+
+                if (requiresExecutablePluginRuntimeRegistry) {
                     runtimeRegistry = await resolveRuntimeRegistry();
                     resolutionContributions = runtimeRegistry.contributes;
                     backend = resolutionContributions.backendDefinitionsById.get(backendId) ?? backend;
@@ -1275,7 +1445,7 @@ export async function resolveCliEngineRegistry(
                 const pluginContext = createHostPluginContextV1({ ...(params ?? {}), backendId, runtimeRegistry });
 
                 if (!backend) {
-                    return null;
+                    return getDescriptorResolution();
                 }
 
                 return await resolveEngineAdapterResolutionFromRegistry({

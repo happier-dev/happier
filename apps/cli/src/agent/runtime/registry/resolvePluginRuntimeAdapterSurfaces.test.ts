@@ -2,18 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 import type { BackendRuntimeAdapterV1 } from '@happier-dev/protocol';
 
-import { createResolvedContributionRegistry } from '../../../extensions/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
 import type {
   ResolvedBackendContribution,
   ResolvedProviderContribution,
-} from '../../../extensions/registry/types';
-import type { ResolvedExecutablePluginRuntimeRegistry } from '../../../extensions/runtime/resolveExecutablePluginRuntimeRegistry';
+} from '../../../plugins/projection/registry/types';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 const { loadPluginDaemonModuleMock } = vi.hoisted(() => ({
   loadPluginDaemonModuleMock: vi.fn(),
 }));
 
-vi.mock('../../../extensions/runtime/loadPluginDaemonModule', () => ({
+vi.mock('../../../plugins/runtime/loadPluginDaemonModule', () => ({
   loadPluginDaemonModule: loadPluginDaemonModuleMock,
 }));
 
@@ -60,11 +60,12 @@ function createRuntimeRegistry(backend: ResolvedBackendContribution): ResolvedEx
   });
 
     return {
-    contributions,
+    contributes: contributions,
     actionHandlersByActionId: new Map(),
     hookHandlersByHookId: new Map(),
-    runtimeAdapterHandlersByBackendId: new Map(),
+    runtimeCoreHandlersByBackendId: new Map(),
     backendEnginesByBackendId: new Map(),
+    scmHostingProvidersById: new Map(),
     pluginDiagnosticsByPluginId: Object.freeze({}),
     readHookEventEnvelopeV1,
     dispose: async () => undefined,
@@ -91,7 +92,7 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     };
     const backendWithRuntimeAdapters: ResolvedBackendContribution = {
       ...backend,
-      runtimeAdapters: [runtimeAdapter],
+      runtimeCoreHooks: [runtimeAdapter],
     };
     const launch = vi.fn(async () => 'launched');
     loadPluginDaemonModuleMock.mockResolvedValue({
@@ -131,14 +132,14 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     };
     const backendWithRuntimeAdapters: ResolvedBackendContribution = {
       ...backend,
-      runtimeAdapters: [runtimeAdapter],
+      runtimeCoreHooks: [runtimeAdapter],
     };
     const launch = vi.fn(async () => 'activated-launched');
     loadPluginDaemonModuleMock.mockRejectedValue(new Error('direct module load should not be used'));
 
     const runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
       ...createRuntimeRegistry(backendWithRuntimeAdapters),
-      runtimeAdapterHandlersByBackendId: new Map([
+      runtimeCoreHandlersByBackendId: new Map([
         [
           backend.id,
           new Map([
@@ -162,7 +163,7 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
   it('merges activated runtime adapter handlers with manifest-backed runtime adapter operations', async () => {
     const backend = createBackendContribution();
     const provider = createProviderContribution();
-    const runtimeAdapters: BackendRuntimeAdapterV1[] = [
+    const runtimeCoreHooks: BackendRuntimeAdapterV1[] = [
       {
         runtimeAdapterApiVersion: 1,
         id: 'backend.terminalRuntime.launch',
@@ -186,13 +187,13 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     ];
     const backendWithRuntimeAdapters: ResolvedBackendContribution = {
       ...backend,
-      runtimeAdapters,
+      runtimeCoreHooks,
     };
     const launch = vi.fn(async () => 'activated-launched');
     const bindTranscript = vi.fn(async () => 'activated-bind');
     const runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
       ...createRuntimeRegistry(backendWithRuntimeAdapters),
-      runtimeAdapterHandlersByBackendId: new Map([
+      runtimeCoreHandlersByBackendId: new Map([
         [
           backend.id,
           new Map([
@@ -246,7 +247,7 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     };
     const backendWithRuntimeAdapters: ResolvedBackendContribution = {
       ...backend,
-      runtimeAdapters: [runtimeAdapter],
+      runtimeCoreHooks: [runtimeAdapter],
     };
     loadPluginDaemonModuleMock.mockResolvedValue({});
 
@@ -281,7 +282,7 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     const provider = createProviderContribution();
     const backendWithRuntimeAdapters: ResolvedBackendContribution = {
       ...backend,
-      runtimeAdapters: [{
+      runtimeCoreHooks: [{
         runtimeAdapterApiVersion: 1,
         id: 'backend.terminalRuntime.launch',
         kind: 'terminalRuntime',
@@ -333,7 +334,7 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     const provider = createProviderContribution();
     const backendWithRuntimeAdapters: ResolvedBackendContribution = {
       ...backend,
-      runtimeAdapters: [{
+      runtimeCoreHooks: [{
         runtimeAdapterApiVersion: 1,
         id: 'backend.terminalRuntime.launch',
         kind: 'terminalRuntime',
@@ -387,7 +388,7 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     } as BackendRuntimeAdapterV1;
     const backendWithRuntimeAdapters: ResolvedBackendContribution = {
       ...backend,
-      runtimeAdapters: [runtimeAdapter],
+      runtimeCoreHooks: [runtimeAdapter],
     };
     const launch = vi.fn(async () => 'launched');
     loadPluginDaemonModuleMock.mockResolvedValue({

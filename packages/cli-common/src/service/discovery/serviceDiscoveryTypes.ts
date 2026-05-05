@@ -63,6 +63,9 @@ export type SystemdUnitStatus = Readonly<{
   loadState: string | null;
   activeState: string | null;
   subState: string | null;
+  result: string | null;
+  execMainStatus: number | null;
+  nRestarts: number | null;
   unitFileState: string | null;
   fragmentPath: string | null;
   mainPid: number | null;

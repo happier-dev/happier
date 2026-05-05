@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { projectPath } from '@/projectPath';
-import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
+import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 import { getRuntime, type Runtime } from '@/utils/runtime';
 
 export type DoctorRuntimeDiagnostics = Readonly<{

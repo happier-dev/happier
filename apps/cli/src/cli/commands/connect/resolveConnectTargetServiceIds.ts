@@ -1,6 +1,6 @@
-import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

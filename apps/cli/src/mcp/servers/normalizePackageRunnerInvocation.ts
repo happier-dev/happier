@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 
-import { ensureManagedPnpmCommand } from '@/runtime/managedTools/pnpm/managedPnpm';
+import { ensureManagedPnpmCommand } from '@/packagedRuntime/managedTools/pnpm/managedPnpm';
 
 export type NormalizedPackageRunnerInvocation = Readonly<{
   command: string;

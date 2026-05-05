@@ -1,5 +1,3 @@
-import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 import { resolveClaudeRemoteQueuedPromptWithReplaySeed } from '@/backends/claude/remote/resolveClaudeRemoteQueuedPromptWithReplaySeed';
 
@@ -33,14 +31,12 @@ export function createClaudeRemoteQueuedPromptCoordinator(params: Readonly<{
     let pending: ClaudeRemoteQueuedPromptBatch | null = null;
     let modeHash: string | null = null;
     let didReplaySeedBootstrap = false;
-    let didSendChangeTitleInstructionForSession = false;
     let workVersion = 0;
 
     const resetForNewSession = (): void => {
         pending = null;
         modeHash = null;
         didReplaySeedBootstrap = false;
-        didSendChangeTitleInstructionForSession = false;
     };
 
     const primePending = (batch: ClaudeRemoteQueuedPromptBatch): void => {
@@ -61,28 +57,9 @@ export function createClaudeRemoteQueuedPromptCoordinator(params: Readonly<{
         });
         didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
 
-        const effectiveMessage = (() => {
-            const raw = typeof replaySeedResolution.message === 'string' ? replaySeedResolution.message : '';
-            if (!raw.trim()) return raw;
-            if (didSendChangeTitleInstructionForSession) return raw;
-
-            const lower = raw.toLowerCase();
-            const appendLower = typeof batch.mode.appendSystemPrompt === 'string' ? batch.mode.appendSystemPrompt.toLowerCase() : '';
-            const customLower = typeof batch.mode.customSystemPrompt === 'string' ? batch.mode.customSystemPrompt.toLowerCase() : '';
-
-            const alreadyMentionsChangeTitle =
-                CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias)) ||
-                CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => appendLower.includes(alias)) ||
-                CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => customLower.includes(alias));
-
-            didSendChangeTitleInstructionForSession = true;
-            if (alreadyMentionsChangeTitle) return raw;
-            return `${raw}\n\n${CHANGE_TITLE_INSTRUCTION}`;
-        })();
-
         workVersion += 1;
         return {
-            message: effectiveMessage,
+            message: typeof replaySeedResolution.message === 'string' ? replaySeedResolution.message : '',
             mode: batch.mode,
         };
     };

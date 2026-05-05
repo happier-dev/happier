@@ -114,7 +114,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { deriveBoxPublicKeyFromSeed, encodeBase64, sealEncryptedDataKeyEnvelopeV1, type ActionId } from '@happier-dev/protocol';
-import { createPluginStateStore } from '@/extensions/store/state';
+import { createPluginStateStore } from '@/plugins/store/state';
 import { configuration } from '@/configuration';
 
 const env = process.env;

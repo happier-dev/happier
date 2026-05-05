@@ -461,7 +461,7 @@ describe('codexAcp release-binary installer', () => {
       codexAcpInstallDir,
       getCodexAcpDepStatus,
     } = await import('./codexAcp');
-    const { writeRuntimeInstallableLastCheckAtMs } = await import('@/runtime/installables/updateState');
+    const { writeRuntimeInstallableLastCheckAtMs } = await import('@/packagedRuntime/installables/updateState');
 
     const lastBackgroundUpdateCheckAtMs = 1_773_164_020_808;
     await mkdir(dirname(codexAcpBinPath()), { recursive: true });

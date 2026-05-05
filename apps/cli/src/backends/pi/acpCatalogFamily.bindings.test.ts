@@ -5,23 +5,23 @@ type AgentBackendLike = Readonly<{
     subscribeMessages: (handler: (msg: unknown) => void) => () => void;
 }>;
 
-type RuntimeBindingLike = RuntimeBindingsLike | Readonly<{ bindings: RuntimeBindingsLike }>;
-type RuntimeBindingsLike = Readonly<{
+type RuntimeCoreEnvelopeLike = RuntimeCoreLike | Readonly<{ runtimeCore: RuntimeCoreLike }>;
+type RuntimeCoreLike = Readonly<{
     createExecutionRunBackend: (params: unknown) => AgentBackendLike;
 }>;
 
-describe('Pi bindings execution runs', () => {
+describe('Pi runtimeCore execution runs', () => {
     it('does not rely on execution-run host-runtime type recovery for the Pi leaf', async () => {
         vi.resetModules();
         vi.doMock('@/agent/runtime/bridges/executionRun/executionRunHostRuntime', async (importOriginal) => ({
             ...(await importOriginal<typeof import('@/agent/runtime/bridges/executionRun/executionRunHostRuntime')>()),
             requireExecutionRunHostRuntime: vi.fn(() => {
-                throw new Error('Pi bindings should not need execution-run host-runtime recovery');
+                throw new Error('Pi runtimeCore should not need execution-run host-runtime recovery');
             }),
         }));
 
         const { agent } = await import('@/backends/pi');
-        const bindingFactoryOrCreator = await agent.getBindings!();
+        const bindingFactoryOrCreator = await agent.getRuntimeCore!();
         const bindingParams = {
             backend: {
                 id: 'pi',
@@ -50,10 +50,10 @@ describe('Pi bindings execution runs', () => {
             typeof maybeResolved === 'function'
                 ? await bindingFactory(bindingParams)
                 : maybeResolved;
-        const runtimeBinding = resolvedBinding as RuntimeBindingLike;
-        const bindings = 'bindings' in runtimeBinding ? runtimeBinding.bindings : runtimeBinding;
+        const runtimeBinding = resolvedBinding as RuntimeCoreEnvelopeLike;
+        const runtimeCore = 'runtimeCore' in runtimeBinding ? runtimeBinding.runtimeCore : runtimeBinding;
 
-        const runtime = (bindings as { createExecutionRunBackend: (params: unknown) => AgentBackendLike }).createExecutionRunBackend({
+        const runtime = (runtimeCore as { createExecutionRunBackend: (params: unknown) => AgentBackendLike }).createExecutionRunBackend({
             cwd: process.cwd(),
             backendId: 'pi',
             permissionMode: 'read_only',

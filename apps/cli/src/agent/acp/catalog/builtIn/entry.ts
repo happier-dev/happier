@@ -26,11 +26,11 @@ export function createBuiltInEntry(
   }
 
   const core = getAgentCore(agentId);
-  const getBindings: AgentCatalogEntry['getBindings'] = async () => {
-    const { createCatalogBindings } = await import('@/agent/runtime/registry/bindings/catalog');
+  const getRuntimeCore: AgentCatalogEntry['getRuntimeCore'] = async () => {
+    const { createCatalogRuntimeCore } = await import('@/agent/runtime/registry/runtimeCore/catalog');
     const runtimeOwners = await loadBuiltInRuntimeOwners(agentId);
 
-    return createCatalogBindings({
+    return createCatalogRuntimeCore({
       providerId: agentId,
       createHostSessionRuntimePlan: (sessionParams) =>
         runtimeOwners.createHostSessionRuntimePlan(
@@ -73,7 +73,7 @@ export function createBuiltInEntry(
     ...(overrides.getPreflightSessionControlsProbeAdapter
       ? { getPreflightSessionControlsProbeAdapter: overrides.getPreflightSessionControlsProbeAdapter }
       : {}),
-    getBindings,
+    getRuntimeCore,
     vendorResumeSupport: core.resume.vendorResume,
   };
 }

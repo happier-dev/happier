@@ -1,37 +1,35 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { inferPublicReleaseRingIdFromEnvAndArgv } from '@/cli/runtime/publicReleaseChannel';
-import { configuration, reloadConfiguration } from '@/configuration';
-import { createOutputBuilder, ok } from '@happier-dev/cli-common/output';
-import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
-import { promptSecret } from '@/terminal/prompts/promptSecret';
-import { ensureSshAskpassScriptPath, SSH_PASSWORD_ENV } from '@/capabilities/systemTasks/ssh/sshAskpass';
-import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
+import chalk from 'chalk';
 
-import { readKnownHostsTextSync, sshKeyscanSync, writeKnownHostsTextSync } from '@happier-dev/cli-common/ssh';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
+import {
+  collectCurrentMachineReachableServerUrlCandidates,
+  listCurrentMachineNetworkAddressCandidates,
+} from '@/server/reachability/currentMachineReachableServerUrlCandidates';
+import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
+  resolveManagedCliReleaseChannelSync,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { createRelayHostEngine } from '@happier-dev/cli-common/relayHost';
 import {
   installRemoteFirstPartyComponent,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,
-  buildSshTarget,
-  parseSshTarget,
-  extractFirstScannedSshKnownHostLine,
-  resolveSshKnownHostTrust,
   type RelayRuntimeStatusSnapshot,
   type RelayRuntimeTaskParams,
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
-import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+import { readKnownHostsTextSync, writeKnownHostsTextSync } from '@happier-dev/cli-common/ssh';
+import { getReleaseRingPublicLabel, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '../server/commandUtilities';
+import { buildScpCommand, buildSshCommand, type SshAuth } from '@/capabilities/systemTasks/ssh/sshTransport';
 
 type RelayHostStatusJson = Readonly<{
   installed: boolean;
@@ -187,9 +185,6 @@ function parseEnvOverrides(values: readonly string[]): Record<string, string> {
   for (const raw of values) {
     const entry = String(raw ?? '').trim();
     if (!entry) continue;
-    if (/[\r\n\0]/.test(entry)) {
-      throw new Error('Invalid --env value: keys and values must be single-line.');
-    }
     const eq = entry.indexOf('=');
     if (eq < 0) {
       throw new Error(`Invalid --env value (expected KEY=VALUE): ${entry}`);
@@ -198,12 +193,6 @@ function parseEnvOverrides(values: readonly string[]): Record<string, string> {
     const value = entry.slice(eq + 1);
     if (!key) {
       throw new Error(`Invalid --env value (expected KEY=VALUE): ${entry}`);
-    }
-    if (/[\r\n\0]/.test(key) || /[\r\n\0]/.test(value)) {
-      throw new Error('Invalid --env value: keys and values must be single-line.');
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      throw new Error(`Invalid --env value: unsupported key "${key}".`);
     }
     env[key] = value;
   }
@@ -217,15 +206,17 @@ function normalizeMode(raw: unknown): 'user' | 'system' {
 function normalizeChannel(raw: unknown): 'stable' | 'preview' | 'dev' {
   const explicit = String(raw ?? '').trim();
   if (explicit) {
-    return normalizePublicReleaseRingLabel(explicit) || 'stable';
+    const normalized = normalizePublicReleaseRingId(explicit);
+    if (!normalized) return 'stable';
+    return getReleaseRingPublicLabel(normalized);
   }
-  const inferred = inferPublicReleaseRingIdFromEnvAndArgv({
-    env: process.env,
+  const inferred = resolveManagedCliReleaseChannelSync({
+    processEnv: process.env,
     argv: process.argv,
     argv0: process.argv0,
     execPath: process.execPath,
-  });
-  return inferred === 'publicdev' ? 'dev' : inferred;
+  }).ringId;
+  return getReleaseRingPublicLabel(inferred);
 }
 
 function resolveTestFirstPartyPayloadOverride(): Readonly<{ payloadRoot: string; versionId: string }> | null {
@@ -271,14 +262,14 @@ function resolveLocalServerPayloadOverrideFromBinaryPath(serverBinaryPath: strin
 }> {
   const binaryPath = String(serverBinaryPath ?? '').trim();
   if (!binaryPath || !existsSync(binaryPath)) {
-    throw new Error(`server binary not found: ${binaryPath || '(empty)'}`);
+    throw new Error(`relay binary not found: ${binaryPath || '(empty)'}`);
   }
   const binaryDir = dirname(binaryPath);
   const payloadRoot = basename(binaryDir) === 'bin'
     ? dirname(binaryDir)
     : binaryDir;
   if (!existsSync(payloadRoot) || !lstatSync(payloadRoot).isDirectory()) {
-    throw new Error(`server payload root not found: ${payloadRoot}`);
+    throw new Error(`relay payload root not found: ${payloadRoot}`);
   }
   return {
     payloadRoot,
@@ -292,159 +283,42 @@ function quoteForRemoteBash(command: string): string {
   return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
 }
 
-function buildSshArgs(params: Readonly<{
-  ssh: SystemTaskSshConnectionConfig;
-  knownHostsMode: 'app' | 'system';
-  remoteCommand: string;
-}>): string[] {
-  const args: string[] = [];
-
-  if (typeof params.ssh.port === 'number') {
-    args.push('-p', String(Math.floor(params.ssh.port)));
-  }
-  if (params.ssh.sshConfigFile) {
-    args.push('-F', params.ssh.sshConfigFile);
-  }
-
-  args.push(
-    '-o',
-    params.ssh.auth === 'password' ? 'BatchMode=no' : 'BatchMode=yes',
-    '-o',
-    'LogLevel=ERROR',
-    '-o',
-    'ConnectTimeout=10',
-    '-o',
-    'ServerAliveInterval=15',
-    '-o',
-    'ServerAliveCountMax=3',
-  );
-
-  if (params.knownHostsMode === 'app') {
-    if (!params.ssh.knownHostsPath) {
-      throw new Error('knownHostsPath is required when using app-managed known hosts');
-    }
-    args.push(
-      '-o',
-      'GlobalKnownHostsFile=/dev/null',
-      '-o',
-      `UserKnownHostsFile=${params.ssh.knownHostsPath}`,
-    );
-  }
-
-  args.push(
-    '-o',
-    'StrictHostKeyChecking=yes',
-  );
-
-  if (params.ssh.auth === 'keyfile') {
-    if (!params.ssh.identityFile) {
+function resolveOpenSshAuth(ssh: SystemTaskSshConnectionConfig): SshAuth {
+  if (ssh.auth === 'keyfile') {
+    if (!ssh.identityFile) {
       throw new Error('identityFile is required for keyfile auth');
     }
-    args.push('-i', params.ssh.identityFile);
+    return { mode: 'keyFile', privateKeyPath: ssh.identityFile };
   }
-  if (params.ssh.auth === 'password') {
-    args.push(
-      '-o',
-      'NumberOfPasswordPrompts=1',
-      '-o',
-      'PreferredAuthentications=password,keyboard-interactive',
-    );
-  }
-
-  args.push(params.ssh.target, 'bash', '-lc', quoteForRemoteBash(params.remoteCommand));
-  return args;
+  return { mode: 'agent' };
 }
 
-function buildScpArgs(params: Readonly<{
-  ssh: SystemTaskSshConnectionConfig;
-  knownHostsMode: 'app' | 'system';
-  localPath: string;
-  remotePath: string;
-}>): string[] {
-  const args: string[] = [];
-
-  if (typeof params.ssh.port === 'number') {
-    args.push('-P', String(Math.floor(params.ssh.port)));
+function assertValidSshInvocationConfig(ssh: SystemTaskSshConnectionConfig): void {
+  try {
+    buildSshCommand({
+      sshBin: 'ssh',
+      target: ssh.target,
+      remoteCommand: ['true'],
+      sshConfigFile: ssh.sshConfigFile,
+      knownHostsPath: ssh.knownHostsPath,
+      knownHostsMode: resolveKnownHostsMode(ssh),
+      auth: resolveOpenSshAuth(ssh),
+      port: ssh.port,
+      connectTimeoutSec: 10,
+      serverAliveIntervalSec: 15,
+      serverAliveCountMax: 3,
+    });
+  } catch (error) {
+    throw createInvalidArgumentsError(error instanceof Error ? error.message : String(error));
   }
-  if (params.ssh.sshConfigFile) {
-    args.push('-F', params.ssh.sshConfigFile);
-  }
-
-  args.push(
-    '-o',
-    params.ssh.auth === 'password' ? 'BatchMode=no' : 'BatchMode=yes',
-    '-o',
-    'LogLevel=ERROR',
-    '-o',
-    'ConnectTimeout=10',
-    '-o',
-    'ServerAliveInterval=15',
-    '-o',
-    'ServerAliveCountMax=3',
-  );
-
-  if (params.knownHostsMode === 'app') {
-    if (!params.ssh.knownHostsPath) {
-      throw new Error('knownHostsPath is required when using app-managed known hosts');
-    }
-    args.push(
-      '-o',
-      'GlobalKnownHostsFile=/dev/null',
-      '-o',
-      `UserKnownHostsFile=${params.ssh.knownHostsPath}`,
-    );
-  }
-
-  args.push(
-    '-o',
-    'StrictHostKeyChecking=yes',
-  );
-
-  if (params.ssh.auth === 'keyfile') {
-    if (!params.ssh.identityFile) {
-      throw new Error('identityFile is required for keyfile auth');
-    }
-    args.push('-i', params.ssh.identityFile);
-  }
-  if (params.ssh.auth === 'password') {
-    args.push(
-      '-o',
-      'NumberOfPasswordPrompts=1',
-      '-o',
-      'PreferredAuthentications=password,keyboard-interactive',
-    );
-  }
-
-  args.push('-r', params.localPath, `${params.ssh.target}:${params.remotePath}`);
-  return args;
 }
 
 function resolveKnownHostsMode(ssh: SystemTaskSshConnectionConfig): 'app' | 'system' {
   return ssh.knownHostsPath ? 'app' : 'system';
 }
 
-function formatSshHostTrustMessage(params: Readonly<{
-  promptKind: 'ssh.trustHost' | 'ssh.replaceHostKey';
-  host: string;
-  keyType: string;
-  fingerprint: string;
-  existingFingerprint?: string;
-}>): string {
-  return [
-    params.promptKind === 'ssh.replaceHostKey' ? 'SSH host key has changed.' : 'Trust remote SSH host key?',
-    params.host ? `Host: ${params.host}` : '',
-    params.keyType ? `Key type: ${params.keyType}` : '',
-    params.fingerprint ? `Fingerprint: ${params.fingerprint}` : '',
-    params.existingFingerprint ? `Existing fingerprint: ${params.existingFingerprint}` : '',
-  ].filter(Boolean).join('\n');
-}
-
-function runCommandCapture(
-  command: string,
-  args: readonly string[],
-  env?: NodeJS.ProcessEnv,
-): Readonly<{ status: number; stdout: string; stderr: string }> {
-  const out = spawnSync(command, [...args], { encoding: 'utf8', ...(env ? { env } : {}) });
+function runCommandCapture(command: string, args: readonly string[]): Readonly<{ status: number; stdout: string; stderr: string }> {
+  const out = spawnSync(command, [...args], { encoding: 'utf8' });
   return {
     status: typeof out.status === 'number' ? out.status : 1,
     stdout: String(out.stdout ?? ''),
@@ -452,190 +326,62 @@ function runCommandCapture(
   };
 }
 
-function resolveSshEndpointForKeyscan(params: Readonly<{
-  ssh: SystemTaskSshConnectionConfig;
-}>): Readonly<{ host: string; port?: number }> {
-  const parsedTarget = parseSshTarget(params.ssh.target);
-  const explicitPort = typeof params.ssh.port === 'number' && Number.isFinite(params.ssh.port) && params.ssh.port > 0
-    ? Math.floor(params.ssh.port)
-    : undefined;
-  const baselinePort = explicitPort;
-
-  const sshConfigFile = String(params.ssh.sshConfigFile ?? '').trim();
-  if (!sshConfigFile) {
-    return {
-      host: parsedTarget.host,
-      ...(typeof baselinePort === 'number' ? { port: baselinePort } : {}),
-    };
-  }
-
-  const result = spawnSync('ssh', ['-G', '-F', sshConfigFile, params.ssh.target], {
-    encoding: 'utf8',
-    windowsHide: true,
-  });
-  if (result.error) {
-    throw result.error;
-  }
-  if ((result.status ?? 1) !== 0) {
-    const stderr = String(result.stderr ?? '').trim();
-    const stdout = String(result.stdout ?? '').trim();
-    const detail = stderr || stdout;
-    throw new Error(detail ? `SSH config resolution failed: ${detail}` : 'SSH config resolution failed');
-  }
-
-  const values = new Map<string, string>();
-  for (const line of String(result.stdout ?? '').split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const splitIndex = trimmed.indexOf(' ');
-    if (splitIndex < 0) continue;
-    const key = trimmed.slice(0, splitIndex).trim().toLowerCase();
-    const value = trimmed.slice(splitIndex + 1).trim();
-    if (key && value) {
-      values.set(key, value);
-    }
-  }
-
-  const resolvedPort = Number(values.get('port') ?? '');
-  return {
-    host: values.get('hostname')?.trim() || parsedTarget.host,
-    ...(explicitPort
-      ? { port: explicitPort }
-      : (Number.isFinite(resolvedPort) && resolvedPort > 0
-          ? { port: Math.floor(resolvedPort) }
-          : (typeof baselinePort === 'number' ? { port: baselinePort } : {}))),
-  };
+function ensureTrustedHostKeySeeded(ssh: SystemTaskSshConnectionConfig, knownHostsMode: 'app' | 'system'): void {
+  if (knownHostsMode !== 'app') return;
+  const knownHostsPath = String(ssh.knownHostsPath ?? '').trim();
+  const trustedHostKey = String(ssh.trustedHostKey ?? '').trim();
+  if (!knownHostsPath || !trustedHostKey) return;
+  const existing = readKnownHostsTextSync(knownHostsPath);
+  if (existing.includes(trustedHostKey)) return;
+  const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+  writeKnownHostsTextSync(knownHostsPath, `${existing}${suffix}${trustedHostKey}`);
 }
 
-function buildSshRunner(
-  ssh: SystemTaskSshConnectionConfig,
-  password: string | null,
-  params: Readonly<{
-    assumeYes: boolean;
-    interactive: boolean;
-    promptInput: (prompt: string) => Promise<string>;
-  }>,
-) {
+function createInvalidArgumentsError(message: string): Error & { code: 'invalid_arguments' } {
+  const error = new Error(message) as Error & { code: 'invalid_arguments' };
+  error.code = 'invalid_arguments';
+  return error;
+}
+
+function buildSshRunner(ssh: SystemTaskSshConnectionConfig) {
   const knownHostsMode = resolveKnownHostsMode(ssh);
-  const ensureTrustedHostKey = () => {
-    if (knownHostsMode !== 'app') return;
-    if (!ssh.knownHostsPath || !ssh.trustedHostKey) return;
-    const trustedHostKey = String(ssh.trustedHostKey).trim();
-    if (!trustedHostKey) return;
-    if (trustedHostKey.includes('\n') || trustedHostKey.includes('\r')) {
-      throw new Error('Invalid --trusted-host-key: expected a single known_hosts line');
-    }
-
-    mkdirSync(dirname(ssh.knownHostsPath), { recursive: true });
-    let existing = '';
-    try {
-      existing = readFileSync(ssh.knownHostsPath, 'utf8');
-    } catch {
-      existing = '';
-    }
-    if (existing.includes(trustedHostKey)) return;
-    const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-    writeFileSync(ssh.knownHostsPath, `${existing}${suffix}${trustedHostKey}\n`, 'utf8');
-  };
-
-  const ensureHostTrusted = (() => {
-    let resolved = false;
-    return async () => {
-      if (resolved) return;
-      if (knownHostsMode !== 'app') {
-        resolved = true;
-        return;
-      }
-      if (!ssh.knownHostsPath) {
-        throw new Error('knownHostsPath is required when using app-managed known hosts');
-      }
-      // If the caller supplied an explicit trusted host key, preserve the legacy behavior: write it
-      // and let OpenSSH validate it (no extra keyscan required).
-      if (ssh.trustedHostKey) {
-        ensureTrustedHostKey();
-        resolved = true;
-        return;
-      }
-
-      const parsedTarget = parseSshTarget(ssh.target);
-      const host = parsedTarget.host.trim();
-      if (!host) {
-        throw new Error('Missing required SSH host.');
-      }
-
-      const endpoint = resolveSshEndpointForKeyscan({ ssh });
-      const scannedOutput = sshKeyscanSync({
-        host: endpoint.host,
-        ...(typeof endpoint.port === 'number' ? { port: endpoint.port } : {}),
-        timeoutSec: 10,
-      });
-      const scanned = extractFirstScannedSshKnownHostLine(scannedOutput);
-      const trust = resolveSshKnownHostTrust({
-        knownHostsText: readKnownHostsTextSync(ssh.knownHostsPath),
-        scannedHostKeyLine: scanned.line,
-      });
-
-      if (trust.status === 'rejected') {
-        throw new Error(trust.message);
-      }
-
-      if (trust.status === 'prompt') {
-        const message = formatSshHostTrustMessage({
-          promptKind: trust.promptKind,
-          host: trust.scanned.host,
-          keyType: trust.scanned.keyType,
-          fingerprint: trust.scanned.fingerprint,
-          ...(trust.existingFingerprint ? { existingFingerprint: trust.existingFingerprint } : {}),
-        });
-
-        if (!params.assumeYes) {
-          if (!params.interactive) {
-            throw new Error('Non-interactive mode requires --yes for SSH host trust prompts.');
-          }
-          const answer = await params.promptInput(`${message}\nTrust this host key? [y/N]: `);
-          if (!/^y(?:es)?$/i.test(answer.trim())) {
-            throw new Error('SSH host trust was declined.');
-          }
-        }
-
-        writeKnownHostsTextSync(ssh.knownHostsPath, trust.nextKnownHostsText);
-        resolved = true;
-        return;
-      }
-
-      // Trusted (either unchanged or already present).
-      writeKnownHostsTextSync(ssh.knownHostsPath, trust.nextKnownHostsText);
-      resolved = true;
-    };
-  })();
-
+  const auth = resolveOpenSshAuth(ssh);
   return {
     knownHostsMode,
     runRemoteText: async (remoteCommand: string) => {
-      await ensureHostTrusted();
-      const env = ssh.auth === 'password'
-        ? {
-            ...process.env,
-            [SSH_PASSWORD_ENV]: String(password ?? ''),
-            SSH_ASKPASS: ensureSshAskpassScriptPath(),
-            SSH_ASKPASS_REQUIRE: 'force',
-            DISPLAY: process.env.DISPLAY ?? ':0',
-          }
-        : undefined;
-      return runCommandCapture('ssh', buildSshArgs({ ssh, knownHostsMode, remoteCommand }), env);
+      ensureTrustedHostKeySeeded(ssh, knownHostsMode);
+      const invocation = buildSshCommand({
+        sshBin: 'ssh',
+        target: ssh.target,
+        remoteCommand: ['bash', '-lc', quoteForRemoteBash(remoteCommand)],
+        sshConfigFile: ssh.sshConfigFile,
+        knownHostsPath: ssh.knownHostsPath,
+        knownHostsMode,
+        auth,
+        port: ssh.port,
+        connectTimeoutSec: 10,
+        serverAliveIntervalSec: 15,
+        serverAliveCountMax: 3,
+      });
+      return runCommandCapture(invocation.command, invocation.args);
     },
     copyLocalDirectoryToRemote: async (localPath: string, remotePath: string) => {
-      await ensureHostTrusted();
-      const env = ssh.auth === 'password'
-        ? {
-            ...process.env,
-            [SSH_PASSWORD_ENV]: String(password ?? ''),
-            SSH_ASKPASS: ensureSshAskpassScriptPath(),
-            SSH_ASKPASS_REQUIRE: 'force',
-            DISPLAY: process.env.DISPLAY ?? ':0',
-          }
-        : undefined;
-      const result = runCommandCapture('scp', buildScpArgs({ ssh, knownHostsMode, localPath, remotePath }), env);
+      ensureTrustedHostKeySeeded(ssh, knownHostsMode);
+      const invocation = buildScpCommand({
+        scpBin: 'scp',
+        target: ssh.target,
+        localPath,
+        remotePath,
+        sshConfigFile: ssh.sshConfigFile,
+        knownHostsPath: ssh.knownHostsPath,
+        knownHostsMode,
+        auth,
+        port: ssh.port,
+        connectTimeoutSec: 10,
+        serverAliveIntervalSec: 15,
+        serverAliveCountMax: 3,
+      });
+      const result = runCommandCapture(invocation.command, invocation.args);
       if (result.status !== 0) {
         throw new Error(result.stderr.trim() || 'SCP failed');
       }
@@ -711,10 +457,8 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const op = String(args[0] ?? '').trim();
   if (!op) {
-    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--ssh-user <user> --ssh-host <host>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-port <port>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--preserve-active-server] [--yes] [--json]');
+    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--server-binary <path>] [--lan | --expose | --host <ip>] [--preserve-active-server] [--yes] [--json]');
   }
-
-  const interactive = isInteractiveTerminal();
 
   let rest = args.slice(1);
   const channelFlag = takeFlagValue(rest, '--channel');
@@ -723,14 +467,12 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = modeFlag.rest;
   const sshFlag = takeFlagValue(rest, '--ssh');
   rest = sshFlag.rest;
-  const sshUserFlag = takeFlagValue(rest, '--ssh-user');
-  rest = sshUserFlag.rest;
-  const sshHostFlag = takeFlagValue(rest, '--ssh-host');
-  rest = sshHostFlag.rest;
   const envFlag = takeRepeatedFlagValues(rest, '--env');
   rest = envFlag.rest;
   const serverBinaryFlag = takeFlagValue(rest, '--server-binary');
   rest = serverBinaryFlag.rest;
+  const selfHostServerBinaryFlag = takeFlagValue(rest, '--self-host-server-binary');
+  rest = selfHostServerBinaryFlag.rest;
   const identityFile = takeFlagValue(rest, '--identity-file');
   rest = identityFile.rest;
   const sshConfigFile = takeFlagValue(rest, '--ssh-config-file');
@@ -741,113 +483,79 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = trustedHostKey.rest;
   const port = takeFlagValue(rest, '--port');
   rest = port.rest;
-  const sshPort = takeFlagValue(rest, '--ssh-port');
-  rest = sshPort.rest;
-  const sshAuth = takeFlagValue(rest, '--ssh-auth');
-  rest = sshAuth.rest;
   const preserveActiveServerFlag = takeFlag(rest, '--preserve-active-server');
   rest = preserveActiveServerFlag.rest;
+  const lanFlag = takeFlag(rest, '--lan');
+  rest = lanFlag.rest;
+  const exposeFlag = takeFlag(rest, '--expose');
+  rest = exposeFlag.rest;
+  const hostFlag = takeFlagValue(rest, '--host');
+  rest = hostFlag.rest;
   const yesFlag = takeFlag(rest, '--yes');
   rest = yesFlag.rest;
   const jsonFlag = takeFlag(rest, '--json');
   rest = jsonFlag.rest;
 
   if (rest.length > 0) {
-    throw new Error(`Unknown relay host arguments: ${rest.join(' ')}`);
+    throw createInvalidArgumentsError(`Unknown relay host arguments: ${rest.join(' ')}`);
+  }
+
+  const bindFlagCount = [lanFlag.present, exposeFlag.present, hostFlag.value !== null].filter(Boolean).length;
+  if (bindFlagCount > 1) {
+    throw createInvalidArgumentsError('--lan, --expose, and --host are mutually exclusive.');
+  }
+  if (bindFlagCount > 0 && sshFlag.value) {
+    throw createInvalidArgumentsError('--lan, --expose, and --host cannot be used with --ssh (applies to local installs only).');
+  }
+  if (bindFlagCount > 0 && op !== 'install') {
+    throw createInvalidArgumentsError('--lan, --expose, and --host can only be used with the install subcommand.');
   }
 
   const channel = normalizeChannel(channelFlag.value);
   const mode = normalizeMode(modeFlag.value);
   const preserveActiveServer = preserveActiveServerFlag.present;
-
-  if (sshFlag.value && (sshUserFlag.value || sshHostFlag.value)) {
-    throw new Error('Do not combine --ssh with --ssh-user/--ssh-host.');
+  const normalizedTrustedHostKey = trustedHostKey.value?.trim() ?? '';
+  if (normalizedTrustedHostKey && (normalizedTrustedHostKey.includes('\n') || normalizedTrustedHostKey.includes('\r'))) {
+    throw createInvalidArgumentsError('Invalid --trusted-host-key: expected a single known_hosts line');
+  }
+  if (normalizedTrustedHostKey && !knownHostsPath.value?.trim()) {
+    throw createInvalidArgumentsError('Missing required flag: --known-hosts-path (when using --trusted-host-key).');
   }
 
-  const sshAuthMode = (() => {
-    const raw = String(sshAuth.value ?? '').trim().toLowerCase();
-    if (!raw) {
-      return identityFile.value?.trim() ? 'keyfile' : 'agent';
-    }
-    if (raw === 'agent') return 'agent';
-    if (raw === 'keyfile') return 'keyfile';
-    if (raw === 'password') return 'password';
-    throw new Error(`Invalid --ssh-auth value: ${sshAuth.value}`);
-  })();
-
-  const parsedLegacyTarget = parseSshTarget(sshFlag.value ?? '');
-  const parsedSplitTarget = parseSshTarget(sshHostFlag.value ?? '');
-  const sshTargetUsername = sshFlag.value
-    ? parsedLegacyTarget.username
-    : (sshUserFlag.value?.trim() || parsedSplitTarget.username);
-  const sshTargetHost = sshFlag.value
-    ? parsedLegacyTarget.host
-    : (parsedSplitTarget.host || sshHostFlag.value?.trim() || '');
-  const normalizedSshTarget = buildSshTarget({
-    username: sshTargetUsername,
-    host: sshTargetHost,
-  });
-
-  if (sshUserFlag.value && !sshHostFlag.value && !sshFlag.value) {
-    throw new Error('Missing required flag: --ssh-host <host>.');
-  }
-  if (sshHostFlag.value && !normalizedSshTarget) {
-    throw new Error('Missing required SSH host.');
-  }
-
-  const normalizedPort = (() => {
-    const text = String(sshPort.value ?? port.value ?? '').trim();
-    if (!text) return null;
-    const parsed = Number.parseInt(text, 10);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      throw new Error('Missing or invalid value for --ssh-port');
-    }
-    return parsed;
-  })();
-
-  const ssh: SystemTaskSshConnectionConfig | null = (sshFlag.value || sshHostFlag.value)
+  const ssh: SystemTaskSshConnectionConfig | null = sshFlag.value
     ? {
-        target: normalizedSshTarget,
-        auth: sshAuthMode,
-        ...(sshAuthMode === 'keyfile'
-          ? { identityFile: identityFile.value?.trim() ? identityFile.value.trim() : '' }
-          : {}),
+        target: sshFlag.value.trim(),
+        auth: identityFile.value?.trim() ? 'keyfile' : 'agent',
+        ...(identityFile.value?.trim() ? { identityFile: identityFile.value.trim() } : {}),
         ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
         ...(knownHostsPath.value?.trim() ? { knownHostsPath: knownHostsPath.value.trim() } : {}),
-        ...(trustedHostKey.value?.trim() ? { trustedHostKey: trustedHostKey.value.trim() } : {}),
-        ...(normalizedPort ? { port: normalizedPort } : {}),
+        ...(normalizedTrustedHostKey ? { trustedHostKey: normalizedTrustedHostKey } : {}),
+        ...(port.value && Number.isFinite(Number(port.value)) ? { port: Number(port.value) } : {}),
       }
     : null;
 
   if (ssh && !ssh.target) {
-    throw new Error('Missing required flag: --ssh <user@host> or --ssh-host <host>.');
+    throw createInvalidArgumentsError('Missing required flag: --ssh <user@host>');
   }
-  if (ssh && ssh.auth === 'keyfile' && (!ssh.identityFile || !ssh.identityFile.trim())) {
-    throw new Error('Missing required flag: --identity-file <path>');
+  if (ssh) {
+    assertValidSshInvocationConfig(ssh);
   }
-
-  let sshPassword: string | null = null;
-  if (ssh && ssh.auth === 'password') {
-    const fromEnv = String(process.env[SSH_PASSWORD_ENV] ?? '').trim();
-    if (fromEnv) {
-      sshPassword = fromEnv;
-    } else if (interactive) {
-      sshPassword = (await promptSecret('SSH password: ')).trim();
-    }
-    if (!sshPassword) {
-      throw new Error(`SSH password auth requires ${SSH_PASSWORD_ENV} or an interactive terminal.`);
-    }
+  if (serverBinaryFlag.value && selfHostServerBinaryFlag.value) {
+    throw createInvalidArgumentsError('Do not combine --server-binary with --self-host-server-binary.');
+  }
+  if (ssh && selfHostServerBinaryFlag.value) {
+    throw createInvalidArgumentsError('Use --server-binary instead of --self-host-server-binary for relay host install over SSH.');
   }
 
   const taskParams = resolveRelayRuntimeTaskParams({ channel, mode, ssh });
   const env = envFlag.values.length > 0 ? parseEnvOverrides(envFlag.values) : null;
-  const serverBinaryOverride = String(serverBinaryFlag.value ?? '').trim() || null;
-  const assumeYes = yesFlag.present;
+  const selfHostRelayBinaryOverride = String(serverBinaryFlag.value ?? selfHostServerBinaryFlag.value ?? '').trim() || null;
+  const localEngine = createLocalRelayHostEngine({});
 
   if (op === 'status') {
     const engine = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh, sshPassword, { assumeYes, interactive, promptInput });
+          const runner = buildSshRunner(ssh);
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           return createRelayHostEngine({
             resolveRemoteReleaseTarget: async () => await resolveRemoteReleaseTarget(),
@@ -860,17 +568,18 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
             },
           });
         })()
-      : createLocalRelayHostEngine({});
+      : localEngine;
 
-    const snapshot = await engine.readStatus(taskParams as RelayRuntimeTaskParams);
-    const status: RelayHostStatusJson = {
-      installed: snapshot.installed,
-      version: snapshot.version,
-      service: snapshot.service,
-      relayUrl: snapshot.installed ? snapshot.baseUrl : null,
-      healthy: typeof snapshot.healthy === 'boolean' ? snapshot.healthy : null,
-      ...(snapshot.warnings && snapshot.warnings.length > 0 ? { warnings: snapshot.warnings } : {}),
-    };
+    const payload = engine.readStatus(taskParams as RelayRuntimeTaskParams).then((status) => ({
+      installed: status.installed,
+      version: status.version,
+      service: status.service,
+      relayUrl: status.installed ? status.baseUrl : null,
+      healthy: status.healthy,
+      ...(status.warnings && status.warnings.length > 0 ? { warnings: status.warnings } : {}),
+    }));
+
+    const status = await payload;
 
     if (json) {
       printJsonEnvelope({
@@ -881,32 +590,64 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    const out = createOutputBuilder();
-    out.section('Relay host status', (section) => {
-      section.definitionList([
-        { label: 'url', value: status.relayUrl ?? '(not installed)' },
-        { label: 'installed', value: status.installed ? 'yes' : 'no' },
-        ...(status.version ? [{ label: 'version', value: status.version }] : []),
-        { label: 'service', value: status.service.active ? 'running' : 'stopped' },
-        ...(status.warnings ?? []).map((warning) => ({ label: 'warning', value: warning })),
-      ], { indent: '  ' });
-    });
-    console.log(out.render());
+    console.log(chalk.bold('Relay host status'));
+    console.log(chalk.gray(`  url: ${status.relayUrl ?? '(not installed)'}`));
+    console.log(chalk.gray(`  installed: ${status.installed ? 'yes' : 'no'}`));
+    if (status.version) console.log(chalk.gray(`  version: ${status.version}`));
+    console.log(chalk.gray(`  service: ${status.service.active ? 'running' : 'stopped'}`));
+    for (const warning of status.warnings ?? []) {
+      console.log(chalk.yellow(`  warning: ${warning}`));
+    }
     return;
   }
 
   if (op === 'install') {
-    const localServerPayloadOverride = serverBinaryOverride
-      ? resolveLocalServerPayloadOverrideFromBinaryPath(serverBinaryOverride)
+    let bindHost: string | null = null;
+    if (exposeFlag.present || hostFlag.value?.trim() === '0.0.0.0') {
+      bindHost = '0.0.0.0';
+    } else if (lanFlag.present) {
+      const entries = listCurrentMachineNetworkAddressCandidates().filter((entry) => entry.family === 4);
+      if (entries.length === 0) {
+        throw new Error('No LAN/Tailscale network interfaces detected. Use --host <ip> to specify a bind address explicitly.');
+      }
+      if (entries.length === 1) {
+        bindHost = entries[0].address;
+        console.log(chalk.gray(`→ Binding to ${entries[0].label} ${entries[0].address}`));
+      } else if (isInteractiveTerminal()) {
+        console.log('Multiple network interfaces found. Which one should the relay listen on?\n');
+        for (let i = 0; i < entries.length; i++) {
+          console.log(`  ${i + 1}) ${entries[i].label}   ${entries[i].address}`);
+        }
+        console.log('');
+        const answer = await promptInput(`Enter a number (1–${entries.length}): `);
+        const index = Number(answer.trim()) - 1;
+        if (!Number.isInteger(index) || index < 0 || index >= entries.length) {
+          throw new Error(`Invalid selection. Expected a number between 1 and ${entries.length}.`);
+        }
+        bindHost = entries[index].address;
+        console.log(chalk.gray(`→ Binding to ${entries[index].label} ${bindHost}`));
+      } else {
+        const list = entries.map((e, i) => `  ${i + 1}) ${e.label}   ${e.address}`).join('\n');
+        throw new Error(`Multiple LAN/Tailscale interfaces detected:\n${list}\nUse --host <ip> to specify one explicitly.`);
+      }
+    } else if (hostFlag.value) {
+      bindHost = hostFlag.value.trim();
+    }
+
+    const bindEnv: Record<string, string> = bindHost ? { HAPPIER_SERVER_HOST: bindHost } : {};
+    const mergedEnv = (env !== null || Object.keys(bindEnv).length > 0) ? { ...(env ?? {}), ...bindEnv } : null;
+
+    const localServerPayloadOverride = selfHostRelayBinaryOverride
+      ? resolveLocalServerPayloadOverrideFromBinaryPath(selfHostRelayBinaryOverride)
       : null;
     const installParams: RelayRuntimeTaskParams = {
       ...taskParams,
-      ...(env ? { env } : {}),
-      ...(!ssh && serverBinaryOverride ? { selfHostRelayBinaryOverride: serverBinaryOverride } : {}),
+      ...(mergedEnv ? { env: mergedEnv } : {}),
+      ...(!ssh && selfHostRelayBinaryOverride ? { selfHostRelayBinaryOverride } : {}),
     };
     const result = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh, sshPassword, { assumeYes, interactive, promptInput });
+          const runner = buildSshRunner(ssh);
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           const override = resolveTestFirstPartyPayloadOverride();
           const engine = createRelayHostEngine({
@@ -960,29 +701,36 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
         })()
       : (async () => {
           const override = resolveTestFirstPartyPayloadOverride();
-          const prepared = override
-            ? {
+          const prepared = await (async () => {
+            if (localServerPayloadOverride) {
+              return {
+                payloadRoot: localServerPayloadOverride.payloadRoot,
+                versionId: localServerPayloadOverride.versionId,
+                cleanup: async () => undefined,
+              };
+            }
+            if (override) {
+              return {
                 payloadRoot: override.payloadRoot,
                 versionId: override.versionId,
                 cleanup: async () => undefined,
-              }
-            : serverBinaryOverride
-                ? null
-                : await prepareFirstPartyComponentPayloadFromGitHubRelease({
-                    componentId: 'happier-server',
-                    channel: channel === 'dev' ? 'publicdev' : channel,
-                  });
+              };
+            }
+            return await prepareFirstPartyComponentPayloadFromGitHubRelease({
+              componentId: 'happier-server',
+              channel: channel === 'dev' ? 'publicdev' : channel,
+            });
+          })();
           try {
-            const serverBinaryPath = serverBinaryOverride
-              || (prepared ? resolveLocalServerBinaryFromPayloadRoot(prepared.payloadRoot) : null);
+            const serverBinaryPath = selfHostRelayBinaryOverride || resolveLocalServerBinaryFromPayloadRoot(prepared.payloadRoot);
             if (!serverBinaryPath) {
-              throw new Error('Unable to resolve happier-server binary from prepared payload.');
+              throw new Error('Unable to resolve relay binary (happier-server) from prepared payload.');
             }
 
             const engine = createLocalRelayHostEngine({
               resolveLocalInstallVersion: async ({ serverBinaryPath: candidate }) => {
                 if (candidate === serverBinaryPath) {
-                  return localServerPayloadOverride?.versionId || prepared?.versionId || null;
+                  return localServerPayloadOverride?.versionId || prepared.versionId || null;
                 }
                 return null;
               },
@@ -993,7 +741,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
               selfHostRelayBinaryOverride: serverBinaryPath,
             });
           } finally {
-            await prepared?.cleanup?.();
+            await prepared.cleanup();
           }
         })();
 
@@ -1018,17 +766,26 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    const out = createOutputBuilder();
-    out.line(ok('Relay host installed'));
-    out.line(`  ${payload.relayUrl}`);
-    console.log(out.render());
+    console.log(chalk.green('✓ Relay host installed'));
+    console.log(chalk.gray(`  ${payload.relayUrl}`));
+    if (bindHost === '0.0.0.0') {
+      const reachableCandidates = await collectCurrentMachineReachableServerUrlCandidates({
+        localServerUrl: payload.relayUrl,
+      });
+      if (reachableCandidates.length > 0) {
+        console.log(chalk.gray('  Exposed on all interfaces - other machines can connect via:'));
+        for (const candidate of reachableCandidates) {
+          console.log(chalk.gray(`    ${candidate.url} (${candidate.label})`));
+        }
+      }
+    }
     return;
   }
 
   if (op === 'start' || op === 'stop' || op === 'restart' || op === 'uninstall') {
     const engine = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh, sshPassword, { assumeYes, interactive, promptInput });
+          const runner = buildSshRunner(ssh);
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           return createRelayHostEngine({
             resolveRemoteReleaseTarget: async () => await resolveRemoteReleaseTarget(),
@@ -1041,8 +798,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
             },
           });
         })()
-      : createLocalRelayHostEngine({});
-
+      : localEngine;
     await engine.control({ ...taskParams, action: op });
 
     if (json) {
@@ -1054,9 +810,20 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    const out = createOutputBuilder();
-    out.line(ok(`Relay host ${op} requested`));
-    console.log(out.render());
+    // All ops finished synchronously at the service-manager level:
+    //  - uninstall: service deregistered + files removed before control() returns.
+    //  - start/stop/restart: launchctl/systemctl has accepted the request; the
+    //    bootstrap retry + kickstart path (in apply.ts) ensures the service
+    //    is in the domain and the program started before this line is reached.
+    // Past tense reflects what `launchctl list` / `systemctl status` will
+    // report immediately after.
+    const verbPastTense: Record<string, string> = {
+      uninstall: 'uninstalled',
+      start: 'started',
+      stop: 'stopped',
+      restart: 'restarted',
+    };
+    console.log(chalk.green(`✓ Relay host ${verbPastTense[op] ?? `${op}ed`}`));
     return;
   }
 

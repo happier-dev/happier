@@ -1,8 +1,8 @@
 import type { AgentId } from '@happier-dev/agents';
 
-import { createCatalogHostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/catalogPlan';
+import { createCatalogHostSessionRuntimePlan } from '@/agent/runtime/session/loop/catalogPlan';
 import type { DeferredStartupPushSender } from '@/agent/runtime/startup/deferredStartupTypes';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 

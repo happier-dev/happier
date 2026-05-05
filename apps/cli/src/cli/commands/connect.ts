@@ -3,7 +3,7 @@ import { readCredentials } from '@/persistence';
 import { ApiClient } from '@/api/api';
 import type { CloudConnectTarget, CloudConnectTargetStatus } from '@/cloud/connectTypes';
 import { configuration } from '@/configuration';
-import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { promptInput } from '@/terminal/prompts/promptInput';
 import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCiphertext, type ConnectedServiceId } from '@happier-dev/protocol';
 import { banner, bullets, cmd, dim, errorFrame, gray, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
@@ -12,7 +12,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
 import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
 import { resolveConnectTargetServiceIdsFromRegistry } from './connect/resolveConnectTargetServiceIds';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 /**
  * Handle connect subcommand.

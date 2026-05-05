@@ -324,7 +324,7 @@ export class ConnectedServiceQuotasCoordinator {
           const controller = new AbortController();
           const timeoutMs = this.fetchTimeoutMs;
 
-          const fetchPromise = fetcher.fetch({ record, now, signal: controller.signal });
+          const fetchPromise = fetcher.loadQuota({ record, now, signal: controller.signal });
 
           let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
           const timeoutPromise = new Promise<{ type: 'timeout' }>((resolve) => {

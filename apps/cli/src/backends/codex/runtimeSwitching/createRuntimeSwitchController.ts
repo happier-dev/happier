@@ -1,12 +1,14 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { applyTerminalRemoteLaunchGating } from '../../../agent/runtimeSwitching/launchGating';
-import { createTerminalRemoteModeController } from '../../../agent/runtimeSwitching/createModeController';
+import { applyTerminalRemoteLaunchGating } from '@/agent/runtime/mode/switching/launchGating';
+import { createTerminalRemoteModeController } from '@/agent/runtime/mode/switching/createModeController';
 import { createCodexRemoteTerminalUi } from '../runtime/remote/createRemoteTerminalUi';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { logger } from '@/ui/logger';
+import { resolveRemoteModeControlSurface } from '@/ui/remoteControl/remoteModeControl';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
 import { requestSwitchToTerminal } from './requestSwitchToTerminal';
 import { formatCodexTerminalRuntimeSwitchDeniedMessage } from '../terminalRuntime/terminalRuntimeSupport';
@@ -44,18 +46,29 @@ export async function createCodexRuntimeSwitchController<TMode extends { localId
     messageBuffer: MessageBuffer;
     session: ApiSessionClient;
     messageQueue: MessageQueue2<TMode, string>;
-    getThinking: () => boolean;
+    getKeepAliveActive: () => boolean;
     setShouldExit: (value: boolean) => void;
     handleAbort: () => Promise<void>;
     abortStartOrLoad: () => void;
     resolveTerminalRuntimeSupport: (args: { includeAcpProbe: boolean }) => Promise<CodexTerminalRuntimeSupportDecision>;
     stdin: NodeJS.ReadStream;
+    terminalRuntime?: TerminalRuntimeFlags | null;
 }>): Promise<CodexRuntimeSwitchController> {
     const hasTTY = resolveHasTTY({
         stdoutIsTTY: process.stdout.isTTY,
         stdinIsTTY: process.stdin.isTTY,
         startedBy: params.startedBy,
     });
+    const remoteControlSurface = params.startedBy === 'daemon'
+        ? resolveRemoteModeControlSurface({
+            stdoutIsTTY: process.stdout.isTTY,
+            stdinIsTTY: process.stdin.isTTY,
+            startedBy: params.startedBy,
+            terminalMode: params.terminalRuntime?.mode ?? null,
+        })
+        : hasTTY
+            ? 'ink'
+            : 'none';
 
     let requestedSwitchToTerminal = false;
     let switchToTerminalBarrier = createSwitchToTerminalBarrier();
@@ -97,6 +110,7 @@ export async function createCodexRuntimeSwitchController<TMode extends { localId
         messageBuffer: params.messageBuffer,
         logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
         hasTTY,
+        surface: remoteControlSurface,
         stdin: params.stdin,
         onExit: async () => {
             logger.debug('[codex]: Exiting agent via Ctrl-C');
@@ -110,7 +124,7 @@ export async function createCodexRuntimeSwitchController<TMode extends { localId
 
     const terminalRemoteSwitchController = createTerminalRemoteModeController({
         session: params.session,
-        getThinking: params.getThinking,
+        getKeepAliveActive: params.getKeepAliveActive,
         resolveTerminalSwitchAvailability: resolveTerminalSwitchAvailability,
         requestSwitchToTerminalIfSupported: requestSwitchToTerminalIfSupported,
         mountRemoteUi: () => remoteTerminalUi.mount(),

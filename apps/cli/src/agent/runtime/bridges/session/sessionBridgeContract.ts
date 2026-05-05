@@ -20,7 +20,7 @@ import type {
   CanonicalizedDirectSessionSourceResult,
 } from './directSessionSourceCanonicalization';
 import type { DirectSessionLinkIdentity } from '@/session/directSessions/providerOps';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 
 /**
  * Canonical live session host-bridge surface. This is the concrete owner that superseded the

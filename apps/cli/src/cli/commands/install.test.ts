@@ -8,11 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { reloadConfiguration } from '@/configuration';
-import { createPluginStateStore } from '@/extensions/store/state';
-import { loadInstalledPlugins } from '@/extensions/load/installed';
-import { installPluginFromSource } from '@/extensions/install/source';
+import { createPluginStateStore } from '@/plugins/store/state';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { installPluginFromSource } from '@/plugins/store/install/source';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { materializeSamplePluginFixture } from '@/extensions/testkit/samplePackage';
+import { materializeSamplePluginFixture } from '@/plugins/testkit/samplePackage';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { runInstallCliCommand } from './install';
@@ -21,8 +21,8 @@ const { resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
   resolveMergedContributionRegistryMock: vi.fn(),
 }));
 
-vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
   return {
     ...actual,
     resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,

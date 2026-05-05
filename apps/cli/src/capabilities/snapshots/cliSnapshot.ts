@@ -8,7 +8,7 @@ import { promisify } from 'util';
 import { AGENTS, type CatalogAgentLookupId, type CliDetectSpec } from '@/backends/catalog';
 import { resolveCliAuthHomeDir } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatus } from '@/backends/types';
-import { resolveProviderCliCommandForRuntime } from '@/runtime/managedTools/providerCliResolution';
+import { resolveProviderCliCommandForRuntime } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { getProviderCliRuntimeSpec, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
 import {

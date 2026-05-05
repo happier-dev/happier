@@ -5,7 +5,7 @@ import {
     type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
 
-import { matchesExecutionRunLegacyBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { matchesExecutionRunLegacyBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 
 function compareExecutionRunPublicStates(left: ExecutionRunPublicState, right: ExecutionRunPublicState): number {
     if (left.startedAtMs !== right.startedAtMs) {

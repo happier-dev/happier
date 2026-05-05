@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/extensions/registry/createResolvedContributionRegistry', () => ({
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
   getResolvedContributionRegistry: () => ({
     providerDefinitionsById: new Map([
       ['plugin-target', { definition: { id: 'plugin-target', auth: { connectedServiceCompatibility: ['openai'] } } }],

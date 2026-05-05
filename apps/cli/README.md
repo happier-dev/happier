@@ -6,9 +6,36 @@ Free. Open source. Code anywhere.
 
 ## Installation
 
+Recommended binary installer:
+
+```bash
+curl -fsSL https://happier.dev/install | bash
+```
+
+Public installer lanes:
+
+- `stable`: `happier`
+- `preview`: `hprev`
+- `dev`: `hdev`
+
+The installer installs or refreshes the CLI payload and shims for that lane. It does not always install automatic startup or a background service; use `happier setup` when you want to configure this computer.
+
+npm fallback:
+
 ```bash
 npm install -g @happier-dev/cli
 ```
+
+For installer-managed installs, inspect or change the default release channel with:
+
+```bash
+happier self release-channel status
+happier self release-channel use stable
+happier self release-channel use preview
+happier self release-channel use dev
+```
+
+Default-following automatic startup entries follow the selected release channel. When you change the default release channel, Happier syncs the managed shims and prompts or runs the needed background-service restart follow-up.
 
 ## Testing
 
@@ -84,12 +111,53 @@ happier connect gemini
 
 ### Utility Commands
 
+- `happier setup` – Configure this computer for a Relay, auth, background service, and providers
 - `happier auth` – Manage authentication
 - `happier connect` – Store AI vendor API keys in Happier cloud
+- `happier relay` – Manage Relay profiles, local Relay aliases, hosted Relay runtimes, and Relay access
 - `happier notify` – Send a push notification to your devices
 - `happier service` – Manage background services
 - `happier daemon` – Legacy alias for background service commands
-- `happier doctor` – System diagnostics & troubleshooting
+- `happier doctor` – System diagnostics and repair
+
+### Setup, Repair, And Relay
+
+Use setup for first-time configuration of this computer:
+
+```bash
+happier setup --relay-url https://YOUR_RELAY_URL
+```
+
+Use doctor repair when already-configured state has drifted or broken:
+
+```bash
+happier doctor repair
+happier doctor repair --report-only
+happier doctor repair --json
+```
+
+Host a local Relay:
+
+```bash
+happier relay host install --mode user
+happier relay host install --lan
+happier relay host install --expose
+happier relay host install --host 192.168.1.25
+```
+
+The bind flags are local-install-only: `--lan` chooses a private LAN address, `--expose` binds to all interfaces, and `--host <ip>` binds to a specific address.
+
+Use a local Relay profile from the current release channel:
+
+```bash
+happier relay use --local
+happier relay add --local
+happier relay set --local --use
+happier relay start-daemon
+happier relay auth
+```
+
+Pass `--local-channel stable|preview|dev` when you want a different installed local Relay lane.
 
 ### Connect Subcommands
 

@@ -3,13 +3,13 @@ import { createInterface } from "node:readline";
 import { mkdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { attachProcessSignalForwardingToChild } from '@/agent/runtime/signalForwarding';
-import { buildMissingJavaScriptRuntimeMessage } from "@/runtime/js/buildMissingJavaScriptRuntimeMessage";
-import { isEmbeddedBunBundlePath } from "@/runtime/js/isEmbeddedBunBundlePath";
+import { buildMissingJavaScriptRuntimeMessage } from "@/packagedRuntime/js/buildMissingJavaScriptRuntimeMessage";
+import { isEmbeddedBunBundlePath } from "@/packagedRuntime/js/isEmbeddedBunBundlePath";
 import { restoreStdinBestEffort } from "@/ui/ink/restoreStdinBestEffort";
 import { logger } from "@/ui/logger";
 import { stripNestedSessionDetectionEnv } from "@/utils/processEnv/stripNestedSessionDetectionEnv";
 import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
-import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 

@@ -14,7 +14,7 @@ import {
 } from '@happier-dev/agents';
 import { listExecutionRunSupportedIntents } from '../../agent/executionRuns/profiles/intentRegistry';
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
-import type { ResolvedBackendContribution } from '../../extensions/registry/types';
+import type { ResolvedBackendContribution } from '../../plugins/projection/registry/types';
 
 const CODERABBIT_INTENTS = ['review'] as const;
 
@@ -30,9 +30,9 @@ function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): bo
 
 function hasExecutionRunCatalogOwner(entry: Readonly<{
   getAcpBackendFactory?: unknown;
-  getBindings?: unknown;
+  getRuntimeCore?: unknown;
 }> | null | undefined): boolean {
-  return typeof entry?.getAcpBackendFactory === 'function' || typeof entry?.getBindings === 'function';
+  return typeof entry?.getAcpBackendFactory === 'function' || typeof entry?.getRuntimeCore === 'function';
 }
 
 function resolveExecutionRunBackendAvailability(params: Readonly<{
@@ -41,7 +41,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
   isKnownBuiltInAgentId: boolean;
   entry: Readonly<{
     getAcpBackendFactory?: unknown;
-    getBindings?: unknown;
+    getRuntimeCore?: unknown;
   }> | null | undefined;
   backendContribution?: ResolvedBackendContribution;
 }>): boolean {
@@ -56,7 +56,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
     return true;
   }
 
-  if (hasExecutionRunCatalogOwner(params.entry) || typeof params.backendContribution?.getBindings === 'function') {
+  if (hasExecutionRunCatalogOwner(params.entry) || typeof params.backendContribution?.getRuntimeCore === 'function') {
     return true;
   }
 

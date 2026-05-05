@@ -61,7 +61,7 @@ vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
   resolveReplaySeedDraft,
 }));
 
-import { ExecutionRunManager } from './ExecutionRunManager';
+import { ExecutionRunHostBridge as ExecutionRunManager } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 
 beforeEach(() => {
   runtimeFactoryRef.current = null;

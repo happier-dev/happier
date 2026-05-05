@@ -1,7 +1,9 @@
 import type { ConnectedServiceQuotaFetcher } from '../types';
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
 import { isRecord, normalizeNonEmptyString, normalizePct, resolveConnectedServiceQuotaAccountLabel } from '../quotaNormalization';
+import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
 
 function normalizeResetAtMs(value: unknown): number | null {
   const num = typeof value === 'number' ? value : Number(value);
@@ -18,17 +20,20 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
   usageUrl?: string;
   staleAfterMs?: number;
   userAgent?: string;
+  runtimeFetch?: FetchRuntimeServiceV1;
 }>): ConnectedServiceQuotaFetcher {
   const usageUrl = params?.usageUrl ?? 'https://chatgpt.com/backend-api/wham/usage';
   const staleAfterMs = typeof params?.staleAfterMs === 'number' && Number.isFinite(params.staleAfterMs) ? Math.max(1, Math.trunc(params.staleAfterMs)) : 300_000;
   const userAgent = params?.userAgent ?? 'happier';
+  const runtimeFetch = params?.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
 
   return {
     serviceId: 'openai-codex',
-    fetch: async ({ record, now, signal }) => {
+    loadQuota: async ({ record, now, signal }) => {
       if (record.kind !== 'oauth') return null;
 
-      const response = await fetch(usageUrl, {
+      const response = await runtimeFetch({
+        url: usageUrl,
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${record.oauth.accessToken}`,

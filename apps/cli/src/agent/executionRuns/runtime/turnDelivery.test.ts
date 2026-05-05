@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from './turnDelivery';
+import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '@/agent/runtime/bridges/executionRun/turnDelivery';
 
 describe('turnDelivery', () => {
   it('normalizes unknown delivery to prompt', () => {
@@ -27,4 +27,3 @@ describe('turnDelivery', () => {
     expect(isAbortLikeError(abortErr)).toBe(true);
   });
 });
-

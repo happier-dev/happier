@@ -26,7 +26,7 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
   resolveCliTsxTsconfigPath: vi.fn(() => '/repo/tsconfig.json'),
 }));
 
-vi.mock('@/runtime/js/requireJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/requireJavaScriptRuntimeExecutable', () => ({
   requireJavaScriptRuntimeExecutable: requireJavaScriptRuntimeExecutableMock,
 }));
 

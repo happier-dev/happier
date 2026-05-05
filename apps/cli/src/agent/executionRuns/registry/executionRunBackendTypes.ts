@@ -1,6 +1,10 @@
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { BackendIsolationBundle, BackendIsolationRequest } from '@/packagedRuntime/isolation/types';
+import type {
+  ExecutionRunIntentStartPreflightParams,
+  ExecutionRunStartIntentPolicyResult,
+} from '@/agent/executionRuns/policy/executionRunStartPreflight';
 
 export type ExecutionRunBackendStartContext = Readonly<{
   intentInput?: unknown;
@@ -25,8 +29,12 @@ export type ExecutionRunBackendFactoryOptions = Readonly<{
 }>;
 
 export type ExecutionRunBackendFactory = (opts: ExecutionRunBackendFactoryOptions) => ExecutionRunHostRuntime;
+export type ExecutionRunBackendStartPreflight = (
+  params: ExecutionRunIntentStartPreflightParams,
+) => Promise<ExecutionRunStartIntentPolicyResult>;
 
 export type ExecutionRunBackendDescriptor = Readonly<{
   factory: ExecutionRunBackendFactory;
+  startPreflight?: ExecutionRunBackendStartPreflight;
   resolveIsolation?: (request: BackendIsolationRequest, baseBundle: BackendIsolationBundle) => BackendIsolationBundle;
 }>;

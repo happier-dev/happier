@@ -1,6 +1,6 @@
 import { delimiter, resolve } from 'node:path';
 
-import { resolveCliRuntimeRootPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { resolveCliRuntimeRootPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 
 export function buildCodexAcpEnvOverrides(params?: {
   baseEnv?: NodeJS.ProcessEnv;

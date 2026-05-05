@@ -3,6 +3,48 @@ import { describe, expect, it, vi } from 'vitest';
 import { refreshClaudeSubscriptionOauthTokens, refreshGeminiOauthTokens, refreshOpenAiCodexOauthTokens } from './serviceRefreshers';
 
 describe('serviceRefreshers', () => {
+  it('refreshes OpenAI Codex tokens through injected runtime fetch without using global fetch', async () => {
+    const globalFetch = vi.fn(async () => {
+      throw new Error('global fetch must not be used by connected-service refreshers');
+    });
+    vi.stubGlobal('fetch', globalFetch as unknown as typeof fetch);
+    const runtimeFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      text: async () => '',
+      json: async () => ({
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+        id_token: 'new-id',
+        expires_in: 3600,
+      }),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+
+    const params = {
+      refreshToken: 'old-refresh',
+      now: 1000,
+      runtimeFetch,
+    };
+    const refreshed = await refreshOpenAiCodexOauthTokens(params);
+
+    expect(globalFetch).not.toHaveBeenCalled();
+    expect(runtimeFetch).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'POST',
+      url: expect.stringContaining('/oauth/token'),
+      headers: expect.objectContaining({
+        'Content-Type': 'application/x-www-form-urlencoded',
+      }),
+    }));
+    expect(refreshed).toMatchObject({
+      accessToken: 'new-access',
+      refreshToken: 'new-refresh',
+      idToken: 'new-id',
+    });
+  });
+
   it('refreshes OpenAI Codex tokens via refresh_token grant', async () => {
     const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) => ({
       ok: true,

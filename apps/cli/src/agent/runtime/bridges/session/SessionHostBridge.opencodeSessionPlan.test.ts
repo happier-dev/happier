@@ -18,13 +18,13 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
 }));
 
 describe('SessionHostBridge (opencode session plan)', () => {
-  it('returns a host-owned OpenCode session plan through bindings', async () => {
+  it('returns a host-owned OpenCode session plan through runtimeCore', async () => {
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'opencode',
       providerId: 'opencode',
       source: 'built_in',
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createSessionRuntime: createSessionRuntimeMock,
         },
       },

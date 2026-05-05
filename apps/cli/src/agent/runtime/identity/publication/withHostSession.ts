@@ -1,8 +1,8 @@
-import type { HostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { NormalizedRuntimeEventPublication } from '@/agent/runtime/events/createNormalizedRuntimeEventWriter';
 import { createNormalizedRuntimeEventPublicationHub } from '@/agent/runtime/events/createNormalizedRuntimeEventPublicationHub';
-import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/sessionLoop/factoryResult';
+import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 
 function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
   runtime: RuntimeTurnOperations;

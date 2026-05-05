@@ -15,6 +15,7 @@ import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { Metadata } from '@/api/types';
 import type { ACPMessageData, ACPProvider } from '../../sessionMessageTypes';
 import { deriveVoiceAgentTurnLocalId, readRuntimeDescriptorV1FromMetadata, readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol';
+import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
 
 export function resolveSessionClientParentProvider(metadata: unknown): CatalogAgentId {
     const runtimeDescriptorProviderId = typeof readRuntimeDescriptorV1FromMetadata(metadata)?.providerId === 'string'
@@ -74,6 +75,7 @@ export function registerSessionClientRuntimeHandlers(
         sendUserTextMessageCommitted: (text: string, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
         sendAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
         sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => void;
+        getAgentStateRequestStore?: ExecutionRunPermissionRequestStoreProvider;
         persistVoiceAgentRunMetadataFromPublicRun: (run: unknown, welcomedEpoch?: number) => void;
         socketEmitExecutionRunUpdated: (run: unknown) => void;
     }>,
@@ -123,16 +125,6 @@ export function registerSessionClientRuntimeHandlers(
         cwd: workingDirectory,
         serverUrl: configuration.serverUrl,
         parentProvider,
-        createBackend: ({ backendId, backendTarget, permissionMode, modelId, accountSettings, start }) =>
-            createExecutionRunRuntime({
-                cwd: workingDirectory,
-                backendId,
-                backendTarget,
-                permissionMode,
-                modelId,
-                accountSettings,
-                start,
-            }),
         sendAcp: (provider, body, opts) => params.sendAgentMessage(provider as ACPProvider, body as ACPMessageData, opts),
         streamedTranscriptSession: {
             sendAgentMessageEphemeral: (provider, body, opts) =>
@@ -142,6 +134,7 @@ export function registerSessionClientRuntimeHandlers(
         },
         transcriptWriter,
         budgetRegistry: executionBudgetRegistry,
+        getPermissionRequestStore: params.getAgentStateRequestStore,
         onExecutionRunPublicStateUpdated: (run) => {
             try {
                 params.persistVoiceAgentRunMetadataFromPublicRun(run);

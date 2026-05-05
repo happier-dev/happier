@@ -54,6 +54,7 @@ const harness = vi.hoisted(() => {
     }),
     updateMachineMetadata: vi.fn(async () => {}),
     updateDaemonState: vi.fn(async () => {}),
+    emitSessionEnd: vi.fn(),
     shutdown: vi.fn(),
   };
 
@@ -169,6 +170,7 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
 vi.mock('@/backends/catalog', () => ({
   AGENTS: {},
   getVendorResumeSupport: vi.fn(async () => () => true),
+  getManagedServerShutdownCleanup: vi.fn(async () => null),
   resolveAgentCliSubcommand: vi.fn(),
   resolveCatalogAgentId: vi.fn(() => 'codex'),
 }));
@@ -520,6 +522,39 @@ describe('startDaemon automation wiring (integration)', () => {
       expect(harness.automationWorkerRefreshAssignments).toHaveBeenCalledTimes(2);
       expect(harness.automationWorkerStop).toHaveBeenCalledTimes(1);
       expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('publishes session-end events for orphaned daemon startup sessions after machine sync connects', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    try {
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockResolvedValueOnce({
+        orphanedDeadDaemonSessions: [
+          {
+            sessionId: 'sess-orphaned-6480',
+            pid: 6480,
+          },
+        ],
+      });
+
+      const { startDaemon } = await import('./startDaemon');
+      await startDaemon();
+
+      expect(harness.apiMachine.emitSessionEnd).toHaveBeenCalledWith({
+        sid: 'sess-orphaned-6480',
+        time: expect.any(Number),
+        exit: {
+          observedBy: 'daemon',
+          pid: 6480,
+          reason: 'process-missing',
+          code: null,
+          signal: null,
+        },
+      });
     } finally {
       exitSpy.mockRestore();
     }

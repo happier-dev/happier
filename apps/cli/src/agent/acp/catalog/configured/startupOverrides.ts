@@ -1,4 +1,4 @@
-import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 
 import type { ResolvedConfiguredAcpBackend } from './resolveBackend';
 

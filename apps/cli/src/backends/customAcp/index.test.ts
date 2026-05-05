@@ -7,7 +7,7 @@ describe('backends/customAcp/index', () => {
     expect(agent.id).toBe('customAcp');
     expect(agent.cliSubcommand).toBe('customAcp');
     expect(agent.getAcpBackendFactory).toBeTypeOf('function');
-    expect(agent.getBindings).toBeTypeOf('function');
+    expect(agent.getRuntimeCore).toBeTypeOf('function');
     expect(agent.vendorResumeSupport).toBe('unsupported');
     await expect(agent.getCliCommandHandler?.()).resolves.toBeTypeOf('function');
   });

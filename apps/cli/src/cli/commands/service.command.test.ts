@@ -12,7 +12,7 @@ vi.mock('@/daemon/service/cli', () => ({
     runDaemonServiceCliCommand: runDaemonServiceCliCommandMock,
 }));
 
-vi.mock('./serviceRepair/handleServiceRepairCliCommand', () => ({
+vi.mock('./service/repair/handleServiceRepairCliCommand', () => ({
     handleServiceRepairCliCommand: handleServiceRepairCliCommandMock,
 }));
 

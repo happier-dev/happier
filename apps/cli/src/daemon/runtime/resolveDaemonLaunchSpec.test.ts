@@ -12,11 +12,11 @@ const {
   resolveCliTsxTsconfigPathMock: vi.fn(() => '/opt/happier/apps/cli/tsconfig.json'),
 }));
 
-vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
   ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
 }));
 
-vi.mock('@/runtime/resolvePackagedRuntimeEntrypoint', () => ({
+vi.mock('@/packagedRuntime/resolvePackagedRuntimeEntrypoint', () => ({
   resolvePackagedRuntimeEntrypoint: resolvePackagedRuntimeEntrypointMock,
 }));
 

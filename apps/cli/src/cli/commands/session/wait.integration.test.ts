@@ -543,8 +543,9 @@ describe('happier session wait (integration)', () => {
         }),
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(transcriptFetchCount).toBeGreaterThan(0);
+      await vi.waitFor(() => {
+        expect(transcriptFetchCount).toBeGreaterThan(0);
+      }, { timeout: 1_000 });
 
       transcriptMessages = [
         {

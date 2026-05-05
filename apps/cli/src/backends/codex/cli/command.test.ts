@@ -21,7 +21,7 @@ vi.mock('@/persistence', () => ({
 }));
 
 import { handleCodexCliCommand } from './command';
-import * as runCodexModule from '@/backends/codex/bindings/session';
+import * as runCodexModule from '@/backends/codex/runtimeCore/session';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { type Credentials } from '@/persistence';
 

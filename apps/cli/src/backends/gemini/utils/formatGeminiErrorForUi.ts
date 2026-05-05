@@ -1,6 +1,6 @@
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
-import { buildProviderCliUnavailableMessage } from '@/runtime/managedTools/buildProviderCliUnavailableMessage';
+import { buildProviderCliUnavailableMessage } from '@/packagedRuntime/managedTools/buildProviderCliUnavailableMessage';
 import { buildGeminiWorkspaceProjectAuthenticationMessage } from './buildGeminiWorkspaceProjectGuidance';
 
 export function formatGeminiErrorForUi(error: unknown, displayedModel?: string | null): string {

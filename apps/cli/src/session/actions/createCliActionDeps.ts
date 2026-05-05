@@ -56,10 +56,7 @@ import {
   isLegacyCustomAcpSessionAgentId,
 } from '@/session/backendTargets/compat/customAcp';
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
-import {
-  readExecutionRunPermissionResponseTargetFromAgentState,
-  readSessionMetadata,
-} from './cliActionDeps/sessionStateReaders';
+import { readSessionMetadata } from './cliActionDeps/sessionStateReaders';
 
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
@@ -632,41 +629,6 @@ export function createCliActionDeps(params: Readonly<{
       }
 
       const approved = decision === 'allow';
-      const executionRunResponseTarget = readExecutionRunPermissionResponseTargetFromAgentState({
-        rawSession: transport.rawSession,
-        mode: transport.mode,
-        ctx: transport.ctx,
-        requestId: reqId,
-      });
-      if (executionRunResponseTarget) {
-        const actionResult = await executeExecutionRunAction({
-          token: params.credentials.token,
-          sessionId: transport.sessionId,
-          ctx: transport.ctx,
-          mode: transport.mode,
-          request: {
-            runId: executionRunResponseTarget.runId,
-            actionId: 'permission.respond',
-            input: {
-              requestId: reqId,
-              approved,
-              responseTarget: executionRunResponseTarget,
-            },
-          },
-        });
-        if (actionResult.ok) {
-          if (actionResult.data && typeof actionResult.data === 'object' && !Array.isArray(actionResult.data)) {
-            return actionResult.data as Record<string, unknown>;
-          }
-          return { ok: true };
-        }
-        return {
-          ok: false,
-          errorCode: actionResult.code,
-          errorMessage: actionResult.message ?? actionResult.code,
-          sessionId: transport.sessionId,
-        };
-      }
       try {
         return await callSessionRpc({
           token: params.credentials.token,

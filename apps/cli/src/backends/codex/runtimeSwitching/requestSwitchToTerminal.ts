@@ -1,4 +1,4 @@
-import { discardQueuedAndPendingForTerminalSwitch } from '../../../agent/runtimeSwitching/discardQueuedAndPendingForSwitch';
+import { discardQueuedAndPendingForTerminalSwitch } from '@/agent/runtime/mode/switching/discardQueuedAndPendingForSwitch';
 
 type QueueItem = {
   message: string;

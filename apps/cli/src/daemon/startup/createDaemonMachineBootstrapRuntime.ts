@@ -6,6 +6,7 @@ import { startAutomationWorker, type AutomationWorkerHandle } from '../automatio
 import { startMemoryWorker, type MemoryWorkerHandle } from '../memory/memoryWorker';
 import { startVoiceInferenceWorker, type VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
 import type { startDaemonMachineRegistration } from '../machine/startDaemonMachineRegistration';
+import { createDaemonMachineLiveStreamCaptureAdapter } from '../peer/mediation/stream';
 import type { Credentials } from '@/persistence';
 import packageJson from '../../../package.json';
 
@@ -56,6 +57,7 @@ export function createDaemonMachineBootstrapRuntime(
 ): BootstrapRuntime {
   return {
     cliVersion: packageJson.version,
+    credentials: params.credentials,
     isShuttingDown: params.isShuttingDown,
     createConnectedApiMachine: (registeredMachine) =>
       params.diagnosticSubsystemGates.disableMachineSync
@@ -113,5 +115,10 @@ export function createDaemonMachineBootstrapRuntime(
     directPeerServerLifecycle: params.directPeerServerLifecycle,
     directTransferPromptAssetAdapterRegistry: params.directTransferPromptAssetAdapterRegistry,
     directTransferPromptRegistryRegistry: params.directTransferPromptRegistryRegistry,
+    peerMediationMachineRpc: {
+      stream: {
+        captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(),
+      },
+    },
   };
 }

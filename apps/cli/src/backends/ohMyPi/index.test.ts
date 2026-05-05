@@ -10,6 +10,6 @@ describe('backends/ohMyPi/index', () => {
     expect(agent.getDirectSessionProviderOps).toBeTypeOf('function');
     expect(agent.getConnectedServicesMaterializer).toBeTypeOf('function');
     expect(agent.getTerminalRuntimeOps).toBeTypeOf('function');
-    expect(agent.getBindings).toBeTypeOf('function');
+    expect(agent.getRuntimeCore).toBeTypeOf('function');
   });
 });

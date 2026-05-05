@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import type { CodexBackendMode } from '@happier-dev/agents';
 
-import { applyTerminalRemoteLaunchGating } from '@/agent/runtimeSwitching/launchGating';
+import { applyTerminalRemoteLaunchGating } from '@/agent/runtime/mode/switching/launchGating';
 import { isExperimentalCodexAcpEnabled } from '@/backends/codex/experiments';
 
 import { createCodexTerminalRuntimeSupportResolver } from '../../terminalRuntime/supportResolver';

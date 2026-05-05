@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import { createPluginStateStore } from '@/extensions/store/state';
+import { createPluginStateStore } from '@/plugins/store/state';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 

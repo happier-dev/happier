@@ -7,11 +7,13 @@ export async function waitForNextPermissionModeMessage<Mode, Message>(opts: {
   messageQueue: MessageQueue2<Mode, Message>;
   abortSignal: AbortSignal;
   session: ApiSessionClient;
+  beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   onMetadataUpdate?: (() => void | Promise<void>) | null;
 }): Promise<MessageBatch<Mode, Message> | null> {
   return await waitForMessagesOrPending({
     messageQueue: opts.messageQueue,
     abortSignal: opts.abortSignal,
+    beforePendingMaterialize: opts.beforePendingMaterialize,
     popPendingMessage: () => opts.session.popPendingMessage(),
     waitForMetadataUpdate: (signal) => opts.session.waitForMetadataUpdate(signal),
     onMetadataUpdate: opts.onMetadataUpdate,

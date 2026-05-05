@@ -1,5 +1,5 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,7 @@ const {
   getProviderAttachOps,
   getTerminalRuntimeOps,
   createMockBackendExecutionSurfaces,
+  bootstrapAccountSettingsContext,
 } = vi.hoisted(() => {
   const createMockBackendExecutionSurfaces = (backendId: string | null | undefined): BackendExecutionSurfaces => {
     const createMockTerminalRuntimeBinding = (
@@ -101,6 +102,7 @@ const {
     getProviderAttachOps: vi.fn(),
     getTerminalRuntimeOps: vi.fn(),
     createMockBackendExecutionSurfaces,
+    bootstrapAccountSettingsContext: vi.fn(),
   };
 });
 
@@ -113,6 +115,10 @@ vi.mock('@/backends/catalog', () => ({
   getTerminalRuntimeOps,
 }));
 
+vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
+  bootstrapAccountSettingsContext,
+}));
+
 describe('happier attach', () => {
   const localSettings = { machineId: 'machine-local' } as Settings;
   const previousManagedServerStatePath = process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
@@ -122,12 +128,14 @@ describe('happier attach', () => {
 
   beforeEach(() => {
     exitSpy.mockClear();
+    bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
   });
 
   afterEach(() => {
     resolveBackendExecutionSurfaces.mockReset().mockImplementation(createMockBackendExecutionSurfaces);
     getProviderAttachOps.mockReset();
     getTerminalRuntimeOps.mockReset();
+    bootstrapAccountSettingsContext.mockReset();
     if (previousManagedServerStatePath === undefined) {
       delete process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
     } else {
@@ -244,6 +252,71 @@ describe('happier attach', () => {
 
     expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith('opencode');
     expect(getProviderAttachOps).not.toHaveBeenCalled();
+  });
+
+  it('passes the resolved attach backend id to direct provider attach when configured backend ownership differs from the agent id', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_plugin_attach_backend_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-remote',
+        flavor: 'acp:plugin-review-bot',
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 1,
+          backendId: 'plugin-review-bot',
+          title: 'Plugin Review Bot',
+        },
+        runtimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {},
+        },
+      }),
+    });
+    const runProviderAttachFn = vi.fn(async () => 0);
+    const createProviderAttachStatePublisherFn = vi.fn(() => null);
+    resolveBackendExecutionSurfaces.mockImplementation((backendId) => backendId === 'plugin-review-bot'
+      ? {
+          terminalRuntime: null,
+          directSessions: null,
+          attach: {
+            evaluateEligibility: async ({ metadata }) => ({
+              eligible: true,
+              scope: 'remote',
+              metadata,
+            }),
+            probeReachability: async () => ({ reachable: true }),
+            runAttach: async () => 0,
+          },
+          sessionHandoff: null,
+        }
+      : createMockBackendExecutionSurfaces(backendId));
+
+    await (handleAttachCommand as any)(['sid_plugin_attach_backend_1'], {
+      readCredentialsFn: async () => credentials,
+      readSettingsFn: async () => localSettings,
+      fetchSessionByIdFn: async () => rawSession,
+      runProviderAttachFn,
+      createProviderAttachStatePublisherFn,
+      readTerminalAttachmentInfoFn: async () => null,
+      isTmuxAvailableFn: async () => true,
+    });
+
+    expect(createProviderAttachStatePublisherFn).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'opencode',
+      sessionId: 'sid_plugin_attach_backend_1',
+    }));
+    expect(runProviderAttachFn).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'opencode',
+      backendId: 'plugin-review-bot',
+      sessionId: 'sid_plugin_attach_backend_1',
+    }));
   });
 
   it('allows explicit local OpenCode attach after machine id drift when a local attachment marker exists', async () => {
@@ -399,19 +472,19 @@ describe('happier attach', () => {
       probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
     }) => {
       expect(rows).toHaveLength(3);
-      expect(rows[0]).toMatchObject({
+      expect(rows[0]).toMatchObject({ sessionId: 'sid_attachable_1', disabled: false });
+      expect(rows[1]).toMatchObject({
         sessionId: 'sid_remote_opencode_1',
         disabled: true,
         annotation: 'remote',
         disabledReason: 'Press P to check remote reachability.',
         probeable: true,
       });
-      expect(rows[1]).toMatchObject({ sessionId: 'sid_attachable_1', disabled: false });
       expect(rows[2]).toMatchObject({
         sessionId: 'sid_not_attachable_1',
         disabled: true,
-        disabledReason: 'Session was not started in tmux.',
       });
+      expect(String(rows[2]?.disabledReason)).toMatch(/started outside tmux/i);
 
       await expect(probeSessionIdFn?.('sid_remote_opencode_1')).resolves.toMatchObject({
         reachable: true,
@@ -460,6 +533,182 @@ describe('happier attach', () => {
     expect(getTerminalRuntimeOps).not.toHaveBeenCalled();
   });
 
+  it('uses host comparison to show likely local sessions when the current machine id is unavailable', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const localHost = hostname().replace(/\.(local|lan|localdomain)$/i, '');
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_host_fallback_1',
+      active: true,
+      updatedAt: 20,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        host: `${localHost}.local`,
+        flavor: 'claude',
+        tag: 'repo-host',
+        path: '/tmp/repo-host',
+        terminal: {
+          mode: 'plain',
+          requested: 'tmux',
+        },
+      }),
+    });
+    const selectAttachableSessionIdFn = vi.fn(async ({ rows }: { rows: Array<Record<string, unknown>> }) => {
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        sessionId: 'sid_host_fallback_1',
+        disabled: true,
+      });
+      return { type: 'cancelled' as const };
+    });
+
+    await (handleAttachCommand as any)([], {
+      readCredentialsFn: async () => credentials,
+      readSettingsFn: async (): Promise<Settings> => ({ machineId: undefined } as Settings),
+      fetchSessionsPageFn: async () => ({
+        sessions: [rawSession],
+        nextCursor: null,
+        hasNext: false,
+      }),
+      fetchSessionByIdFn: async () => rawSession,
+      canUseInkSelectorFn: () => true,
+      selectAttachableSessionIdFn,
+      readTerminalAttachmentInfoFn: async () => null,
+      runTmuxAttachFn: vi.fn(async () => 0),
+    });
+
+    expect(selectAttachableSessionIdFn).toHaveBeenCalled();
+  });
+
+  it('uses account settings when explaining interactive outside-tmux attach rows', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    bootstrapAccountSettingsContext.mockResolvedValueOnce({
+      settings: {
+        sessionUseTmux: true,
+      },
+    });
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_plain_claude_1',
+      active: true,
+      updatedAt: 20,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-local',
+        host: hostname(),
+        flavor: 'claude',
+        tag: 'repo-tmux',
+        path: '/tmp/repo-tmux',
+        terminal: {
+          mode: 'plain',
+          requested: 'tmux',
+        },
+      }),
+    });
+    const selectAttachableSessionIdFn = vi.fn(async ({ footerHint }: { footerHint?: string | null }) => {
+      expect(footerHint).toMatch(/start.*now.*attachable/i);
+      expect(footerHint).not.toMatch(/enable .*tmux/i);
+      return { type: 'cancelled' as const };
+    });
+
+    await (handleAttachCommand as any)([], {
+      readCredentialsFn: async () => credentials,
+      readSettingsFn: async () => localSettings,
+      fetchSessionsPageFn: async () => ({
+        sessions: [rawSession],
+        nextCursor: null,
+        hasNext: false,
+      }),
+      fetchSessionByIdFn: async () => rawSession,
+      canUseInkSelectorFn: () => true,
+      selectAttachableSessionIdFn,
+      readTerminalAttachmentInfoFn: async () => null,
+      isTmuxAvailableFn: async () => true,
+      runTmuxAttachFn: vi.fn(async () => 0),
+    });
+
+    expect(bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
+      credentials,
+      mode: 'fast',
+    }));
+  });
+
+  it('points interactive empty attach at active remote session discovery', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const selectAttachableSessionIdFn = vi.fn(async () => ({ type: 'none' as const }));
+
+    try {
+      await (handleAttachCommand as any)([], {
+        readCredentialsFn: async () => credentials,
+        readSettingsFn: async () => localSettings,
+        fetchSessionsPageFn: async () => ({
+          sessions: [],
+          nextCursor: null,
+          hasNext: false,
+        }),
+        fetchSessionByIdFn: async () => {
+          throw new Error('fetchSessionByIdFn should not be called');
+        },
+        canUseInkSelectorFn: () => true,
+        selectAttachableSessionIdFn,
+        readTerminalAttachmentInfoFn: async () => null,
+        runTmuxAttachFn: vi.fn(async () => 0),
+      });
+
+      const output = logSpy.mock.calls.flat().join('\n');
+      expect(output).toContain('No active sessions on this machine.');
+      expect(output).toContain('happier session list --active');
+      expect(output).toContain('happier resume');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('prints a clearer explicit attach explanation for sessions started outside tmux', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_plain_codex_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-local',
+        host: 'test',
+        path: '/tmp/codex-workspace',
+        flavor: 'codex',
+        terminal: {
+          mode: 'plain',
+          requested: 'tmux',
+        },
+      }),
+    });
+
+    await expect((handleAttachCommand as any)(['sid_plain_codex_1'], {
+      readCredentialsFn: async () => credentials,
+      readSettingsFn: async () => localSettings,
+      fetchSessionByIdFn: async () => rawSession,
+      readTerminalAttachmentInfoFn: async () => null,
+      runProviderAttachFn: vi.fn(async () => 1),
+      runTmuxAttachFn: vi.fn(async () => 0),
+    })).rejects.toThrow('process.exit(1)');
+
+    const output = errorSpy.mock.calls.flat().join('\n');
+    expect(output).toMatch(/started outside tmux/i);
+
+    errorSpy.mockRestore();
+  });
+
   it('dispatches provider-native attach for provider-attach local-control sessions', async () => {
     const credentials: Credentials = {
       token: 'token-1',
@@ -495,6 +744,7 @@ describe('happier attach', () => {
 
     expect(runProviderAttachFn).toHaveBeenCalledWith({
       agentId: 'opencode',
+      backendId: 'opencode',
       metadata: expect.objectContaining({
         path: '/tmp/opencode-workspace',
         opencodeSessionId: 'opencode-session-1',
@@ -637,6 +887,61 @@ describe('happier attach', () => {
         mode: 'tmux',
         tmux: expect.objectContaining({ target: 'happy:session-1' }),
       }),
+    }));
+  });
+
+  it('requests a remote-control banner refresh when attaching to daemon-started tmux sessions', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_daemon_claude_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-local',
+        path: '/tmp/claude-workspace',
+        host: 'test',
+        flavor: 'claude',
+        startedBy: 'daemon',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: {
+            target: 'happy:session-1',
+            tmpDir: '/tmp/happy-tmux',
+          },
+        },
+      }),
+    });
+    const runTmuxAttachFn = vi.fn(async () => 0);
+
+    await (handleAttachCommand as any)(['sid_daemon_claude_1'], {
+      readCredentialsFn: async () => credentials,
+      readSettingsFn: async () => localSettings,
+      fetchSessionByIdFn: async () => rawSession,
+      readTerminalAttachmentInfoFn: async () => ({
+        version: 1,
+        sessionId: 'sid_daemon_claude_1',
+        updatedAt: Date.now(),
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: {
+            target: 'happy:session-1',
+            tmpDir: '/tmp/happy-tmux',
+          },
+        },
+      }),
+      isTmuxAvailableFn: async () => true,
+      runProviderAttachFn: vi.fn(async () => false),
+      runTmuxAttachFn,
+    });
+
+    expect(runTmuxAttachFn).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sid_daemon_claude_1',
+      refreshRemoteControl: true,
     }));
   });
 

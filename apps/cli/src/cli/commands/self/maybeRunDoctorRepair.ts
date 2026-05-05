@@ -1,7 +1,7 @@
 import { resolveBackgroundServiceRepairPlanForCurrentRuntime } from '@/diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime';
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
 
-import { handleServiceRepairCliCommand } from '../serviceRepair/handleServiceRepairCliCommand';
+import { handleServiceRepairCliCommand } from '../service/repair/handleServiceRepairCliCommand';
 
 export async function maybeRunDoctorRepair(params: Readonly<{
   migrationRan: boolean;

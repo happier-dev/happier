@@ -6,8 +6,8 @@ const { getResolvedContributionRegistryMock } = vi.hoisted(() => ({
   getResolvedContributionRegistryMock: vi.fn(),
 }));
 
-vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
   getResolvedContributionRegistryMock.mockImplementation(actual.getResolvedContributionRegistry);
   return {
     ...actual,

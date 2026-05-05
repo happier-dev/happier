@@ -9,7 +9,7 @@ import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { qwenTransport } from '@/backends/qwen/acp/transport';
 import type { PermissionMode } from '@/api/types';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import { buildQwenAcpArgs } from './approvalMode';
 
 export interface QwenBackendOptions extends AgentFactoryOptions {

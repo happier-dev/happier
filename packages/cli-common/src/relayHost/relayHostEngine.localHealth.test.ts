@@ -126,6 +126,78 @@ describe('RelayHostEngine (local health)', () => {
     });
   });
 
+  it('resolves a non-colliding desired local relay URL before lane conflict checks', async () => {
+    await withTemporaryHome(async (homeDir) => {
+      const stableDefaults = resolveRelayRuntimeDefaults({
+        platform: 'linux',
+        mode: 'user',
+        channel: 'stable',
+        homeDir,
+      });
+      await mkdir(stableDefaults.configDir, { recursive: true });
+      await mkdir(stableDefaults.installRoot, { recursive: true });
+      await writeFile(join(stableDefaults.configDir, 'server.env'), 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n', 'utf8');
+      await writeFile(join(stableDefaults.installRoot, 'self-host-state.json'), JSON.stringify({ version: '0.3.0-test' }), 'utf8');
+
+      const previewDefaults = resolveRelayRuntimeDefaults({
+        platform: 'linux',
+        mode: 'user',
+        channel: 'preview',
+        homeDir,
+      });
+      await mkdir(previewDefaults.configDir, { recursive: true });
+      await writeFile(join(previewDefaults.configDir, 'server.env'), 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n', 'utf8');
+
+      const payloadRoot = join(homeDir, 'payload');
+      const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init');
+      await mkdir(migrationsSourceDir, { recursive: true });
+      await writeFile(join(migrationsSourceDir, 'migration.sql'), '-- init\n', 'utf8');
+      const serverBinaryPath = join(payloadRoot, 'happier-server');
+      await writeFile(serverBinaryPath, '#!/bin/sh\necho ok\n', 'utf8');
+
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      vi.doMock('node:os', async () => {
+        const actual = await vi.importActual<typeof import('node:os')>('node:os');
+        return {
+          ...actual,
+          homedir: () => homeDir,
+        };
+      });
+      vi.doMock('node:child_process', async () => {
+        const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+        return {
+          ...actual,
+          spawnSync: () => ({ status: 0, stdout: '', stderr: '' }),
+        };
+      });
+
+      const { createRelayHostEngine } = await import('./relayHostEngine.js');
+      const engine = createRelayHostEngine({
+        localInstallPolicy: { runServiceCommands: false, skipHealthCheck: true },
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => {},
+        installRemoteComponent: async () => ({ binaryPath: '$HOME/.happier/happier-server/current/happier-server', versionId: 'publicdev-1' }),
+      });
+
+      const result = await engine.installOrUpdate({
+        target: { kind: 'local' },
+        channel: 'preview',
+        mode: 'user',
+        selfHostRelayBinaryOverride: serverBinaryPath,
+      });
+
+      expect(result.relayUrl).not.toBe('http://127.0.0.1:3005');
+
+      const status = await engine.readStatus({
+        target: { kind: 'local' },
+        channel: 'preview',
+        mode: 'user',
+      });
+      expect(status.baseUrl).toBe(result.relayUrl);
+    });
+  });
+
   it('reports a warning when older legacy relay state with a different data secret remains beside the canonical preview root', async () => {
     await withTemporaryHome(async (homeDir) => {
       const defaults = resolveRelayRuntimeDefaults({
@@ -352,7 +424,7 @@ describe('RelayHostEngine (local health)', () => {
     });
   });
 
-  it('fails closed when another relay lane is already installed on the same local base URL', async () => {
+  it('auto-selects a non-colliding URL when another relay lane already uses the default local base URL', async () => {
     await withTemporaryHome(async (homeDir) => {
       const stableDefaults = resolveRelayRuntimeDefaults({
         platform: 'linux',
@@ -397,12 +469,14 @@ describe('RelayHostEngine (local health)', () => {
         installRemoteComponent: async () => ({ binaryPath: '$HOME/.happier/happier-server/current/happier-server', versionId: 'publicdev-1' }),
       });
 
-      await expect(engine.installOrUpdate({
+      const result = await engine.installOrUpdate({
         target: { kind: 'local' },
         channel: 'preview',
         mode: 'user',
         selfHostRelayBinaryOverride: previewBinaryPath,
-      })).rejects.toThrow(/stable/i);
+      });
+
+      expect(result.relayUrl).not.toBe('http://127.0.0.1:3005');
     });
   });
 

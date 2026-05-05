@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPluginStateStore } from '@/extensions/store/state';
+import { createPluginStateStore } from '@/plugins/store/state';
 
 import { reloadTrustedLocalPluginTool } from './reloadTrustedLocalPluginTool';
 

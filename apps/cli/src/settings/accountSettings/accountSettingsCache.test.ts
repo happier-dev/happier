@@ -1,13 +1,54 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { mkdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { readAccountSettingsCache, writeAccountSettingsCacheAtomic } from './accountSettingsCache';
+import { configuration } from '@/configuration';
+
+import { readAccountSettingsCache, resolveAccountSettingsCachePath, writeAccountSettingsCacheAtomic } from './accountSettingsCache';
+
+function createJwtWithSub(sub: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
+  return `${header}.${payload}.sig`;
+}
 
 describe('accountSettingsCache', () => {
+  const originalActiveServerDir = configuration.activeServerDir;
+
+  afterEach(() => {
+    Object.assign(configuration as unknown as { activeServerDir: string }, { activeServerDir: originalActiveServerDir });
+  });
+
+  it('resolves same-server account cache paths by token subject without exposing raw identity', () => {
+    const root = join(tmpdir(), `happier-account-settings-cache-${randomUUID()}`);
+    Object.assign(configuration as unknown as { activeServerDir: string }, { activeServerDir: root });
+
+    const accountAPath = resolveAccountSettingsCachePath({ token: createJwtWithSub('account-a@example.test') });
+    const accountBPath = resolveAccountSettingsCachePath({ token: createJwtWithSub('account-b@example.test') });
+
+    expect(accountAPath).not.toBe(accountBPath);
+    expect(accountAPath).toContain(root);
+    expect(accountAPath).toContain('account-settings-cache');
+    expect(accountAPath).not.toContain('account-a@example.test');
+    expect(accountAPath).not.toContain(createJwtWithSub('account-a@example.test'));
+  });
+
+  it('falls back to a token hash scope when the token has no subject', () => {
+    const root = join(tmpdir(), `happier-account-settings-cache-${randomUUID()}`);
+    Object.assign(configuration as unknown as { activeServerDir: string }, { activeServerDir: root });
+    const token = 'not-a-jwt-token';
+
+    const path = resolveAccountSettingsCachePath({ token });
+
+    expect(path).toContain(root);
+    expect(path).toContain('account-settings-cache');
+    expect(path).not.toContain(token);
+    expect(path).not.toBe(join(root, 'account.settings.cache.json'));
+  });
+
   it('removes stale lock files and completes write', async () => {
     const root = join(tmpdir(), `happier-account-settings-cache-${randomUUID()}`);
     await mkdir(root, { recursive: true });

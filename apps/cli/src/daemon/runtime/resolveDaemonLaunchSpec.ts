@@ -4,8 +4,8 @@ import { basename, join } from 'node:path';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 
 import { projectPath } from '@/projectPath';
-import { resolvePackagedRuntimeEntrypoint } from '@/runtime/resolvePackagedRuntimeEntrypoint';
-import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
+import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
+import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable';
 import { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
 export type DaemonLaunchSpec = Readonly<{

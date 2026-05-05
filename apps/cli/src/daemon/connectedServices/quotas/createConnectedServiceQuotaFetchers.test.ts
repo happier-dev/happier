@@ -39,7 +39,7 @@ describe('createConnectedServiceQuotaFetchers', () => {
       },
     });
 
-    const snapshot = await openAiFetcher!.fetch({ record, now, signal: new AbortController().signal });
+    const snapshot = await openAiFetcher!.loadQuota({ record, now, signal: new AbortController().signal });
     expect(snapshot?.staleAfterMs).toBe(30 * 60_000);
   });
 });

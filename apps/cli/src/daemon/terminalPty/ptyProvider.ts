@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 
-import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
+import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 import { logger } from '@/ui/logger';
 import { createPythonPtyRelayProvider } from './pythonPtyRelayProvider';
 

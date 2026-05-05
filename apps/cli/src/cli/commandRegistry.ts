@@ -125,7 +125,7 @@ export async function ensureMergedAgentCommandRegistryLoaded(): Promise<void> {
     return await mergedAgentCommandRegistryPromise;
   }
   const pending = (async () => {
-    const { primeResolvedContributionRegistry } = await import('@/extensions/registry/createResolvedContributionRegistry');
+    const { primeResolvedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
     await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
     syncAgentCommandRegistryFromCatalogSnapshot();
     mergedAgentCommandRegistryLoaded = true;

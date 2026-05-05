@@ -7,7 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod/v4';
 
 import { logger } from '@/ui/logger';
-import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
+import { requireProviderCliCommand } from '@/packagedRuntime/managedTools/requireProviderCliCommand';
 import type { CodexSessionConfig, CodexToolResponse } from './types';
 
 import { createCodexTransport, type CodexMcpClientSpawnMode } from './client';

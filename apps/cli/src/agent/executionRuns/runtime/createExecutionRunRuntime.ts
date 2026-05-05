@@ -83,11 +83,11 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             if (!engineResolution) {
                 throw new Error(`Unsupported execution-run backend: ${opts.backendId}`);
             }
-            const createRuntime = engineResolution.engineAdapter.runtimeCore?.createExecutionRunBackend;
-            if (typeof createRuntime !== 'function') {
+            const runtimeCore = engineResolution.engineAdapter.runtimeCore;
+            if (typeof runtimeCore?.createExecutionRunBackend !== 'function') {
                 throw new Error(`Engine adapter for ${opts.backendId} does not expose runtimeCore.createExecutionRunBackend`);
             }
-            const runtime = createRuntime({
+            const runtime = runtimeCore.createExecutionRunBackend({
                 cwd: opts.cwd,
                 runId: opts.runId,
                 backendId: opts.backendId,

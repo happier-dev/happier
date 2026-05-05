@@ -26,12 +26,12 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
-vi.mock('@/agent/runtime/sessionLoop/runHostSessionRuntime', () => ({
+vi.mock('@/agent/runtime/session/loop/runHostSessionRuntime', () => ({
   runHostSessionRuntime: runHostSessionRuntimeMock,
 }));
 
-vi.mock('@/agent/runtime/sessionLoop/lifecycle', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agent/runtime/sessionLoop/lifecycle')>();
+vi.mock('@/agent/runtime/session/loop/lifecycle', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/runtime/session/loop/lifecycle')>();
   return {
     ...actual,
     runHostSessionRuntimePlan: runHostSessionRuntimePlanMock,
@@ -109,6 +109,24 @@ describe('runConfiguredAcpBackend', () => {
       transportProfile: 'generic',
       capabilities: {},
       defaultModel: 'sonnet',
+      fsEnabled: false,
+      timeouts: {
+        initMs: 25,
+        initDelayMs: 5,
+      },
+      permissionModeArgv: {
+        flag: '--permission-mode',
+        map: {
+          default: null,
+          read_only: 'read-only',
+        },
+      },
+      mcp: {
+        policy: 'drop',
+      },
+      messageMeta: {
+        enrichOutgoing: (message: unknown) => ({ message }),
+      },
     });
     materializeConfiguredAcpEnvironmentMock.mockReturnValue({ TOKEN: 'secret' });
     resolveConfiguredAcpBackendStartupOverridesMock.mockReturnValue({
@@ -217,9 +235,26 @@ describe('runConfiguredAcpBackend', () => {
     expect(createdConfiguredBackend).toBe(createdBackend);
     expect(createConfiguredAcpBackendMock).toHaveBeenCalledWith({
       cwd: '/repo',
-      backend: expect.objectContaining({
+      definition: expect.objectContaining({
         backendId: 'custom-backend',
-        title: 'Custom Backend',
+        fsEnabled: false,
+        timeouts: {
+          initMs: 25,
+          initDelayMs: 5,
+        },
+        permissionModeArgv: {
+          flag: '--permission-mode',
+          map: {
+            default: null,
+            read_only: 'read-only',
+          },
+        },
+        mcp: {
+          policy: 'drop',
+        },
+        messageMeta: expect.objectContaining({
+          enrichOutgoing: expect.any(Function),
+        }),
       }),
       launchEnv: { TOKEN: 'secret' },
       mcpServers: {},

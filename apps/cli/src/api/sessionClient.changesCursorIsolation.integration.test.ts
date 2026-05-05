@@ -7,8 +7,8 @@ vi.mock('@/persistence', () => ({ writeLastChangesCursor, readLastChangesCursor 
 
 class FakeSocket {
   connected = false;
-  handlers = new Map<string, any>();
-  on(event: string, handler: any) {
+  handlers = new Map<string, (...args: unknown[]) => void>();
+  on(event: string, handler: (...args: unknown[]) => void) {
     this.handlers.set(event, handler);
     return this;
   }
@@ -21,9 +21,20 @@ class FakeSocket {
   }
 }
 
+const sessionScopedSockets: FakeSocket[] = [];
+const userScopedSockets: FakeSocket[] = [];
+
 vi.mock('./session/sockets', () => ({
-  createSessionScopedSocket: () => new FakeSocket(),
-  createUserScopedSocket: () => new FakeSocket(),
+  createSessionScopedSocket: () => {
+    const socket = new FakeSocket();
+    sessionScopedSockets.push(socket);
+    return socket;
+  },
+  createUserScopedSocket: () => {
+    const socket = new FakeSocket();
+    userScopedSockets.push(socket);
+    return socket;
+  },
 }));
 
 vi.mock('@/ui/logger', () => ({
@@ -53,7 +64,7 @@ describe('ApiSessionClient changesCursor isolation', () => {
 
     const client = new ApiSessionClient('tok', {
       id: 's1',
-      metadata: { path: '/tmp' },
+      metadata: { path: '/tmp', flavor: 'codex' },
       metadataVersion: 0,
       agentState: null,
       agentStateVersion: 0,
@@ -61,11 +72,14 @@ describe('ApiSessionClient changesCursor isolation', () => {
       encryptionVariant: 'v1',
     } as any);
 
-    (client as any).handleUpdate(
+    const userScopedUpdateHandler = userScopedSockets.at(-1)?.handlers.get('update');
+    expect(userScopedUpdateHandler).toBeTypeOf('function');
+
+    userScopedUpdateHandler?.(
       { id: 'upd-1', seq: 999, createdAt: 1, body: { t: 'update-machine', machineId: 'm1' } },
-      { source: 'session-scoped' },
     );
 
     expect(writeLastChangesCursor).not.toHaveBeenCalled();
+    await client.close();
   }, 20_000);
 });

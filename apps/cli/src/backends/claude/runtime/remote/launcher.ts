@@ -13,12 +13,18 @@ import { getToolName } from "@/backends/claude/utils/getToolName";
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
 import { createStreamedTranscriptWriter, type StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import { ClaudeRemoteTaskOutputCollector } from '@/backends/claude/remote/sidechains/claudeRemoteTaskOutputCollector';
 import { ClaudeRemoteSubagentFileCollector } from '@/backends/claude/remote/sidechains/claudeRemoteSubagentFileCollector';
 import { resolveClaudeSubagentJsonlPathForRemoteSession } from '@/backends/claude/remote/sidechains/resolveClaudeSubagentJsonlPathForRemoteSession';
 import { createClaudeRemoteTeamInboxBridge } from '@/backends/claude/remote/teamInbox/claudeRemoteTeamInboxBridge';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
+import {
+    resolveRemoteModeControlSurface,
+    startRemoteModeStaticControl,
+    type RemoteModeStaticControl,
+} from '@/ui/remoteControl/remoteModeControl';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
@@ -41,21 +47,49 @@ interface PermissionsField {
     allowedTools?: string[];
 }
 
+type RuntimeTranscriptClient = Omit<TranscriptSessionPort, 'sendAgentMessageCommitted'> &
+    Partial<Pick<TranscriptSessionPort, 'sendAgentMessageCommitted'>>;
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function readRemoteControlTerminalMode(session: Session): string | null {
+    if (session.terminalRuntime?.mode) return session.terminalRuntime.mode;
+
+    const metadata = readRecord(session.client.getMetadataSnapshot?.());
+    const terminal = readRecord(metadata?.terminal);
+    const mode = terminal?.mode;
+    return typeof mode === 'string' && mode.trim().length > 0 ? mode.trim() : null;
+}
+
 export async function launchClaudeRemoteSession(session: Session): Promise<'switch' | 'exit'> {
     logger.debug('[claudeRemoteLauncher] Starting remote launcher');
 
     // Check if we have a TTY for UI rendering
-    const hasTTY = resolveHasTTY({
+    const terminalInkAvailable = resolveHasTTY({
         stdoutIsTTY: process.stdout.isTTY,
         stdinIsTTY: process.stdin.isTTY,
         startedBy: session.startedBy,
     });
-    const shouldRenderInkUi = hasTTY && session.startedBy !== 'daemon';
-    logger.debug(`[claudeRemoteLauncher] TTY available: ${hasTTY}`);
+    const controlSurface = session.startedBy === 'daemon'
+        ? resolveRemoteModeControlSurface({
+            stdoutIsTTY: process.stdout.isTTY,
+            stdinIsTTY: process.stdin.isTTY,
+            startedBy: session.startedBy,
+            terminalMode: readRemoteControlTerminalMode(session),
+        })
+        : terminalInkAvailable
+            ? 'ink'
+            : 'none';
+    const shouldRenderInkUi = controlSurface === 'ink';
+    logger.debug(`[claudeRemoteLauncher] remote control surface: ${controlSurface}`);
 
     // Configure terminal
     let messageBuffer = new MessageBuffer();
     let inkInstance: any = null;
+    let staticControl: RemoteModeStaticControl | null = null;
     let launchController: ClaudeRemoteLaunchController | null = null;
 
     if (shouldRenderInkUi) {
@@ -79,9 +113,24 @@ export async function launchClaudeRemoteSession(session: Session): Promise<'swit
             patchConsole: false,
             stdout: inkStdout,
         });
+    } else if (controlSurface === 'static') {
+        staticControl = startRemoteModeStaticControl({
+            providerName: 'Claude',
+            stdin: process.stdin,
+            stdout: process.stdout,
+            allowSwitchToTerminal: true,
+            onExit: async () => {
+                logger.debug('[remote]: Exiting client via Ctrl-C');
+                await launchController?.abort();
+            },
+            onSwitchToTerminal: () => {
+                logger.debug('[remote]: Switching to terminal mode via static control');
+                void launchController?.switchToLocal();
+            },
+        });
     }
 
-    if (hasTTY) {
+    if (shouldRenderInkUi) {
         // Ensure we can capture keypresses for the remote-mode UI.
         // Avoid forcing stdin encoding here; Ink (and Node) should handle key decoding safely.
         process.stdin.resume();
@@ -99,7 +148,13 @@ export async function launchClaudeRemoteSession(session: Session): Promise<'swit
     );
 
     const streamedTranscriptWriter: StreamedTranscriptWriter = (() => {
-        const client: any = session.client as any;
+        const client = session.client as RuntimeTranscriptClient;
+        const sendAgentMessageCommitted: TranscriptSessionPort['sendAgentMessageCommitted'] =
+            typeof client.sendAgentMessageCommitted === 'function'
+                ? (provider, body, opts) => client.sendAgentMessageCommitted!(provider, body, opts)
+                : async () => {
+                    throw new Error('sendAgentMessageCommitted unavailable');
+                };
         return createStreamedTranscriptWriter({
             provider: 'claude' as any,
             session: {
@@ -108,10 +163,9 @@ export async function launchClaudeRemoteSession(session: Session): Promise<'swit
                 // runtime check so tests/stubs that don't implement it can opt out.
                 sendAgentMessageEphemeral:
                     typeof client?.sendAgentMessageEphemeral === 'function'
-                        ? (provider: any, body: any, opts: any) => client.sendAgentMessageEphemeral(provider, body, opts)
+                        ? (provider, body, opts) => client.sendAgentMessageEphemeral?.(provider, body, opts)
                         : undefined,
-                sendAgentMessageCommitted: (provider, body, opts) =>
-                    session.client.sendAgentMessageCommitted(provider, body, opts),
+                sendAgentMessageCommitted,
             },
         });
     })();
@@ -158,7 +212,6 @@ export async function launchClaudeRemoteSession(session: Session): Promise<'swit
 
     const seededTeamInboxSessionIds = new Set<string>();
 
-    let lastAssistantUuidSeen: string | null = null;
     const turnChangeTracker = new ClaudeTurnChangeTracker();
     const suppressedExplicitDiffCallIds = new Set<string>();
 
@@ -265,26 +318,6 @@ export async function launchClaudeRemoteSession(session: Session): Promise<'swit
             } else {
                 turnChangeTracker.resetTurn();
                 suppressedExplicitDiffCallIds.clear();
-            }
-        }
-
-        if (message && message.type === 'assistant') {
-            const parentToolUseId =
-                typeof (message as any).parent_tool_use_id === 'string' ? (message as any).parent_tool_use_id.trim() : '';
-            const maybeUuid = typeof (message as any).uuid === 'string' ? (message as any).uuid.trim() : '';
-            // Only persist mainline assistant UUIDs. Sidechain/sub-agent assistant messages can also have UUIDs,
-            // but resuming at those anchors can produce surprising results.
-            if (!parentToolUseId && maybeUuid.length > 0 && maybeUuid !== lastAssistantUuidSeen) {
-                lastAssistantUuidSeen = maybeUuid;
-                updateMetadataBestEffort(
-                    session.client,
-                    (metadata) => ({
-                        ...metadata,
-                        claudeLastAssistantUuid: maybeUuid,
-                    }),
-                    '[remote]',
-                    'last_assistant_uuid',
-                );
             }
         }
 
@@ -529,6 +562,10 @@ export async function launchClaudeRemoteSession(session: Session): Promise<'swit
 
         if (inkInstance) {
             inkInstance.unmount();
+        }
+        if (staticControl) {
+            await staticControl.stop();
+            staticControl = null;
         }
 
         // Give Ink a brief moment to release stdin/tty state, then drain any buffered input

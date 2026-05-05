@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createExecutionRunPermissionHandler } from './createExecutionRunBackend';
+import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 
 const TEST_RECOVERY_BACKEND_ID = `${'recovery'}.${'backend'}`;
 

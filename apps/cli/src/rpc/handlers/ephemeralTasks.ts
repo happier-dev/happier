@@ -1,5 +1,5 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 
 import { BackendTargetRefSchema, EphemeralTaskRunRequestSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';

@@ -1,6 +1,6 @@
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import { createAcpBackend } from '@/agent/acp/createAcpBackend';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 
 import type { BuiltInAcpBackendOptions } from '../builtIn/backend';
 import { resolveAcpCatalogTransportHandler } from '../transport/resolveAcpCatalogTransportHandler';

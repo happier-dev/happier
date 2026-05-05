@@ -1,5 +1,5 @@
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
-import { executePluginActionIfAvailable } from '@/extensions/actions/execute';
+import { executePluginActionIfAvailable } from '@/plugins/projection/actions/execute';
 
 export function createCliActionExecutor(
   params: Parameters<typeof createCliActionExecutorHarness>[0],

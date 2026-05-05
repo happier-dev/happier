@@ -13,6 +13,7 @@ export type CodexAppServerStartOrLoadOptions = Readonly<{
     resumeId?: string | null;
     existingSessionId?: string | null;
     importHistory?: boolean;
+    preserveRequestedThreadId?: boolean;
 }>;
 
 export async function startOrLoadCodexAppServerThread(params: Readonly<{
@@ -46,7 +47,7 @@ export async function startOrLoadCodexAppServerThread(params: Readonly<{
             ...policyFields,
             persistExtendedHistory: true,
         });
-        nextThreadId = readThreadId(response) ?? resumeId;
+        nextThreadId = options.preserveRequestedThreadId === true ? resumeId : readThreadId(response) ?? resumeId;
     } else if (existingSessionId) {
         response = await params.client.request('thread/resume', {
             threadId: existingSessionId,
@@ -55,7 +56,7 @@ export async function startOrLoadCodexAppServerThread(params: Readonly<{
             ...policyFields,
             persistExtendedHistory: true,
         });
-        nextThreadId = readThreadId(response) ?? existingSessionId;
+        nextThreadId = options.preserveRequestedThreadId === true ? existingSessionId : readThreadId(response) ?? existingSessionId;
     } else {
         response = await params.client.request('thread/start', {
             cwd: params.directory,

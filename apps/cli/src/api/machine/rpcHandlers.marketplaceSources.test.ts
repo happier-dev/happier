@@ -77,7 +77,7 @@ describe('rpcHandlers (marketplace sources)', () => {
         ],
       };
       await expect(set(next)).resolves.toEqual(next);
-      expect(JSON.parse(readFileSync(join(happyHomeDir, 'extensions', 'plugins', 'state', 'marketplace-source-registry.v1.json'), 'utf8'))).toEqual(next);
+      expect(JSON.parse(readFileSync(join(happyHomeDir, 'plugins', 'plugins', 'state', 'marketplace-source-registry.v1.json'), 'utf8'))).toEqual(next);
       await expect(get({})).resolves.toEqual(next);
     } finally {
       envScope.restore();

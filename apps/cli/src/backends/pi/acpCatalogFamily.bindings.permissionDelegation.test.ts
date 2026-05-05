@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PermissionMode } from '@/api/types';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import type {
     HostSessionRuntimeFactoryParams,
-} from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
-import type { HostSessionRuntimeFactoryResult } from '@/agent/runtime/sessionLoop/factoryResult';
+} from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import type { HostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { CatalogAcpRuntimeCreateCall } from '@/testkit/backends/catalogAcpRuntime';
 import { createCatalogAcpBackendSpy, createMessageBufferFixture } from '@/testkit/backends/catalogAcpRuntime';
@@ -14,12 +14,12 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import type { Credentials } from '@/persistence';
 
-import { createPiSessionRuntimePlan } from '@/backends/pi/bindings/session';
-import { createQwenSessionRuntimePlan } from '@/backends/qwen/bindings/session';
-import { createKimiSessionRuntimePlan } from '@/backends/kimi/bindings/session';
-import { createKiloSessionRuntimePlan } from '@/backends/kilo/bindings/session';
-import { createCopilotSessionRuntimePlan } from '@/backends/copilot/bindings/session';
-import { createAuggieSessionRuntimePlan } from '@/backends/auggie/bindings/session';
+import { createPiSessionRuntimePlan } from '@/backends/pi/runtimeCore/session';
+import { createQwenSessionRuntimePlan } from '@/backends/qwen/runtimeCore/session';
+import { createKimiSessionRuntimePlan } from '@/backends/kimi/runtimeCore/session';
+import { createKiloSessionRuntimePlan } from '@/backends/kilo/runtimeCore/session';
+import { createCopilotSessionRuntimePlan } from '@/backends/copilot/runtimeCore/session';
+import { createAuggieSessionRuntimePlan } from '@/backends/auggie/runtimeCore/session';
 
 type CatalogSessionPlanBuilder = (opts: {
     credentials: Credentials;
@@ -124,7 +124,7 @@ function normalizeFactoryResult(createdRuntime: HostSessionRuntimeFactoryResult<
     };
 }
 
-describe('ACP catalog family bindings permission delegation', () => {
+describe('ACP catalog family runtimeCore permission delegation', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });

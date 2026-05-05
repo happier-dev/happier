@@ -1,6 +1,6 @@
 export async function handleSelfMigrateCommand(argv: readonly string[]): Promise<void> {
   const forwardedArgv = ['repair', ...argv];
-  const { handleServiceRepairCliCommand } = await import('../serviceRepair/handleServiceRepairCliCommand');
+  const { handleServiceRepairCliCommand } = await import('../service/repair/handleServiceRepairCliCommand');
   await handleServiceRepairCliCommand({
     argv: forwardedArgv,
     commandPath: 'happier self migrate',

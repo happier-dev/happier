@@ -2,12 +2,13 @@ import { realpathSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import { McpServersSettingsV1Schema, resolveEffectiveServersV1 } from '@happier-dev/protocol';
+import { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
 import { probeMcpStdioServerTools } from './probeMcpStdioServerTools';
 import { materializeMcpServerConfigRecord } from './materializeMcpServerConfigRecord';
@@ -65,9 +66,13 @@ describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord p
     const goodHome = join(root, 'good-home');
     const fixtureServerPath = join(root, 'fixture-server.mjs');
     const fakePnpmPath = join(root, 'pnpm');
-    const tsxCliPath = join(dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+    const tsxHookPath = resolveTsxImportHookPath();
     const sourceLauncherPath = fileURLToPath(new URL('../launchers/stdioMcpServerLauncher.ts', import.meta.url));
     const originalCwd = process.cwd();
+
+    if (!tsxHookPath) {
+      throw new Error('Expected tsx import hook to be resolvable for source launcher execution');
+    }
 
     await mkdir(badCwd, { recursive: true });
     await mkdir(goodHome, { recursive: true });
@@ -108,7 +113,10 @@ describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord p
         deps: {
           resolveStdioLauncherCommand: () => ({
             command: process.execPath,
-            args: [tsxCliPath, sourceLauncherPath],
+            args: ['--no-warnings', '--no-deprecation', '--import', tsxHookPath, sourceLauncherPath],
+            env: {
+              TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
+            },
           }),
         },
       });

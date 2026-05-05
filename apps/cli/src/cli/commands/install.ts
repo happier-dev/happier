@@ -4,14 +4,14 @@ import { AGENT_IDS, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev
 import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { installPluginFromSource, type PluginInstallKind } from '@/extensions/install/source';
-import { removeInstalledPlugin } from '@/extensions/install/remove';
-import { createPluginStateStore } from '@/extensions/store/state';
-import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import { installPluginFromSource, type PluginInstallKind } from '@/plugins/store/install/source';
+import { removeInstalledPlugin } from '@/plugins/store/install/remove';
+import { createPluginStateStore } from '@/plugins/store/state';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type {
   invokeProviderCliInstall as invokeProviderCliInstallDefault,
-} from '@/runtime/managedTools/invokeProviderCliInstall';
+} from '@/packagedRuntime/managedTools/invokeProviderCliInstall';
 import type { runDoctorCommand as runDoctorCommandDefault } from '@/ui/doctor';
 
 type ProviderStatusRow = Readonly<{
@@ -58,7 +58,7 @@ async function runDoctorCommandLazy(): Promise<void> {
 async function invokeProviderCliInstallLazy(
   ...args: Parameters<typeof invokeProviderCliInstallDefault>
 ): Promise<Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>> {
-  const { invokeProviderCliInstall } = await import('@/runtime/managedTools/invokeProviderCliInstall');
+  const { invokeProviderCliInstall } = await import('@/packagedRuntime/managedTools/invokeProviderCliInstall');
   return await invokeProviderCliInstall(...args);
 }
 

@@ -3,6 +3,8 @@ import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/prom
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
+import type { Metadata } from '@/api/types';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { Session } from '../session/ClaudeSession';
@@ -140,7 +142,12 @@ function getSessionAbortController(session: Session): () => Promise<void> {
   return candidate.abortCurrentTurn.bind(session);
 }
 
-function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHarness {
+function createRemoteHarness(options?: {
+  sessionId?: string | null;
+  metadata?: Metadata | null;
+  startedBy?: 'daemon' | 'terminal';
+  terminalRuntime?: TerminalRuntimeFlags | null;
+}): RemoteHarness {
   const switchDeferred = createDeferred<RpcHandler>();
   const sendClaudeSessionMessage = vi.fn();
 
@@ -161,7 +168,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     },
     sendClaudeSessionMessage,
     sendSessionEvent: vi.fn(),
-    getMetadataSnapshot: () => (options as any)?.metadata ?? null,
+    getMetadataSnapshot: () => options?.metadata ?? null,
     waitForMetadataUpdate: vi.fn(async () => false),
     popPendingMessage: vi.fn(async () => false),
     peekPendingMessageQueueV2Count: vi.fn(async () => 0),
@@ -184,6 +191,8 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     messageQueue: new MessageQueue2<EnhancedMode>(hashClaudeEnhancedModeForQueue),
     onModeChange: () => {},
     hookSettingsPath: '/tmp/hooks.json',
+    startedBy: options?.startedBy,
+    terminalRuntime: options?.terminalRuntime ?? null,
   });
 
   createdSessions.push(session);
@@ -210,6 +219,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
         mockConvertSidechainUserMessage.mockReset();
         mockGenerateInterruptedToolResult.mockReset();
         vi.doUnmock('@/ui/tty/resolveHasTTY');
+        vi.doUnmock('@/ui/remoteControl/remoteModeControl');
 	    // Keep integration tests fast: disable the switch/exit grace window by default.
 	    // Individual tests can opt back in by setting the env var before importing the launcher.
 	    process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS = '0';
@@ -624,6 +634,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     };
 
     const harness = createRemoteHarness();
+    delete (harness.client as Partial<Pick<SessionClientStub, 'sendAgentMessageCommitted'>>).sendAgentMessageCommitted;
     harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
 
     let capturedWriter: any = null;
@@ -1004,7 +1015,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
-  it('passes resumeSessionAt from metadata snapshot into the remote dispatch options', async () => {
+  it('does not pass stored assistant UUID metadata as a normal resumeSessionAt anchor', async () => {
     const { session, switchHandlerReady } = createRemoteHarness({
       sessionId: 'sess_0',
       metadata: { claudeLastAssistantUuid: 'asst_uuid_1' },
@@ -1024,7 +1035,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     const switchHandler = await switchHandlerReady;
     await dispatchStarted.promise;
 
-    expect(capturedOpts?.resumeSessionAt).toBe('asst_uuid_1');
+    expect(capturedOpts?.resumeSessionAt ?? null).toBeNull();
 
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
@@ -1296,7 +1307,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
-  it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {
+  it('does not persist assistant UUIDs from remote messages as resume anchors', async () => {
     const { session, client, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
 
     const dispatchStarted = createDeferred<void>();
@@ -1319,9 +1330,11 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     const switchHandler = await switchHandlerReady;
     await dispatchStarted.promise;
 
-    expect(client.updateMetadata).toHaveBeenCalled();
-    const updater = (client.updateMetadata as any).mock.calls[0][0];
-    expect(updater({})).toEqual(expect.objectContaining({ claudeLastAssistantUuid: 'asst_uuid_2' }));
+    const updateCalls = (client.updateMetadata as any).mock.calls ?? [];
+    for (const [updater] of updateCalls) {
+      expect(typeof updater).toBe('function');
+      expect(updater({})).not.toHaveProperty('claudeLastAssistantUuid');
+    }
 
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
@@ -1474,8 +1487,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
       resolveHasTTY: () => true,
     }));
 
-    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
-    (session as any).startedBy = 'daemon';
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0', startedBy: 'daemon' });
 
     mockInkRender.mockClear();
     mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
@@ -1495,6 +1507,102 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     const switchHandler = await switchHandlerReady;
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
+  it('starts the static remote-control surface for daemon-started tmux sessions', async () => {
+    const stopStaticControl = vi.fn(async () => undefined);
+    const startRemoteModeStaticControl = vi.fn((params: unknown) => {
+      void params;
+      return { stop: stopStaticControl };
+    });
+    vi.doMock('@/ui/remoteControl/remoteModeControl', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/ui/remoteControl/remoteModeControl')>();
+      return {
+        ...actual,
+        resolveRemoteModeControlSurface: vi.fn(() => 'static'),
+        startRemoteModeStaticControl,
+      };
+    });
+
+    const { session, switchHandlerReady } = createRemoteHarness({
+      sessionId: 'sess_0',
+      startedBy: 'daemon',
+      terminalRuntime: { mode: 'tmux' },
+    });
+
+    mockInkRender.mockClear();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions;
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { launchClaudeRemoteSession: claudeRemoteLauncher } = await import('./launcher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await vi.waitFor(() => {
+      expect(startRemoteModeStaticControl).toHaveBeenCalledTimes(1);
+    });
+    expect(startRemoteModeStaticControl.mock.calls[0]?.[0]).toMatchObject({
+      providerName: 'Claude',
+      allowSwitchToTerminal: true,
+    });
+    expect(mockInkRender).not.toHaveBeenCalled();
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+    expect(stopStaticControl).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it('starts the static remote-control surface from synced tmux metadata when terminal runtime flags are absent', async () => {
+    const stopStaticControl = vi.fn(async () => undefined);
+    const resolveRemoteModeControlSurface = vi.fn(() => 'static');
+    const startRemoteModeStaticControl = vi.fn((params: unknown) => {
+      void params;
+      return { stop: stopStaticControl };
+    });
+    vi.doMock('@/ui/remoteControl/remoteModeControl', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/ui/remoteControl/remoteModeControl')>();
+      return {
+        ...actual,
+        resolveRemoteModeControlSurface,
+        startRemoteModeStaticControl,
+      };
+    });
+
+    const { session, switchHandlerReady } = createRemoteHarness({
+      sessionId: 'sess_0',
+      startedBy: 'daemon',
+      terminalRuntime: null,
+      metadata: {
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-from-metadata' },
+        },
+      } as Metadata,
+    });
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions;
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { launchClaudeRemoteSession: claudeRemoteLauncher } = await import('./launcher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await vi.waitFor(() => {
+      expect(startRemoteModeStaticControl).toHaveBeenCalledTimes(1);
+    });
+    expect(resolveRemoteModeControlSurface).toHaveBeenCalledWith(expect.objectContaining({
+      startedBy: 'daemon',
+      terminalMode: 'tmux',
+    }));
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+    expect(stopStaticControl).toHaveBeenCalledTimes(1);
   }, 30_000);
 
   it('respects switch RPC params and is idempotent', async () => {
@@ -1517,7 +1625,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     await expect(launcherPromise).resolves.toBe('switch');
   });
 
-  it('appends CHANGE_TITLE_INSTRUCTION to the first queued prompt only', async () => {
+  it('does not append hidden change-title instructions to queued prompts', async () => {
     const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
 
     const firstSeen = createDeferred<any>();
@@ -1539,11 +1647,13 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     const launcherPromise = claudeRemoteLauncher(session);
 
     const first = await firstSeen.promise;
-    expect(first?.message).toContain(CHANGE_TITLE_INSTRUCTION);
+    expect(first?.message).toBe('hello');
+    expect(first?.message).not.toContain(CHANGE_TITLE_INSTRUCTION);
 
     session.queue.push('again', { permissionMode: 'default' } satisfies EnhancedMode);
 
     const second = await secondSeen.promise;
+    expect(second?.message).toBe('again');
     expect(second?.message).not.toContain(CHANGE_TITLE_INSTRUCTION);
 
     const switchHandler = await switchHandlerReady;

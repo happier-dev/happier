@@ -10,7 +10,7 @@ import {
   type DirectSourceValidationResult,
 } from '@/session/directSessions/sourceValidation';
 
-function resolveConfiguredCodexHome(env: NodeJS.ProcessEnv): string {
+export function resolveConfiguredCodexHome(env: NodeJS.ProcessEnv): string {
   const configuredHome =
     typeof env.CODEX_HOME === 'string' && env.CODEX_HOME.trim().length > 0
       ? env.CODEX_HOME

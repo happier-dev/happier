@@ -45,7 +45,7 @@ describe('createTerminalRemoteModeController', () => {
 
     const controller = createTerminalRemoteModeController({
       session: harness.session,
-      getThinking: () => true,
+      getKeepAliveActive: () => true,
       resolveTerminalSwitchAvailability,
       requestSwitchToTerminalIfSupported: vi.fn(async () => true),
       mountRemoteUi,
@@ -80,7 +80,7 @@ describe('createTerminalRemoteModeController', () => {
     const harness = createSessionHarness();
     const controller = createTerminalRemoteModeController({
       session: harness.session,
-      getThinking: () => false,
+      getKeepAliveActive: () => false,
       resolveTerminalSwitchAvailability: vi.fn(async () => ({ ok: true as const })),
       requestSwitchToTerminalIfSupported: vi.fn(async () => true),
       mountRemoteUi: vi.fn(),
@@ -111,7 +111,7 @@ describe('createTerminalRemoteModeController', () => {
 
     const controller = createTerminalRemoteModeController({
       session: harness.session,
-      getThinking: () => false,
+      getKeepAliveActive: () => false,
       resolveTerminalSwitchAvailability,
       requestSwitchToTerminalIfSupported: vi.fn(async () => false),
       mountRemoteUi: vi.fn(),
@@ -135,11 +135,11 @@ describe('createTerminalRemoteModeController', () => {
     });
   });
 
-  it('supports provider-specific runtime-switch state publication', async () => {
+  it('supports agent-specific runtime-switch state publication', async () => {
     const harness = createSessionHarness();
     const controller = createTerminalRemoteModeController({
       session: harness.session,
-      getThinking: () => false,
+      getKeepAliveActive: () => false,
       resolveTerminalSwitchAvailability: vi.fn(async () => ({ ok: true as const })),
       requestSwitchToTerminalIfSupported: vi.fn(async () => true),
       mountRemoteUi: vi.fn(),
@@ -179,7 +179,7 @@ describe('createTerminalRemoteModeController', () => {
 
     const controller = createTerminalRemoteModeController({
       session: harness.session,
-      getThinking: () => false,
+      getKeepAliveActive: () => false,
       resolveTerminalSwitchAvailability: vi.fn(async () => ({ ok: true as const })),
       requestSwitchToTerminalIfSupported,
       mountRemoteUi: vi.fn(),

@@ -4,18 +4,63 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createPluginStateStore } from '@/extensions/store/state';
+import { createPluginStateStore } from '@/plugins/store/state';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import {
     SAMPLE_PLUGIN_BACKEND_ID,
     SAMPLE_PLUGIN_ID,
     SAMPLE_PLUGIN_PROVIDER_ID,
     materializeSamplePluginFixture,
-} from '@/extensions/testkit/samplePackage';
+} from '@/plugins/testkit/samplePackage';
 
 import {
     resolveBackendEngineAdapterResolution,
 } from './catalog';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function rewriteBackendAttachRuntimeAdaptersToPluginTargets(manifest: unknown): unknown {
+    if (!isRecord(manifest) || !Array.isArray(manifest.contributions)) {
+        return manifest;
+    }
+
+    return {
+        ...manifest,
+        contributions: manifest.contributions.map((contribution) => {
+            if (
+                !isRecord(contribution)
+                || contribution.kind !== 'backend'
+                || !Array.isArray(contribution.runtimeAdapters)
+            ) {
+                return contribution;
+            }
+
+            return {
+                ...contribution,
+                runtimeAdapters: contribution.runtimeAdapters.map((runtimeAdapter) => {
+                    if (
+                        !isRecord(runtimeAdapter)
+                        || typeof runtimeAdapter.id !== 'string'
+                        || !runtimeAdapter.id.startsWith('backend.attach.')
+                    ) {
+                        return runtimeAdapter;
+                    }
+
+                    const handler = isRecord(runtimeAdapter.handler) ? runtimeAdapter.handler : {};
+                    return {
+                        ...runtimeAdapter,
+                        handler: {
+                            ...handler,
+                            target: 'plugin',
+                        },
+                    };
+                }),
+            };
+        }),
+    };
+}
 
 describe('resolveBackendExecutionSurfaces', () => {
     it('maps plugin backend runtime-adapter descriptors into executable backend catalog surfaces', async () => {
@@ -210,26 +255,9 @@ describe('resolveBackendExecutionSurfaces', () => {
 
         await materializeSamplePluginFixture(pluginRoot);
         const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
-        const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-            contributions?: {
-                backends?: Array<{
-                    runtimeAdapters?: Array<{
-                        id?: string;
-                        handler?: { target?: string };
-                    }>;
-                }>;
-            };
-        };
-        for (const backend of manifest.contributions?.backends ?? []) {
-            for (const runtimeAdapter of backend.runtimeAdapters ?? []) {
-                if (runtimeAdapter.id?.startsWith('backend.attach.')) {
-                    runtimeAdapter.handler = {
-                        ...runtimeAdapter.handler,
-                        target: 'plugin',
-                    };
-                }
-            }
-        }
+        const manifest = rewriteBackendAttachRuntimeAdaptersToPluginTargets(
+            JSON.parse(await readFile(manifestPath, 'utf8')) as unknown,
+        );
         await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
         await store.write({
@@ -311,7 +339,7 @@ describe('resolveBackendExecutionSurfaces', () => {
         expect(resolution).toMatchObject({
             backendId: SAMPLE_PLUGIN_BACKEND_ID,
             providerId: SAMPLE_PLUGIN_PROVIDER_ID,
-            source: 'plugin',
+            provenance: 'external',
             selectedSource: 'plugin',
             backend: {
                 id: SAMPLE_PLUGIN_BACKEND_ID,
@@ -344,5 +372,6 @@ describe('resolveBackendExecutionSurfaces', () => {
                 },
             },
         });
+        expect(resolution).not.toHaveProperty('source');
     });
 });

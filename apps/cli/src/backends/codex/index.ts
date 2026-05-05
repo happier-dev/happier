@@ -22,7 +22,7 @@ export const agent = {
   getConnectedServicesMaterializer: async () =>
     (await import('./connectedServices/createCodexConnectedServicesMaterializer'))
       .createCodexConnectedServicesMaterializer(),
-  getBindings: async () => (await import('./bindings')).createCodexBindings,
+  getRuntimeCore: async () => (await import('./runtimeCore')).createCodexRuntimeCore,
   getSessionHandoffProviderOps: async () => (await import('./handoff/providerOps')).codexSessionHandoffProviderOps,
   getTerminalRuntimeOps: async () => (await import('./terminalRuntime/codexTerminalRuntimeOps')).codexTerminalRuntimeOps,
   vendorResumeSupport: AGENTS_CORE.codex.resume.vendorResume,

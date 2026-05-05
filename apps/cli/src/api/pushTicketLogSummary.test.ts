@@ -7,23 +7,24 @@ describe('summarizeExpoPushTicketErrorsForLog', () => {
     const res = summarizeExpoPushTicketErrorsForLog([
       {
         status: 'error',
-        message: 'DeviceNotRegistered',
+        message: 'DeviceNotRegistered for ExpoPushToken[modern]',
         details: {
           expoPushToken: 'ExponentPushToken[abc]',
           token: 'secret',
           Authorization: 'Bearer secret',
-          nested: { authToken: 'secret2', ok: true },
+          nested: { authToken: 'secret2', ok: true, receipt: 'ExpoPushToken[modern]' },
         },
       },
     ]);
 
     expect(res).toEqual([
       {
-        message: 'DeviceNotRegistered',
-        details: { nested: { ok: true } },
+        message: 'DeviceNotRegistered for [REDACTED]',
+        details: { nested: { ok: true, receipt: '[REDACTED]' } },
       },
     ]);
     expect(JSON.stringify(res)).not.toContain('ExponentPushToken');
+    expect(JSON.stringify(res)).not.toContain('ExpoPushToken');
     expect(JSON.stringify(res)).not.toContain('secret');
   });
 
@@ -35,4 +36,3 @@ describe('summarizeExpoPushTicketErrorsForLog', () => {
     expect(res).toEqual([]);
   });
 });
-

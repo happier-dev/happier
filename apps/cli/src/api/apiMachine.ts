@@ -14,6 +14,7 @@ import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBr
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
+import type { RpcHandlerInvoker } from './rpc/types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
     TRANSFER_RELAY_V2_SOCKET_EVENT,
@@ -209,6 +210,12 @@ export class ApiMachineClient {
                 ],
             },
         });
+    }
+
+    getPeerMediationMachineRpcHandlerManager(): RpcHandlerInvoker {
+        return {
+            invokeLocal: async (method, params) => await this.rpcHandlerManager.invokeLocal(method, params),
+        };
     }
 
     onUpdate(listener: (update: Update) => boolean | void): () => void {

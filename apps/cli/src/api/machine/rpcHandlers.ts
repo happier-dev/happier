@@ -29,6 +29,7 @@ import { registerMachinePromptAssetTransferRpcHandlers } from './rpcHandlers.pro
 import { registerMachineMarketplaceSourcesRpcHandlers } from './rpcHandlers.marketplaceSources';
 import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';
 import { registerMachinePromptRegistryTransferRpcHandlers } from './rpcHandlers.promptRegistryTransfers';
+import { registerPetRpcHandlers } from '@/pets/rpc/registerPetRpcHandlers';
 import { registerMachineDirectTransferImportRpcHandlers } from './rpcHandlers.directTransferImports';
 import {
   registerMachineDirectTransferExportRpcHandlers,
@@ -41,6 +42,8 @@ import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/tr
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { configuration } from '@/configuration';
 import type {
+  AccountPetCreateRequestV1,
+  AccountPetCreateResponseV1,
   DirectSessionTranscriptDeltaEphemeral,
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
@@ -133,6 +136,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
   extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
 }>;
 
 export function registerMachineRpcHandlers(params: Readonly<{
@@ -205,6 +209,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
     deps: {
       happyHomeDir: params.deps?.promptAssetsHappierHomeDir?.(),
     },
+  });
+  registerPetRpcHandlers({
+    rpcHandlerManager,
+    createAccountPet: params.deps?.createAccountPet,
   });
   const promptRegistryTransfers = registerMachinePromptRegistryTransferRpcHandlers({
     rpcHandlerManager,

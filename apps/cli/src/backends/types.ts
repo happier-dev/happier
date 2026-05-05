@@ -12,7 +12,7 @@ import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeFor
 import type { ReplayForkContinuationHandler } from '@/session/fork/replayForkContinuationHandler';
 import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
 import type { ImportedSessionHandoffBundle, SessionHandoffProviderBundle } from '@/session/handoff/types';
-import type { ProviderCliLaunchSpec } from '../runtime/managedTools/requireProviderCliLaunchSpec';
+import type { ProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 
 export { AGENT_IDS as CATALOG_AGENT_IDS, DEFAULT_AGENT_ID as DEFAULT_CATALOG_AGENT_ID } from '@happier-dev/agents';
 import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happier-dev/agents';
@@ -24,7 +24,7 @@ import type { CodexBackendMode } from '@happier-dev/agents';
 import type { InstallableKey } from '@happier-dev/protocol';
 import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import type { ConnectedServicesMaterializer } from '@/daemon/connectedServices/materialization/materializer';
-import type { CliBindingsGetter } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { CliRuntimeCoreGetter } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { CatalogAcpBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import type {
   CliAuthMethod,
@@ -48,6 +48,7 @@ export type { ConnectedServicesMaterializer };
 
 export type CatalogAcpBackendCreateResult = Readonly<{ backend: CatalogAcpBackend }>;
 export type CatalogAcpBackendFactory = (opts: AgentFactoryOptions) => CatalogAcpBackendCreateResult;
+export type ManagedServerShutdownCleanup = () => Promise<void>;
 
 export type VendorResumeSupportParams = Readonly<{
   experimentalCodexAcp?: boolean;
@@ -184,6 +185,13 @@ export type AgentCatalogEntry = Readonly<{
    */
   getManagedServerLaunchSpec?: () => Promise<ProviderCliLaunchSpec | null>;
   /**
+   * Optional provider-owned managed-server shutdown cleanup.
+   *
+   * Daemon shutdown invokes this hook for providers that host long-lived managed
+   * server processes, while the backend owns the process identity and safety checks.
+   */
+  getManagedServerShutdownCleanup?: () => Promise<ManagedServerShutdownCleanup | null>;
+  /**
    * Optional provider-owned attach operations for shared local-control backends.
    *
    * Keep provider-specific attach eligibility and execution in the backend folder
@@ -198,12 +206,12 @@ export type AgentCatalogEntry = Readonly<{
    */
   getTerminalRuntimeOps?: () => Promise<AnyTerminalRuntimeOps | null>;
   /**
-   * Optional provider-owned host bindings.
+   * Optional provider-owned host runtime core.
    *
-   * When present, the engine registry will prefer these bindings over the legacy
+   * When present, the engine registry will prefer this runtimeCore over the legacy
    * execution-run registry fallback.
    */
-  getBindings?: CliBindingsGetter;
+  getRuntimeCore?: CliRuntimeCoreGetter;
   /**
    * Whether this agent supports vendor-level resume (NOT Happy session resume).
    *

@@ -1,6 +1,6 @@
 import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1, McpDetectedProviderV1 } from '@happier-dev/protocol';
 
-import { detectOpenCodeMcpServers } from '@happier-dev/extensions-opencode';
+import { detectOpenCodeMcpServers } from '@happier-dev/plugins-opencode';
 
 import { detectClaudeMcpServers } from '@/backends/claude/mcp/detectClaudeMcpServers';
 import { detectCodexMcpServers } from '@/backends/codex/mcp/detectCodexMcpServers';

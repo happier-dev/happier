@@ -14,10 +14,12 @@ type MockDaemonServiceListEntry = {
 
 const {
   handleServiceRepairCliCommandMock,
+  isInteractiveTerminalMock,
   resolveDaemonServiceCliRuntimeFromEnvMock,
   resolveDaemonServiceListEntriesMock,
 } = vi.hoisted(() => ({
   handleServiceRepairCliCommandMock: vi.fn(async (_params: unknown) => undefined),
+  isInteractiveTerminalMock: vi.fn(() => false),
   resolveDaemonServiceCliRuntimeFromEnvMock: vi.fn((_params?: unknown) => ({
     platform: 'linux',
     mode: 'user',
@@ -40,14 +42,52 @@ vi.mock('@/daemon/service/cli', () => ({
   resolveDaemonServiceListEntries: (runtime: unknown, options?: unknown) => resolveDaemonServiceListEntriesMock(runtime, options),
 }));
 
-vi.mock('../serviceRepair/handleServiceRepairCliCommand', () => ({
+vi.mock('../service/repair/handleServiceRepairCliCommand', () => ({
     handleServiceRepairCliCommand: (params: unknown) => handleServiceRepairCliCommandMock(params),
+}));
+
+vi.mock('@/terminal/prompts/promptInput', () => ({
+  isInteractiveTerminal: () => isInteractiveTerminalMock(),
 }));
 
 describe('maybeRunVersionGatedRuntimeMigration', () => {
   beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
+
+  function mockUserPinnedServiceMigrationWork(): void {
+    resolveDaemonServiceCliRuntimeFromEnvMock.mockImplementation((_params?: unknown) => ({
+      platform: 'linux',
+      mode: 'user',
+      systemUser: '',
+      channel: 'preview',
+      targetMode: 'default-following',
+      instanceId: 'company',
+      uid: 1000,
+      userHomeDir: '/tmp/user',
+      happierHomeDir: '/tmp/user/.happier',
+      serverUrl: 'https://company.example.test',
+      publicServerUrl: 'https://company.example.test',
+      webappUrl: 'https://company.example.test',
+    }));
+    resolveDaemonServiceListEntriesMock.mockImplementation(async (_runtime: unknown, options?: unknown) => {
+      const normalizedOptions = options as { mode?: 'user' | 'system' } | undefined;
+      if (normalizedOptions?.mode === 'user') {
+        return [{
+          serverId: 'company',
+          name: 'Company',
+          installed: true,
+          path: '/tmp/user/.config/systemd/user/happier-daemon.preview.company.service',
+          platform: 'linux',
+          mode: 'user',
+          releaseChannel: 'preview',
+          label: 'happier-daemon.preview.company',
+          targetMode: 'pinned',
+        }];
+      }
+      return [];
+    });
+  }
 
   it('treats legacy installs without version markers as crossing the 0.2.3 migration boundary', async () => {
     const { hasCrossedBackgroundServiceMigrationBoundary } = await import('./maybeRunVersionGatedRuntimeMigration');
@@ -68,8 +108,11 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     handleServiceRepairCliCommandMock.mockClear();
+    isInteractiveTerminalMock.mockReset();
+    isInteractiveTerminalMock.mockReturnValue(false);
     resolveDaemonServiceCliRuntimeFromEnvMock.mockClear();
     resolveDaemonServiceListEntriesMock.mockClear();
+    delete process.env.HAPPIER_INSTALLER_MIGRATION;
   });
 
   it('delegates to one aggregated repair pass when an update crosses the 0.2.3 migration boundary and repair work exists', async () => {
@@ -118,9 +161,72 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     expect(resolveDaemonServiceCliRuntimeFromEnvMock).toHaveBeenCalled();
     expect(resolveDaemonServiceListEntriesMock).toHaveBeenCalled();
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
-      argv: ['repair'],
+      argv: ['repair', '--migrate', '--yes'],
       commandPath: 'happier self migrate',
     });
+  });
+
+  it('preserves interactive consent by passing --migrate without --yes when a terminal is available', async () => {
+    isInteractiveTerminalMock.mockReturnValue(true);
+    mockUserPinnedServiceMigrationWork();
+
+    const { maybeRunVersionGatedRuntimeMigration } = await import('./maybeRunVersionGatedRuntimeMigration');
+
+    await expect(maybeRunVersionGatedRuntimeMigration({
+      fromVersion: '0.2.2',
+      toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
+      argv: ['repair'],
+      commandPath: 'happier self migrate',
+    })).resolves.toBe(true);
+
+    expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
+      argv: ['repair', '--migrate'],
+      commandPath: 'happier self migrate',
+    });
+  });
+
+  it('forces noninteractive repair consent when requested even with a terminal', async () => {
+    isInteractiveTerminalMock.mockReturnValue(true);
+    mockUserPinnedServiceMigrationWork();
+
+    const { maybeRunVersionGatedRuntimeMigration } = await import('./maybeRunVersionGatedRuntimeMigration');
+
+    await expect(maybeRunVersionGatedRuntimeMigration({
+      fromVersion: '0.2.2',
+      toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
+      argv: ['repair'],
+      commandPath: 'happier self migrate',
+      forceNonInteractive: true,
+    })).resolves.toBe(true);
+
+    expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
+      argv: ['repair', '--migrate', '--yes'],
+      commandPath: 'happier self migrate',
+    });
+  });
+
+  it('sets and restores installer migration context around the repair invocation', async () => {
+    process.env.HAPPIER_INSTALLER_MIGRATION = 'previous';
+    const observedMigrationValues: string[] = [];
+    handleServiceRepairCliCommandMock.mockImplementationOnce(async () => {
+      observedMigrationValues.push(String(process.env.HAPPIER_INSTALLER_MIGRATION ?? ''));
+    });
+    mockUserPinnedServiceMigrationWork();
+
+    const { maybeRunVersionGatedRuntimeMigration } = await import('./maybeRunVersionGatedRuntimeMigration');
+
+    await expect(maybeRunVersionGatedRuntimeMigration({
+      fromVersion: '0.2.2',
+      toVersion: '0.2.3',
+      hadLegacyCurrentInstallWithoutVersionMarkers: false,
+      argv: ['repair'],
+      commandPath: 'happier self migrate',
+    })).resolves.toBe(true);
+
+    expect(observedMigrationValues).toEqual(['1']);
+    expect(process.env.HAPPIER_INSTALLER_MIGRATION).toBe('previous');
   });
 
   it('skips repair when the version change did not cross the migration boundary', async () => {

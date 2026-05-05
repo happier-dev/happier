@@ -19,7 +19,7 @@ describe('resolveDaemonServiceListEntries', () => {
 
   afterEach(() => {
     envScope.restore();
-    vi.doUnmock('@/runtime/js/ensureJavaScriptRuntimeExecutable');
+    vi.doUnmock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable');
     vi.doUnmock('./discoverInstalledDaemonServiceEntries');
     ensureJavaScriptRuntimeExecutableMock.mockReset();
     ensureJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/node');
@@ -103,9 +103,10 @@ describe('resolveDaemonServiceListEntries', () => {
       });
       vi.resetModules();
 
-      const [{ planDaemonServiceInstall }, { resolveDaemonServiceListEntries }] = await Promise.all([
+      const [{ planDaemonServiceInstall }, { resolveDaemonServiceListEntries }, { discoverInstalledDaemonServiceEntries }] = await Promise.all([
         import('./plan'),
         import('./cli'),
+        import('./discoverInstalledDaemonServiceEntries'),
       ]);
 
       const runtime = {
@@ -170,7 +171,7 @@ describe('resolveDaemonServiceListEntries', () => {
         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
       });
       vi.resetModules();
-      vi.doMock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+      vi.doMock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
         ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
       }));
       vi.doMock('./discoverInstalledDaemonServiceEntries', async (importOriginal) => {

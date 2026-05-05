@@ -255,6 +255,63 @@ describe('Session', () => {
     }
   });
 
+  it('clears stale assistant UUID metadata when the Claude session id changes', () => {
+    let metadata: Metadata = createMetadataStub({
+      claudeLastAssistantUuid: 'asst_stale',
+    });
+
+    const client = createSessionClientStub({
+      updateMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+    });
+
+    const session = createSession(client);
+
+    try {
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/sess_1.jsonl'));
+      metadata = {
+        ...metadata,
+        claudeLastAssistantUuid: 'asst_stale',
+      };
+
+      session.onSessionFound('sess_2', hookWithTranscript('/tmp/sess_2.jsonl'));
+
+      expect(metadata.claudeSessionId).toBe('sess_2');
+      expect(metadata).not.toHaveProperty('claudeLastAssistantUuid');
+    } finally {
+      session.cleanup();
+    }
+  });
+
+  it('clears stale assistant UUID metadata when a known transcript path changes for the same session', () => {
+    let metadata: Metadata = createMetadataStub();
+
+    const client = createSessionClientStub({
+      updateMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+    });
+
+    const session = createSession(client);
+
+    try {
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/sess_1.old.jsonl'));
+      metadata = {
+        ...metadata,
+        claudeLastAssistantUuid: 'asst_stale',
+      };
+
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/sess_1.new.jsonl'));
+
+      expect(metadata.claudeSessionId).toBe('sess_1');
+      expect(metadata.claudeTranscriptPath).toBe('/tmp/sess_1.new.jsonl');
+      expect(metadata).not.toHaveProperty('claudeLastAssistantUuid');
+    } finally {
+      session.cleanup();
+    }
+  });
+
   it('clearSessionId clears transcriptPath as well', () => {
     const client = createSessionClientStub();
 
@@ -269,6 +326,36 @@ describe('Session', () => {
 
       expect(session.sessionId).toBeNull();
       expect(session.transcriptPath).toBeNull();
+    } finally {
+      session.cleanup();
+    }
+  });
+
+  it('clearSessionId clears stale assistant UUID metadata', () => {
+    let metadata: Metadata = createMetadataStub({
+      claudeLastAssistantUuid: 'asst_stale',
+    });
+
+    const client = createSessionClientStub({
+      updateMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+    });
+
+    const session = createSession(client);
+
+    try {
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/sess_1.jsonl'));
+      metadata = {
+        ...metadata,
+        claudeLastAssistantUuid: 'asst_stale',
+      };
+
+      session.clearSessionId();
+
+      expect(session.sessionId).toBeNull();
+      expect(session.transcriptPath).toBeNull();
+      expect(metadata).not.toHaveProperty('claudeLastAssistantUuid');
     } finally {
       session.cleanup();
     }

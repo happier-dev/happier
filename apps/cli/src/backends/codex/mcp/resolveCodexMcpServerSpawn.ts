@@ -1,4 +1,4 @@
-import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
+import { requireProviderCliCommand } from '@/packagedRuntime/managedTools/requireProviderCliCommand';
 
 export type CodexMcpServerSpawn = Readonly<{ mode: 'codex-cli' | 'mcp-server'; command: string }>;
 

@@ -252,6 +252,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
             await clientLifecycle.publishSessionControls(client);
         },
         disposeClient: clientLifecycle.disposeClient,
+        sendSessionStatusMessage: (message) => {
+            params.session.sendSessionEvent({ type: 'message', message });
+        },
     });
 
     return {

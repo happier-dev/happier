@@ -111,7 +111,7 @@ describe('Gemini ACP backend CLI path resolution', () => {
     tempDirs.add(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
 
-    const { resolveProviderCliManagedCommandPath } = await import('@/runtime/managedTools/providerCliResolution');
+    const { resolveProviderCliManagedCommandPath } = await import('@/packagedRuntime/managedTools/providerCliResolution');
     const binPath = resolveProviderCliManagedCommandPath('gemini', { happyHomeDir: homeDir });
     await mkdir(join(binPath, '..'), { recursive: true });
     await writeTextFile(binPath, '#!/bin/sh\necho ok\n', { mode: 0o755 });

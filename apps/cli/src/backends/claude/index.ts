@@ -17,7 +17,7 @@ export const agent = {
   getConnectedServicesMaterializer: async () =>
     (await import('./connectedServices/createClaudeConnectedServicesMaterializer'))
       .createClaudeConnectedServicesMaterializer(),
-  getBindings: async () => (await import('./bindings/index')).createClaudeBindings,
+  getRuntimeCore: async () => (await import('./runtimeCore/index')).createClaudeRuntimeCore,
   getSessionHandoffProviderOps: async () => (await import('./handoff/providerOps')).claudeSessionHandoffProviderOps,
   normalizeSessionControlPermissionMode: normalizeClaudeHappyCliSessionControlPermissionMode,
   getTerminalRuntimeOps: async () => (await import('./terminalRuntime/claudeTerminalRuntimeOps')).claudeTerminalRuntimeOps,

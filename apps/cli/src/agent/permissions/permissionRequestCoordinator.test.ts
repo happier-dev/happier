@@ -337,6 +337,38 @@ describe('PermissionRequestCoordinator', () => {
         );
     });
 
+    it('does not reuse a completed live decision for a later same-id retry', async () => {
+        const { coordinator, session } = createHarness();
+
+        const first = coordinator.requestDecision(bashRequest);
+        expect(
+            coordinator.handleResponse({
+                requestId: bashRequest.requestId,
+                buildCompletion: () => ({
+                    result: approve(),
+                    completedRequest: { status: 'approved', decision: 'approved' },
+                }),
+            }),
+        ).toBe(true);
+
+        await expect(first).resolves.toEqual(approve());
+        expect(session.agentState.requests![bashRequest.requestId]).toBeUndefined();
+
+        const retryAbort = new AbortController();
+        const retry = coordinator.requestDecision(bashRequest, { signal: retryAbort.signal });
+
+        expect(await settledState(retry)).toBe('pending');
+        expect(session.agentState.requests![bashRequest.requestId]).toEqual(
+            expect.objectContaining({
+                tool: 'Bash',
+                arguments: bashRequest.toolInput,
+            }),
+        );
+
+        retryAbort.abort();
+        await expect(retry).rejects.toThrow('Permission request aborted');
+    });
+
     it('ignores uncorrelated responses without building a completion', () => {
         const { coordinator, session } = createHarness();
         let built = false;

@@ -3,7 +3,7 @@ import { basename, dirname, join } from 'node:path';
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
-import { resolveProviderCliManagedCommandPath } from '@/runtime/managedTools/providerCliResolution';
+import { resolveProviderCliManagedCommandPath } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';

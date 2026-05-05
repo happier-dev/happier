@@ -1,4 +1,4 @@
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 export type InternalOnlyRpcMethodEntry = Readonly<{
     method: string;
@@ -30,6 +30,101 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         method: RPC_METHODS.STOP_DAEMON,
         rationale: 'Daemon lifecycle shutdown transport; not a plugin-exposed action surface.',
         ownerPacket: 'A.12.0',
+    },
+    {
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
+        rationale: 'Private execution-run transport used to resume an existing run; no public ActionSpec surface yet.',
+        ownerPacket: 'A.12-execution-runs',
+    },
+    {
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+        rationale: 'Private execution-run convenience transport that composes ensure/start semantics inside the session runtime.',
+        ownerPacket: 'A.12-execution-runs',
+    },
+    {
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
+        rationale: 'Private streaming cursor transport for voice/execution-run turns; public stream ActionSpec is deferred.',
+        ownerPacket: 'A.12-execution-runs',
+    },
+    {
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
+        rationale: 'Private streaming cursor transport for voice/execution-run turns; public stream ActionSpec is deferred.',
+        ownerPacket: 'A.12-execution-runs',
+    },
+    {
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL,
+        rationale: 'Private streaming cursor cancellation transport for voice/execution-run turns; public stream ActionSpec is deferred.',
+        ownerPacket: 'A.12-execution-runs',
+    },
+    {
+        method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_MEMORY_STATUS,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_EXTENSIONS_RELOAD_STATUS,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_PROMPT_ASSETS_LIST_TYPES,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_ADAPTERS,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_SOURCES,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_MARKETPLACE_SOURCE_REGISTRY_GET,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.SCM_BACKEND_DESCRIBE,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.CAPABILITIES_DESCRIBE,
+        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
+        ownerPacket: 'PMS-5',
     },
 ] satisfies readonly InternalOnlyRpcMethodEntry[]);
 

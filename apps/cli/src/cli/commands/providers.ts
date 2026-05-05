@@ -13,8 +13,8 @@ import {
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { configuration } from '@/configuration';
-import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry, ResolvedProviderContribution } from '@/extensions/registry/types';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry, ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { bullets, cmd, createOutputBuilder, dim, errorFrame, fail, kv, neutral, ok, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
 import { resolveConnectTargetServiceIdsFromRegistry } from './connect/resolveConnectTargetServiceIds';

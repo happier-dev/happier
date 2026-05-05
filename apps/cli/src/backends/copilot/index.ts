@@ -10,7 +10,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('@/backends/copilot/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/copilot/cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('@/backends/copilot/cli/auth/copilotCliAuthSpec')).copilotCliAuthSpec,
-  getBindings: async () => (await import('@/backends/copilot/bindings/index')).createCopilotBindings(),
+  getRuntimeCore: async () => (await import('@/backends/copilot/runtimeCore/index')).createCopilotRuntimeCore(),
   vendorResumeSupport: AGENTS_CORE.copilot.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createCopilotBackend } = await import('@/backends/copilot/acp/backend');

@@ -1,8 +1,9 @@
-import { compareVersions } from '@happier-dev/cli-common/update';
+import { resolveApplicableHappierRuntimeMigrations } from '@happier-dev/cli-common/happierRuntime';
 
 import { resolveBackgroundServiceRepairPlanForCurrentRuntime } from '@/diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime';
+import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 
-import { handleServiceRepairCliCommand } from '../serviceRepair/handleServiceRepairCliCommand';
+import { handleServiceRepairCliCommand } from '../service/repair/handleServiceRepairCliCommand';
 
 function normalizeVersionId(value: string | null | undefined): string | null {
   const normalized = String(value ?? '').trim().replace(/^v/i, '');
@@ -14,16 +15,11 @@ export function hasCrossedBackgroundServiceMigrationBoundary(params: Readonly<{
   toVersion: string | null | undefined;
   hadLegacyCurrentInstallWithoutVersionMarkers?: boolean;
 }>): boolean {
-  const fromVersion = normalizeVersionId(params.fromVersion);
-  const toVersion = normalizeVersionId(params.toVersion);
-  if (!toVersion) {
-    return false;
-  }
-  if (!fromVersion) {
-    return params.hadLegacyCurrentInstallWithoutVersionMarkers === true
-      && compareVersions(toVersion, '0.2.3') >= 0;
-  }
-  return compareVersions(fromVersion, '0.2.3') < 0 && compareVersions(toVersion, '0.2.3') >= 0;
+  return resolveApplicableHappierRuntimeMigrations({
+    fromVersion: normalizeVersionId(params.fromVersion),
+    toVersion: normalizeVersionId(params.toVersion),
+    hadLegacyCurrentInstallWithoutVersionMarkers: params.hadLegacyCurrentInstallWithoutVersionMarkers,
+  }).length > 0;
 }
 
 export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
@@ -33,8 +29,14 @@ export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
   argv: readonly string[];
   commandPath: string;
   installedRuntimeNodePath?: string | null;
+  forceNonInteractive?: boolean;
 }>): Promise<boolean> {
-  if (!hasCrossedBackgroundServiceMigrationBoundary(params)) {
+  const migrations = resolveApplicableHappierRuntimeMigrations({
+    fromVersion: params.fromVersion,
+    toVersion: params.toVersion,
+    hadLegacyCurrentInstallWithoutVersionMarkers: params.hadLegacyCurrentInstallWithoutVersionMarkers,
+  });
+  if (migrations.length === 0) {
     return false;
   }
 
@@ -80,11 +82,27 @@ export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
     return false;
   }
 
+  const shouldAutoConsent = params.forceNonInteractive === true || !isInteractiveTerminal();
+  const repairArgv = [
+    ...params.argv,
+    ...(params.argv.includes('--migrate') ? [] : ['--migrate']),
+    ...(shouldAutoConsent && !params.argv.includes('--yes') ? ['--yes'] : []),
+  ];
+  const previousInstallerMigration = process.env.HAPPIER_INSTALLER_MIGRATION;
   await runWithInstalledRuntimeContext(async () => {
-    await handleServiceRepairCliCommand({
-      argv: [...params.argv],
-      commandPath: params.commandPath,
-    });
+    process.env.HAPPIER_INSTALLER_MIGRATION = '1';
+    try {
+      await handleServiceRepairCliCommand({
+        argv: repairArgv,
+        commandPath: params.commandPath,
+      });
+    } finally {
+      if (previousInstallerMigration === undefined) {
+        delete process.env.HAPPIER_INSTALLER_MIGRATION;
+      } else {
+        process.env.HAPPIER_INSTALLER_MIGRATION = previousInstallerMigration;
+      }
+    }
   });
   return true;
 }

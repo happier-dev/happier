@@ -1,7 +1,7 @@
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { logger } from '@/ui/logger';
-import { buildProviderCliUnavailableMessage } from '@/runtime/managedTools/buildProviderCliUnavailableMessage';
+import { buildProviderCliUnavailableMessage } from '@/packagedRuntime/managedTools/buildProviderCliUnavailableMessage';
 
 import { getCodexMcpCommand, getCodexVersionInfo } from './version';
 

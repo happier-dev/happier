@@ -1,3 +1,7 @@
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const spawnSyncMock = vi.fn();
@@ -29,23 +33,6 @@ describe('runDaemonServiceCommands', () => {
       {
         cmd: 'launchctl',
         args: ['bootout', 'gui/501/com.happier.cli.daemon.default'],
-      },
-    ], { failureMode: 'strict' })).not.toThrow();
-  });
-
-  it('ignores launchctl kickstart service-materialization races in strict mode', async () => {
-    const { runDaemonServiceCommands } = await import('./apply');
-
-    spawnSyncMock.mockReturnValue({
-      status: 113,
-      stdout: Buffer.from(''),
-      stderr: Buffer.from('Could not find service "com.happier.cli.daemon.default" in domain for user gui: 501'),
-    });
-
-    expect(() => runDaemonServiceCommands([
-      {
-        cmd: 'launchctl',
-        args: ['kickstart', '-k', 'gui/501/com.happier.cli.daemon.default'],
       },
     ], { failureMode: 'strict' })).not.toThrow();
   });
@@ -84,6 +71,23 @@ describe('runDaemonServiceCommands', () => {
     ], { failureMode: 'strict' })).not.toThrow();
   });
 
+  it('ignores launchctl kickstart service-materialization races in strict mode', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+
+    spawnSyncMock.mockReturnValue({
+      status: 113,
+      stdout: Buffer.from(''),
+      stderr: Buffer.from('Could not find service "com.happier.cli.daemon.default" in domain for user gui: 501'),
+    });
+
+    expect(() => runDaemonServiceCommands([
+      {
+        cmd: 'launchctl',
+        args: ['kickstart', '-k', 'gui/501/com.happier.cli.daemon.default'],
+      },
+    ], { failureMode: 'strict' })).not.toThrow();
+  });
+
   it('still throws for non-benign launchctl failures in strict mode', async () => {
     const { runDaemonServiceCommands } = await import('./apply');
 
@@ -99,36 +103,6 @@ describe('runDaemonServiceCommands', () => {
         args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'],
       },
     ], { failureMode: 'strict' })).toThrow(/Background service command failed/);
-  });
-
-  it('treats a launchctl bootstrap I/O error as non-fatal when the label is already materialized in launchd', async () => {
-    const { runDaemonServiceCommands } = await import('./apply');
-
-    spawnSyncMock.mockImplementation((_command: string, args: readonly string[] = []) => {
-      if (args[0] === 'bootstrap') {
-        return { status: 1, stdout: Buffer.from(''), stderr: Buffer.from('Bootstrap failed: 5: Input/output error') };
-      }
-      if (args[0] === 'print' && args[1] === 'gui/501/com.happier.cli.daemon.default') {
-        return { status: 0, stdout: Buffer.from('state = running'), stderr: Buffer.from('') };
-      }
-      return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
-    });
-
-    expect(() => runDaemonServiceCommands([
-      {
-        cmd: 'launchctl',
-        args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'],
-      },
-    ], { failureMode: 'strict' })).not.toThrow();
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      'launchctl',
-      ['print', 'gui/501/com.happier.cli.daemon.default'],
-      expect.objectContaining({
-        env: expect.any(Object),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }),
-    );
   });
 
   it('ignores optional systemctl cleanup failures in strict mode', async () => {
@@ -194,6 +168,62 @@ describe('runDaemonServiceCommands', () => {
       'systemctl',
       ['--user', 'start', 'happier-daemon.default.service'],
       expect.objectContaining({ timeout: 42000 }),
+    );
+  });
+
+  it('refreshes the plist mtime before launchctl bootstrap in strict mode', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+
+    const dir = mkdtempSync(join(tmpdir(), 'happier-daemon-service-apply-'));
+    const plistPath = join(dir, 'com.happier.cli.daemon.default.plist');
+    writeFileSync(plistPath, '<plist version="1.0"></plist>', 'utf-8');
+    const initialMtimeMs = statSync(plistPath).mtimeMs;
+
+    spawnSyncMock.mockImplementation((_command: string, args: readonly string[] = []) => {
+      if (args[0] === 'bootstrap') {
+        const refreshedMtimeMs = statSync(plistPath).mtimeMs;
+        return refreshedMtimeMs > initialMtimeMs
+          ? { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }
+          : { status: 1, stdout: Buffer.from(''), stderr: Buffer.from('Bootstrap failed: 5: Input/output error') };
+      }
+      return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+    });
+
+    expect(() => runDaemonServiceCommands([
+      {
+        cmd: 'launchctl',
+        args: ['bootstrap', 'gui/501', plistPath],
+      },
+    ], { failureMode: 'strict' })).not.toThrow();
+  });
+
+  it('treats a launchctl bootstrap I/O error as non-fatal when the label is already materialized in launchd', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+
+    spawnSyncMock.mockImplementation((_command: string, args: readonly string[] = []) => {
+      if (args[0] === 'bootstrap') {
+        return { status: 1, stdout: Buffer.from(''), stderr: Buffer.from('Bootstrap failed: 5: Input/output error') };
+      }
+      if (args[0] === 'print' && args[1] === 'gui/501/com.happier.cli.daemon.default') {
+        return { status: 0, stdout: Buffer.from('state = running'), stderr: Buffer.from('') };
+      }
+      return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+    });
+
+    expect(() => runDaemonServiceCommands([
+      {
+        cmd: 'launchctl',
+        args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'],
+      },
+    ], { failureMode: 'strict' })).not.toThrow();
+
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      'launchctl',
+      ['print', 'gui/501/com.happier.cli.daemon.default'],
+      expect.objectContaining({
+        env: expect.any(Object),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
     );
   });
 });

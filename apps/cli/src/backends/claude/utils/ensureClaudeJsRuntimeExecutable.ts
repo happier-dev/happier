@@ -1,5 +1,5 @@
 import type { JsRuntime } from '@/backends/claude/runtime/claudeSessionRuntimeOptions';
-import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
+import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable';
 import { isBun } from '@/utils/runtime';
 
 export async function ensureClaudeJsRuntimeExecutable(jsRuntime?: JsRuntime): Promise<string | undefined> {

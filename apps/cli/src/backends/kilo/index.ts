@@ -10,7 +10,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('@/backends/kilo/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/kilo/cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('@/backends/kilo/cli/auth/kiloCliAuthSpec')).kiloCliAuthSpec,
-  getBindings: async () => (await import('@/backends/kilo/bindings/index')).createKiloBindings(),
+  getRuntimeCore: async () => (await import('@/backends/kilo/runtimeCore/index')).createKiloRuntimeCore(),
   vendorResumeSupport: AGENTS_CORE.kilo.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createKiloBackend } = await import('@/backends/kilo/acp/backend');

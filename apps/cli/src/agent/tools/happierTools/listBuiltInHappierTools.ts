@@ -1,6 +1,6 @@
 import { HAPPIER_BUILT_IN_TOOLS } from './catalog';
 import { filterBuiltInToolsForSurface, listPluginActionBackedTools } from './actionToolCatalog';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 
 export type BuiltInHappierToolsSurface = 'mcp' | 'cli' | 'session_agent';

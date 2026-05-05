@@ -131,6 +131,7 @@ export function createCodexAppServerClientLifecycle(params: Readonly<{
                         handleMcpElicitationRequest: params.handleMcpElicitationRequest,
                         schedulePendingTurnFinalization: params.schedulePendingTurnFinalization,
                         abortPendingTurnWithFailure: params.abortPendingTurnWithFailure,
+                        finishPendingTurn: params.finishPendingTurn,
                         sendCodexMessage: (message) => {
                             params.session.sendCodexMessage(message);
                         },

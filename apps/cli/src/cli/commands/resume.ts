@@ -10,15 +10,15 @@ import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { resolveSessionEncryptionContextFromCredentials, tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodeBase64 } from '@/api/encryption';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
-import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleCatalogCliCommand';
+import { buildResumeSelectionModel, formatResumeSelectionFooter } from './resumeInteractiveSelection';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 
@@ -36,7 +36,7 @@ type ResolveResumeContributionRegistryFn = () => Promise<ResumeContributionRegis
 type ResumableSessionSelection =
   | { type: 'selected'; sessionId: string }
   | { type: 'cancelled' }
-  | { type: 'none' };
+  | { type: 'none'; footerHint?: string | null };
 
 async function resolveAgentHandler(agentId: CatalogAgentId): Promise<CommandHandler> {
   const entry = requireCatalogEntry(agentId);
@@ -79,33 +79,15 @@ async function selectResumableSessionId(params: Readonly<{
   fetchSessionsPageFn: FetchSessionsPageFn;
   contributionRegistry: ResumeContributionRegistry | null;
 }>): Promise<ResumableSessionSelection> {
-  const page = await params.fetchSessionsPageFn({ token: params.credentials.token, limit: 200 });
-  const rows = page.sessions
-    .map((raw) => buildCliSessionRowModel({
-      credentials: params.credentials,
-      rawSession: raw,
-      accountSettings: params.accountSettings,
-      contributionRegistry: params.contributionRegistry,
-    }))
-    .filter((row) => row.isSystem !== true)
-    .filter((row) => row.archivedAt === null && row.active !== true)
-    .filter((row) => Boolean(row.path))
-    .filter((row) => row.vendorResume.eligible === true)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const model = await buildResumeSelectionModel(params);
+  const footerHint = formatResumeSelectionFooter(model.hint);
+  if (model.rows.length === 0) return { type: 'none', footerHint };
 
-  if (rows.length === 0) return { type: 'none' };
-
-  const selectorRows: SessionActionSelectorRow[] = rows.map((row) => ({
-    sessionId: row.id,
-    agentId: row.agentId,
-    updatedAt: row.updatedAt,
-    title: [row.tag, row.title].filter((v) => typeof v === 'string' && v.trim().length > 0).join(' · '),
-    path: row.path ?? '',
-  }));
   const selection = await runSessionActionSelector({
     title: 'Resume a session',
     actionVerb: 'resume',
-    rows: selectorRows,
+    rows: model.rows,
+    footerHint,
   });
   return selection.type === 'selected' ? selection : { type: 'cancelled' };
 }
@@ -184,6 +166,9 @@ export async function handleResumeCommand(
     }
     if (selected.type === 'none') {
       console.log('No resumable sessions found.');
+      if (selected.footerHint) {
+        console.log(`Hint: ${selected.footerHint}`);
+      }
       return;
     }
     sessionIdOrPrefix = selected.sessionId;

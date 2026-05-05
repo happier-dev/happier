@@ -5,7 +5,7 @@ const { ensureJavaScriptRuntimeExecutableMock, isBunMock } = vi.hoisted(() => ({
   isBunMock: vi.fn(() => false),
 }));
 
-vi.mock('../../../runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
   ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
 }));
 

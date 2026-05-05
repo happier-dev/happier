@@ -119,6 +119,96 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
     }
   });
 
+  it('auto-selects a non-colliding port when a sibling relay already uses the default port', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-port-collision-'));
+    try {
+      const stableDefaults = resolveRelayRuntimeDefaults({
+        platform: 'linux',
+        mode: 'user',
+        channel: 'stable',
+        homeDir,
+      });
+      await mkdir(stableDefaults.configDir, { recursive: true });
+      await mkdir(stableDefaults.installRoot, { recursive: true });
+      await writeFile(join(stableDefaults.configDir, 'server.env'), 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n', 'utf8');
+      await writeFile(join(stableDefaults.installRoot, 'self-host-state.json'), JSON.stringify({ channel: 'stable', mode: 'user', version: '0.3.0-test' }), 'utf8');
+
+      const previewDefaults = resolveRelayRuntimeDefaults({
+        platform: 'linux',
+        mode: 'user',
+        channel: 'preview',
+        homeDir,
+      });
+      await mkdir(previewDefaults.configDir, { recursive: true });
+      await writeFile(join(previewDefaults.configDir, 'server.env'), 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n', 'utf8');
+
+      const payloadRoot = join(homeDir, 'payload');
+      const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init');
+      await mkdir(migrationsSourceDir, { recursive: true });
+      await writeFile(join(migrationsSourceDir, 'migration.sql'), '-- init\n', 'utf8');
+
+      const serverBinaryPath = join(payloadRoot, 'happier-server');
+      await writeFile(serverBinaryPath, '#!/bin/sh\necho ok\n', 'utf8');
+
+      const result = await installOrUpdateRelayRuntimeLocal({
+        serverBinaryPath,
+        channel: 'preview',
+        mode: 'user',
+        platform: 'linux',
+        arch: 'arm64',
+        homeDir,
+        runServiceCommands: false,
+        skipHealthCheck: true,
+      });
+
+      expect(result.baseUrl).not.toBe('http://127.0.0.1:3005');
+
+      const envText = await readFileText(join(previewDefaults.configDir, 'server.env'));
+      const advertisedPort = new URL(result.baseUrl).port;
+      expect(envText).toContain(`PORT=${advertisedPort}`);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an explicit PORT override that collides with a sibling relay', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-explicit-port-collision-'));
+    try {
+      const stableDefaults = resolveRelayRuntimeDefaults({
+        platform: 'linux',
+        mode: 'user',
+        channel: 'stable',
+        homeDir,
+      });
+      await mkdir(stableDefaults.configDir, { recursive: true });
+      await mkdir(stableDefaults.installRoot, { recursive: true });
+      await writeFile(join(stableDefaults.configDir, 'server.env'), 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n', 'utf8');
+      await writeFile(join(stableDefaults.installRoot, 'self-host-state.json'), JSON.stringify({ channel: 'stable', mode: 'user', version: '0.3.0-test' }), 'utf8');
+
+      const payloadRoot = join(homeDir, 'payload');
+      const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init');
+      await mkdir(migrationsSourceDir, { recursive: true });
+      await writeFile(join(migrationsSourceDir, 'migration.sql'), '-- init\n', 'utf8');
+
+      const serverBinaryPath = join(payloadRoot, 'happier-server');
+      await writeFile(serverBinaryPath, '#!/bin/sh\necho ok\n', 'utf8');
+
+      await expect(installOrUpdateRelayRuntimeLocal({
+        serverBinaryPath,
+        channel: 'preview',
+        mode: 'user',
+        platform: 'linux',
+        arch: 'arm64',
+        homeDir,
+        env: { PORT: '3005' },
+        runServiceCommands: false,
+        skipHealthCheck: true,
+      })).rejects.toThrow(/PORT=3005/i);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('copies the installed server binary into the persistent install root so launchd does not depend on the temp payload path', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-'));
     const payloadRoot = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-payload-'));

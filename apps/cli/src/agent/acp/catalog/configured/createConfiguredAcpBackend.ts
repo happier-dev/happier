@@ -1,34 +1,47 @@
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
-import { createAcpBackend } from '@/agent/acp/createAcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import type { AgentFactoryOptions, McpServerConfig } from '@/agent/core';
+import {
+  createAcpBackendFromDefinition,
+  normalizeConfiguredAcpDefinition,
+  type AcpRuntimeDefinitionV1,
+} from '@/agent/acp/runtime/definition';
 
 import type { ResolvedConfiguredAcpBackend } from './resolveBackend';
-import { resolveAcpCatalogTransportHandler } from '../transport/resolveAcpCatalogTransportHandler';
 
 export type ConfiguredAcpBackendOptions = AgentFactoryOptions & Readonly<{
-  backend: ResolvedConfiguredAcpBackend;
+  backend?: ResolvedConfiguredAcpBackend;
+  definition?: AcpRuntimeDefinitionV1;
   launchEnv: Readonly<Record<string, string>>;
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
+  permissionMode?: string;
 }>;
 
 export function createConfiguredAcpBackend(
   options: ConfiguredAcpBackendOptions,
 ): AcpBackend {
-  return createAcpBackend({
-    agentName: options.backend.backendId,
+  const definition = options.definition ?? (
+    options.backend
+      ? normalizeConfiguredAcpDefinition({
+          backend: options.backend,
+          launchEnv: options.launchEnv,
+        })
+      : null
+  );
+  if (!definition) {
+    throw new Error('Configured ACP backends require either a normalized definition or backend metadata');
+  }
+
+  return createAcpBackendFromDefinition({
+    definition,
     cwd: options.cwd,
-    command: options.backend.command,
-    args: [...options.backend.args],
     env: {
       ...(options.env ?? {}),
       ...options.launchEnv,
-      NODE_ENV: 'production',
-      DEBUG: '',
     },
+    permissionMode: options.permissionMode,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
-    transportHandler: resolveAcpCatalogTransportHandler(options.backend.transportProfile),
   });
 }

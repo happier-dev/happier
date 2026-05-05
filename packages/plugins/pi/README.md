@@ -1,0 +1,1 @@
+Skeleton plugin package for `pi` reserved per amendment-x Wave C 2026-04-27. Substantive content lands during Stage E.10 extraction (see `.project/plans/runtime-unification/stages/stage-E/E.10.md`). Currently no-op scaffolding.

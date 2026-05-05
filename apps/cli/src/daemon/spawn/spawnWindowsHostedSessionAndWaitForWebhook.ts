@@ -9,6 +9,7 @@ import {
     buildWindowsHostedTerminalArgs,
     buildWindowsHostedTerminalAttachment,
     buildWindowsTerminalWindowIdentity,
+    resolveWindowsTerminalWindowName,
 } from '../platform/windows/windowsHostedSessionRuntime';
 import type { ChildExit } from '../sessions/onChildExited';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
@@ -122,6 +123,10 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         existingSessionId: params.normalizedExistingSessionId,
         reservedSessionId: params.reservedSessionId,
         agentCommand: params.agentCommand,
+        windowName: resolveWindowsTerminalWindowName({
+            requested: params.options.windowsTerminalWindowName,
+            env: process.env,
+        }),
     });
 
     const tryConsoleLaunch = async (launchParams: {
@@ -134,7 +139,9 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
             requestedMode: launchParams.requested,
             fallbackReason: launchParams.fallbackReason,
         });
-        const launchSpec = buildHappyCliSubprocessLaunchSpec(consoleArgs);
+        const launchSpec = buildHappyCliSubprocessLaunchSpec(consoleArgs, {
+            preferWindowsPackagedBinary: true,
+        });
         const started = await startHappySessionInVisibleWindowsConsole({
             filePath: launchSpec.filePath,
             args: launchSpec.args,
@@ -173,7 +180,9 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
             requestedMode: 'windows_terminal',
             windowId: windowsTerminalIdentity.windowId,
         });
-        const launchSpec = buildHappyCliSubprocessLaunchSpec(windowsTerminalArgs);
+        const launchSpec = buildHappyCliSubprocessLaunchSpec(windowsTerminalArgs, {
+            preferWindowsPackagedBinary: true,
+        });
         const started = await startHappySessionInWindowsTerminal({
             filePath: launchSpec.filePath,
             args: launchSpec.args,

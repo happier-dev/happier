@@ -1,5 +1,5 @@
 import {
-  inferAgentIdFromSessionMetadata,
+  resolveAgentIdFromSessionMetadata,
   type AgentId,
 } from '@happier-dev/agents';
 
@@ -10,6 +10,7 @@ import type { Metadata } from '@/api/types';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
+import { resolveCliSessionAttachBackendId } from './resolveCliSessionAttachBackendId';
 
 export type CliSessionAttachEligibilityReasonCode =
   | 'archived'
@@ -27,13 +28,14 @@ export type CliSessionAttachEligibility =
   | Readonly<{
       eligible: true;
       agentId: AgentId;
+      backendId: string;
       attachStrategy: 'provider_attach';
       attachScope: 'local' | 'remote';
       metadata: Record<string, unknown>;
     }>
   | Readonly<{
       eligible: true;
-      agentId: AgentId;
+      agentId: AgentId | null;
       attachStrategy: 'terminal_host';
       attachScope: 'local';
       terminal: NonNullable<Metadata['terminal']>;
@@ -65,7 +67,7 @@ function readMachineId(metadata: Record<string, unknown> | null): string | null 
 }
 
 function resolveAgentId(metadata: Record<string, unknown> | null): AgentId | null {
-  return metadata ? inferAgentIdFromSessionMetadata(metadata) : null;
+  return metadata ? resolveAgentIdFromSessionMetadata(metadata) : null;
 }
 
 function buildTerminalAttachEligibility(params: Readonly<{
@@ -75,8 +77,7 @@ function buildTerminalAttachEligibility(params: Readonly<{
   currentTmuxSocketPath?: string | null;
 }>): CliSessionAttachEligibility {
   const localTerminal = params.localAttachmentInfo?.terminal ?? null;
-  const metadataTerminalValue = params.metadata?.terminal;
-  const metadataTerminal = asRecord(metadataTerminalValue) as NonNullable<Metadata['terminal']> | null;
+  const metadataTerminal = asRecord(params.metadata?.terminal) as NonNullable<Metadata['terminal']> | null;
 
   if (localTerminal) {
     const plan = createTerminalAttachPlan({
@@ -95,7 +96,7 @@ function buildTerminalAttachEligibility(params: Readonly<{
     }
     return {
       eligible: true,
-      agentId: resolveAgentId(params.metadata) ?? 'claude',
+      agentId: resolveAgentId(params.metadata),
       attachStrategy: 'terminal_host',
       attachScope: 'local',
       terminal: localTerminal,
@@ -134,6 +135,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   credentials: Credentials;
   rawSession: RawSessionListRow | RawSessionRecord;
   currentMachineId: string | null;
+  currentMachineHost?: string | null;
   localAttachmentInfo: TerminalAttachmentInfo | null;
   insideTmux: boolean;
   currentTmuxSocketPath?: string | null;
@@ -174,13 +176,18 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   }
 
   const sessionMachineId = readMachineId(metadata);
-  const backendExecutionSurfaces = agentId ? await resolveBackendExecutionSurfaces(agentId) : null;
+  const hasLocalTerminalEvidence = params.localAttachmentInfo !== null;
+  const hasSyncedTerminalMetadata = asRecord(metadata?.terminal) !== null;
+  const backendId = resolveCliSessionAttachBackendId(metadata);
+  const backendExecutionSurfaces = backendId ? await resolveBackendExecutionSurfaces(backendId) : null;
   const providerAttachOps = backendExecutionSurfaces?.attach ?? null;
   if (providerAttachOps) {
-    if (!agentId) {
+    const providerBackendId = backendId;
+    const providerAgentId = agentId;
+    if (!providerBackendId || !providerAgentId) {
       return {
         eligible: false,
-        agentId,
+        agentId: providerAgentId,
         reasonCode: 'provider_attach_unavailable',
         reason: 'Provider attach is not available for this session.',
         metadata,
@@ -196,7 +203,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     if (!evaluation.eligible) {
       return {
         eligible: false,
-        agentId,
+        agentId: providerAgentId,
         reasonCode: 'provider_attach_unavailable',
         reason: evaluation.reason,
         metadata,
@@ -205,7 +212,8 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
 
     return {
       eligible: true,
-      agentId,
+      agentId: providerAgentId,
+      backendId: providerBackendId,
       attachStrategy: 'provider_attach',
       attachScope: evaluation.scope,
       metadata: evaluation.metadata,
@@ -213,15 +221,6 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   }
 
   const terminalRuntimeOps = backendExecutionSurfaces?.terminalRuntime ?? null;
-  if (!terminalRuntimeOps) {
-    return {
-      eligible: false,
-      agentId,
-      reasonCode: 'local_control_unsupported',
-      reason: 'This session does not support terminal attach.',
-      metadata,
-    };
-  }
 
   if (!params.currentMachineId && !params.localAttachmentInfo) {
     return {
@@ -241,12 +240,40 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       metadata,
     };
   }
-  if (sessionMachineId && params.currentMachineId && sessionMachineId !== params.currentMachineId) {
+  if (sessionMachineId && params.currentMachineId && sessionMachineId !== params.currentMachineId && !hasLocalTerminalEvidence) {
     return {
       eligible: false,
       agentId,
       reasonCode: 'not_current_machine',
       reason: 'Session belongs to another machine and cannot be attached from this computer.',
+      metadata,
+    };
+  }
+
+  if (hasLocalTerminalEvidence) {
+    return buildTerminalAttachEligibility({
+      metadata,
+      localAttachmentInfo: params.localAttachmentInfo,
+      insideTmux: params.insideTmux,
+      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
+    });
+  }
+
+  if (hasSyncedTerminalMetadata) {
+    return buildTerminalAttachEligibility({
+      metadata,
+      localAttachmentInfo: params.localAttachmentInfo,
+      insideTmux: params.insideTmux,
+      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
+    });
+  }
+
+  if (!terminalRuntimeOps) {
+    return {
+      eligible: false,
+      agentId,
+      reasonCode: 'local_control_unsupported',
+      reason: 'This session does not support terminal attach.',
       metadata,
     };
   }

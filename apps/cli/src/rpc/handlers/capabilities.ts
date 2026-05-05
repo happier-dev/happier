@@ -26,13 +26,13 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import type { AgentId } from '@happier-dev/agents';
 import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
 import { BackendTargetRefSchema, type BackendTargetRefV1, type CapabilityId } from '@happier-dev/protocol';
-import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/runtime/managedTools/invokeProviderCliInstall';
-import { primeResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
-import { installMarketplacePlugin as installMarketplacePluginFromCatalog } from '@/extensions/marketplace/catalog';
-import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry } from '@/extensions/catalog/installed';
-import { setInstalledPluginEnabled } from '@/extensions/store/enabled';
-import { pluginReloadController } from '@/extensions/reload/singleton';
-import type { PluginReloadResult } from '@/extensions/reload/controller';
+import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/packagedRuntime/managedTools/invokeProviderCliInstall';
+import { primeResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { installMarketplacePlugin as installMarketplacePluginFromCatalog } from '@/plugins/store/marketplace/catalog';
+import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry } from '@/plugins/projection/catalog/installed';
+import { setInstalledPluginEnabled } from '@/plugins/store/enabled';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import type { PluginReloadResult } from '@/plugins/runtime/reload/controller';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
 

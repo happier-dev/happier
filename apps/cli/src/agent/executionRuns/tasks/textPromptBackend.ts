@@ -3,7 +3,7 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { SessionId } from '@/agent/core/AgentBackend';
 import { createExecutionRunRuntime } from '@/agent/executionRuns/runtime/createExecutionRunRuntime';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { resolveExecutionRunPublicBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';

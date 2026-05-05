@@ -1,7 +1,7 @@
 import { ClaudeSdkAgentBackend } from '@/backends/claude/sdkAgentBackend/ClaudeSdkAgentBackend';
 import type { ExecutionRunBackendFactory } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { BackendIsolationBundle, BackendIsolationRequest } from '@/runtime/isolation/types';
+import type { BackendIsolationBundle, BackendIsolationRequest } from '@/packagedRuntime/isolation/types';
 import { configuration } from '@/configuration';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

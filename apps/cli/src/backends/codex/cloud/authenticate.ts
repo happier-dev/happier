@@ -6,6 +6,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 import { openBrowser } from '../../../ui/openBrowser';
 import { generatePkceCodes } from '../../../cloud/pkce';
 import type { CloudConnectAuthenticateOptions } from '../../../cloud/connectTypes';
@@ -14,6 +15,7 @@ import { promptInput } from '../../../terminal/prompts/promptInput';
 
 import { createCodexCloudAuthenticator } from './createCodexCloudAuthenticator';
 import { authenticateCodexDevice, OPENAI_CODEX_DEVICE_VERIFICATION_URL } from './deviceAuth';
+import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
 
 export interface CodexAuthTokens {
     id_token: string;
@@ -55,9 +57,11 @@ function parseJWT(token: string): any {
 async function exchangeCodeForTokens(
     code: string,
     verifier: string,
-    port: number
+    port: number,
+    runtimeFetch: FetchRuntimeServiceV1 = createGlobalConnectedServiceFetchRuntime(),
 ): Promise<CodexAuthTokens> {
-    const response = await fetch(`${AUTH_BASE_URL}/oauth/token`, {
+    const response = await runtimeFetch({
+        url: `${AUTH_BASE_URL}/oauth/token`,
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -107,6 +111,7 @@ export async function exchangeCodexAuthorizationCodeForTokens(params: Readonly<{
   verifier: string;
   redirectUri: string;
   now: number;
+  runtimeFetch?: FetchRuntimeServiceV1;
 }>): Promise<Readonly<{
   accessToken: string;
   refreshToken: string;
@@ -116,7 +121,7 @@ export async function exchangeCodexAuthorizationCodeForTokens(params: Readonly<{
 }>> {
   const redirectUrl = new URL(params.redirectUri);
   const port = Number.parseInt(redirectUrl.port || '80', 10);
-  const tokens = await exchangeCodeForTokens(params.code, params.verifier, port);
+  const tokens = await exchangeCodeForTokens(params.code, params.verifier, port, params.runtimeFetch);
 
   const expiresAt = typeof tokens.expires_in === 'number' && Number.isFinite(tokens.expires_in) && tokens.expires_in > 0
     ? params.now + Math.trunc(tokens.expires_in) * 1000

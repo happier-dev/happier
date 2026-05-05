@@ -1,4 +1,4 @@
-import { waitForQueuedSessionPromptBatch } from '@/agent/runtime/sessionLoop/waitForQueuedSessionPromptBatch';
+import { waitForQueuedSessionPromptBatch } from '@/agent/runtime/session/loop/waitForQueuedSessionPromptBatch';
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 import type { PermissionHandler } from '@/backends/claude/utils/permissionHandler';
 import { syncClaudePermissionModeFromMetadata } from '@/backends/claude/utils/syncPermissionModeFromMetadata';

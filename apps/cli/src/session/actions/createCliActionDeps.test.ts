@@ -362,7 +362,7 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
-  it('routes execution-run parent-session permission responses through execution-run action', async () => {
+  it('routes execution-run parent-session permission responses through session permission RPC', async () => {
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'sess-1',
@@ -397,6 +397,7 @@ describe('createCliActionDeps hook dispatch', () => {
       mode: 'plain',
     });
     executeExecutionRunAction.mockResolvedValue({ ok: true });
+    callSessionRpc.mockResolvedValue({ ok: true });
 
     const deps = createCliActionDeps({
       token: 'token',
@@ -426,23 +427,12 @@ describe('createCliActionDeps hook dispatch', () => {
       requestId: 'perm-1',
     })).resolves.toEqual({ ok: true });
 
-    expect(executeExecutionRunAction).toHaveBeenCalledWith(expect.objectContaining({
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-1',
-      request: {
-        runId: 'run-1',
-        actionId: 'permission.respond',
-        input: expect.objectContaining({
-          requestId: 'perm-1',
-          approved: true,
-          responseTarget: expect.objectContaining({
-            kind: 'execution_run_host_bridge',
-            runId: 'run-1',
-            providerRequestId: 'perm-1',
-          }),
-        }),
-      },
+      method: 'sess-1:permission',
+      request: { id: 'perm-1', approved: true },
     }));
-    expect(callSessionRpc).not.toHaveBeenCalled();
+    expect(executeExecutionRunAction).not.toHaveBeenCalled();
   });
 });

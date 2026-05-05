@@ -2,9 +2,10 @@ function shouldOmitKey(key: string): boolean {
   return /(token|authorization|cookie|password)/i.test(key);
 }
 
+const EXPO_PUSH_TOKEN_PATTERN = /(?:Exponent|Expo)PushToken\[[^\]]+\]/g;
+
 function redactStringValue(value: string): string {
-  if (value.includes('ExponentPushToken[')) return '[REDACTED]';
-  return value;
+  return value.replace(EXPO_PUSH_TOKEN_PATTERN, '[REDACTED]');
 }
 
 function redactValue(value: unknown, depth: number): unknown {
@@ -17,29 +18,31 @@ function redactValue(value: unknown, depth: number): unknown {
   }
 
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+  for (const [k, v] of Object.entries(value)) {
     if (shouldOmitKey(k)) continue;
     const next = redactValue(v, depth + 1);
     // Avoid keeping empty objects around.
-    if (next && typeof next === 'object' && !Array.isArray(next) && Object.keys(next as any).length === 0) continue;
+    if (next && typeof next === 'object' && !Array.isArray(next) && Object.keys(next).length === 0) continue;
     out[k] = next;
   }
   return out;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function summarizeExpoPushTicketErrorsForLog(tickets: ReadonlyArray<unknown>): Array<{ message?: string; details?: unknown }> {
   const out: Array<{ message?: string; details?: unknown }> = [];
 
   for (const ticket of tickets) {
-    if (!ticket || typeof ticket !== 'object') continue;
-    const t = ticket as any;
-    if (t.status !== 'error') continue;
+    if (!isRecord(ticket)) continue;
+    if (ticket.status !== 'error') continue;
 
-    const message = typeof t.message === 'string' ? t.message : undefined;
-    const details = t.details !== undefined ? redactValue(t.details, 0) : undefined;
+    const message = typeof ticket.message === 'string' ? redactStringValue(ticket.message) : undefined;
+    const details = ticket.details !== undefined ? redactValue(ticket.details, 0) : undefined;
     out.push(details !== undefined ? { message, details } : { message });
   }
 
   return out;
 }
-

@@ -11,6 +11,7 @@ class FakeRpcHandlerManager {
 class FakeSession {
   rpcHandlerManager = new FakeRpcHandlerManager();
   agentState: any = { requests: {}, completedRequests: {} };
+  boundAgentStateRequestStore: unknown = null;
 
   getAgentStateSnapshot() {
     return this.agentState;
@@ -19,6 +20,10 @@ class FakeSession {
   updateAgentState(updater: any) {
     this.agentState = updater(this.agentState);
     return this.agentState;
+  }
+
+  bindAgentStateRequestStore(store: unknown) {
+    this.boundAgentStateRequestStore = store;
   }
 }
 
@@ -40,6 +45,21 @@ class TestPermissionHandler extends BasePermissionHandler {
 }
 
 describe('BasePermissionHandler allowlist', () => {
+  it('binds the canonical request store to each active session client', () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+
+    expect(session.boundAgentStateRequestStore).toEqual(expect.objectContaining({
+      publishRequest: expect.any(Function),
+      registerResponseTargetHandler: expect.any(Function),
+    }));
+
+    const nextSession = new FakeSession();
+    handler.updateSession(nextSession as any);
+
+    expect(nextSession.boundAgentStateRequestStore).toBe(session.boundAgentStateRequestStore);
+  });
+
   it('records the request kind for interactive tool prompts vs permissions', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);

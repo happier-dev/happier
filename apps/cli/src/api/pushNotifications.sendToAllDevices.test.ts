@@ -4,7 +4,12 @@ import axios from 'axios';
 
 import { logger } from '@/ui/logger';
 import { PushNotificationClient } from './pushNotifications';
-import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol';
+import {
+  HAPPIER_FOCUS_LIVE_ACTIVITY_NAME,
+  PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
+  PUSH_NOTIFICATION_CATEGORY_IDS,
+  type LiveActivityRemoteUpdateRequestV1,
+} from '@happier-dev/protocol';
 
 type MockExpoPushTicket = Readonly<{
   status: string;
@@ -20,7 +25,7 @@ const getPushNotificationReceiptsAsyncSpy = vi.fn(async (_ids: string[]) => ({})
 vi.mock('axios', () => {
   return {
     __esModule: true,
-    default: { get: vi.fn(), delete: vi.fn(), isAxiosError: (err: any) => Boolean(err?.isAxiosError) },
+    default: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), isAxiosError: (err: any) => Boolean(err?.isAxiosError) },
   };
 });
 
@@ -53,12 +58,20 @@ vi.mock('expo-server-sdk', () => {
 });
 
 describe('PushNotificationClient.sendToAllDevicesAsync', () => {
+  const originalDebugPush = process.env.HAPPIER_DEBUG_PUSH;
+
   beforeEach(() => {
     sendPushNotificationsAsyncSpy.mockClear();
     getPushNotificationReceiptsAsyncSpy.mockClear();
     (logger.debug as any).mockClear();
     (axios as any).get.mockReset();
+    vi.mocked(axios.post).mockReset();
     (axios as any).delete.mockReset();
+    if (typeof originalDebugPush === 'string') {
+      process.env.HAPPIER_DEBUG_PUSH = originalDebugPush;
+    } else {
+      delete process.env.HAPPIER_DEBUG_PUSH;
+    }
   });
 
   it('uses token-specific clientServerUrl when present', async () => {
@@ -86,7 +99,12 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
   it('sets categoryId for permission/user_action request pushes based on payload kind', async () => {
     (axios as any).get.mockResolvedValue({
       data: {
-        tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
+        tokens: [{
+          id: '1',
+          token: 'ExponentPushToken[a]',
+          createdAt: Date.parse('2026-05-04T12:00:00.000Z'),
+          updatedAt: Date.parse('2026-05-04T12:00:00.000Z'),
+        }],
       },
     });
 
@@ -102,7 +120,12 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
   it('sets iOS subtitle and Android channelId for permission request pushes', async () => {
     (axios as any).get.mockResolvedValue({
       data: {
-        tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
+        tokens: [{
+          id: '1',
+          token: 'ExponentPushToken[a]',
+          createdAt: Date.parse('2026-05-04T12:00:00.000Z'),
+          updatedAt: Date.parse('2026-05-04T12:00:00.000Z'),
+        }],
       },
     });
 
@@ -121,6 +144,142 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
       subtitle: 'Bash',
       channelId: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1,
     });
+  });
+
+  it('uses sound-specific Android channels when a bundled sound id is provided', async () => {
+    (axios as any).get.mockResolvedValue({
+      data: {
+        tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
+      },
+    });
+
+    const client = new PushNotificationClient('t', 'https://api.example.test');
+    await client.sendToAllDevicesAsync('Title', 'Body', {
+      sessionId: 's_1',
+      requestId: 'p_1',
+      kind: 'permission',
+    }, {
+      sound: 'happier_urgent.wav',
+      priority: 'high',
+      androidSoundId: 'urgent',
+    });
+
+    const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(-1) ?? [];
+    expect(Array.isArray(chunk)).toBe(true);
+    expect(chunk).toHaveLength(1);
+    expect((chunk as any[])[0]).toMatchObject({
+      sound: 'happier_urgent.wav',
+      channelId: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsUrgentV1,
+    });
+  });
+
+  it('applies explicit sound and priority options to outbound Expo messages', async () => {
+    (axios as any).get.mockResolvedValue({
+      data: {
+        tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
+      },
+    });
+
+    const client = new PushNotificationClient('t', 'https://api.example.test');
+    await client.sendToAllDevicesAsync('Title', 'Body', { sessionId: 's_1' }, {
+      sound: null,
+      priority: 'normal',
+    });
+
+    const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(-1) ?? [];
+    expect(Array.isArray(chunk)).toBe(true);
+    expect(chunk).toHaveLength(1);
+    expect((chunk as any[])[0]).toMatchObject({ priority: 'normal' });
+    expect((chunk as any[])[0]).not.toHaveProperty('sound');
+  });
+
+  it('does not log notification title or body when push debug logging is enabled', async () => {
+    process.env.HAPPIER_DEBUG_PUSH = '1';
+    (axios as any).get.mockResolvedValue({
+      data: {
+        tokens: [{
+          id: '1',
+          token: 'ExponentPushToken[a]',
+          createdAt: Date.parse('2026-05-04T12:00:00.000Z'),
+          updatedAt: Date.parse('2026-05-04T12:00:00.000Z'),
+        }],
+      },
+    });
+
+    const client = new PushNotificationClient('t', 'https://api.example.test');
+    await client.sendToAllDevicesAsync(
+      'Private launch title',
+      'Body includes private-token',
+      { sessionId: 's_1' },
+    );
+
+    const logged = JSON.stringify((logger.debug as any).mock.calls);
+    expect(logged).not.toContain('Private launch title');
+    expect(logged).not.toContain('private-token');
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[PUSH] sendToAllDevicesAsync called',
+      expect.objectContaining({
+        titleLength: 'Private launch title'.length,
+        bodyLength: 'Body includes private-token'.length,
+      }),
+    );
+  });
+
+  it('posts Live Activity remote updates to the selected server route', async () => {
+    vi.mocked(axios.post).mockResolvedValue({
+      status: 200,
+      data: { success: true, deliveries: [] },
+    } as never);
+    const request = {
+      v: 1,
+      requestId: 'request-1',
+      createdAt: 1_762_000_000_000,
+      transportMode: 'direct_apns',
+      event: 'update',
+      activityKey: {
+        serverId: 'server-a',
+        sessionId: 'session-1',
+        activityName: HAPPIER_FOCUS_LIVE_ACTIVITY_NAME,
+      },
+      snapshotFingerprint: 'snapshot-fingerprint-1',
+      contentState: {
+        version: 1,
+        generatedAt: 1_762_000_000_000,
+        staleAt: 1_762_001_800_000,
+        sessionId: 'session-1',
+        title: 'Review branch',
+        subtitle: null,
+        previewText: null,
+        statusText: 'Ready',
+        attentionState: 'unread',
+        defaultTarget: 'open-inbox',
+        sessionTarget: 'open-session:session-1?serverId=server-a',
+        overflowCount: 0,
+        totalAttentionCount: 1,
+        allowActionButtons: true,
+        labels: {
+          title: 'Happier',
+          openLabel: 'Open',
+          inboxLabel: 'Inbox',
+          attentionLabel: 'Attention',
+        },
+      },
+    } satisfies LiveActivityRemoteUpdateRequestV1;
+
+    const client = new PushNotificationClient('t', 'https://api.example.test', 'server-a');
+    expect(typeof client.sendLiveActivityRemoteUpdateAsync).toBe('function');
+    await client.sendLiveActivityRemoteUpdateAsync(request);
+
+    expect(vi.mocked(axios.post)).toHaveBeenCalledWith(
+      'https://api.example.test/v1/live-activity-remote-updates',
+      request,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer t',
+          'Content-Type': 'application/json',
+        }),
+      }),
+    );
   });
 
   it('sanitizes iOS subtitle for notification pushes', async () => {

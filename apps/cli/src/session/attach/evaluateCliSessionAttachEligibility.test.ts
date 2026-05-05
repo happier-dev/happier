@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildAcpConfiguredBackendV1 } from '@happier-dev/protocol';
 
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import type { AnyTerminalRuntimeOps, ProviderAttachOps } from '@/backends/types';
@@ -131,6 +132,182 @@ afterEach(() => {
 });
 
 describe('evaluateCliSessionAttachEligibility', () => {
+  it('rejects terminal-host sessions from a different physical host even when synced tmux metadata exists', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_remote_tmux_physical_host_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-remote',
+        flavor: 'claude',
+        host: 'office-imac',
+        path: '/tmp/workspace',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-remote' },
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-local',
+      currentMachineHost: 'leeroy-mbp',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      reasonCode: 'not_current_machine',
+    });
+  });
+
+  it('accepts a local terminal marker even when the session machine identity changed', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_local_marker_after_machine_rotation_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-before-reauth',
+        flavor: 'claude',
+        host: 'leeroy-mbp',
+        path: '/tmp/workspace',
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-after-reauth',
+      currentMachineHost: 'leeroy-mbp',
+      localAttachmentInfo: {
+        version: 1,
+        sessionId: 'sid_local_marker_after_machine_rotation_1',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-local-marker' },
+        },
+        updatedAt: Date.now(),
+      },
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: true,
+      attachStrategy: 'terminal_host',
+      agentId: 'claude',
+      attachScope: 'local',
+      plan: expect.objectContaining({ type: 'tmux', target: 'happy:session-local-marker' }),
+    });
+  });
+
+  it('rejects same-host synced tmux metadata when the machine identity differs without a local marker', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_same_host_synced_tmux_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-from-ui',
+        flavor: 'claude',
+        host: 'leeroy-mbp',
+        path: '/tmp/workspace',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-same-host' },
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-from-cli',
+      currentMachineHost: 'leeroy-mbp.local',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      agentId: 'claude',
+      reasonCode: 'not_current_machine',
+    });
+  });
+
+  it('rejects same-host synced tmux metadata when terminal runtime ops are unavailable without a local marker', async () => {
+    resolveBackendExecutionSurfaces.mockResolvedValue({
+      terminalRuntime: null,
+      directSessions: null,
+      attach: null,
+      sessionHandoff: null,
+    });
+
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_same_host_synced_tmux_without_backend_runtime_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-from-ui',
+        flavor: 'claude',
+        host: 'leeroy-mbp',
+        path: '/tmp/workspace',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-same-host' },
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-from-cli',
+      currentMachineHost: 'leeroy-mbp.local',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      agentId: 'claude',
+      reasonCode: 'not_current_machine',
+    });
+  });
+
+  it('does not fall back to claude when metadata terminal attach resolves a backend but cannot infer an agent id', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_same_host_synced_tmux_unknown_agent_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-from-ui',
+        host: 'leeroy-mbp',
+        path: '/tmp/ohmypi-workspace',
+        acpConfiguredBackendV1: buildAcpConfiguredBackendV1({
+          updatedAt: 1,
+          backendId: 'ohMyPi',
+          title: 'Oh My Pi',
+        }),
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-same-host-unknown-agent' },
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-from-cli',
+      currentMachineHost: 'leeroy-mbp.local',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      agentId: null,
+      reasonCode: 'not_current_machine',
+    });
+  });
+
   it('rejects sessions from a different machine even when synced tmux metadata exists', async () => {
     const rawSession = createSessionRecordFixture({
       id: 'sid_remote_tmux_1',
@@ -253,6 +430,62 @@ describe('evaluateCliSessionAttachEligibility', () => {
     });
 
     expect(resolveBackendExecutionSurfacesSpy).toHaveBeenCalledWith('opencode');
+  });
+
+  it('resolves configured ACP attach through the concrete configured backend execution surface', async () => {
+    const attach: ProviderAttachOps = {
+      evaluateEligibility: async ({ metadata }) => ({
+        eligible: true,
+        scope: 'remote',
+        metadata,
+      }),
+      probeReachability: async () => ({ reachable: true }),
+      runAttach: async () => 0,
+    };
+    resolveBackendExecutionSurfaces.mockImplementation((backendId) => backendId === 'plugin-review-bot'
+      ? {
+          terminalRuntime: null,
+          directSessions: null,
+          attach,
+          sessionHandoff: null,
+        }
+      : createMockBackendExecutionSurfaces(backendId));
+
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_configured_plugin_attach_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-remote',
+        flavor: 'acp:plugin-review-bot',
+        acpConfiguredBackendV1: buildAcpConfiguredBackendV1({
+          updatedAt: 1,
+          backendId: 'plugin-review-bot',
+          title: 'Plugin Review Bot',
+        }),
+        runtimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {},
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-local',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: true,
+      attachStrategy: 'provider_attach',
+      agentId: 'opencode',
+      backendId: 'plugin-review-bot',
+      attachScope: 'remote',
+    });
+
+    expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith('plugin-review-bot');
   });
 
   it('accepts terminal-hosted sessions when the backend catalog exposes terminal runtime ops', async () => {

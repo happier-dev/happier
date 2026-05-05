@@ -178,7 +178,7 @@ describe('generateHookPluginDir', () => {
     envScope.patch({ HAPPIER_HOME_DIR: happyHomeDir });
 
     vi.resetModules();
-    vi.doMock('@/runtime/js/resolveJavaScriptRuntimeExecutable', () => ({
+    vi.doMock('@/packagedRuntime/js/resolveJavaScriptRuntimeExecutable', () => ({
       resolveJavaScriptRuntimeExecutable: () => null,
     }));
     vi.doMock('@/utils/runtime', () => ({
@@ -193,7 +193,7 @@ describe('generateHookPluginDir', () => {
         /No JavaScript runtime available to execute claude session hook plugin/,
       );
     } finally {
-      vi.doUnmock('@/runtime/js/resolveJavaScriptRuntimeExecutable');
+      vi.doUnmock('@/packagedRuntime/js/resolveJavaScriptRuntimeExecutable');
       vi.doUnmock('@/utils/runtime');
       vi.resetModules();
     }

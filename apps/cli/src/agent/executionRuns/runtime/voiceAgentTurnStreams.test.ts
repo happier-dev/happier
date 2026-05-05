@@ -5,8 +5,8 @@ import {
   cancelVoiceAgentTurnStream,
   readVoiceAgentTurnStream,
   startVoiceAgentTurnStream,
-} from './voiceAgentTurnStreams';
-import type { ExecutionRunState } from './executionRunTypes';
+} from '@/agent/runtime/bridges/executionRun/voiceAgentTurnStreams';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { ExecutionRunVoiceAgentController } from '../controllers/types';
 
 function createVoiceAgentController(): ExecutionRunVoiceAgentController {

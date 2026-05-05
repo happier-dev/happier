@@ -55,7 +55,7 @@ function refreshLaunchctlBootstrapPath(command: DaemonServicePlannedCommand): vo
   }
 }
 
-function isBenignLaunchctlCleanupFailure(
+function isBenignLaunchctlFailure(
   command: DaemonServicePlannedCommand,
   result: Readonly<{ ok: boolean; out: string | null }>,
 ): boolean {
@@ -64,26 +64,28 @@ function isBenignLaunchctlCleanupFailure(
   }
 
   const action = String(command.args[0] ?? '').trim().toLowerCase();
-  if (action !== 'bootout' && action !== 'disable' && action !== 'kickstart') {
-    if (action === 'bootstrap') {
-      const output = String(result.out ?? '').trim().toLowerCase();
-      if (output.includes('input/output error')) {
-        const domain = String(command.args[1] ?? '').trim();
-        const plistPath = String(command.args.at(-1) ?? '').trim();
-        const label = plistPath.endsWith('.plist') ? basename(plistPath, '.plist') : '';
-        if (domain && label) {
-          return runCommand({
-            cmd: 'launchctl',
-            args: ['print', `${domain}/${label}`],
-          }).ok;
-        }
-      }
-    }
-    return false;
+  const output = String(result.out ?? '').trim().toLowerCase();
+  if (action === 'bootout' || action === 'disable') {
+    return output.includes('no such process') || output.includes('could not find service');
   }
 
-  const output = String(result.out ?? '').trim().toLowerCase();
-  return output.includes('no such process') || output.includes('could not find service');
+  if (action === 'kickstart') {
+    return output.includes('could not find service');
+  }
+
+  if (action === 'bootstrap' && output.includes('input/output error')) {
+    const domain = String(command.args[1] ?? '').trim();
+    const plistPath = String(command.args.at(-1) ?? '').trim();
+    const label = plistPath.endsWith('.plist') ? basename(plistPath, '.plist') : '';
+    if (domain && label) {
+      return runCommand({
+        cmd: 'launchctl',
+        args: ['print', `${domain}/${label}`],
+      }).ok;
+    }
+  }
+
+  return false;
 }
 
 function isBenignSystemctlFailure(
@@ -110,6 +112,39 @@ function isBenignSystemctlFailure(
   return output.includes('does not exist') || output.includes('not loaded') || output.includes('not found');
 }
 
+/**
+ * Retry the given launchctl command a few times with increasing delays.
+ * Used for `bootstrap` and `kickstart` which can transiently fail while
+ * launchd is still draining a preceding `bootout` — the teardown is async
+ * and the next command may hit "Could not find service" / silently no-op if
+ * it runs too close on the heels. Short retry loop gives launchd a moment
+ * to finish the prior operation.
+ */
+function runLaunchctlWithRetry(command: DaemonServicePlannedCommand): { ok: boolean; out: string | null } {
+  const delaysMs = [150, 300, 600];
+  let result = runCommand(command);
+  if (result.ok) return result;
+  for (const ms of delaysMs) {
+    const { status } = spawnSync('sleep', [(ms / 1000).toFixed(3)]);
+    if (status !== 0) {
+      // Fallback to a busy wait in the rare environment without `sleep`.
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        // spin
+      }
+    }
+    result = runCommand(command);
+    if (result.ok) return result;
+  }
+  return result;
+}
+
+function shouldRetryLaunchctlCommand(command: DaemonServicePlannedCommand): boolean {
+  if (command.cmd !== 'launchctl') return false;
+  const action = String(command.args[0] ?? '').trim().toLowerCase();
+  return action === 'kickstart' || action === 'bootstrap';
+}
+
 export function runDaemonServiceCommands(
   commands: readonly DaemonServicePlannedCommand[],
   options: Readonly<{ failureMode?: DaemonServiceCommandFailureMode }> = {},
@@ -125,8 +160,8 @@ export function runDaemonServiceCommands(
     }
 
     refreshLaunchctlBootstrapPath(command);
-    const result = runCommand(command);
-    if (command.ignoreFailure || isBenignLaunchctlCleanupFailure(command, result) || isBenignSystemctlFailure(command, result)) {
+    const result = shouldRetryLaunchctlCommand(command) ? runLaunchctlWithRetry(command) : runCommand(command);
+    if (command.ignoreFailure || isBenignLaunchctlFailure(command, result) || isBenignSystemctlFailure(command, result)) {
       continue;
     }
     if (!result.ok && failureMode === 'strict') {

@@ -128,14 +128,9 @@ export function createClaudeSdkRuntimeController(
                     deps.runtime.currentTurnOrdinal += 1;
                     deps.runtime.turnChangeTracker.beginTurn();
 
-                    const promptState = prepareClaudeSdkPrompt({
-                        didSendChangeTitleInstructionForSession: deps.runtime.didSendChangeTitleInstructionForSession,
-                        prompt,
-                    });
-                    deps.runtime.didSendChangeTitleInstructionForSession = promptState.didSendChangeTitleInstructionForSession;
                     deps.promptStream.push({
                         type: 'user',
-                        message: { role: 'user', content: promptState.prompt },
+                        message: { role: 'user', content: prepareClaudeSdkPrompt(prompt) },
                     });
                     startedResolve();
 
@@ -171,7 +166,6 @@ export function createClaudeSdkRuntimeController(
         startSession: async ({ resume }) => {
             if (deps.lifecycle.started) return;
             deps.lifecycle.started = true;
-            deps.runtime.didSendChangeTitleInstructionForSession = false;
 
             const model = normalizeModelId(deps.opts.modelId);
             const canCallTool = createClaudeSdkCanCallTool({

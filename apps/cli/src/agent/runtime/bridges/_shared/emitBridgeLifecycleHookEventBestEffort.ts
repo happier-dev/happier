@@ -1,5 +1,5 @@
-import { dispatchBridgeLifecycleHookEvent } from '@/extensions/hooks/execution/dispatchBridgeLifecycleHookEvent';
-import type { BridgeLifecycleHookDispatchEvent } from '@/extensions/hooks/execution/dispatchBridgeLifecycleHookEvent';
+import { dispatchBridgeLifecycleHookEvent } from '@/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent';
+import type { BridgeLifecycleHookDispatchEvent } from '@/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent';
 
 export async function emitBridgeLifecycleHookEventBestEffort(params: Readonly<{
   happyHomeDir: string;

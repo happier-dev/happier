@@ -15,6 +15,25 @@ export function readRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE =
+    'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
+
+type CodexAppServerErrorPayload = Readonly<{
+    message: string | null;
+    additionalDetails: string | null;
+    codexErrorInfo: string | null;
+}>;
+
+class CodexAppServerTurnFailure extends Error {
+    readonly isAuthAccountChanged: boolean;
+
+    constructor(message: string, options: Readonly<{ isAuthAccountChanged: boolean }>) {
+        super(message);
+        this.name = 'CodexAppServerTurnFailure';
+        this.isAuthAccountChanged = options.isAuthAccountChanged;
+    }
+}
+
 export function trimSessionId(value: string | null | undefined): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
@@ -78,7 +97,7 @@ export function readCodexTurnStatus(value: unknown): string | null {
     return trimStringValue(turn?.status);
 }
 
-export function readCodexAppServerErrorMessage(value: unknown): string | null {
+function readCodexAppServerErrorPayload(value: unknown): CodexAppServerErrorPayload | null {
     const record = readRecord(value);
     if (!record) return null;
 
@@ -88,16 +107,47 @@ export function readCodexAppServerErrorMessage(value: unknown): string | null {
     const error = directError ?? turnError;
     if (!error) return null;
 
-    const message = trimStringValue(error.message);
-    const additionalDetails = trimStringValue(error.additionalDetails ?? error.additional_details);
-    if (message && additionalDetails) {
-        return `${message}\n\n${additionalDetails}`;
+    return {
+        message: trimStringValue(error.message),
+        additionalDetails: trimStringValue(error.additionalDetails ?? error.additional_details),
+        codexErrorInfo: trimStringValue(error.codexErrorInfo ?? error.codex_error_info),
+    };
+}
+
+function formatCodexAppServerErrorPayloadMessage(payload: CodexAppServerErrorPayload): string | null {
+    if (payload.message && payload.additionalDetails) {
+        return `${payload.message}\n\n${payload.additionalDetails}`;
     }
-    return message ?? additionalDetails;
+    return payload.message ?? payload.additionalDetails;
+}
+
+export function readCodexAppServerErrorMessage(value: unknown): string | null {
+    const payload = readCodexAppServerErrorPayload(value);
+    return payload ? formatCodexAppServerErrorPayloadMessage(payload) : null;
+}
+
+function isCodexAppServerAuthAccountChangedPayload(payload: CodexAppServerErrorPayload): boolean {
+    const codexErrorInfo = payload.codexErrorInfo?.toLowerCase() ?? null;
+    const hasAuthAccountChangedMessage = [payload.message, payload.additionalDetails].some((value) =>
+        value?.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE),
+    );
+    return hasAuthAccountChangedMessage && (!codexErrorInfo || codexErrorInfo === 'unauthorized');
+}
+
+export function isCodexAppServerAuthAccountChangedError(error: unknown): boolean {
+    if (error instanceof CodexAppServerTurnFailure) {
+        return error.isAuthAccountChanged;
+    }
+    if (!(error instanceof Error)) return false;
+    return error.message.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE);
 }
 
 export function createCodexAppServerTurnFailure(value: unknown): Error {
-    return new Error(readCodexAppServerErrorMessage(value) ?? 'Codex app-server turn failed');
+    const payload = readCodexAppServerErrorPayload(value);
+    return new CodexAppServerTurnFailure(
+        payload ? formatCodexAppServerErrorPayloadMessage(payload) ?? 'Codex app-server turn failed' : 'Codex app-server turn failed',
+        { isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false },
+    );
 }
 
 export function formatCodexAppServerErrorForUi(error: Error): string {

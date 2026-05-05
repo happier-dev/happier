@@ -49,12 +49,48 @@ describe('resolveSessionModeOverrideFromMetadataSnapshot', () => {
       .toEqual({ modeId: 'plan', updatedAt: 14 });
   });
 
-  it('normalizes modeId="default" to an empty string (clear override sentinel)', () => {
+  it('normalizes modeId="default" to an empty string when the provider has no real default option', () => {
     const fn = (permissionModeFromMetadata as any).resolveSessionModeOverrideFromMetadataSnapshot;
     expect(typeof fn).toBe('function');
 
-    expect(fn({ metadata: { sessionModeOverrideV1: { v: 1, updatedAt: 15, modeId: 'default' } } as any }))
+    expect(fn({
+      metadata: {
+        sessionModesV1: {
+          v: 1,
+          provider: 'opencode',
+          updatedAt: 1,
+          currentModeId: 'build',
+          availableModes: [
+            { id: 'build', name: 'Build' },
+            { id: 'plan', name: 'Plan' },
+          ],
+        },
+        sessionModeOverrideV1: { v: 1, updatedAt: 15, modeId: 'default' },
+      } as any,
+    }))
       .toEqual({ modeId: '', updatedAt: 15 });
+  });
+
+  it('preserves modeId="default" when the provider exposes it as a real session mode option', () => {
+    const fn = (permissionModeFromMetadata as any).resolveSessionModeOverrideFromMetadataSnapshot;
+    expect(typeof fn).toBe('function');
+
+    expect(fn({
+      metadata: {
+        sessionModesV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 1,
+          currentModeId: 'plan',
+          availableModes: [
+            { id: 'default', name: 'Default' },
+            { id: 'plan', name: 'Plan' },
+          ],
+        },
+        sessionModeOverrideV1: { v: 1, updatedAt: 16, modeId: 'default' },
+      } as any,
+    }))
+      .toEqual({ modeId: 'default', updatedAt: 16 });
   });
 });
 

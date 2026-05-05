@@ -43,6 +43,9 @@ export interface CreateAcpBackendOptions {
   /** Optional permission handler for tool approval */
   permissionHandler?: AcpPermissionHandler;
 
+  /** Optional per-backend ACP fs capability override */
+  fsEnabled?: boolean;
+
   /** Optional transport handler for agent-specific behavior */
   transportHandler?: TransportHandler;
 }
@@ -80,6 +83,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     env: options.env,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
+    ...(typeof options.fsEnabled === 'boolean' ? { fsEnabled: options.fsEnabled } : {}),
     transportHandler: options.transportHandler ?? new DefaultTransport(options.agentName),
   };
 

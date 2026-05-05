@@ -110,7 +110,7 @@ describe('resolveEmbeddingsProvider', () => {
 
   beforeEach(() => {
     vi.resetModules();
-    vi.doUnmock('@/runtime/assets/resolveCliRuntimeAssetPath');
+    vi.doUnmock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath');
     vi.doMock('@huggingface/transformers', () => ({
       env: {},
       pipeline: async () => {
@@ -132,7 +132,7 @@ describe('resolveEmbeddingsProvider', () => {
 
   afterEach(() => {
     vi.resetModules();
-    vi.doUnmock('@/runtime/assets/resolveCliRuntimeAssetPath');
+    vi.doUnmock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath');
     transformersState.failPipelineInit = false;
     vi.unstubAllGlobals();
     if (runtimeRoot) {
@@ -202,7 +202,7 @@ describe('resolveEmbeddingsProvider', () => {
       'utf8',
     );
 
-    vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+    vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
       resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot as string, ...segments),
     }));
 
@@ -247,7 +247,7 @@ describe('resolveEmbeddingsProvider', () => {
       'utf8',
     );
 
-    vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+    vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
       resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot as string, ...segments),
     }));
 
@@ -291,7 +291,7 @@ describe('resolveEmbeddingsProvider', () => {
       'utf8',
     );
 
-    vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+    vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
       resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot as string, ...segments),
     }));
 
@@ -343,7 +343,7 @@ describe('resolveEmbeddingsProvider', () => {
       'utf8',
     );
 
-    vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+    vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
       resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot as string, ...segments),
     }));
 

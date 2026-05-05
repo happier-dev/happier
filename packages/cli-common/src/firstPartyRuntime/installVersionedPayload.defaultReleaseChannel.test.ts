@@ -81,7 +81,7 @@ describe('installVersionedPayload default release-channel persistence', () => {
         }
     });
 
-    it('does not update the persisted default release channel when installing non-default-shim components', async () => {
+    it('updates the persisted default release channel only for default-channel-managed components', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-install-versioned-payload-channel-non-cli-'));
         const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
         const statePath = resolveDefaultManagedReleaseChannelStatePath({ processEnv: env });
@@ -111,16 +111,16 @@ describe('installVersionedPayload default release-channel persistence', () => {
                 processEnv: env,
                 channel: 'preview',
             });
-            expect(await readJsonReleaseChannel(statePath)).toBe('stable');
+            expect(await readJsonReleaseChannel(statePath)).toBe('preview');
 
             await installVersionedPayload({
                 componentId: 'hstack',
-                versionId: '3.0.0-preview.1',
-                payloadRoot: await createPayload(homeDir, '3.0.0-preview.1', 'preview-stack'),
+                versionId: '3.0.0',
+                payloadRoot: await createPayload(homeDir, '3.0.0', 'stable-stack'),
                 processEnv: env,
-                channel: 'preview',
+                channel: 'stable',
             });
-            expect(await readJsonReleaseChannel(statePath)).toBe('stable');
+            expect(await readJsonReleaseChannel(statePath)).toBe('preview');
         } finally {
             await rm(homeDir, { recursive: true, force: true });
         }

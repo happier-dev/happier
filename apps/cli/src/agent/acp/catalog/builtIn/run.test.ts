@@ -18,12 +18,12 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
   };
 });
 
-vi.mock('@/agent/runtime/sessionLoop/runHostSessionRuntime', () => ({
+vi.mock('@/agent/runtime/session/loop/runHostSessionRuntime', () => ({
   runHostSessionRuntime: vi.fn(),
 }));
 
-vi.mock('@/agent/runtime/sessionLoop/lifecycle', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agent/runtime/sessionLoop/lifecycle')>();
+vi.mock('@/agent/runtime/session/loop/lifecycle', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/runtime/session/loop/lifecycle')>();
   return {
     ...actual,
     runHostSessionRuntimePlan: runHostSessionRuntimePlanMock,

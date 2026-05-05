@@ -1,7 +1,7 @@
 import { killRunawayHappyProcesses } from '@/daemon/doctor';
 import { runDoctorCommand } from '@/ui/doctor';
 import { buildDoctorSnapshot } from '@/ui/doctorSnapshot';
-import { handleServiceRepairCliCommand } from './serviceRepair/handleServiceRepairCliCommand';
+import { handleServiceRepairCliCommand } from './service/repair/handleServiceRepairCliCommand';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 

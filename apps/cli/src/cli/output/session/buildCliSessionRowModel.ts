@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 

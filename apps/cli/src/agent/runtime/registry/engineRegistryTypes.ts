@@ -12,10 +12,10 @@ import type {
     ResolvedContributionProvenance,
     ResolvedContributionRegistry,
     ResolvedProviderContribution,
-} from '@/extensions/registry/types';
-import type { EngineAdapter, RuntimeBindings } from '@happier-dev/agents';
+} from '@/plugins/projection/registry/types';
+import type { EngineAdapter, RuntimeCore } from '@happier-dev/agents';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 
 export type BackendExecutionSurfaces = Readonly<{
     terminalRuntime: AnyTerminalRuntimeOps | null;
@@ -39,26 +39,26 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
 export type CliSessionRuntime = HostSessionRuntimePlan;
 export type CliExecutionRunRuntime = ExecutionRunHostRuntime;
 
-export type CliRuntimeBindings = RuntimeBindings<
+export type CliRuntimeCore = RuntimeCore<
     unknown,
     CliSessionRuntime,
     CreateCliExecutionRunBackendParams,
     CliExecutionRunRuntime
 >;
 
-export type CliBindingsParams = Readonly<{
+export type CliRuntimeCoreParams = Readonly<{
     backend: ResolvedBackendContribution;
     provider: ResolvedProviderContribution;
     executionSurfaces: BackendExecutionSurfaces;
 }>;
 
-export type CliBindingsFactory = (params: CliBindingsParams) =>
+export type CliRuntimeCoreFactory = (params: CliRuntimeCoreParams) =>
     | CliEngineAdapter
     | Promise<CliEngineAdapter>;
 
-export type CliBindingsGetter = () =>
-    | CliBindingsFactory
-    | Promise<CliBindingsFactory>;
+export type CliRuntimeCoreGetter = () =>
+    | CliRuntimeCoreFactory
+    | Promise<CliRuntimeCoreFactory>;
 
 export type CliEngineAdapter = EngineAdapter<
     unknown,

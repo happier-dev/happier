@@ -1,8 +1,9 @@
 import type { ProviderMessageMetaEnricher } from '@happier-dev/agents';
 
+import { normalizeStartingMode } from '@/agent/runtime/session/loop/resolveStartingMode';
 import type { Credentials } from '@/persistence';
 
-import { normalizeClaudeRuntimeStartingMode, type StartOptions } from './claudeSessionRuntimeOptions';
+import type { StartOptions } from './claudeSessionRuntimeOptions';
 
 type ClaudeRuntimeSessionLeafBase = Readonly<{
   credentials: Credentials;
@@ -38,7 +39,7 @@ export function resolveClaudeRuntimeSessionLeaf(sessionParams: unknown): ClaudeR
     providerMessageMetaEnricher: _ignoredProviderMessageMetaEnricher,
     ...startOptionsRaw
   } = opts;
-  const startingMode = normalizeClaudeRuntimeStartingMode(startOptionsRaw.startingMode);
+  const startingMode = normalizeStartingMode(startOptionsRaw.startingMode) ?? 'terminal';
   const startOptions: StartOptions = {
     ...(startOptionsRaw as StartOptions),
     startingMode,

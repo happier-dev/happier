@@ -49,7 +49,7 @@ vi.mock('@/backends/catalog', () => ({
   },
 }));
 
-vi.mock('@/runtime/managedTools/providerCliResolution', () => ({
+vi.mock('@/packagedRuntime/managedTools/providerCliResolution', () => ({
   resolveProviderCliCommand: () => null,
   resolveProviderCliCommandForRuntime: () => null,
 }));

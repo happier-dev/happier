@@ -12,7 +12,7 @@ vi.mock('@/ui/doctor', () => ({
   runDoctorCommand: runDoctorCommandMock,
 }));
 
-vi.mock('./serviceRepair/handleServiceRepairCliCommand', () => ({
+vi.mock('./service/repair/handleServiceRepairCliCommand', () => ({
   handleServiceRepairCliCommand: handleServiceRepairCliCommandMock,
 }));
 

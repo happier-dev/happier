@@ -711,6 +711,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       },
       transcriptStorage: 'direct',
+      windowsTerminalWindowName: 'happier-qa',
     });
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -725,6 +726,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       },
       transcriptStorage: 'direct',
+      windowsTerminalWindowName: 'happier-qa',
     }));
     const firstSpawnCall = spawnSession.mock.calls.at(0) as [unknown] | undefined;
     const forwardedSpawn = firstSpawnCall?.[0] as

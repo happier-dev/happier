@@ -4,13 +4,12 @@ import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { cmd, createOutputBuilder, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
 import { buildSshTarget, parseSshTarget } from '@happier-dev/cli-common/systemTasks';
 import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
-import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
+import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { configuration } from '@/configuration';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
-import { resolvePublicReleaseRingLabelForId } from '@happier-dev/release-runtime/releaseRings';
 import {
   parseApproveRemoteProvisioningPromptData,
   parseReplaceRemoteBackgroundServicesPromptData,
@@ -153,11 +152,12 @@ function isLoopbackUrl(url: string): boolean {
 }
 
 function normalizeTaskChannel(args: readonly string[]): 'stable' | 'preview' | 'dev' {
-  const ring = resolvePublicReleaseRingIdFromCliArgs({
+  return resolveManagedCliReleaseChannelSync({
     args,
+    argv: process.argv,
     invokedPath: process.argv[1] ?? '',
-  });
-  return resolvePublicReleaseRingLabelForId(ring);
+    processEnv: process.env,
+  }).label;
 }
 
 function buildMachineSetupSpec(params: Readonly<{

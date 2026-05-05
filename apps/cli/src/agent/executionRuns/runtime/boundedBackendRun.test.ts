@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
-import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
+import type { FinishExecutionRun } from '@/agent/runtime/bridges/executionRun/executionRunFinishRun';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 
-import { executeBoundedBackendRun } from './boundedBackendRun';
+import { executeBoundedBackendRun } from '@/agent/runtime/bridges/executionRun/bounded/loop';
 
 const mockedLogger = vi.hoisted(() => ({
   debug: vi.fn(),

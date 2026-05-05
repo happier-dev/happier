@@ -2,8 +2,8 @@ import { accessSync, constants as fsConstants, existsSync, readFileSync, statSyn
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
-import { requireJavaScriptRuntimeExecutable } from '../../../runtime/js/requireJavaScriptRuntimeExecutable';
-import { requireProviderCliCommand } from '../../../runtime/managedTools/requireProviderCliCommand';
+import { requireJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/requireJavaScriptRuntimeExecutable';
+import { requireProviderCliCommand } from '@/packagedRuntime/managedTools/requireProviderCliCommand';
 import { isBun } from '../../../utils/runtime';
 
 const JAVA_SCRIPT_ENTRYPOINT_EXTENSION = /\.(?:c?js|mjs)$/i;

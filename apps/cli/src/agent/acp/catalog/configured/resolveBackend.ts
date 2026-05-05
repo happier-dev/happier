@@ -2,7 +2,6 @@ import {
   AcpBackendAuthConfigV1Schema,
   AcpBackendCapabilitiesV1Schema,
   AcpCatalogTransportProfileV1Schema,
-  McpValueRefV1Schema,
 } from '@happier-dev/protocol';
 import type {
   AcpBackendAuthConfigV1,
@@ -10,11 +9,20 @@ import type {
   AcpCatalogTransportProfileV1,
   McpValueRefV1,
 } from '@happier-dev/protocol';
-import { resolveMergedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
-import { loadInstalledPlugins, type LoadedPlugin } from '@/extensions/load/installed';
-import type { ResolvedBackendContribution } from '@/extensions/registry/types';
+import type {
+  AcpBootstrapV1,
+  AcpMcpInputPolicyV1,
+  AcpMessageMetaHooksV1,
+  AcpPermissionModeArgvSpecV1,
+  AcpTimeoutsV1,
+  AcpTransportLifecycleV1,
+} from '@happier-dev/plugin-sdk';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { loadInstalledPlugins, type LoadedPlugin } from '@/plugins/discovery/load/installed';
 
 import { readAcpCatalogSettingsFromAccountSettings } from '../readAcpCatalogSettingsFromAccountSettings';
+import { normalizePluginBackendContributionAcpDefinition } from '../../runtime/definition/plugin';
+import type { AcpRuntimeDefinitionV1 } from '../../runtime/definition/_types';
 
 export type ResolvedConfiguredAcpBackend = Readonly<{
   backendId: string;
@@ -23,12 +31,32 @@ export type ResolvedConfiguredAcpBackend = Readonly<{
   description?: string;
   command: string;
   args: ReadonlyArray<string>;
+  launch?: Readonly<
+    | {
+        kind: 'executable';
+        command: string;
+        args: ReadonlyArray<string>;
+      }
+    | {
+        kind: 'agent-cli';
+        agentId: string;
+        args: ReadonlyArray<string>;
+      }
+  >;
   env: Readonly<Record<string, McpValueRefV1>>;
   auth?: AcpBackendAuthConfigV1;
   transportProfile: AcpCatalogTransportProfileV1;
   capabilities: AcpBackendCapabilitiesV1;
   defaultMode?: string;
   defaultModel?: string;
+  timeouts?: AcpTimeoutsV1;
+  fsEnabled?: boolean;
+  transportLifecycle?: AcpTransportLifecycleV1;
+  permissionModeArgv?: AcpPermissionModeArgvSpecV1;
+  sessionIdHeaderName?: string;
+  bootstrap?: AcpBootstrapV1;
+  messageMeta?: AcpMessageMetaHooksV1;
+  mcp?: AcpMcpInputPolicyV1;
 }>;
 
 type AccountSettingsConfiguredAcpBackend = ReturnType<typeof readAcpCatalogSettingsFromAccountSettings>['backends'][number];
@@ -47,6 +75,11 @@ function resolveConfiguredAcpBackendFromAccountSettingsEntry(
     description: backend.description,
     command: backend.command,
     args: [...backend.args],
+    launch: {
+      kind: 'executable',
+      command: backend.command,
+      args: [...backend.args],
+    },
     env: { ...backend.env },
     auth: backend.auth,
     transportProfile: backend.transportProfile,
@@ -77,29 +110,6 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function readOptionalStringArray(value: unknown): ReadonlyArray<string> | undefined {
-  if (!Array.isArray(value)) return undefined;
-  if (!value.every((entry) => typeof entry === 'string')) return undefined;
-  return [...value];
-}
-
-function parsePluginAcpEnv(acpEnv: unknown): Record<string, McpValueRefV1> | null {
-  const envRecord = asRecord(acpEnv);
-  if (!envRecord) return null;
-
-  const out: Record<string, McpValueRefV1> = {};
-  for (const [key, value] of Object.entries(envRecord)) {
-    const parsed = McpValueRefV1Schema.safeParse(value);
-    if (!parsed.success) {
-      if (typeof value !== 'string') return null;
-      out[key] = { t: 'literal', v: value };
-      continue;
-    }
-    out[key] = parsed.data;
-  }
-  return out;
-}
-
 function parseLaunchLiteralEnv(launchEnv: unknown): Record<string, McpValueRefV1> | null {
   const envRecord = asRecord(launchEnv);
   if (!envRecord) return null;
@@ -112,106 +122,149 @@ function parseLaunchLiteralEnv(launchEnv: unknown): Record<string, McpValueRefV1
   return out;
 }
 
-function resolvePluginAcpEnv(acpRecord: Readonly<Record<string, unknown>> | null, launchRecord: Readonly<Record<string, unknown>> | null): Record<string, McpValueRefV1> | null {
-  if (acpRecord && Object.prototype.hasOwnProperty.call(acpRecord, 'env')) {
-    return parsePluginAcpEnv(acpRecord.env);
+function resolvePluginAcpAuth(definition: AcpRuntimeDefinitionV1): AcpBackendAuthConfigV1 | undefined | null {
+  if (!definition.auth?.config) {
+    return undefined;
   }
-  if (launchRecord && Object.prototype.hasOwnProperty.call(launchRecord, 'env')) {
-    return parseLaunchLiteralEnv(launchRecord.env);
-  }
-  return {};
+  const parsed = AcpBackendAuthConfigV1Schema.safeParse(definition.auth.config);
+  return parsed.success ? parsed.data : null;
 }
 
-function coerceSupportHintFromBoolean(value: unknown): AcpBackendCapabilitiesV1['supportsModes'] | undefined {
-  if (typeof value !== 'boolean') return undefined;
-  return value ? 'yes' : 'no';
+function coerceSupportHintFromFinalFlag(value: unknown): AcpBackendCapabilitiesV1['supportsModes'] | undefined {
+  if (typeof value === 'boolean') {
+    return value ? 'yes' : 'no';
+  }
+  if (value === 'yes' || value === 'no') {
+    return value;
+  }
+  if (value === 'unknown') {
+    return 'unknown';
+  }
+  return undefined;
 }
 
-function resolvePluginAcpCapabilities(
-  acpRecord: Readonly<Record<string, unknown>> | null,
-  backendDefinitionRecord: Readonly<Record<string, unknown>>,
-): AcpBackendCapabilitiesV1 | null {
-  if (acpRecord && Object.prototype.hasOwnProperty.call(acpRecord, 'capabilities')) {
-    const parsed = AcpBackendCapabilitiesV1Schema.safeParse(acpRecord.capabilities);
-    return parsed.success ? parsed.data : null;
-  }
-
-  const backendCapabilities = asRecord(backendDefinitionRecord.capabilities);
-  if (!backendCapabilities) {
-    return { ...DEFAULT_ACP_CAPABILITIES };
-  }
+function resolveFinalPluginAcpCapabilities(
+  definition: AcpRuntimeDefinitionV1,
+): AcpBackendCapabilitiesV1 {
+  const capabilities = definition.capabilities;
 
   return {
-    supportsLoadSession: typeof backendCapabilities.supportsLoadSession === 'boolean'
-      ? backendCapabilities.supportsLoadSession
-      : DEFAULT_ACP_CAPABILITIES.supportsLoadSession,
-    supportsModes: coerceSupportHintFromBoolean(backendCapabilities.supportsModes) ?? DEFAULT_ACP_CAPABILITIES.supportsModes,
-    supportsModels: coerceSupportHintFromBoolean(backendCapabilities.supportsModels) ?? DEFAULT_ACP_CAPABILITIES.supportsModels,
-    supportsConfigOptions: coerceSupportHintFromBoolean(backendCapabilities.supportsConfigOptions) ?? DEFAULT_ACP_CAPABILITIES.supportsConfigOptions,
-    promptImageSupport: coerceSupportHintFromBoolean(backendCapabilities.promptImageSupport) ?? DEFAULT_ACP_CAPABILITIES.promptImageSupport,
+    supportsLoadSession: typeof capabilities.supportsLoadSession === 'boolean'
+      ? capabilities.supportsLoadSession
+      : typeof capabilities.supportsResume === 'boolean'
+        ? capabilities.supportsResume
+        : DEFAULT_ACP_CAPABILITIES.supportsLoadSession,
+    supportsModes: coerceSupportHintFromFinalFlag(capabilities.supportsModes) ?? DEFAULT_ACP_CAPABILITIES.supportsModes,
+    supportsModels: coerceSupportHintFromFinalFlag(capabilities.supportsModels) ?? DEFAULT_ACP_CAPABILITIES.supportsModels,
+    supportsConfigOptions: coerceSupportHintFromFinalFlag(capabilities.supportsConfigOptions) ?? DEFAULT_ACP_CAPABILITIES.supportsConfigOptions,
+    promptImageSupport: coerceSupportHintFromFinalFlag(capabilities.promptImageSupport)
+      ?? coerceSupportHintFromFinalFlag(capabilities.supportsPromptImages)
+      ?? DEFAULT_ACP_CAPABILITIES.promptImageSupport,
   };
 }
 
-function resolvePluginAcpTransportProfile(acpRecord: Readonly<Record<string, unknown>> | null): AcpCatalogTransportProfileV1 | null {
-  if (!acpRecord || !Object.prototype.hasOwnProperty.call(acpRecord, 'transportProfile')) {
-    return DEFAULT_ACP_TRANSPORT_PROFILE;
+function mergePluginFinalAcpEnv(
+  definitionEnv: Readonly<Record<string, string>>,
+  launchEnv: Readonly<Record<string, string>> | undefined,
+): Record<string, McpValueRefV1> | null {
+  const merged: Record<string, McpValueRefV1> = {};
+  for (const source of [definitionEnv, launchEnv]) {
+    if (source === undefined) continue;
+    const parsed = parseLaunchLiteralEnv(source);
+    if (!parsed) return null;
+    Object.assign(merged, parsed);
   }
-  const parsed = AcpCatalogTransportProfileV1Schema.safeParse(acpRecord.transportProfile);
-  return parsed.success ? parsed.data : null;
+  return merged;
 }
 
-function resolvePluginAcpAuth(acpRecord: Readonly<Record<string, unknown>> | null): AcpBackendAuthConfigV1 | undefined | null {
-  if (!acpRecord || !Object.prototype.hasOwnProperty.call(acpRecord, 'auth')) {
-    return undefined;
+function resolveFinalPluginAcpLaunch(
+  definition: AcpRuntimeDefinitionV1,
+): ResolvedConfiguredAcpBackend['launch'] | null {
+  const transport = definition.transport;
+  if (transport.kind !== 'stdio') return null;
+  if (transport.launch.kind === 'executable') {
+    const command = readOptionalString(transport.launch.command);
+    if (!command) return null;
+    return {
+      kind: 'executable',
+      command,
+      args: [...(transport.launch.args ?? [])],
+    };
   }
-  const parsed = AcpBackendAuthConfigV1Schema.safeParse(acpRecord.auth);
-  return parsed.success ? parsed.data : null;
+
+  const agentId = readOptionalString(transport.launch.agentId);
+  if (!agentId) return null;
+  return {
+    kind: 'agent-cli',
+    agentId,
+    args: [...(transport.launch.args ?? [])],
+  };
 }
 
-export function resolveConfiguredAcpBackendFromPluginBackendDefinition(
-  backendDefinition: Readonly<Record<string, unknown>> | null,
+function resolveFinalPluginAcpBackendDefinition(
+  backendDefinitionRecord: Readonly<Record<string, unknown>>,
   backendId: string,
+  pluginId?: string,
 ): ResolvedConfiguredAcpBackend | null {
-  if (!backendDefinition) return null;
-  const backendDefinitionRecord = asRecord(backendDefinition);
-  if (!backendDefinitionRecord) return null;
-  if (backendDefinitionRecord.runtimeKind !== 'acp') return null;
+  let definition: AcpRuntimeDefinitionV1;
+  try {
+    definition = normalizePluginBackendContributionAcpDefinition({
+      pluginId,
+      backend: backendDefinitionRecord,
+    });
+  } catch {
+    return null;
+  }
 
-  const acpRecord = asRecord(backendDefinitionRecord.acp);
-  const launchRecord = asRecord(backendDefinitionRecord.launch);
-
-  const command = readOptionalString(acpRecord?.command) ?? readOptionalString(launchRecord?.command);
-  if (!command) return null;
-
-  const args = readOptionalStringArray(acpRecord?.args) ?? readOptionalStringArray(launchRecord?.args) ?? [];
-  const env = resolvePluginAcpEnv(acpRecord, launchRecord);
+  const launch = resolveFinalPluginAcpLaunch(definition);
+  if (!launch) return null;
+  const transport = definition.transport;
+  if (transport.kind !== 'stdio') return null;
+  const env = mergePluginFinalAcpEnv(definition.launchEnv, transport.launch.env);
   if (!env) return null;
 
-  const transportProfile = resolvePluginAcpTransportProfile(acpRecord);
-  if (!transportProfile) return null;
-  const auth = resolvePluginAcpAuth(acpRecord);
+  const title = readOptionalString(definition.ux.title) ?? backendId;
+  const name = readOptionalString(definition.ux.name) ?? backendId;
+  const auth = resolvePluginAcpAuth(definition);
   if (auth === null) return null;
-
-  const capabilities = resolvePluginAcpCapabilities(acpRecord, backendDefinitionRecord);
-  if (!capabilities) return null;
-
-  const name = readOptionalString(acpRecord?.name) ?? backendId;
-  const title = readOptionalString(acpRecord?.title) ?? backendId;
+  const capabilities = resolveFinalPluginAcpCapabilities(definition);
 
   return {
     backendId,
     name,
     title,
-    description: readOptionalString(acpRecord?.description),
-    command,
-    args,
+    description: readOptionalString(definition.ux.description),
+    command: launch.kind === 'executable' ? launch.command : launch.agentId,
+    args: [...launch.args],
+    launch,
     env,
     ...(auth ? { auth } : {}),
-    transportProfile,
+    transportProfile: DEFAULT_ACP_TRANSPORT_PROFILE,
     capabilities,
-    defaultMode: readOptionalString(acpRecord?.defaultMode),
-    defaultModel: readOptionalString(acpRecord?.defaultModel),
+    defaultMode: readOptionalString(definition.ux.defaultMode),
+    defaultModel: readOptionalString(definition.ux.defaultModel),
+    ...(definition.timeouts ? { timeouts: definition.timeouts } : {}),
+    ...(typeof definition.fsEnabled === 'boolean' ? { fsEnabled: definition.fsEnabled } : {}),
+    ...(definition.transportLifecycle ? { transportLifecycle: definition.transportLifecycle } : {}),
+    ...(definition.permissionModeArgv ? { permissionModeArgv: definition.permissionModeArgv } : {}),
+    ...(definition.sessionIdHeaderName ? { sessionIdHeaderName: definition.sessionIdHeaderName } : {}),
+    ...(definition.bootstrap ? { bootstrap: definition.bootstrap } : {}),
+    ...(definition.messageMeta ? { messageMeta: definition.messageMeta } : {}),
+    ...(definition.mcp ? { mcp: definition.mcp } : {}),
   };
+}
+
+export function resolveConfiguredAcpBackendFromPluginBackendDefinition(
+  backendDefinition: Readonly<Record<string, unknown>> | null,
+  backendId: string,
+  pluginId?: string,
+): ResolvedConfiguredAcpBackend | null {
+  if (!backendDefinition) return null;
+  const backendDefinitionRecord = asRecord(backendDefinition);
+  if (!backendDefinitionRecord) return null;
+  const finalDefinition = resolveFinalPluginAcpBackendDefinition(backendDefinitionRecord, backendId, pluginId);
+  if (finalDefinition) return finalDefinition;
+  return null;
 }
 
 async function listPluginConfiguredAcpBackends(params: Readonly<{
@@ -228,8 +281,8 @@ async function listPluginConfiguredAcpBackends(params: Readonly<{
     if (backendContribution.provenance !== 'external' || !backendContribution.pluginId) continue;
     const plugin = loadedPluginsById.get(backendContribution.pluginId);
     if (!plugin) continue;
-    const rawBackend = plugin.manifest.contributions.backends.find((entry) => entry.id === backendContribution.id) ?? null;
-    const backend = resolveConfiguredAcpBackendFromPluginBackendDefinition(rawBackend, backendContribution.id);
+    const rawBackend = plugin.manifest.contributes.backends.find((entry) => entry.id === backendContribution.id) ?? null;
+    const backend = resolveConfiguredAcpBackendFromPluginBackendDefinition(rawBackend, backendContribution.id, backendContribution.pluginId);
     if (backend) {
       resolved.push(backend);
     }

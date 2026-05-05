@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { accountSettingsParse } from '@happier-dev/protocol'
+import { accountSettingsParse, type LiveActivityRemoteUpdateRequestV1 } from '@happier-dev/protocol'
 
 import { sendReadyWithPushNotification } from '@/agent/runtime/notifications/sendReadyWithPushNotification'
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot'
@@ -99,6 +99,99 @@ describe('sendReadyWithPushNotification', () => {
 
     expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' })
     expect(sendToAllDevices).not.toHaveBeenCalled()
+  })
+
+  it('honors unified attention policy when dispatching ready notifications', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {})
+    const session = createSessionStub('session-policy')
+
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({
+        attentionDeliveryPolicyV1: {
+          v: 1,
+          channels: {
+            expo_push: {
+              events: {
+                ready: { enabled: false },
+              },
+            },
+          },
+        },
+      }),
+      settingsVersion: 8,
+      loadedAtMs: 123,
+      settingsSecretsReadKeys: [],
+    })
+
+    sendReadyWithPushNotification({
+      session: session as any,
+      pushSender: { sendToAllDevicesAsync },
+      waitingForCommandLabel: 'Codex',
+      logPrefix: '[Codex]',
+      sessionTitle: 'Review branch',
+      assistantPreviewText: 'Done.',
+      shouldSendPush: () => true,
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' })
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled()
+  })
+
+  it('forwards ready notifications to the Live Activity remote sender', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {})
+    const sendLiveActivityRemoteUpdateAsync = vi.fn(async (_request: LiveActivityRemoteUpdateRequestV1) => {})
+    const session = createSessionStub('session-live-ready')
+
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({
+        attentionDeliveryPolicyV1: {
+          v: 1,
+          channels: {
+            expo_push: { enabled: false },
+          },
+          liveActivityRemoteUpdates: {
+            enabled: true,
+            preferredMode: 'direct_apns',
+          },
+        },
+      }),
+      settingsVersion: 9,
+      loadedAtMs: 123,
+      settingsSecretsReadKeys: [],
+    })
+
+    sendReadyWithPushNotification({
+      session: session as any,
+      pushSender: {
+        serverId: 'server-a',
+        sendToAllDevicesAsync,
+        sendLiveActivityRemoteUpdateAsync,
+      },
+      waitingForCommandLabel: 'Codex',
+      logPrefix: '[Codex]',
+      sessionTitle: 'Review branch',
+      assistantPreviewText: 'Done.',
+      shouldSendPush: () => true,
+    })
+
+    await vi.waitFor(() => {
+      expect(sendLiveActivityRemoteUpdateAsync).toHaveBeenCalledTimes(1)
+    })
+
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled()
+    expect(sendLiveActivityRemoteUpdateAsync.mock.calls[0]?.[0]).toMatchObject({
+      transportMode: 'direct_apns',
+      activityKey: {
+        serverId: 'server-a',
+        sessionId: 'session-live-ready',
+        activityName: 'HappierFocusLiveActivity',
+      },
+    })
   })
 
   it('still emits ready event when push notification fails', () => {

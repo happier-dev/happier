@@ -8,7 +8,8 @@ import {
   type EngineResolutionDiagnosticCode,
   type EngineResolutionSelectedSource,
 } from '../agent/runtime/registry/engineRegistry';
-import { getResolvedContributionRegistry } from '../extensions/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '../plugins/projection/registry/createResolvedContributionRegistry';
+import { readBuiltInHostCatalogEntries } from './builtInHostCatalogEntries';
 import { CATALOG_AGENT_IDS, DEFAULT_CATALOG_AGENT_ID } from './types';
 import type {
   AcpForkContinuationHandler,
@@ -17,6 +18,7 @@ import type {
   CatalogAgentLookupId,
   ConnectedServicesMaterializer,
   DirectSessionProviderOps,
+  ManagedServerShutdownCleanup,
   ProviderCliLaunchSpec,
   ProviderAttachOps,
   ProviderNativeForkHandler,
@@ -36,7 +38,10 @@ export type {
 };
 
 function readCatalogEntriesSnapshot(): Record<string, AgentCatalogEntry> {
-  return getResolvedContributionRegistry().catalogEntriesById as Record<string, AgentCatalogEntry>;
+  return {
+    ...(getResolvedContributionRegistry().catalogEntriesById as Record<string, AgentCatalogEntry>),
+    ...readBuiltInHostCatalogEntries(),
+  };
 }
 
 const AGENT_PROXY_TARGET: Record<string, AgentCatalogEntry> = Object.create(null);
@@ -88,6 +93,7 @@ const cachedVendorResumeSupportPromises = new Map<CatalogAgentId, Promise<Vendor
 const cachedDirectSessionProviderOpsPromises = new Map<DirectSessionsProviderId, Promise<DirectSessionProviderOps>>();
 const cachedConnectedServicesMaterializerPromises = new Map<CatalogAgentId, Promise<ConnectedServicesMaterializer | null>>();
 const cachedManagedServerLaunchSpecPromises = new Map<CatalogAgentId, Promise<ProviderCliLaunchSpec | null>>();
+const cachedManagedServerShutdownCleanupPromises = new Map<CatalogAgentId, Promise<ManagedServerShutdownCleanup | null>>();
 const cachedProviderAttachOpsPromises = new Map<CatalogAgentId, Promise<ProviderAttachOps | null>>();
 const cachedTerminalRuntimeOpsPromises = new Map<CatalogAgentId, Promise<AnyTerminalRuntimeOps | null>>();
 const cachedAcpForkContinuationHandlerPromises = new Map<CatalogAgentId, Promise<AcpForkContinuationHandler | null>>();
@@ -151,6 +157,20 @@ export async function getManagedServerLaunchSpec(agentId: CatalogAgentId): Promi
   const entry = AGENTS[agentId];
   const promise = entry?.getManagedServerLaunchSpec ? entry.getManagedServerLaunchSpec() : Promise.resolve(null);
   cachedManagedServerLaunchSpecPromises.set(agentId, promise);
+  return await promise;
+}
+
+export async function getManagedServerShutdownCleanup(
+  agentId: CatalogAgentId,
+): Promise<ManagedServerShutdownCleanup | null> {
+  const existing = cachedManagedServerShutdownCleanupPromises.get(agentId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[agentId];
+  const promise = entry?.getManagedServerShutdownCleanup
+    ? entry.getManagedServerShutdownCleanup()
+    : Promise.resolve(null);
+  cachedManagedServerShutdownCleanupPromises.set(agentId, promise);
   return await promise;
 }
 

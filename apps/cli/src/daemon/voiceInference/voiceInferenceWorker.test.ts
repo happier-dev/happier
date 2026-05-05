@@ -66,7 +66,7 @@ describe('voiceInferenceWorker', () => {
         envScope.restore();
         envScope = createEnvKeyScope(envKeys);
         vi.resetModules();
-        vi.doUnmock('@/runtime/assets/resolveCliRuntimeAssetPath');
+        vi.doUnmock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath');
         while (servers.length > 0) {
             const server = servers.pop();
             if (!server) {
@@ -2031,7 +2031,7 @@ describe('voiceInferenceWorker', () => {
             ].join('\n'),
             'utf8',
         );
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 

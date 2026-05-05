@@ -1,5 +1,5 @@
 import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptRuntimeFactory } from '../runtime/ephemeralTextPrompt';
-import { resolveExecutionRunPublicBackendId } from '../runtime/backendTargets';
+import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import { createExecutionRunTextPromptBackendForTarget } from './textPromptBackend';
 
 function normalizeNonEmptyString(value: unknown): string | null {

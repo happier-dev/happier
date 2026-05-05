@@ -6,7 +6,7 @@ import type { Credentials } from '@/persistence';
 import type { TrackedSession } from './types';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { projectPath } from '@/projectPath';
-import { resolvePackagedRuntimeProjectRoots } from '@/runtime/resolvePackagedRuntimeEntrypoint';
+import { resolvePackagedRuntimeProjectRoots } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import {
   buildSpawnSessionOptionsFromRespawnDescriptorV1,
   SessionRunnerRespawnDescriptorV1Schema,

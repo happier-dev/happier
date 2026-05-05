@@ -149,6 +149,17 @@ function splitByApproxBytesUtf8(input: string, maxBytes: number): string[] {
   return out;
 }
 
+function resolveTerminalSpawnEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const configuredPromptEolMark = env.HAPPIER_DAEMON_TERMINAL_PROMPT_EOL_MARK;
+  return {
+    ...env,
+    // zsh otherwise paints a '%' marker when prompt-adjacent output lacks a final newline.
+    PROMPT_EOL_MARK: typeof configuredPromptEolMark === 'string'
+      ? configuredPromptEolMark
+      : (env.PROMPT_EOL_MARK ?? ''),
+  };
+}
+
 export function createTerminalPtySessionManager(params: Readonly<{
   ptyProvider: PtyProvider;
   config: TerminalPtySessionManagerConfig;
@@ -265,7 +276,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
           cols,
           rows,
           cwd: input.cwd,
-          env,
+          env: resolveTerminalSpawnEnv(env),
           encoding: 'utf8',
         },
       });

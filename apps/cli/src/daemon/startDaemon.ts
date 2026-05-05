@@ -23,6 +23,7 @@ import {
 } from '@/persistence';
 
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
+import { publishOrphanedStartupSessionEnds } from './sessions/publishOrphanedStartupSessionEnds';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { createDaemonSessionHandoffMetadataBridge } from './sessions/createDaemonSessionHandoffMetadataBridge';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
@@ -58,6 +59,7 @@ import { setRespawnDescriptorEncryptionMaterialForRestore } from './reattach';
 import { startDaemonSessionControlRuntime } from './startup/startDaemonSessionControlRuntime';
 import { prepareDaemonBootstrapContext } from './startup/prepareDaemonBootstrapContext';
 import { createDaemonMachineBootstrapRuntime } from './startup/createDaemonMachineBootstrapRuntime';
+import { stopManagedServersOnDaemonShutdownBestEffort } from './managedServers/stopManagedServersOnDaemonShutdown';
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
@@ -153,6 +155,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     let voiceInferenceWorker: VoiceInferenceWorkerHandle | null = null;
     let apiMachine: ApiMachineClient | null = null;
     let machineConnectionStateCleanup: (() => void) | null = null;
+    let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
     let shutdownInitiated = false;
     let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
 
@@ -196,8 +199,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     });
 
     setRespawnDescriptorEncryptionMaterialForRestore(credentials.encryption ?? null);
+    let orphanedDeadDaemonSessions: ReadonlyArray<{ sessionId: string; pid: number }> = [];
     try {
-      await reattachTrackedSessionsFromMarkers({ pidToTrackedSession, credentials });
+      const startupReattachResult = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession, credentials });
+      orphanedDeadDaemonSessions = startupReattachResult.orphanedDeadDaemonSessions;
       if (process.platform === 'linux' && startupSource === 'background-service') {
         const migratedTrackedSessionProcesses = await migrateTrackedSessionProcessesOutOfDaemonServiceCgroup({
           trackedSessions: pidToTrackedSession.values(),
@@ -325,6 +330,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         voiceInferenceWorker = machineSyncRuntime.voiceInferenceWorker;
         daemonConnectivityCoordinator = machineSyncRuntime.daemonConnectivityCoordinator;
         machineConnectionStateCleanup = machineSyncRuntime.machineConnectionStateCleanup;
+        stopPeerMediationLoopbackServer = machineSyncRuntime.stopPeerMediationLoopbackServer;
+        if (machineSyncRuntime.apiMachine) {
+          publishOrphanedStartupSessionEnds({
+            apiMachine: machineSyncRuntime.apiMachine,
+            orphanedDeadDaemonSessions,
+          });
+        }
       },
       filesystemAccessPolicy,
       takeoverRequested,
@@ -351,7 +363,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       isShuttingDown: () => shutdownInitiated,
     });
 
-    // Setup signal handlers
+    logger.debug('[DAEMON RUN] Daemon started successfully, waiting for shutdown request');
+
+    // Wait for shutdown request
+    const shutdownRequest = await resolvesWhenShutdownRequested;
     const cleanupAndShutdown = createDaemonCleanupAndShutdown({
       markShutdownInitiated: () => {
         shutdownInitiated = true;
@@ -367,17 +382,16 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       memoryWorker,
       voiceInferenceWorker,
       trackedSessionCount: pidToTrackedSession.size,
-      stopDirectPeerServer,
+      stopDirectPeerServer: async () => {
+        await stopPeerMediationLoopbackServer();
+        await stopDirectPeerServer();
+      },
       stopTailscaleTransferServeLifecycle,
+      stopManagedServersOnShutdown: stopManagedServersOnDaemonShutdownBestEffort,
       stopControlServer,
       daemonLockHandle,
       releaseDaemonLock,
     });
-
-    logger.debug('[DAEMON RUN] Daemon started successfully, waiting for shutdown request');
-
-    // Wait for shutdown request
-    const shutdownRequest = await resolvesWhenShutdownRequested;
     await cleanupAndShutdown(shutdownRequest.source, shutdownRequest.errorMessage);
   } catch (error) {
     try {

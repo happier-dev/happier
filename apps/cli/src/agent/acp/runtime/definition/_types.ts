@@ -12,7 +12,7 @@ import type {
   AcpTier2PreflightV1,
   AcpTimeoutsV1,
   AcpTransportSpecV1,
-} from '@happier-dev/extension-sdk';
+} from '@happier-dev/plugin-sdk';
 
 export type AcpRuntimeDefinitionSourceV1 =
   | Readonly<{

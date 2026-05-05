@@ -1,4 +1,7 @@
+import chalk from 'chalk';
+
 import { configuration, reloadConfiguration } from '@/configuration';
+import { readCredentials } from '@/persistence';
 import {
   addServerProfile,
   getActiveServerProfile,
@@ -20,13 +23,10 @@ import {
   promptInput,
   runCliAction,
 } from './commandUtilities';
-import {
-  resolveInstalledDefaultFollowingDaemonServiceModes,
-  runDefaultFollowingBackgroundServiceServerChangeFollowUp,
-} from '../backgroundServiceFollowUp.js';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
 import { fetchServerAdvertisedUrls } from '@/server/serverCapabilities';
+import { promptForCurrentMachineReachableServerUrl } from '@/server/reachability/promptCurrentMachineReachableServerUrl';
 import {
   isInsecureRemoteHttpServerUrl,
   isLocalishServerUrl,
@@ -35,17 +35,10 @@ import {
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { resolveInstalledDaemonServiceInventoryForCurrentRelay } from '@/daemon/ownership/daemonServiceInventory';
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
-import type { CliAuthState } from '@/capabilities/cliAuth/types';
 import {
-  bullets,
-  cmd,
-  errorFrame,
-  kv,
-  neutral,
-  ok,
-  sectionTitle,
-} from '@happier-dev/cli-common/output';
-import { readCredentials } from '@/persistence';
+  runDefaultFollowingBackgroundServiceServerChangeFollowUp,
+  resolveInstalledDefaultFollowingDaemonServiceModes,
+} from '../backgroundServiceFollowUp.js';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -85,14 +78,39 @@ type ServerProfileSummary = Readonly<{
   lastUsedAt?: number;
 }>;
 
-function assertNoUnknownFlags(args: string[], allowedFlags: ReadonlySet<string>): void {
-  for (const raw of args) {
-    if (!String(raw).startsWith('--')) continue;
-    if (raw === '--') break;
-    const flag = String(raw).split('=')[0] ?? '';
-    if (!allowedFlags.has(flag)) {
-      throw new Error(`Unknown flag: ${flag}`);
+function assertNoUnknownServerFlags(params: Readonly<{
+  args: readonly string[];
+  commandName: 'add' | 'set';
+  valueFlags: readonly string[];
+  booleanFlags: readonly string[];
+}>): void {
+  const valueFlags = new Set(params.valueFlags);
+  const booleanFlags = new Set(params.booleanFlags);
+  const unknown: string[] = [];
+
+  for (let index = 0; index < params.args.length; index += 1) {
+    const current = String(params.args[index] ?? '').trim();
+    if (!current) continue;
+    if (!current.startsWith('-')) {
+      unknown.push(current);
+      continue;
     }
+
+    const flagName = current.includes('=') ? current.slice(0, current.indexOf('=')) : current;
+    if (booleanFlags.has(flagName)) {
+      continue;
+    }
+    if (valueFlags.has(flagName)) {
+      if (flagName === current) {
+        index += 1;
+      }
+      continue;
+    }
+    unknown.push(current);
+  }
+
+  if (unknown.length > 0) {
+    throw new Error(`Unknown server ${params.commandName} arguments: ${unknown.join(' ')}`);
   }
 }
 
@@ -131,11 +149,6 @@ function resolveTailscaleServeStatusTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 750;
 }
 
-async function probeServerSelectionAuthState(): Promise<CliAuthState> {
-  const credentials = await readCredentials().catch(() => null);
-  return credentials ? 'logged_in' : 'logged_out';
-}
-
 async function cmdList(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
   const profiles = await listServerProfiles();
@@ -151,18 +164,18 @@ async function cmdList(args: string[]): Promise<void> {
     return;
   }
   if (profiles.length === 0) {
-    console.log(neutral('(no server profiles configured)'));
+    console.log(chalk.gray('(no relay profiles configured)'));
     return;
   }
 
   for (const p of profiles.sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))) {
-    const isActive = p.id === active.id;
-    console.log((isActive ? ok : neutral)(`${p.name} (${p.id})`));
-    console.log(`    ${kv('Server:', p.serverUrl)}`);
+    const marker = p.id === active.id ? chalk.green('✓') : ' ';
+    console.log(`${marker} ${chalk.bold(p.name)} (${p.id})`);
+    console.log(`    ${chalk.gray('relay:')} ${p.serverUrl}`);
     if (p.localServerUrl && p.localServerUrl !== p.serverUrl) {
-      console.log(`    ${kv('Local:', p.localServerUrl)}`);
+      console.log(`    ${chalk.gray('local:')} ${p.localServerUrl}`);
     }
-    console.log(`    ${kv('Webapp:', p.webappUrl)}`);
+    console.log(`    ${chalk.gray('webapp:')} ${p.webappUrl}`);
   }
 }
 
@@ -176,38 +189,29 @@ async function cmdCurrent(args: string[]): Promise<void> {
     });
     return;
   }
-  console.log(sectionTitle('Active server'));
-  console.log(kv('Name:', active.name));
-  console.log(kv('ID:', active.id));
-  console.log(kv('Server:', active.serverUrl));
+  console.log(chalk.bold('Active relay profile'));
+  console.log(`${chalk.gray('name:')}   ${active.name}`);
+  console.log(`${chalk.gray('id:')}     ${active.id}`);
+  console.log(`${chalk.gray('relay:')}  ${active.serverUrl}`);
   if (active.localServerUrl && active.localServerUrl !== active.serverUrl) {
-    console.log(kv('Local:', active.localServerUrl));
+    console.log(`${chalk.gray('local:')} ${active.localServerUrl}`);
   }
-  console.log(kv('Webapp:', active.webappUrl));
+  console.log(`${chalk.gray('webapp:')} ${active.webappUrl}`);
 }
 
 async function cmdAdd(args: string[]): Promise<void> {
-  assertNoUnknownFlags(
+  assertNoUnknownServerFlags({
     args,
-    new Set([
-      '--help',
-      '--json',
-      '--name',
-      '--server-url',
-      '--local-server-url',
-      '--webapp-url',
-      '--use',
-      '--no-use',
-      '--start-daemon',
-      '--install-service',
-    ]),
-  );
-
+    commandName: 'add',
+    valueFlags: ['--name', '--server-url', '--local-server-url', '--public-server-url', '--webapp-url'],
+    booleanFlags: ['--use', '--no-use', '--start-daemon', '--install-service', '--json'],
+  });
   const json = wantsJson(args);
   const interactive = isInteractiveTerminal() && !json;
   let name = argvValue(args, '--name');
   let serverUrlRaw = argvValue(args, '--server-url');
   let localServerUrlRaw = argvValue(args, '--local-server-url');
+  let publicServerUrlRaw = argvValue(args, '--public-server-url');
   let webappUrlRaw = argvValue(args, '--webapp-url');
   const hasUse = args.includes('--use');
   const hasNoUse = args.includes('--no-use');
@@ -230,39 +234,31 @@ async function cmdAdd(args: string[]): Promise<void> {
       throw new Error(
         [
           'Non-interactive mode: missing required arguments for `happier server add`.',
-          'Provide: --name <name> --server-url <canonical-url> [--local-server-url <url>] [--webapp-url <url>] [--use].',
+          'Provide: --name <name> --server-url <relay-url> [--local-server-url <url>] [--webapp-url <url>] [--use].',
           'Optional actions: --start-daemon, --install-service.',
         ].join(' '),
       );
     }
   } else {
     if (!serverUrlRaw) {
-      serverUrlRaw = (await promptInput('Server URL (https://...): ')).trim();
+      serverUrlRaw = (await promptInput('Relay URL (https://...): ')).trim();
     }
 
-    if (!localServerUrlRaw) {
+    if (!localServerUrlRaw && !publicServerUrlRaw) {
       const normalized = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
       if (isLocalishServerUrl(normalized)) {
         const answer = await promptInput('Is this URL only reachable from this machine/LAN? [Y/n]: ');
         const localOnly = parseYesNoWithDefault(answer, true);
         if (localOnly) {
           localServerUrlRaw = normalized;
-          let inferredCanonical: string | null = null;
-          if (shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(normalized)) {
-            inferredCanonical = await tailscaleServeHttpsUrlForInternalServerUrl({
-              internalServerUrl: normalized,
-              timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
-              env: process.env,
-            });
-          }
-
-          const canonicalPrompt = inferredCanonical
-            ? `Canonical (shareable) Server URL (https://...) [${inferredCanonical}]: `
-            : 'Canonical (shareable) Server URL (https://...): ';
-          const canonicalAnswer = (await promptInput(canonicalPrompt)).trim();
-          const canonical = canonicalAnswer || inferredCanonical;
+          const canonical = (await promptForCurrentMachineReachableServerUrl({
+            localServerUrl: normalized,
+            remoteDescription: 'other machines',
+          })).trim();
           if (!canonical) {
-            throw new Error('Missing canonical Server URL. Provide a public HTTPS URL, or run `happier server add --local-server-url <url> --server-url <canonical>`.');
+            throw new Error(
+              'Missing canonical relay URL. Provide a public HTTPS URL, or run `happier server add --local-server-url <url> --server-url <canonical>`.',
+            );
           }
           serverUrlRaw = canonical;
         }
@@ -272,11 +268,11 @@ async function cmdAdd(args: string[]): Promise<void> {
     const serverUrlForDefaults = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
     if (!name) {
       const defaultName = defaultNameFromUrl(serverUrlForDefaults);
-      const answer = await promptInput(`Server profile name [${defaultName}]: `);
+      const answer = await promptInput(`Relay profile name [${defaultName}]: `);
       name = answer.trim() || defaultName;
     }
     if (!hasUse && !hasNoUse) {
-      const answer = await promptInput('Use this server as active now? [Y/n]: ');
+      const answer = await promptInput('Use this relay as active now? [Y/n]: ');
       shouldUse = parseYesNoWithDefault(answer, true);
     } else if (hasNoUse) {
       shouldUse = false;
@@ -284,10 +280,20 @@ async function cmdAdd(args: string[]): Promise<void> {
   }
 
   if (!name) throw new Error('Missing --name');
+  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
+  if (publicServerUrlRaw) {
+    if (serverUrlRaw && !localServerUrlRaw) {
+      localServerUrlRaw = serverUrlRaw;
+      serverUrlRaw = publicServerUrlRaw;
+    } else if (!serverUrlRaw) {
+      serverUrlRaw = publicServerUrlRaw;
+    }
+  }
+
   let serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
   let localServerUrl = localServerUrlRaw ? normalizeUrlOrThrow(localServerUrlRaw, '--local-server-url') : '';
 
-  if (shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
+  if (!publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
     const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
       internalServerUrl: serverUrl,
       timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
@@ -341,26 +347,24 @@ async function cmdAdd(args: string[]): Promise<void> {
   }
 
   if (shouldUse) reloadConfiguration();
-  console.log(ok(`Saved server profile: ${created.name} (${created.id})`));
+  console.log(chalk.green(`✓ Saved relay profile: ${created.name} (${created.id})`));
   const prefix = `happier --server ${created.id}`;
   if (shouldUse) {
-    console.log(`  ${kv('Active server is now:', created.serverUrl)}`);
+    console.log(chalk.gray(`  Active relay is now: ${created.serverUrl}`));
     if (created.localServerUrl && created.localServerUrl !== created.serverUrl) {
-      console.log(`  ${kv('Local API URL:', created.localServerUrl)}`);
+      console.log(chalk.gray(`  Local API URL: ${created.localServerUrl}`));
     }
   }
 
   if (!interactive || shouldUse) {
     console.log('');
-    console.log(sectionTitle('Next steps (optional)'));
-    console.log(bullets([
-      `Start daemon: ${cmd(`${prefix} daemon start`)}`,
-      `Install background service: ${cmd(`${prefix} service install`)}`,
-    ]));
+    console.log(chalk.bold('Next steps (optional)'));
+    console.log(chalk.gray(`  Start daemon: ${prefix} daemon start`));
+    console.log(chalk.gray(`  Enable automatic startup: ${prefix} service install`));
   }
 
   if (installService) {
-    await runCliAction(['--server', created.id, 'service', 'install']);
+    await runCliAction(['--server', created.id, 'daemon', 'service', 'install']);
   }
   if (startDaemon && !installService) {
     await runCliAction(['--server', created.id, 'daemon', 'start']);
@@ -376,15 +380,15 @@ async function cmdAdd(args: string[]): Promise<void> {
 async function cmdUse(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const identifier = String(args[0] ?? '').trim();
-  if (!identifier) throw new Error('Missing server id/name');
+  if (!identifier) throw new Error('Missing relay profile id/name');
   const active = await useServerProfile(identifier);
   reloadConfiguration();
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'server_use', data: { active: summarizeProfile(active) } });
     return;
   }
-  console.log(ok(`Active server: ${active.name} (${active.id})`));
-  console.log(`  ${active.serverUrl}`);
+  console.log(chalk.green(`✓ Active relay: ${active.name} (${active.id})`));
+  console.log(chalk.gray(`  ${active.serverUrl}`));
 
   await runServerSelectionBackgroundServiceFollowUp({
     interactive: isInteractiveTerminal(),
@@ -395,7 +399,7 @@ async function cmdUse(args: string[]): Promise<void> {
 async function cmdRemove(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const identifier = String(args[0] ?? '').trim();
-  if (!identifier) throw new Error('Missing server id/name');
+  if (!identifier) throw new Error('Missing relay profile id/name');
   const force = args.includes('--force');
   const out = await removeServerProfile(identifier, { force });
   reloadConfiguration();
@@ -407,8 +411,8 @@ async function cmdRemove(args: string[]): Promise<void> {
     });
     return;
   }
-  console.log(ok(`Removed server profile: ${out.removed.name} (${out.removed.id})`));
-  console.log(`  ${kv('Active server:', `${out.active.name} (${out.active.id})`)}`);
+  console.log(chalk.green(`✓ Removed relay profile: ${out.removed.name} (${out.removed.id})`));
+  console.log(chalk.gray(`  Active relay: ${out.active.name} (${out.active.id})`));
 }
 
 async function cmdTest(args: string[]): Promise<void> {
@@ -429,41 +433,44 @@ async function cmdTest(args: string[]): Promise<void> {
     return;
   }
   if (!result.ok) {
-    console.error(errorFrame(`Server test failed: ${profile.serverUrl}`, [
-      `url: ${result.url}`,
-      ...(result.status ? [`status: ${result.status}`] : []),
-      `error: ${result.error}`,
-    ]));
+    console.error(chalk.red(`✗ Relay test failed: ${profile.serverUrl}`));
+    console.error(chalk.gray(`  url: ${result.url}`));
+    if (result.status) console.error(chalk.gray(`  status: ${result.status}`));
+    console.error(chalk.gray(`  error: ${result.error}`));
     process.exit(1);
   }
-  console.log(ok(`Server reachable: ${profile.serverUrl}`));
-  console.log(bullets([
-    `url: ${result.url}`,
-    ...(result.version ? [`version: ${result.version}`] : []),
-  ]));
+  console.log(chalk.green(`✓ Relay reachable: ${profile.serverUrl}`));
+  console.log(chalk.gray(`  url: ${result.url}`));
+  if (result.version) console.log(chalk.gray(`  version: ${result.version}`));
 }
 
 async function cmdSet(args: string[]): Promise<void> {
-  assertNoUnknownFlags(
+  assertNoUnknownServerFlags({
     args,
-    new Set([
-      '--help',
-      '--json',
-      '--server-url',
-      '--local-server-url',
-      '--webapp-url',
-    ]),
-  );
-
+    commandName: 'set',
+    valueFlags: ['--server-url', '--local-server-url', '--public-server-url', '--webapp-url'],
+    booleanFlags: ['--json'],
+  });
   const json = wantsJson(args);
   let serverUrlRaw = argvValue(args, '--server-url');
   let localServerUrlRaw = argvValue(args, '--local-server-url');
+  const publicServerUrlRaw = argvValue(args, '--public-server-url');
   let webappUrlRaw = argvValue(args, '--webapp-url');
+
+  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
+  if (publicServerUrlRaw) {
+    if (serverUrlRaw && !localServerUrlRaw) {
+      localServerUrlRaw = serverUrlRaw;
+      serverUrlRaw = publicServerUrlRaw;
+    } else if (!serverUrlRaw) {
+      serverUrlRaw = publicServerUrlRaw;
+    }
+  }
 
   let serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
   let localServerUrl = localServerUrlRaw ? normalizeUrlOrThrow(localServerUrlRaw, '--local-server-url') : '';
 
-  if (shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
+  if (!publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
     const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
       internalServerUrl: serverUrl,
       timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
@@ -510,8 +517,8 @@ async function cmdSet(args: string[]): Promise<void> {
     printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });
     return;
   }
-  console.log(ok(`Active server: ${created.name} (${created.id})`));
-  console.log(`  ${created.serverUrl}`);
+  console.log(chalk.green(`✓ Active relay: ${created.name} (${created.id})`));
+  console.log(chalk.gray(`  ${created.serverUrl}`));
 
   await runServerSelectionBackgroundServiceFollowUp({
     interactive: isInteractiveTerminal(),
@@ -530,14 +537,14 @@ async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
     return;
   }
 
-  const authState = await probeServerSelectionAuthState();
+  const credentials = await readCredentials().catch(() => null);
   await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
     interactive: params.interactive,
     promptInput,
     runCliAction,
     targetServerUrl: params.targetServerUrl,
-    authState,
-    services,
+    authState: credentials ? 'logged_in' : 'logged_out',
     log: console.log,
+    services,
   });
 }

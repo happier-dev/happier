@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import { buildOpenCodeAgentRuntimeDescriptor } from '@happier-dev/agents';
 
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import { buildOpenCodeSessionEnvironmentVariables } from '@/session/opencode/opencodeSessionAffinity';
 import type { ImportedSessionHandoffBundle, OpenCodeSessionBundle } from '@/session/handoff/types';
 

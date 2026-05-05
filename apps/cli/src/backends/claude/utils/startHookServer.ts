@@ -17,7 +17,7 @@
  *     ├─► generateHookSettingsFile(port) ──► ~/.happier/tmp/hooks/session-hook-<pid>.json
  *     │   (contains SessionStart hook pointing to our server)
  *     │                                         
- *     └─► runClaudeModeLoop() ──► launchClaudeTerminalSession() / launchClaudeRemoteSession()
+ *     └─► shared session lifecycle ──► terminal/remote launch primitives
  *             │
  *             └─► spawn claude --settings <hook-settings-path>
  * ```

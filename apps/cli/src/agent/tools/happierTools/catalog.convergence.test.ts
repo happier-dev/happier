@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 const { mockListActionSpecs } = vi.hoisted(() => ({
   mockListActionSpecs: vi.fn(() => []),

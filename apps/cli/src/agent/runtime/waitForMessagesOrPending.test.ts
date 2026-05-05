@@ -101,6 +101,34 @@ describe('waitForMessagesOrPending', () => {
         expect(metadataCallbackCount).toBe(1);
     });
 
+    it('does not pop server pending rows when the handoff gate blocks materialization', async () => {
+        const queue = new MessageQueue2<{ id: string }>(() => 'hash');
+        const abortController = new AbortController();
+        let gateCallCount = 0;
+        let popCallCount = 0;
+
+        const result = await waitForMessagesOrPending({
+            messageQueue: queue,
+            abortSignal: abortController.signal,
+            beforePendingMaterialize: async () => {
+                gateCallCount += 1;
+                return false;
+            },
+            popPendingMessage: async () => {
+                popCallCount += 1;
+                return false;
+            },
+            waitForMetadataUpdate: async () => {
+                abortController.abort();
+                return false;
+            },
+        });
+
+        expect(result).toBeNull();
+        expect(gateCallCount).toBe(1);
+        expect(popCallCount).toBe(0);
+    });
+
     it('does not exit when metadata update waiting fails (e.g., user socket disconnect)', async () => {
         type Mode = { id: string };
         const mode: Mode = { id: 'm1' };

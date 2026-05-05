@@ -117,6 +117,7 @@ export interface SpawnSessionOptions {
      */
     windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
+    windowsTerminalWindowName?: string;
     /**
      * Session-scoped profile identity for display/debugging across devices.
      * This is NOT the profile content; actual runtime behavior is still driven

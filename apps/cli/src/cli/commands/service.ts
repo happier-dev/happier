@@ -1,6 +1,6 @@
 import type { CommandContext } from '@/cli/commandRegistry';
 import { runDaemonServiceCliCommand } from '@/daemon/service/cli';
-import { handleServiceRepairCliCommand } from './serviceRepair/handleServiceRepairCliCommand';
+import { handleServiceRepairCliCommand } from './service/repair/handleServiceRepairCliCommand';
 
 export async function handleServiceCliCommand(context: CommandContext): Promise<void> {
   if (context.args[1] === 'repair') {

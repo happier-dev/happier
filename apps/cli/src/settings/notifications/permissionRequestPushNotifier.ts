@@ -7,7 +7,6 @@ import { setBoundedMap } from '@/utils/collections/lru';
 
 import { summarizeToolInputForNotification } from '@happier-dev/protocol';
 import { sendAgentRequestPushNotificationAsync, type PermissionRequestPushSender } from './permissionRequestPush';
-import { shouldSendPermissionRequestPushNotification, shouldSendUserActionRequestPushNotification } from './notificationsPolicy';
 
 type Entry = {
   state: 'idle' | 'sending' | 'retrying' | 'sent';
@@ -146,18 +145,9 @@ export class PermissionRequestPushNotifier {
     }
 
     const settings = this.getSettings();
-    const shouldSend = entry.kind === 'user_action'
-      ? shouldSendUserActionRequestPushNotification(settings)
-      : shouldSendPermissionRequestPushNotification(settings);
-    if (!shouldSend) {
-      // Skip without retrying; leave it idle so a future notify call can re-attempt if settings change.
-      setBoundedMap(this.entries, permissionId, { ...entry, state: 'idle', timer: null }, this.maxEntries);
-      return;
-    }
-
     const nextEntry: Entry = { ...entry, state: 'sending', attempts: entry.attempts + 1, timer: null };
     setBoundedMap(this.entries, permissionId, nextEntry, this.maxEntries);
-    const ok = await sendAgentRequestPushNotificationAsync({
+    const result = await sendAgentRequestPushNotificationAsync({
       pushSender: this.pushSender,
       sessionId: this.sessionId,
       requestId: permissionId,
@@ -171,13 +161,18 @@ export class PermissionRequestPushNotifier {
     const after = this.entries.get(permissionId) ?? null;
     if (!after) return;
 
-    if (ok) {
+    if (result.status === 'delivered') {
       setBoundedMap(this.entries, permissionId, { ...after, state: 'sent', timer: null }, this.maxEntries);
       try {
         this.onNotifiedAt(permissionId, now);
       } catch {
         // ignore
       }
+      return;
+    }
+
+    if (result.status === 'skipped') {
+      setBoundedMap(this.entries, permissionId, { ...after, state: 'idle', timer: null }, this.maxEntries);
       return;
     }
 

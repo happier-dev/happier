@@ -1,7 +1,6 @@
 import type { AccountSettings } from '@happier-dev/protocol';
 
 import { emitReadyIfIdle } from '@/agent/runtime/emitReadyIfIdle';
-import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from './readyNotificationContext';
@@ -61,7 +60,7 @@ export function createReadyNotificationDispatcher(
       accountSettings: params.accountSettings ?? null,
       settingsSecretsReadKeys: params.settingsSecretsReadKeys,
       includeAssistantPreviewText: params.includeAssistantPreviewText,
-      shouldSendPush: params.shouldSendPush ?? (() => shouldSendReadyPushNotification(params.accountSettings ?? null)),
+      shouldSendPush: params.shouldSendPush,
     });
   };
 }

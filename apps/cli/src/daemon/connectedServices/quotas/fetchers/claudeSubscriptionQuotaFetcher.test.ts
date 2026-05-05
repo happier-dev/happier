@@ -36,7 +36,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
 
     const fetcher = createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 300_000 });
     expect(fetcher.serviceId).toBe('claude-subscription');
-    const snapshot = await fetcher.fetch({ record, now, signal: new AbortController().signal });
+    const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
 
     const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
     expect(parsed.success).toBe(true);
@@ -118,7 +118,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     });
 
     const fetcher = createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 300_000 });
-    const snapshot = await fetcher.fetch({ record, now, signal: new AbortController().signal });
+    const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
     const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
     expect(parsed.success).toBe(true);
 
@@ -188,7 +188,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     });
 
     const fetcher = createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 300_000 });
-    await expect(fetcher.fetch({ record, now, signal: new AbortController().signal }))
+    await expect(fetcher.loadQuota({ record, now, signal: new AbortController().signal }))
       .rejects
       .toThrow(/reconnect claude/i);
   });
@@ -239,7 +239,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     });
 
     const fetcher = createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 300_000 });
-    const snapshot = await fetcher.fetch({ record, now, signal: new AbortController().signal });
+    const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
     expect(snapshot?.meters.length).toBeGreaterThan(0);
     expect(usageCalls).toBe(2);
   });

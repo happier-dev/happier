@@ -4,7 +4,7 @@ import {
     type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
-import { isExecutionRunConcreteBackendTarget } from '@/agent/executionRuns/runtime/backendTargets';
+import { isExecutionRunConcreteBackendTarget } from '@/agent/runtime/bridges/executionRun/backendTargets';
 
 export function normalizeExecutionRunPublicStateBackendTarget(value: unknown): Record<string, unknown> | null {
     try {

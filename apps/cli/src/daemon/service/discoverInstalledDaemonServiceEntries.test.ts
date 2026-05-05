@@ -123,7 +123,7 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       expect(entries).toEqual([
         expect.objectContaining({
           serverId: 'default',
-          name: 'Default background service',
+          name: 'Default automatic startup',
           happierHomeDir: '/Users/tester/.happier',
           targetMode: 'default-following',
           releaseChannel: 'stable',
@@ -199,7 +199,7 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       expect(entries).toEqual([
         expect.objectContaining({
           serverId: 'default',
-          name: 'Default background service',
+          name: 'Default automatic startup',
           happierHomeDir: null,
           targetMode: 'default-following',
           releaseChannel: 'stable',
@@ -245,7 +245,7 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       expect(entries).toEqual([
         expect.objectContaining({
           serverId: 'default',
-          name: 'Default background service',
+          name: 'Default automatic startup',
           happierHomeDir: '/home/tester/.happier',
           targetMode: 'default-following',
           releaseChannel: 'publicdev',
@@ -291,11 +291,55 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       expect(entries).toEqual([
         expect.objectContaining({
           serverId: 'default',
-          name: 'Default background service',
+          name: 'Default automatic startup',
           happierHomeDir: '/home/tester/.happier',
           targetMode: 'default-following',
           releaseChannel: 'preview',
           label: 'happier-daemon',
+          path,
+        }),
+      ]);
+    });
+  });
+
+  it('unquotes systemd Environment values so discovered metadata does not include surrounding quotes', async () => {
+    await withTempDir('happier-discover-service-entry-linux-quoted-env-', async (homeDir) => {
+      const servicesDir = join(homeDir, '.config', 'systemd', 'user');
+      const path = join(servicesDir, 'happier-daemon.default.service');
+      mkdirSync(servicesDir, { recursive: true });
+
+      writeFileSync(
+        path,
+        renderSystemdServiceUnit({
+          description: 'Happier Daemon',
+          execStart: [
+            '/home/tester/.happier/tools/js-runtime/current/bin/happier-js-runtime',
+            '/home/tester/.happier/cli-preview/versions/0.2.2-preview.1/package-dist/index.mjs',
+            'daemon',
+            'start-sync',
+          ],
+          env: {
+            // Contains a space, so the systemd renderer will quote it.
+            HAPPIER_HOME_DIR: '/home/tester/My Happier/.happier',
+            HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+            HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+          },
+          wantedBy: 'default.target',
+        }),
+        'utf-8',
+      );
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'linux',
+        userHomeDir: homeDir,
+        happierHomeDir: join(homeDir, '.happier'),
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          happierHomeDir: '/home/tester/My Happier/.happier',
           path,
         }),
       ]);
@@ -367,7 +411,7 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       expect(entries).toEqual([
         expect.objectContaining({
           serverId: 'default',
-          name: 'Default background service',
+          name: 'Default automatic startup',
           happierHomeDir: 'C:\\Users\\tester\\.happier',
           targetMode: 'default-following',
           releaseChannel: 'preview',
@@ -423,12 +467,67 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       expect(entries).toEqual([
         expect.objectContaining({
           serverId: 'default',
-          name: 'Default background service',
+          name: 'Default automatic startup',
           happierHomeDir: 'C:\\Users\\tester\\.happier',
           targetMode: 'default-following',
           releaseChannel: 'stable',
           label: 'Happier\\happier-daemon.default',
           path: 'C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1',
+        }),
+      ]);
+    });
+  });
+
+  it('discovers Windows scheduled tasks even when the services directory is missing', async () => {
+    await withTempDir('happier-discover-service-entry-windows-missing-services-dir-', async (homeDir) => {
+      const happierHomeDir = join(homeDir, '.happier');
+
+      spawnSyncMock.mockImplementation((command, args) => {
+        if (command !== 'schtasks') {
+          return { status: 1, stdout: '', stderr: '' } as never;
+        }
+        const normalizedArgs = Array.isArray(args) ? args.map((value) => String(value)) : [];
+        if (normalizedArgs.join(' ') === '/Query /FO CSV /NH') {
+          return {
+            status: 0,
+            stdout: '"\\\\Happier\\\\happier-daemon.default","N/A"\r\n',
+            stderr: '',
+          } as never;
+        }
+        if (normalizedArgs.join(' ') === '/Query /TN Happier\\happier-daemon.default /XML') {
+          return {
+            status: 0,
+            stdout: `
+              <Task>
+                <Actions>
+                  <Exec>
+                    <Arguments>-NoProfile -ExecutionPolicy Bypass -File "C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1"</Arguments>
+                  </Exec>
+                </Actions>
+              </Task>
+            `,
+            stderr: '',
+          } as never;
+        }
+        return { status: 1, stdout: '', stderr: 'unexpected schtasks call' } as never;
+      });
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'win32',
+        userHomeDir: homeDir,
+        happierHomeDir,
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          serverId: 'default',
+          name: 'Default automatic startup',
+          label: 'Happier\\happier-daemon.default',
+          path: 'C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1',
+          happierHomeDir: 'C:\\Users\\tester\\.happier',
+          targetMode: 'default-following',
         }),
       ]);
     });

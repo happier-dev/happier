@@ -16,6 +16,7 @@ import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { McpServerConfig } from '@/agent';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { resolveConfiguredClaudeConfigDir } from '../../directSessions/resolveClaudeConfigDir';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -70,6 +71,14 @@ function buildClaudeDirectSessionMetadata(params: Readonly<{
     };
 }
 
+function clearClaudeLastAssistantUuid(metadata: Metadata): Metadata {
+    if (!Object.prototype.hasOwnProperty.call(metadata, 'claudeLastAssistantUuid')) {
+        return metadata;
+    }
+    const { claudeLastAssistantUuid: _claudeLastAssistantUuid, ...next } = metadata;
+    return next;
+}
+
 export class Session {
     readonly path: string;
     readonly logPath: string;
@@ -92,6 +101,8 @@ export class Session {
     readonly jsRuntime: JsRuntime;
     /** How this session was started (affects TTY/UI behavior). */
     readonly startedBy: 'daemon' | 'terminal';
+    /** Terminal host metadata for this CLI process, when launched by tmux/daemon wrappers. */
+    readonly terminalRuntime: TerminalRuntimeFlags | null;
     readonly defaultSystemPromptText: string | undefined;
 
     sessionId: string | null;
@@ -158,6 +169,7 @@ export class Session {
         /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
         jsRuntime?: JsRuntime,
         startedBy?: 'daemon' | 'terminal',
+        terminalRuntime?: TerminalRuntimeFlags | null,
         defaultSystemPromptText?: string,
         precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null,
     }) {
@@ -175,6 +187,7 @@ export class Session {
         this.hookPluginDir = opts.hookPluginDir ?? null;
         this.jsRuntime = opts.jsRuntime ?? 'node';
         this.startedBy = opts.startedBy ?? 'terminal';
+        this.terminalRuntime = opts.terminalRuntime ?? null;
         this.defaultSystemPromptText =
             typeof opts.defaultSystemPromptText === 'string' && opts.defaultSystemPromptText.trim().length > 0
                 ? opts.defaultSystemPromptText.trim()
@@ -381,9 +394,10 @@ export class Session {
 
         const prevSessionId = this.sessionId;
         const prevTranscriptPath = this.transcriptPath;
+        const didSessionIdChange = prevSessionId !== sessionId;
 
         this.sessionId = sessionId;
-        if (prevSessionId !== sessionId) {
+        if (didSessionIdChange) {
             // Avoid carrying a transcript path across different Claude sessions.
             // If the hook didn't provide a transcript path for this session, force fallback to heuristics.
             this.transcriptPath = nextTranscriptPath;
@@ -391,17 +405,22 @@ export class Session {
             // Same sessionId, but we learned/updated the exact transcript path.
             this.transcriptPath = nextTranscriptPath;
         }
+        const didKnownTranscriptPathChange =
+            !didSessionIdChange
+            && typeof prevTranscriptPath === 'string'
+            && typeof nextTranscriptPath === 'string'
+            && prevTranscriptPath !== nextTranscriptPath;
 
         // Update metadata with Claude Code session ID
-        if (prevSessionId !== sessionId) {
+        if (didSessionIdChange) {
             updateMetadataBestEffort(
                 this.client,
                 (metadata) => buildClaudeDirectSessionMetadata({
-                    metadata: {
-                    ...metadata,
-                    claudeSessionId: sessionId,
-                    claudeTranscriptPath: this.transcriptPath,
-                    },
+                    metadata: clearClaudeLastAssistantUuid({
+                        ...metadata,
+                        claudeSessionId: sessionId,
+                        claudeTranscriptPath: this.transcriptPath,
+                    }),
                     sessionId,
                     transcriptPath: this.transcriptPath,
                 }),
@@ -415,10 +434,15 @@ export class Session {
             updateMetadataBestEffort(
                 this.client,
                 (metadata) => buildClaudeDirectSessionMetadata({
-                    metadata: {
-                    ...metadata,
-                    claudeTranscriptPath: this.transcriptPath,
-                    },
+                    metadata: didKnownTranscriptPathChange
+                        ? clearClaudeLastAssistantUuid({
+                            ...metadata,
+                            claudeTranscriptPath: this.transcriptPath,
+                        })
+                        : {
+                            ...metadata,
+                            claudeTranscriptPath: this.transcriptPath,
+                        },
                     sessionId,
                     transcriptPath: this.transcriptPath,
                 }),
@@ -510,6 +534,12 @@ export class Session {
     clearSessionId = (): void => {
         this.sessionId = null;
         this.transcriptPath = null;
+        updateMetadataBestEffort(
+            this.client,
+            clearClaudeLastAssistantUuid,
+            '[Session]',
+            'claude_session_cleared',
+        );
         logger.debug('[Session] Session ID cleared');
     }
 

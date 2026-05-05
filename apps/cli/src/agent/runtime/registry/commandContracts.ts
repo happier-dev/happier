@@ -72,4 +72,4 @@ export function createCommandSurfaceCatalog(
     });
 }
 
-export { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+export { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';

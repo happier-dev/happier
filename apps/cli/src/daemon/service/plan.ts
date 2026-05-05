@@ -39,32 +39,14 @@ const DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX = 'happier-daemon';
 const LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL = 'com.happier.cli.daemon';
 const LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME = 'happier-daemon.service';
 
-function resolveInstalledDefinitionPath(fallbackPath: string, installedPath?: string | null): string {
-  const resolvedInstalledPath = String(installedPath ?? '').trim();
-  return resolvedInstalledPath || fallbackPath;
-}
-
-function resolveInstalledWindowsWrapperLabel(wrapperPath: string): string {
-  const normalizedWrapperPath = String(wrapperPath ?? '').trim();
-  if (!normalizedWrapperPath) {
-    throw new Error('Windows daemon wrapper path is required');
-  }
-  return normalizedWrapperPath.includes('\\')
-    ? win32Path.basename(normalizedWrapperPath, '.ps1')
-    : basename(normalizedWrapperPath, '.ps1');
-}
-
-function pushUniquePath(paths: string[], path: string): void {
-  const normalizedPath = String(path ?? '').trim();
-  if (!normalizedPath || paths.includes(normalizedPath)) {
-    return;
-  }
-  paths.push(normalizedPath);
-}
-
 export function resolveDaemonServiceChannelSegment(channel: PublicReleaseRingId): '' | 'preview' | 'dev' {
   const label = getReleaseRingCatalogEntry(channel).publicLabel;
   return label === 'stable' ? '' : label;
+}
+
+function resolveLegacyChannelScopedDefaultFollowingIdentitySegment(channel: PublicReleaseRingId): string | null {
+  const channelSegment = resolveDaemonServiceChannelSegment(channel);
+  return channelSegment ? `${channelSegment}.default` : null;
 }
 
 export function sanitizeServiceInstanceId(instanceIdRaw: string): string {
@@ -95,11 +77,6 @@ function shouldApplyRawLegacyDefaultFollowingCleanup(params: Readonly<{
   targetMode: DaemonServiceTargetMode;
 }>): boolean {
   return params.targetMode === 'default-following';
-}
-
-function resolveLegacyChannelScopedDefaultFollowingIdentitySegment(channel: PublicReleaseRingId): string | null {
-  const channelSegment = resolveDaemonServiceChannelSegment(channel);
-  return channelSegment ? `${channelSegment}.default` : null;
 }
 
 function shouldApplyLegacyChannelScopedDefaultFollowingCleanup(params: Readonly<{
@@ -185,17 +162,12 @@ export function resolveWindowsDaemonWrapperPath(params: Readonly<{
   instanceId: string;
   channel?: PublicReleaseRingId;
   targetMode?: DaemonServiceTargetMode;
-  mode?: DaemonServiceMode;
 }>): string {
   const label = resolveDaemonServiceSystemdUnitLabel(
     params.instanceId,
     params.channel ?? 'stable',
     params.targetMode ?? 'pinned',
   );
-  const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
-  if (mode === 'system') {
-    return `C:\\\\ProgramData\\\\happier\\\\services\\\\${label}.ps1`;
-  }
   const home = String(params.happierHomeDir ?? '').trim();
   // When callers supply a POSIX absolute path (common in unit tests on macOS/Linux),
   // `win32.join("/tmp/...", ...)` yields a leading `\\tmp\\...` path which is relative on POSIX and can
@@ -206,12 +178,50 @@ export function resolveWindowsDaemonWrapperPath(params: Readonly<{
   return win32Path.join(home, 'services', `${label}.ps1`);
 }
 
+/**
+ * Resolve the stdout/stderr log paths that the Windows scheduled-task wrapper
+ * redirects into. This is the canonical path computation for both wrapper
+ * rendering and post-mortem diagnostics, so those two call sites cannot drift.
+ */
+export function resolveWindowsDaemonServiceLogPaths(params: Readonly<{
+  happierHomeDir: string;
+  instanceId: string;
+  channel?: PublicReleaseRingId;
+  targetMode?: DaemonServiceTargetMode;
+}>): { stdoutPath: string; stderrPath: string } {
+  const channel = params.channel ?? 'stable';
+  const targetMode = params.targetMode ?? 'pinned';
+  const sanitizedInstanceId = sanitizeServiceInstanceId(params.instanceId);
+  const logInstanceId = targetMode === 'default-following' ? 'default' : sanitizedInstanceId;
+  const logPrefix = targetMode === 'default-following'
+    ? ''
+    : (() => {
+        const channelSegment = resolveDaemonServiceChannelSegment(channel);
+        return channelSegment ? `${channelSegment}.` : '';
+      })();
+  const home = String(params.happierHomeDir ?? '').trim();
+  const usePosix = home.startsWith('/');
+  const joinFn = usePosix ? join : win32Path.join;
+  return {
+    stdoutPath: joinFn(home, 'logs', `daemon-service.${logPrefix}${logInstanceId}.out.log`),
+    stderrPath: joinFn(home, 'logs', `daemon-service.${logPrefix}${logInstanceId}.err.log`),
+  };
+}
+
 function buildDaemonServiceProgramArgs(params: Readonly<{ nodePath: string; entryPath: string }>): string[] {
   const nodePath = String(params.nodePath ?? '').trim();
   if (!nodePath) throw new Error('nodePath is required');
   const entryPath = String(params.entryPath ?? '').trim();
-  if (entryPath) return [nodePath, entryPath, 'daemon', 'start-sync'];
-  return [nodePath, 'daemon', 'start-sync'];
+  // `--takeover` is always set on service-managed daemon starts: the
+  // background service is the legitimate owner of its relay profile, so if
+  // a manual daemon squatted the lock (e.g. running from an older CLI) the
+  // service should displace it on next launch. Without this, launchd
+  // respawns indefinitely and the service appears "stopped" to users even
+  // though it's actively crash-looping (see crash_looping finding).
+  // Policy: to run a manual daemon yourself, stop the background service
+  // first — it won't be respawning to fight you.
+  if (entryPath) return [nodePath, entryPath, 'daemon', 'start-sync', '--takeover'];
+  return [nodePath, 'daemon', 'start-sync', '--takeover'];
 }
 
 export function planDaemonServiceInstall(params: Readonly<{
@@ -312,10 +322,18 @@ export function planDaemonServiceInstall(params: Readonly<{
   }
 
   if (params.platform === 'win32') {
-    const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
-    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir: params.happierHomeDir, instanceId, channel, targetMode, mode });
-    const stdoutPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.out.log`);
-    const stderrPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.err.log`);
+    const wrapperPath = resolveWindowsDaemonWrapperPath({
+      happierHomeDir: params.happierHomeDir,
+      instanceId,
+      channel,
+      targetMode,
+    });
+    const { stdoutPath, stderrPath } = resolveWindowsDaemonServiceLogPaths({
+      happierHomeDir: params.happierHomeDir,
+      instanceId,
+      channel,
+      targetMode,
+    });
 
     const wrapper = renderWindowsScheduledTaskWrapperPs1({
       workingDirectory: params.userHomeDir,
@@ -330,7 +348,7 @@ export function planDaemonServiceInstall(params: Readonly<{
 
     const taskName = resolveWindowsDaemonTaskName({ instanceId, channel, targetMode });
     const basePlan = planServiceAction({
-      backend: mode === 'system' ? 'schtasks-system' : 'schtasks-user',
+      backend: 'schtasks-user',
       action: 'install',
       label: unitLabel,
       definitionPath: wrapperPath,
@@ -367,7 +385,7 @@ export function planDaemonServiceInstall(params: Readonly<{
     : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId, channel, targetMode });
 
   const unit = renderSystemdServiceUnit({
-    description: `Happier CLI daemon (${instanceId})`,
+    description: targetMode === 'default-following' ? 'Happier CLI daemon (default)' : `Happier CLI daemon (${instanceId})`,
     execStart: programArgs,
     workingDirectory: mode === 'system' ? params.userHomeDir : '%h',
     env: {
@@ -408,19 +426,20 @@ export function planDaemonServiceUninstall(params: Readonly<{
   instanceId: string;
   userHomeDir: string;
   happierHomeDir?: string;
+  installedPath?: string;
   uid?: number;
-  installedPath?: string | null;
 }>): DaemonServiceUninstallPlan {
   const instanceId = sanitizeServiceInstanceId(params.instanceId);
   const channel: PublicReleaseRingId = params.channel ?? 'stable';
   const targetMode: DaemonServiceTargetMode = params.targetMode ?? 'pinned';
   const label = resolveDaemonServiceLaunchdLabel(instanceId, channel, targetMode);
   const unitLabel = resolveDaemonServiceSystemdUnitLabel(instanceId, channel, targetMode);
+  const unitName = resolveDaemonServiceSystemdUnitName(instanceId, channel, targetMode);
+  const installedPath = String(params.installedPath ?? '').trim() || null;
 
   if (params.platform === 'darwin') {
-    const resolvedPlistPath = resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId, channel, targetMode });
-    const plistPath = resolveInstalledDefinitionPath(resolvedPlistPath, params.installedPath);
-    const installedLabel = params.installedPath && plistPath.endsWith('.plist')
+    const plistPath = installedPath || resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId, channel, targetMode });
+    const installedLabel = installedPath && plistPath.endsWith('.plist')
       ? basename(plistPath, '.plist')
       : label;
     const uid = params.uid;
@@ -444,20 +463,23 @@ export function planDaemonServiceUninstall(params: Readonly<{
       }
     }
 
-    const filesToRemove: string[] = [];
-    pushUniquePath(filesToRemove, plistPath);
-    if (shouldApplyLegacyChannelScopedDefaultFollowingCleanup({ channel, targetMode })) {
-      const legacyIdentitySegment = resolveLegacyChannelScopedDefaultFollowingIdentitySegment(channel);
-      const legacyPath = legacyIdentitySegment
-        ? join(params.userHomeDir, 'Library', 'LaunchAgents', `${DAEMON_SERVICE_LAUNCHD_LABEL_PREFIX}.${legacyIdentitySegment}.plist`)
-        : null;
-      if (legacyPath && legacyPath !== plistPath) {
-        pushUniquePath(filesToRemove, legacyPath);
-      }
-    }
-    if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
-      pushUniquePath(filesToRemove, join(params.userHomeDir, 'Library', 'LaunchAgents', `${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}.plist`));
-    }
+    const filesToRemove = [
+      plistPath,
+      ...(shouldApplyLegacyChannelScopedDefaultFollowingCleanup({ channel, targetMode })
+        ? (() => {
+            const legacyIdentitySegment = resolveLegacyChannelScopedDefaultFollowingIdentitySegment(channel);
+            const legacyPath = legacyIdentitySegment
+              ? join(params.userHomeDir, 'Library', 'LaunchAgents', `${DAEMON_SERVICE_LAUNCHD_LABEL_PREFIX}.${legacyIdentitySegment}.plist`)
+              : null;
+            return legacyPath && legacyPath !== plistPath
+              ? [legacyPath]
+              : [];
+          })()
+        : []),
+      ...(shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })
+        ? [join(params.userHomeDir, 'Library', 'LaunchAgents', `${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}.plist`)]
+        : []),
+    ];
     return { platform: 'darwin', filesToRemove, commands };
   }
 
@@ -466,14 +488,11 @@ export function planDaemonServiceUninstall(params: Readonly<{
     if (!happierHomeDir) {
       throw new Error('happierHomeDir is required for Windows service uninstall');
     }
-    const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
-    const wrapperPath = resolveInstalledDefinitionPath(
-      resolveWindowsDaemonWrapperPath({ happierHomeDir, instanceId, channel, targetMode, mode }),
-      params.installedPath,
-    );
-    const taskName = `Happier\\${resolveInstalledWindowsWrapperLabel(wrapperPath)}`;
+    const wrapperPath = installedPath || resolveWindowsDaemonWrapperPath({ happierHomeDir, instanceId, channel, targetMode });
+    const installedUnitLabel = win32Path.basename(wrapperPath, '.ps1');
+    const taskName = `Happier\\${installedUnitLabel}`;
     const plan = planServiceAction({
-      backend: mode === 'system' ? 'schtasks-system' : 'schtasks-user',
+      backend: 'schtasks-user',
       action: 'uninstall',
       label: unitLabel,
       taskName,
@@ -485,7 +504,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
       const legacyUnitLabel = legacyIdentitySegment
         ? `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.${legacyIdentitySegment}`
         : null;
-      if (legacyUnitLabel && legacyUnitLabel !== resolveInstalledWindowsWrapperLabel(wrapperPath)) {
+      if (legacyUnitLabel && legacyUnitLabel !== installedUnitLabel) {
         commands.push({ cmd: 'schtasks', args: ['/End', '/TN', `Happier\\${legacyUnitLabel}`], ignoreFailure: true });
         commands.push({ cmd: 'schtasks', args: ['/Delete', '/F', '/TN', `Happier\\${legacyUnitLabel}`], ignoreFailure: true });
       }
@@ -496,19 +515,18 @@ export function planDaemonServiceUninstall(params: Readonly<{
       commands.push({ cmd: 'schtasks', args: ['/Delete', '/F', '/TN', `Happier\\${legacyUnitLabel}`] });
     }
     commands.push(...plan.commands.map((c) => ({ cmd: c.cmd, args: c.args })));
-    const filesToRemove: string[] = [];
-    pushUniquePath(filesToRemove, wrapperPath);
+    const filesToRemove = [wrapperPath];
     if (shouldApplyLegacyChannelScopedDefaultFollowingCleanup({ channel, targetMode })) {
       const legacyIdentitySegment = resolveLegacyChannelScopedDefaultFollowingIdentitySegment(channel);
       if (legacyIdentitySegment) {
         const legacyPath = win32Path.join(happierHomeDir, 'services', `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.${legacyIdentitySegment}.ps1`);
         if (legacyPath !== wrapperPath) {
-          pushUniquePath(filesToRemove, legacyPath);
+          filesToRemove.push(legacyPath);
         }
       }
     }
     if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
-      pushUniquePath(filesToRemove, win32Path.join(happierHomeDir, 'services', `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.ps1`));
+      filesToRemove.push(win32Path.join(happierHomeDir, 'services', `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.ps1`));
     }
     return {
       platform: 'win32',
@@ -519,12 +537,9 @@ export function planDaemonServiceUninstall(params: Readonly<{
 
   const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
   const prefix = mode === 'system' ? [] : ['--user'];
-  const unitPath = resolveInstalledDefinitionPath(
-    mode === 'system'
-      ? resolveSystemdSystemUnitPath({ instanceId, channel, targetMode })
-      : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId, channel, targetMode }),
-    params.installedPath,
-  );
+  const unitPath = installedPath || (mode === 'system'
+    ? resolveSystemdSystemUnitPath({ instanceId, channel, targetMode })
+    : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId, channel, targetMode }));
   const installedUnitName = basename(unitPath);
   const legacyScopedDefaultUnitName = shouldApplyLegacyChannelScopedDefaultFollowingCleanup({ channel, targetMode })
     ? (() => {
@@ -540,17 +555,15 @@ export function planDaemonServiceUninstall(params: Readonly<{
   const legacyUnitPath = mode === 'system'
     ? join('/etc', 'systemd', 'system', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME)
     : join(params.userHomeDir, '.config', 'systemd', 'user', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME);
-  const filesToRemove: string[] = [];
-  pushUniquePath(filesToRemove, unitPath);
-  if (legacyScopedDefaultUnitPath && legacyScopedDefaultUnitPath !== unitPath) {
-    pushUniquePath(filesToRemove, legacyScopedDefaultUnitPath);
-  }
-  if (shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })) {
-    pushUniquePath(filesToRemove, legacyUnitPath);
-  }
   return {
     platform: 'linux',
-    filesToRemove,
+    filesToRemove: [
+      unitPath,
+      ...(legacyScopedDefaultUnitPath && legacyScopedDefaultUnitPath !== unitPath ? [legacyScopedDefaultUnitPath] : []),
+      ...(shouldApplyRawLegacyDefaultFollowingCleanup({ targetMode })
+        ? [legacyUnitPath]
+        : []),
+    ],
     commands: [
       { cmd: 'systemctl', args: [...prefix, 'disable', '--now', installedUnitName] },
       { cmd: 'systemctl', args: [...prefix, 'stop', installedUnitName] },
@@ -637,8 +650,17 @@ export function planDaemonServiceLifecycle(params: Readonly<{
       return {
         platform: 'darwin',
         commands: [
-          { cmd: 'launchctl', args: ['bootout', `gui/${uid}/${label}`] },
-          { cmd: 'launchctl', args: ['enable', `gui/${uid}/${label}`] },
+          // bootout may fail if service isn't currently loaded; enable is
+          // idempotent; both are pre-steps whose real purpose is to put
+          // launchd into the right state before bootstrap + kickstart. They
+          // should never block the lifecycle.
+          //
+          // bootstrap is NOT ignored — if it fails we want to surface the
+          // problem. The retry loop in apply.ts absorbs transient
+          // launchd async-teardown failures (bootout completes async so the
+          // following bootstrap can briefly fail until the teardown drains).
+          { cmd: 'launchctl', args: ['bootout', `gui/${uid}/${label}`], ignoreFailure: true },
+          { cmd: 'launchctl', args: ['enable', `gui/${uid}/${label}`], ignoreFailure: true },
           { cmd: 'launchctl', args: ['bootstrap', `gui/${uid}`, plistPath] },
           { cmd: 'launchctl', args: ['kickstart', '-k', `gui/${uid}/${label}`] },
         ],
@@ -653,10 +675,10 @@ export function planDaemonServiceLifecycle(params: Readonly<{
     if (params.action === 'status') {
       return { platform: 'win32', commands: [{ cmd: 'schtasks', args: ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'] }] };
     }
-    const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
     const action = params.action === 'start' ? 'start' : params.action === 'stop' ? 'stop' : 'restart';
+    const backend = params.mode === 'system' ? 'schtasks-system' : 'schtasks-user';
     const plan = planServiceAction({
-      backend: mode === 'system' ? 'schtasks-system' : 'schtasks-user',
+      backend,
       action,
       label: unitLabel,
       taskName,

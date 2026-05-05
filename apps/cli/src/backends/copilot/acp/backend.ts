@@ -10,7 +10,7 @@ import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent
 import { copilotTransport } from '@/backends/copilot/acp/transport';
 import type { PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 
 export interface CopilotBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;

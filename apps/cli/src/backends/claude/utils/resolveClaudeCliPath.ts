@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 
-import { resolveCliRuntimeAssetPath } from '../../../runtime/assets/resolveCliRuntimeAssetPath';
+import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 
 type ClaudeVersionUtilsModule = {
   getClaudeCliPath: () => string;

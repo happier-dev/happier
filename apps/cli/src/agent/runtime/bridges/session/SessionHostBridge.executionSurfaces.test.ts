@@ -9,8 +9,8 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendExecutionSurfaces: (...args: unknown[]) => resolveBackendExecutionSurfacesMock(...args),
 }));
 
-vi.mock('@/agent/runtime/sessionLoop/lifecycle', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agent/runtime/sessionLoop/lifecycle')>();
+vi.mock('@/agent/runtime/session/loop/lifecycle', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/runtime/session/loop/lifecycle')>();
   return {
     ...actual,
     runHostSessionRuntimePlan: (...args: unknown[]) => runHostSessionRuntimePlanMock(...args),
@@ -59,7 +59,7 @@ describe('SessionHostBridge execution surfaces', () => {
     expect(resolveBackendExecutionSurfacesMock).toHaveBeenCalledWith('acme.sample.backend');
   });
 
-  it('creates a canonical host session plan through bindings for the requested backend', async () => {
+  it('creates a canonical host session plan through runtimeCore for the requested backend', async () => {
     const createdPlan = {
       kind: 'hostSessionRuntimePlan',
       providerId: 'acme.sample.backend',
@@ -71,7 +71,7 @@ describe('SessionHostBridge execution surfaces', () => {
       provenance: 'first_party',
       diagnostics: [],
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createSessionRuntime,
         },
       },
@@ -116,7 +116,7 @@ describe('SessionHostBridge execution surfaces', () => {
         id: 'acme.sample.provider',
       },
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createSessionRuntime,
         },
         facets: {
@@ -228,7 +228,7 @@ describe('SessionHostBridge execution surfaces', () => {
       provenance: 'first_party',
       diagnostics: [],
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createSessionRuntime,
         },
       },
@@ -255,7 +255,7 @@ describe('SessionHostBridge execution surfaces', () => {
       provenance: 'first_party',
       diagnostics: [],
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createSessionRuntime,
         },
       },
@@ -264,7 +264,7 @@ describe('SessionHostBridge execution surfaces', () => {
     const bridge = new SessionHostBridge();
 
     await expect(bridge.createSessionRuntime('acme.sample.backend', { cwd: '/tmp/session' })).rejects.toThrow(
-      "Backend 'acme.sample.backend' must return HostSessionRuntimePlan from bindings.createSessionRuntime(...)",
+      "Backend 'acme.sample.backend' must return HostSessionRuntimePlan from runtimeCore.createSessionRuntime(...)",
     );
   });
 
@@ -280,7 +280,7 @@ describe('SessionHostBridge execution surfaces', () => {
       provenance: 'first_party',
       diagnostics: [],
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createSessionRuntime,
         },
       },

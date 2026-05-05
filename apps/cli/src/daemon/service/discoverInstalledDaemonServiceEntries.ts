@@ -9,7 +9,8 @@ import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 export type InstalledDaemonServiceEntry = Readonly<{
   serverId: string;
   name: string;
-  installed: boolean;
+  relayUrl?: string | null;
+  installed: true;
   path: string;
   platform: 'darwin' | 'linux' | 'win32';
   mode?: DaemonServiceMode;
@@ -326,6 +327,7 @@ function parseInstalledServiceMetadata(params: Readonly<{
 }>): Readonly<{
   serverId: string | null;
   happierHomeDir: string | null;
+  relayUrl: string | null;
   releaseChannel: PublicReleaseRingId;
   targetMode: DaemonServiceTargetMode;
 }> {
@@ -334,6 +336,7 @@ function parseInstalledServiceMetadata(params: Readonly<{
     return {
       serverId: null,
       happierHomeDir: null,
+      relayUrl: null,
       releaseChannel: params.initialReleaseChannel,
       targetMode: params.initialTargetMode,
     };
@@ -348,10 +351,12 @@ function parseInstalledServiceMetadata(params: Readonly<{
   const parsedTargetMode = readValue('HAPPIER_DAEMON_SERVICE_TARGET_MODE');
   const parsedServerId = readValue('HAPPIER_ACTIVE_SERVER_ID');
   const parsedHappierHomeDir = readValue('HAPPIER_HOME_DIR') ?? readValue('HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR');
+  const parsedRelayUrl = readValue('HAPPIER_PUBLIC_SERVER_URL') ?? readValue('HAPPIER_SERVER_URL');
   const parsedReleaseChannel = normalizeParsedReleaseChannel(readValue('HAPPIER_PUBLIC_RELEASE_CHANNEL'));
   return {
     serverId: parsedServerId,
     happierHomeDir: parsedHappierHomeDir,
+    relayUrl: parsedRelayUrl,
     releaseChannel: parsedReleaseChannel ?? params.initialReleaseChannel,
     targetMode: parsedTargetMode === 'default-following' ? 'default-following' : params.initialTargetMode,
   };
@@ -363,7 +368,6 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
   happierHomeDir: string;
   mode: DaemonServiceMode;
   serversById: Readonly<Record<string, unknown>>;
-  includeInvalidDefinitions?: boolean;
 }>): Promise<readonly InstalledDaemonServiceEntry[]> {
   const servicesDir =
     params.platform === 'linux'
@@ -378,7 +382,9 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
   try {
     fileNames = fs.readdirSync(servicesDir);
   } catch {
-    return [];
+    if (params.platform !== 'win32') {
+      return [];
+    }
   }
 
   const discoveredCandidates = [
@@ -399,7 +405,7 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
         path,
         expectedLabel: parsed.label,
       });
-      if (!definitionExists && source !== 'task' && params.includeInvalidDefinitions !== true) {
+      if (!definitionExists && source !== 'task') {
         return [];
       }
       const metadata = parseInstalledServiceMetadata({
@@ -410,15 +416,22 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
       });
       const resolvedServerId = String(metadata.serverId ?? '').trim() || parsed.serverId;
       const profile = params.serversById[resolvedServerId];
+      const profileRelayUrl = typeof profile === 'object'
+        && profile
+        && !Array.isArray(profile)
+        && typeof (profile as { serverUrl?: unknown }).serverUrl === 'string'
+          ? String((profile as { serverUrl: string }).serverUrl).trim() || null
+          : null;
       const name = metadata.targetMode === 'default-following'
-        ? 'Default background service'
+        ? 'Default automatic startup'
         : typeof profile === 'object' && profile && !Array.isArray(profile) && typeof (profile as { name?: unknown }).name === 'string'
           ? String((profile as { name: string }).name).trim() || resolvedServerId
           : resolvedServerId;
       return [{
         serverId: resolvedServerId,
         name,
-        installed: definitionExists || source === 'task',
+        relayUrl: metadata.relayUrl ?? profileRelayUrl,
+        installed: true as const,
         path,
         platform: params.platform,
         mode: params.mode,

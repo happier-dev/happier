@@ -41,7 +41,7 @@ import type { DirectSessionLinkIdentity } from '@/session/directSessions/provide
 import {
   isHostSessionRuntimePlan,
   runHostSessionRuntimePlan,
-} from '@/agent/runtime/sessionLoop/lifecycle';
+} from '@/agent/runtime/session/loop/lifecycle';
 import { throwIfPluginRuntimeStartBlocked } from '@/agent/runtime/registry/throwIfPluginRuntimeStartBlocked';
 import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/identity/publication/withHostSession';
 
@@ -56,7 +56,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       return runtime;
     }
     throw new Error(
-      `Backend '${backendId}' must return HostSessionRuntimePlan from bindings.createSessionRuntime(...)`,
+      `Backend '${backendId}' must return HostSessionRuntimePlan from runtimeCore.createSessionRuntime(...)`,
     );
   }
 
@@ -103,7 +103,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     }
     throwIfPluginRuntimeStartBlocked(resolution);
     const injectedParams = this.injectProviderMessageMetaEnricher(params, resolution.engineAdapter.messageMeta);
-    const runtime = await resolution.engineAdapter.bindings.createSessionRuntime(injectedParams);
+    const runtime = await resolution.engineAdapter.runtimeCore.createSessionRuntime(injectedParams);
     const canonicalRuntime = this.requireCanonicalSessionRuntime(runtime, backendId);
     return withHostSessionRuntimeIdentityPublication({
       plan: canonicalRuntime,

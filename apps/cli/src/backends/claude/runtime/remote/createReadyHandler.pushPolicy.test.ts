@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import { createClaudeRemoteReadyHandler } from './createReadyHandler';
@@ -18,7 +17,7 @@ describe('createClaudeRemoteReadyHandler', () => {
     vi.unstubAllGlobals();
   });
 
-  it('sends ready event but suppresses push when account settings disables ready pushes', () => {
+  it('sends ready event but suppresses push when account settings disables ready pushes', async () => {
     const settings = accountSettingsParse({
       notificationsSettingsV1: { v: 1, pushEnabled: true, ready: false, permissionRequest: true },
     });
@@ -33,16 +32,17 @@ describe('createClaudeRemoteReadyHandler', () => {
       waitingForCommandLabel: 'Claude',
       getPending: () => null,
       getQueueSize: () => 0,
-      shouldSendPush: () => shouldSendReadyPushNotification(settings),
+      accountSettings: settings,
     });
 
     onReady();
+    await Promise.resolve();
 
     expect(sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
     expect(sendToAllDevices).not.toHaveBeenCalled();
   });
 
-  it('sends push when idle and ready pushes are enabled', () => {
+  it('sends push when idle and ready pushes are enabled', async () => {
     const settings = accountSettingsParse({
       notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
     });
@@ -57,13 +57,15 @@ describe('createClaudeRemoteReadyHandler', () => {
       waitingForCommandLabel: 'Claude',
       getPending: () => null,
       getQueueSize: () => 0,
-      shouldSendPush: () => shouldSendReadyPushNotification(settings),
+      accountSettings: settings,
     });
 
     onReady();
 
     expect(sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
-    expect(sendToAllDevices).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(sendToAllDevices).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('reads session titles from class-style metadata snapshot methods without losing this binding', () => {
@@ -163,7 +165,6 @@ describe('createClaudeRemoteReadyHandler', () => {
       waitingForCommandLabel: 'Claude',
       getPending: () => null,
       getQueueSize: () => 0,
-      shouldSendPush: () => shouldSendReadyPushNotification(settings),
     });
 
     onReady();

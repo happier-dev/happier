@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { logger } from '@/ui/logger'
-import { Expo, ExpoPushMessage } from 'expo-server-sdk'
+import { Expo, type ExpoPushErrorTicket, type ExpoPushMessage } from 'expo-server-sdk'
 import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
@@ -13,7 +13,10 @@ import {
     collectExpoPushTokensMarkedUnregistered,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
+    resolvePushNotificationAndroidChannelId,
+    type LiveActivityRemoteUpdateRequestV1,
 } from '@happier-dev/protocol'
+import { configuration } from '@/configuration'
 
 export interface PushToken {
     id: string
@@ -22,6 +25,12 @@ export interface PushToken {
     createdAt: number
     updatedAt: number
 }
+
+export type PushNotificationDeliveryOptions = Readonly<{
+    sound?: ExpoPushMessage['sound']
+    priority?: ExpoPushMessage['priority']
+    androidSoundId?: string | null
+}>
 
 interface AccountActivityBadgeSnapshotResponse {
     badgeCount: number
@@ -60,10 +69,33 @@ function resolveCategoryIdFromPushData(data: Record<string, unknown> | undefined
     return undefined
 }
 
-function resolveAndroidChannelIdFromPushData(data: Record<string, unknown> | undefined): string | undefined {
+function resolveAndroidChannelIdFromPushData(
+    data: Record<string, unknown> | undefined,
+    options?: PushNotificationDeliveryOptions,
+): string | undefined {
     const kind = resolvePushRequestKindFromPushData(data)
-    if (kind === 'permission') return PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1
-    if (kind === 'user_action') return PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1
+    if (kind === 'permission') {
+        return resolvePushNotificationAndroidChannelId({
+            kind: 'permission',
+            soundId: options && Object.prototype.hasOwnProperty.call(options, 'androidSoundId')
+                ? options.androidSoundId
+                : undefined,
+        })
+    }
+    if (kind === 'user_action') {
+        return resolvePushNotificationAndroidChannelId({
+            kind: 'user_action',
+            soundId: options && Object.prototype.hasOwnProperty.call(options, 'androidSoundId')
+                ? options.androidSoundId
+                : undefined,
+        })
+    }
+    if (options && Object.prototype.hasOwnProperty.call(options, 'androidSoundId')) {
+        return resolvePushNotificationAndroidChannelId({
+            kind: 'ready',
+            soundId: options.androidSoundId,
+        })
+    }
     return undefined
 }
 
@@ -89,13 +121,19 @@ function resolveIosSubtitleFromPushData(data: Record<string, unknown> | undefine
 export class PushNotificationClient {
     private readonly token: string
     private readonly baseUrl: string
+    readonly serverId: string
     private readonly expo: Expo
     private pushTokenFetchFailureCooldownUntilMs = 0
     private didLogPushTokenFetchCooldown = false
 
-    constructor(token: string, baseUrl: string = 'https://api.happier.dev') {
+    constructor(
+        token: string,
+        baseUrl: string = 'https://api.happier.dev',
+        serverId: string = configuration.activeServerId,
+    ) {
         this.token = token
         this.baseUrl = baseUrl
+        this.serverId = serverId
         this.expo = new Expo()
     }
 
@@ -276,9 +314,9 @@ export class PushNotificationClient {
                     }
                     
                     // Log any errors but don't throw
-                    const errors = ticketChunk.filter(ticket => ticket.status === 'error')
+                    const errors = ticketChunk.filter((ticket): ticket is ExpoPushErrorTicket => ticket.status === 'error')
                     if (errors.length > 0) {
-                        logger.debug('[PUSH] Some notifications failed:', summarizeExpoPushTicketErrorsForLog(errors as any))
+                        logger.debug('[PUSH] Some notifications failed:', summarizeExpoPushTicketErrorsForLog(errors))
                     }
                     
                     // If all notifications failed, throw to trigger retry
@@ -325,9 +363,20 @@ export class PushNotificationClient {
      * @param body - Notification body
      * @param data - Additional data to send with the notification
      */
-    async sendToAllDevicesAsync(title: string, body: string, data?: Record<string, any>): Promise<void> {
+    async sendToAllDevicesAsync(
+        title: string,
+        body: string,
+        data?: Record<string, any>,
+        options?: PushNotificationDeliveryOptions,
+    ): Promise<void> {
         const debugPush = isPushDebugEnabled()
-        if (debugPush) logger.debug(`[PUSH] sendToAllDevicesAsync called with title: "${title}", body: "${body}"`);
+        if (debugPush) {
+            logger.debug('[PUSH] sendToAllDevicesAsync called', {
+                titleLength: title.length,
+                bodyLength: body.length,
+                hasData: typeof data !== 'undefined',
+            })
+        }
 
         try {
             // Fetch all push tokens
@@ -354,20 +403,26 @@ export class PushNotificationClient {
                 if (debugPush) logger.debug(`[PUSH] Creating message ${index + 1} for token`)
                 const baseUrl = normalizeClientServerUrl(token.clientServerUrl) ?? this.baseUrl
                 const categoryId = resolveCategoryIdFromPushData(data);
-                const channelId = resolveAndroidChannelIdFromPushData(data);
+                const channelId = resolveAndroidChannelIdFromPushData(data, options);
                 const subtitle = resolveIosSubtitleFromPushData(data);
-                return {
+                const message: ExpoPushMessage = {
                     to: token.token,
                     title,
                     body,
                     data: withServerUrlInPushData({ baseUrl, data }),
-                    sound: 'default',
-                    priority: 'high',
+                    priority: options?.priority ?? 'high',
                     categoryId,
                     channelId,
                     subtitle,
                     badge: badgeCount ?? undefined,
                 }
+                const sound = options && Object.prototype.hasOwnProperty.call(options, 'sound')
+                    ? options.sound
+                    : 'default'
+                if (sound !== null) {
+                    message.sound = sound
+                }
+                return message
             })
 
             // Send notifications
@@ -381,7 +436,36 @@ export class PushNotificationClient {
         }
     }
 
-    sendToAllDevices(title: string, body: string, data?: Record<string, any>): void {
-        void this.sendToAllDevicesAsync(title, body, data).catch(() => {});
+    sendToAllDevices(
+        title: string,
+        body: string,
+        data?: Record<string, any>,
+        options?: PushNotificationDeliveryOptions,
+    ): void {
+        void this.sendToAllDevicesAsync(title, body, data, options).catch(() => {});
+    }
+
+    async sendLiveActivityRemoteUpdateAsync(
+        request: LiveActivityRemoteUpdateRequestV1,
+    ): Promise<void> {
+        try {
+            const response = await axios.post(
+                `${this.baseUrl}/v1/live-activity-remote-updates`,
+                request,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    timeout: readPushFetchTokensTimeoutMs(),
+                },
+            )
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`Server returned status ${response.status}`)
+            }
+        } catch (error) {
+            logger.debug('[PUSH] Failed to send Live Activity remote update:', serializeAxiosErrorForLog(error))
+            throw error
+        }
     }
 }

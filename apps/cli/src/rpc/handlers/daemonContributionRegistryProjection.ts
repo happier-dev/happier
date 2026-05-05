@@ -1,6 +1,6 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
-import { readInstalledPluginCatalog, type PluginCatalogEntry } from '@/extensions/catalog/installed';
+import { readInstalledPluginCatalog, type PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import {
     DaemonContributionRegistryProjectionDescribeRequestSchema,
     DaemonContributionRegistryProjectionDescribeResponseSchema,
@@ -10,15 +10,15 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
     resolveMergedContributionRegistry,
-} from '@/extensions/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
-import { buildExtensionProjectionV2 } from '@/extensions/registry/projection/v2';
-import { readPluginReloadStateSnapshot } from '@/extensions/reload/state';
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
+import { readPluginReloadStateSnapshot } from '@/plugins/runtime/reload/state';
 import {
     resolveExecutablePluginRuntimeRegistry,
     type ResolvedExecutablePluginRuntimeRegistry,
-} from '@/extensions/runtime/resolveExecutablePluginRuntimeRegistry';
-import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/extensions/reload/runtimeLease';
+} from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 type RegisterOpts = Readonly<{
     resolveRegistry?: () => Promise<ResolvedContributionRegistry>;
@@ -44,7 +44,7 @@ async function defaultResolveRuntimeRegistry(opts: RegisterOpts | undefined): Pr
     const contributions = await (opts?.resolveRegistry ?? defaultResolveRegistry)();
     return await resolveExecutablePluginRuntimeRegistry({
         happyHomeDir: configuration.happyHomeDir,
-        contributions,
+        contributes: contributions,
     });
 }
 
@@ -73,8 +73,8 @@ async function resolveProjection(opts: RegisterOpts | undefined): Promise<Daemon
             resolveRuntimeRegistry: async () => await defaultResolveRuntimeRegistry(opts),
         });
     try {
-        const projection = buildExtensionProjectionV2({
-            registry: lease.registry.contributions,
+        const projection = buildPluginProjectionV2({
+            registry: lease.registry.contributes,
             generation: await (opts?.resolveGeneration ?? defaultResolveGeneration)(),
             installedPackages: await (opts?.resolveInstalledPackages ?? defaultResolveInstalledPackages)(),
             pluginDiagnosticsByPluginId: lease.registry.pluginDiagnosticsByPluginId,

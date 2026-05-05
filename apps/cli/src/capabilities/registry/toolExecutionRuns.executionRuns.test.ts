@@ -32,7 +32,7 @@ function makeCliEngineRegistryMock(
       uiDescriptors: Object.freeze([]),
       activationTargets: Object.freeze([]),
       hookRegistrations: Object.freeze([]),
-      runtimeAdaptersByBackendId: new Map(),
+      runtimeCoreHooksByBackendId: new Map(),
       catalogEntriesById: {},
       providerDefinitionsById: new Map(),
       backendDefinitionsById: new Map(),
@@ -210,7 +210,7 @@ describe('executionRunsCapability', () => {
     }
   });
 
-  it('marks plugin backends with backend-owned bindings available', async () => {
+  it('marks plugin backends with backend-owned runtimeCore available', async () => {
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
       backendDefinitionsById: new Map([
         [
@@ -221,8 +221,8 @@ describe('executionRunsCapability', () => {
             provenance: 'external',
             source: { kind: 'path' },
             definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
-            getBindings: async () => async () => ({
-              bindings: {
+            getRuntimeCore: async () => async () => ({
+              runtimeCore: {
                 createSessionRuntime: async () => {
                   throw new Error('not reached');
                 },

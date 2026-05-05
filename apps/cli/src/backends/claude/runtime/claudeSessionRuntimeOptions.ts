@@ -1,6 +1,6 @@
 import type { AccountSettings } from '@happier-dev/protocol';
 
-import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type { PermissionMode } from './claudeEnhancedMode';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
@@ -8,10 +8,6 @@ import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFla
 export type JsRuntime = 'node' | 'bun';
 export type ClaudeRuntimeMode = 'terminal' | 'remote';
 export type ClaudeRuntimeStartingModeInput = ClaudeRuntimeMode | 'local';
-
-export function normalizeClaudeRuntimeStartingMode(mode: unknown): ClaudeRuntimeMode {
-    return mode === 'remote' ? 'remote' : 'terminal';
-}
 
 export function mapClaudeRuntimeModeToSessionMode(mode: ClaudeRuntimeMode): 'local' | 'remote' {
     return mode === 'remote' ? 'remote' : 'local';

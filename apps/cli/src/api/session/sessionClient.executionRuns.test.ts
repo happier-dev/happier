@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from './voiceAgentRunMetadataV1';
+import { registerSessionClientRuntimeHandlers } from './client/executionRuns/registerSessionClientRuntimeHandlers';
+import { ApiSessionClient } from './sessionClient';
 
 const sessionSocketStubState = vi.hoisted(() => ({
   sessionSocketStub: null as any,
@@ -110,33 +113,46 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     sessionSocketStubState.executionRunHandlerContext = null;
   });
 
-  it('forwards handler-resolved account settings into the execution-run backend factory', async () => {
-    const { ApiSessionClient } = await import('./sessionClient');
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
+  it('exposes the canonical permission request store provider to execution-run handlers', async () => {
+    let requestStore: unknown = null;
 
-    expect(sessionSocketStubState.executionRunHandlerContext).toBeTruthy();
-    const createBackend = sessionSocketStubState.executionRunHandlerContext.createBackend as (args: Record<string, unknown>) => unknown;
-    const accountSettings = { backendEnabledByTargetKey: { 'acpBackend:review-bot': false } };
-
-    createBackend({
-      backendId: 'customAcp',
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-      permissionMode: 'read_only',
-      accountSettings,
+    registerSessionClientRuntimeHandlers({
+      rpcHandlerManager: new RpcHandlerManager({
+        scopePrefix: 's1',
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain',
+        logger: () => undefined,
+      }),
+      metadataPath: '/tmp/project',
+      metadata: createTestMetadata({ path: '/tmp/project' }),
+      sessionId: 's1',
+      getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
+      enqueueSessionUserMessage: vi.fn(),
+      sendUserTextMessage: vi.fn(),
+      sendAgentMessage: vi.fn(),
+      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageEphemeral: vi.fn(),
+      getAgentStateRequestStore: () => requestStore as never,
+      persistVoiceAgentRunMetadataFromPublicRun: vi.fn(),
+      socketEmitExecutionRunUpdated: vi.fn(),
     });
 
-    expect(sessionSocketStubState.createExecutionRunRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
-      backendId: 'customAcp',
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-      permissionMode: 'read_only',
-      accountSettings,
-    }));
+    expect(sessionSocketStubState.executionRunHandlerContext).toBeTruthy();
+    const getPermissionRequestStore =
+      sessionSocketStubState.executionRunHandlerContext.getPermissionRequestStore as () => unknown;
+    expect(getPermissionRequestStore()).toBeNull();
 
-    await client.close();
+    requestStore = {
+      publishRequest: vi.fn(),
+      registerResponseTargetHandler: vi.fn(),
+    };
+
+    expect(getPermissionRequestStore()).toBe(requestStore);
   });
 
   it('derives the execution-run parent provider from runtimeDescriptorV1 when flavor is absent', async () => {
-    const { ApiSessionClient } = await import('./sessionClient');
     const metadata = createTestMetadata({
       path: '/tmp/project',
       flavor: undefined,
@@ -159,7 +175,6 @@ describe('ApiSessionClient execution-run backend wiring', () => {
   });
 
   it('exposes shared execution-run service helpers with the current session transport context', async () => {
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
 
     await client.executionRuns.start({ intent: 'review' });
@@ -288,7 +303,6 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       },
     });
 
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', session);
     const callback = sessionSocketStubState.executionRunHandlerContext.onExecutionRunPublicStateUpdated as
       | ((run: Record<string, unknown>) => void)
@@ -343,7 +357,6 @@ describe('ApiSessionClient execution-run backend wiring', () => {
   });
 
   it('uses deterministic localIds for committed persistent voice transcript rows', async () => {
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
 
     const transcriptWriter = sessionSocketStubState.executionRunHandlerContext.transcriptWriter as

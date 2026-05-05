@@ -1,5 +1,7 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+  type ActionExecuteResult,
+  type ActionId,
   DirectSessionAttachRequestSchema,
   DirectSessionDetachRequestSchema,
   DirectSessionFollowPolicySetRequestSchema,
@@ -24,6 +26,14 @@ import {
   type DirectTranscriptReadAfterResponse,
   type DirectSessionTranscriptDeltaEphemeral,
 } from '@happier-dev/protocol';
+import {
+  ExternalSessionTakeoverInputV1Schema,
+  ExternalSessionTakeoverResultV1Schema,
+  mapDirectSessionsTakeoverPersistToExternalSessionTakeoverInputV1,
+  mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1,
+  type ExternalSessionTakeoverErrorCodeV1,
+  type ExternalSessionTakeoverResultV1,
+} from '@happier-dev/protocol/sessions';
 
 import { readCredentials } from '@/persistence';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
@@ -42,17 +52,96 @@ import { resolveDirectTakeoverSpawnOptions } from '@/api/directSessions/takeover
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
+import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 type DirectSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'provider_unavailable' | 'internal_error';
+type ExternalSessionTakeoverActionInput = Readonly<{
+  linkedSessionId: string;
+  targetRuntimeMode: 'terminal' | 'remote';
+  storageMode: 'external-linked' | 'persisted';
+  forceStop?: boolean;
+  machineId?: string;
+}>;
+type DirectSessionsRpcHandler<TResponse> = (raw: unknown) => Promise<TResponse>;
+type DirectSessionsActionResultMapper<TResponse> = (result: unknown) => TResponse;
 
 function err(
   errorCode: DirectSessionsErrorCode,
   error?: string,
 ): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
   return { ok: false, errorCode, error: typeof error === 'string' && error.trim() ? error : errorCode };
+}
+
+function mapActionFailureToDirectSessionsError(
+  result: Extract<ActionExecuteResult, { ok: false }>,
+): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
+  const errorCode = result.errorCode === 'machine_offline'
+    ? 'machine_offline'
+    : result.errorCode === 'provider_unavailable'
+      ? 'provider_unavailable'
+      : result.errorCode === 'invalid_request' || result.errorCode === 'invalid_parameters'
+        ? 'invalid_request'
+        : 'internal_error';
+  return err(errorCode, result.error);
+}
+
+function mapExternalTakeoverErrorCodeToDirectSessionsErrorCode(
+  errorCode: ExternalSessionTakeoverErrorCodeV1,
+  error?: string,
+): DirectSessionsErrorCode {
+  if (errorCode === 'machine_offline') return 'machine_offline';
+  if (errorCode === 'transcript_import_failed' || errorCode === 'spawn_failed') return 'internal_error';
+  if (errorCode === 'capability_unsupported') {
+    return 'provider_unavailable';
+  }
+  if (
+    errorCode === 'takeover_not_available'
+    && (error === 'takeover_not_supported' || error === 'not_authenticated')
+  ) {
+    return 'provider_unavailable';
+  }
+  if (errorCode === 'invalid_external_source' && error === 'session_metadata_unavailable') {
+    return 'provider_unavailable';
+  }
+  return 'invalid_request';
+}
+
+function mapExternalTakeoverFailureToDirectSessionsError(
+  result: Extract<ExternalSessionTakeoverResultV1, { ok: false }>,
+): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
+  return err(mapExternalTakeoverErrorCodeToDirectSessionsErrorCode(result.errorCode, result.error), result.error);
+}
+
+function mapLinkedDirectSessionErrorToExternalTakeoverError(
+  errorCode: 'invalid_request' | 'provider_unavailable',
+  error: string,
+): ExternalSessionTakeoverResultV1 {
+  const externalErrorCode: ExternalSessionTakeoverErrorCodeV1 =
+    errorCode === 'invalid_request' && error === 'session_not_found'
+      ? 'session_not_found'
+      : 'invalid_external_source';
+  return { ok: false, errorCode: externalErrorCode, error };
+}
+
+function mapExternalTakeoverResultToDirectTakeoverResponse(
+  value: unknown,
+): DirectSessionTakeoverResponse {
+  const parsed = ExternalSessionTakeoverResultV1Schema.safeParse(value);
+  if (!parsed.success) return err('internal_error', 'takeover_action_result_invalid') satisfies DirectSessionTakeoverResponse;
+  if (!parsed.data.ok) return mapExternalTakeoverFailureToDirectSessionsError(parsed.data) satisfies DirectSessionTakeoverResponse;
+  return { ok: true } satisfies DirectSessionTakeoverResponse;
+}
+
+function mapExternalTakeoverResultToDirectTakeoverPersistResponse(
+  value: unknown,
+): DirectSessionTakeoverPersistResponse {
+  const parsed = ExternalSessionTakeoverResultV1Schema.safeParse(value);
+  if (!parsed.success) return err('internal_error', 'takeover_action_result_invalid') satisfies DirectSessionTakeoverPersistResponse;
+  if (!parsed.data.ok) return mapExternalTakeoverFailureToDirectSessionsError(parsed.data) satisfies DirectSessionTakeoverPersistResponse;
+  return { ok: true, converted: parsed.data.converted } satisfies DirectSessionTakeoverPersistResponse;
 }
 
 function stripErrorMessageFromStack(stack: string | undefined): string | undefined {
@@ -156,6 +245,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  actionExecutor?: RpcActionExecutor;
 }>): void {
   const { rpcHandlerManager, emitDirectSessionTranscriptUpdate } = params;
   const takeoverReadinessCacheMs = resolveTakeoverReadinessCacheMs();
@@ -185,7 +275,38 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     takeoverReadinessBySessionId.delete(sessionId);
   };
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, async (raw: unknown) => {
+  const registerExternalSessionActionBackedRpcHandler = <TResponse>(
+    rpcMethod: string,
+    actionId: ActionId,
+    directHandler: DirectSessionsRpcHandler<TResponse>,
+    mapResult?: DirectSessionsActionResultMapper<TResponse>,
+  ): void => {
+    rpcHandlerManager.registerHandler(rpcMethod, async (raw: unknown) => {
+      const localExecutor: RpcActionExecutor = {
+        execute: async (requestedActionId) => {
+          if (requestedActionId !== actionId) {
+            return {
+              ok: false,
+              errorCode: 'unsupported_action',
+              error: `unsupported_action:${requestedActionId}`,
+            };
+          }
+          return { ok: true, result: await directHandler(raw) };
+        },
+      };
+      const dispatched = await dispatchActionFromRpc({
+        actionId,
+        input: raw,
+        executor: params.actionExecutor ?? localExecutor,
+      });
+      if (!dispatched.ok) {
+        return mapActionFailureToDirectSessionsError(dispatched) as TResponse;
+      }
+      return mapResult ? mapResult(dispatched.result) : dispatched.result as TResponse;
+    });
+  };
+
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, 'sessions.external.attach', async (raw: unknown) => {
     const parsed = DirectSessionAttachRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionAttachResponse;
     const validatedSource = await validateDirectMachineSource({
@@ -224,12 +345,12 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         expiresAtMs: attached.expiresAtMs,
         renewed: attached.renewed,
       } satisfies DirectSessionAttachResponse;
-	    } catch (error) {
-	      return internalErrorResponse('direct_session_attach', error, 'direct_session_attach_failed') satisfies DirectSessionAttachResponse;
-	    }
-	  });
+    } catch (error) {
+      return internalErrorResponse('direct_session_attach', error, 'direct_session_attach_failed') satisfies DirectSessionAttachResponse;
+    }
+  });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH, async (raw: unknown) => {
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH, 'sessions.external.detach', async (raw: unknown) => {
     const parsed = DirectSessionDetachRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionDetachResponse;
     const detached = await followLeaseManager.detach({
@@ -242,7 +363,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     } satisfies DirectSessionDetachResponse;
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET, async (raw: unknown) => {
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET, 'sessions.external.followPolicy.set', async (raw: unknown) => {
     const parsed = DirectSessionFollowPolicySetRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionFollowPolicySetResponse;
     const validatedSource = await validateDirectMachineSource({
@@ -347,16 +468,16 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         leaseActive: followLeaseManager.hasBackgroundFollowLease(parsed.data.sessionId) || followLeaseManager.countActiveLeases(parsed.data.sessionId) > 0,
         updatedAtMs,
       } satisfies DirectSessionFollowPolicySetResponse;
-	    } catch (error) {
-	      return internalErrorResponse(
-	        'direct_session_follow_policy_set',
-	        error,
-	        'follow_policy_set_failed',
-	      ) satisfies DirectSessionFollowPolicySetResponse;
-	    }
-	  });
+    } catch (error) {
+      return internalErrorResponse(
+        'direct_session_follow_policy_set',
+        error,
+        'follow_policy_set_failed',
+      ) satisfies DirectSessionFollowPolicySetResponse;
+    }
+  });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, async (raw: unknown) => {
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, 'sessions.external.candidates.list', async (raw: unknown) => {
     const parsed = DirectSessionsCandidatesListRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionsCandidatesListResponse;
     try {
@@ -382,7 +503,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     }
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE, async (raw: unknown) => {
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE, 'sessions.external.link.ensure', async (raw: unknown) => {
     const parsed = DirectSessionLinkEnsureRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionLinkEnsureResponse;
     const validatedSource = await validateDirectMachineSource({
@@ -413,16 +534,16 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         source: validatedSource.source,
       });
       return { ok: true, sessionId: res.sessionId, created: res.created } satisfies DirectSessionLinkEnsureResponse;
-	    } catch (error) {
-	      return internalErrorResponse(
-	        'direct_session_link_ensure',
-	        error,
-	        'direct_session_link_ensure_failed',
-	      ) satisfies DirectSessionLinkEnsureResponse;
-	    }
-	  });
+    } catch (error) {
+      return internalErrorResponse(
+        'direct_session_link_ensure',
+        error,
+        'direct_session_link_ensure_failed',
+      ) satisfies DirectSessionLinkEnsureResponse;
+    }
+  });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET, async (raw: unknown) => {
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET, 'sessions.external.status.get', async (raw: unknown) => {
     const parsed = DirectSessionStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionStatusGetResponse;
     const validatedSource = await validateDirectMachineSource({
@@ -522,7 +643,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     } satisfies DirectSessionStatusGetResponse;
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE, async (raw: unknown) => {
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE, 'sessions.external.transcript.page', async (raw: unknown) => {
     const parsed = DirectTranscriptPageRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectTranscriptPageResponse;
     const validatedSource = await validateDirectMachineSource({
@@ -555,16 +676,16 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         hasMore: res.hasMore,
         truncated: res.truncated,
       } satisfies DirectTranscriptPageResponse;
-	    } catch (error) {
-	      return internalErrorResponse(
-	        'direct_session_transcript_page',
-	        error,
-	        'direct_session_transcript_page_failed',
-	      ) satisfies DirectTranscriptPageResponse;
-	    }
-	  });
+    } catch (error) {
+      return internalErrorResponse(
+        'direct_session_transcript_page',
+        error,
+        'direct_session_transcript_page_failed',
+      ) satisfies DirectTranscriptPageResponse;
+    }
+  });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER, async (raw: unknown) => {
+  registerExternalSessionActionBackedRpcHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER, 'sessions.external.transcript.readAfter', async (raw: unknown) => {
     const parsed = DirectTranscriptReadAfterRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectTranscriptReadAfterResponse;
     const validatedSource = await validateDirectMachineSource({
@@ -590,35 +711,47 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         maxItems,
       });
       return { ok: true, items: res.items, nextCursor: res.nextCursor, truncated: res.truncated } satisfies DirectTranscriptReadAfterResponse;
-	    } catch (error) {
-	      return internalErrorResponse(
-	        'direct_session_transcript_read_after',
-	        error,
-	        'direct_session_transcript_read_after_failed',
-	      ) satisfies DirectTranscriptReadAfterResponse;
-	    }
-	  });
-
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER, async (raw: unknown) => {
-    const parsed = DirectSessionTakeoverRequestSchema.safeParse(raw);
-    if (!parsed.success) return err('invalid_request') satisfies DirectSessionTakeoverResponse;
-    if (!params.spawnSession || !params.stopSession) {
-      return err('provider_unavailable', 'takeover_not_supported') satisfies DirectSessionTakeoverResponse;
+    } catch (error) {
+      return internalErrorResponse(
+        'direct_session_transcript_read_after',
+        error,
+        'direct_session_transcript_read_after_failed',
+      ) satisfies DirectTranscriptReadAfterResponse;
     }
-    invalidateTakeoverReadiness(parsed.data.sessionId);
+  });
+
+  const executeExternalSessionTakeoverAction = async (raw: unknown): Promise<ExternalSessionTakeoverResultV1> => {
+    const parsed = ExternalSessionTakeoverInputV1Schema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, errorCode: 'takeover_not_available', error: 'invalid_request' };
+    }
+    const actionInput = parsed.data as ExternalSessionTakeoverActionInput;
+    const machineId = typeof actionInput.machineId === 'string' && actionInput.machineId.trim().length > 0
+      ? actionInput.machineId.trim()
+      : null;
+    if (!machineId) {
+      return { ok: false, errorCode: 'machine_offline', error: 'machine_id_required' };
+    }
+    if (actionInput.targetRuntimeMode !== 'terminal') {
+      return { ok: false, errorCode: 'capability_unsupported', error: 'target_runtime_mode_unsupported' };
+    }
+    if (!params.spawnSession || !params.stopSession) {
+      return { ok: false, errorCode: 'capability_unsupported', error: 'takeover_not_supported' };
+    }
+    invalidateTakeoverReadiness(actionInput.linkedSessionId);
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
-      return err('provider_unavailable', 'not_authenticated') satisfies DirectSessionTakeoverResponse;
+      return { ok: false, errorCode: 'takeover_not_available', error: 'not_authenticated' };
     }
 
     const linked = await loadLinkedDirectSession({
       credentials,
-      sessionId: parsed.data.sessionId,
-      machineId: parsed.data.machineId,
+      sessionId: actionInput.linkedSessionId,
+      machineId,
     });
     if (!linked.ok) {
-      return err(linked.errorCode, linked.error) satisfies DirectSessionTakeoverResponse;
+      return mapLinkedDirectSessionErrorToExternalTakeoverError(linked.errorCode, linked.error);
     }
     const validatedSource = await validateDirectMachineSource({
       providerId: linked.session.providerId,
@@ -626,7 +759,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
       env: process.env,
     });
     if (!validatedSource.ok) {
-      return err('invalid_request', validatedSource.error) satisfies DirectSessionTakeoverResponse;
+      return { ok: false, errorCode: 'invalid_external_source', error: validatedSource.error };
     }
     const validatedLinkedSession = {
       ...linked.session,
@@ -641,149 +774,156 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
       isPidAlive,
     });
 
-    if (trustedOwner && trustedOwner.happySessionId === parsed.data.sessionId) {
-      return { ok: true } satisfies DirectSessionTakeoverResponse;
+    if (trustedOwner && trustedOwner.happySessionId === actionInput.linkedSessionId && actionInput.storageMode === 'external-linked') {
+      return {
+        ok: true,
+        sessionId: actionInput.linkedSessionId,
+        targetRuntimeMode: actionInput.targetRuntimeMode,
+        storageMode: actionInput.storageMode,
+        converted: false,
+      };
     }
 
-    if (trustedOwner && parsed.data.forceStop !== true) {
-      return err('invalid_request', 'force_stop_required') satisfies DirectSessionTakeoverResponse;
+    if (trustedOwner && trustedOwner.happySessionId !== actionInput.linkedSessionId && actionInput.forceStop !== true) {
+      return {
+        ok: false,
+        errorCode: 'force_stop_required',
+        error: 'force_stop_required',
+        trustedPid: trustedOwner.pid,
+      };
     }
 
-    if (trustedOwner && parsed.data.forceStop === true) {
+    if (trustedOwner && trustedOwner.happySessionId !== actionInput.linkedSessionId && actionInput.forceStop === true) {
       const stopped = await params.stopSession(trustedOwner.happySessionId);
       if (!stopped) {
-        return err('internal_error', 'trusted_process_stop_failed') satisfies DirectSessionTakeoverResponse;
+        return { ok: false, errorCode: 'spawn_failed', error: 'trusted_process_stop_failed' };
       }
     }
 
     const spawnOptions = await resolveDirectTakeoverSpawnOptions({
       linked: validatedLinkedSession,
-      sessionId: parsed.data.sessionId,
+      sessionId: actionInput.linkedSessionId,
     });
     if (!spawnOptions) {
-      return err('invalid_request', 'direct_session_directory_unavailable') satisfies DirectSessionTakeoverResponse;
+      return { ok: false, errorCode: 'takeover_not_available', error: 'direct_session_directory_unavailable' };
     }
 
-    const spawnResult = await params.spawnSession(spawnOptions);
+    if (actionInput.storageMode === 'persisted') {
+      try {
+        await importDirectSessionTranscript({
+          linked: validatedLinkedSession,
+          credentials,
+          sessionId: actionInput.linkedSessionId,
+        });
+      } catch (error) {
+        logDirectSessionsInternalError('external_session_takeover.import_transcript', error);
+        return { ok: false, errorCode: 'transcript_import_failed', error: 'direct_session_import_failed' };
+      }
+    }
+
+    const spawnResult = await params.spawnSession({
+      ...spawnOptions,
+      ...(actionInput.storageMode === 'persisted' ? { transcriptStorage: 'persisted' as const } : {}),
+    });
     if (spawnResult.type !== 'success') {
-      return err(
-        'internal_error',
-        spawnResult.type === 'error' ? spawnResult.errorMessage : 'directory_approval_required',
-      ) satisfies DirectSessionTakeoverResponse;
+      return {
+        ok: false,
+        errorCode: 'spawn_failed',
+        error: spawnResult.type === 'error' ? spawnResult.errorMessage : 'directory_approval_required',
+      };
     }
 
-    return { ok: true } satisfies DirectSessionTakeoverResponse;
+    if (actionInput.storageMode === 'persisted') {
+      try {
+        await updateSessionMetadataWithRetry({
+          token: credentials.token,
+          credentials,
+          sessionId: actionInput.linkedSessionId,
+          rawSession: linked.session.rawSession,
+          updater: (current) => {
+            const next: Record<string, unknown> = { ...current };
+            delete next.directSessionV1;
+            if (typeof next.path !== 'string' || !next.path.trim()) {
+              next.path = spawnOptions.directory;
+            }
+            next.externalHistoryImportV1 = {
+              v: 1,
+              providerId: validatedLinkedSession.providerId,
+              remoteSessionId: validatedLinkedSession.remoteSessionId,
+              importedAtMs: Date.now(),
+              source: validatedLinkedSession.source,
+            };
+            return next;
+          },
+        });
+      } catch (error) {
+        logDirectSessionsInternalError('external_session_takeover.persist_metadata', error);
+        return { ok: false, errorCode: 'transcript_import_failed', error: 'direct_session_persist_failed' };
+      }
+    }
+
+    return {
+      ok: true,
+      sessionId: actionInput.linkedSessionId,
+      targetRuntimeMode: actionInput.targetRuntimeMode,
+      storageMode: actionInput.storageMode,
+      converted: actionInput.storageMode === 'persisted',
+    };
+  };
+
+  const dispatchExternalSessionTakeoverAction = async (
+    actionInput: ExternalSessionTakeoverActionInput,
+  ): Promise<ActionExecuteResult> => {
+    const localExecutor: RpcActionExecutor = {
+      execute: async (requestedActionId, input) => {
+        if (requestedActionId !== 'sessions.external.takeover') {
+          return {
+            ok: false,
+            errorCode: 'unsupported_action',
+            error: `unsupported_action:${requestedActionId}`,
+          };
+        }
+        return { ok: true, result: await executeExternalSessionTakeoverAction(input) };
+      },
+    };
+    return await dispatchActionFromRpc({
+      actionId: 'sessions.external.takeover',
+      input: actionInput,
+      executor: params.actionExecutor ?? localExecutor,
+    });
+  };
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER, async (raw: unknown) => {
+    const parsed = DirectSessionTakeoverRequestSchema.safeParse(raw);
+    if (!parsed.success) return err('invalid_request') satisfies DirectSessionTakeoverResponse;
+    const actionInput = {
+      ...mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1({
+        linkedSessionId: parsed.data.sessionId,
+        ...(parsed.data.forceStop === undefined ? {} : { forceStop: parsed.data.forceStop }),
+      }),
+      machineId: parsed.data.machineId,
+    };
+    const dispatched = await dispatchExternalSessionTakeoverAction(actionInput);
+    if (!dispatched.ok) {
+      return mapActionFailureToDirectSessionsError(dispatched) satisfies DirectSessionTakeoverResponse;
+    }
+    return mapExternalTakeoverResultToDirectTakeoverResponse(dispatched.result);
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST, async (raw: unknown) => {
     const parsed = DirectSessionTakeoverPersistRequestSchema.safeParse(raw);
     if (!parsed.success) return err('invalid_request') satisfies DirectSessionTakeoverPersistResponse;
-    if (!params.spawnSession || !params.stopSession) {
-      return err('provider_unavailable', 'takeover_not_supported') satisfies DirectSessionTakeoverPersistResponse;
-    }
-    invalidateTakeoverReadiness(parsed.data.sessionId);
-
-    const credentials = await readCredentials().catch(() => null);
-    if (!credentials) {
-      return err('provider_unavailable', 'not_authenticated') satisfies DirectSessionTakeoverPersistResponse;
-    }
-
-    const linked = await loadLinkedDirectSession({
-      credentials,
-      sessionId: parsed.data.sessionId,
+    const actionInput = {
+      ...mapDirectSessionsTakeoverPersistToExternalSessionTakeoverInputV1({
+        linkedSessionId: parsed.data.sessionId,
+        ...(parsed.data.forceStop === undefined ? {} : { forceStop: parsed.data.forceStop }),
+      }),
       machineId: parsed.data.machineId,
-    });
-    if (!linked.ok) {
-      return err(linked.errorCode, linked.error) satisfies DirectSessionTakeoverPersistResponse;
-    }
-    const validatedSource = await validateDirectMachineSource({
-      providerId: linked.session.providerId,
-      source: linked.session.source,
-      env: process.env,
-    });
-    if (!validatedSource.ok) {
-      return err('invalid_request', validatedSource.error) satisfies DirectSessionTakeoverPersistResponse;
-    }
-    const validatedLinkedSession = {
-      ...linked.session,
-      source: validatedSource.source,
     };
-
-    const markers = await listSessionMarkers().catch(() => []);
-    const trustedOwner = findTrustedDirectSessionOwner({
-      markers,
-      providerId: validatedLinkedSession.providerId,
-      remoteSessionId: validatedLinkedSession.remoteSessionId,
-      isPidAlive,
-    });
-
-    if (trustedOwner && trustedOwner.happySessionId !== parsed.data.sessionId && parsed.data.forceStop !== true) {
-      return err('invalid_request', 'force_stop_required') satisfies DirectSessionTakeoverPersistResponse;
+    const dispatched = await dispatchExternalSessionTakeoverAction(actionInput);
+    if (!dispatched.ok) {
+      return mapActionFailureToDirectSessionsError(dispatched) satisfies DirectSessionTakeoverPersistResponse;
     }
-
-    if (trustedOwner && trustedOwner.happySessionId !== parsed.data.sessionId && parsed.data.forceStop === true) {
-      const stopped = await params.stopSession(trustedOwner.happySessionId);
-      if (!stopped) {
-        return err('internal_error', 'trusted_process_stop_failed') satisfies DirectSessionTakeoverPersistResponse;
-      }
-    }
-
-    const directSpawnOptions = await resolveDirectTakeoverSpawnOptions({
-      linked: validatedLinkedSession,
-      sessionId: parsed.data.sessionId,
-    });
-    if (!directSpawnOptions) {
-      return err('invalid_request', 'direct_session_directory_unavailable') satisfies DirectSessionTakeoverPersistResponse;
-    }
-
-    try {
-      await importDirectSessionTranscript({
-        linked: validatedLinkedSession,
-        credentials,
-        sessionId: parsed.data.sessionId,
-      });
-	    } catch (error) {
-	      return internalErrorResponse(
-	        'direct_session_takeover_persist.import_transcript',
-	        error,
-	        'direct_session_import_failed',
-	      ) satisfies DirectSessionTakeoverPersistResponse;
-	    }
-
-    const persistedSpawnOptions: SpawnSessionOptions = {
-      ...directSpawnOptions,
-      transcriptStorage: 'persisted',
-    };
-    const spawnResult = await params.spawnSession(persistedSpawnOptions);
-    if (spawnResult.type !== 'success') {
-      return err(
-        'internal_error',
-        spawnResult.type === 'error' ? spawnResult.errorMessage : 'directory_approval_required',
-      ) satisfies DirectSessionTakeoverPersistResponse;
-    }
-
-    await updateSessionMetadataWithRetry({
-      token: credentials.token,
-      credentials,
-      sessionId: parsed.data.sessionId,
-      rawSession: linked.session.rawSession,
-      updater: (current) => {
-        const next: Record<string, unknown> = { ...current };
-        delete next.directSessionV1;
-        if (typeof next.path !== 'string' || !next.path.trim()) {
-          next.path = directSpawnOptions.directory;
-        }
-        next.externalHistoryImportV1 = {
-          v: 1,
-          providerId: validatedLinkedSession.providerId,
-          remoteSessionId: validatedLinkedSession.remoteSessionId,
-          importedAtMs: Date.now(),
-          source: validatedLinkedSession.source,
-        };
-        return next;
-      },
-    });
-
-    return { ok: true, converted: true } satisfies DirectSessionTakeoverPersistResponse;
+    return mapExternalTakeoverResultToDirectTakeoverPersistResponse(dispatched.result);
   });
 }

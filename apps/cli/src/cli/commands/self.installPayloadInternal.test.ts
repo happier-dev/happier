@@ -2,12 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
 
-const { installVersionedPayloadMock } = vi.hoisted(() => ({
+const {
+  installVersionedPayloadMock,
+  quiesceInstalledCliWindowsPayloadOwnersMock,
+} = vi.hoisted(() => ({
   installVersionedPayloadMock: vi.fn(async () => ({
     currentVersionId: '1.2.3' as string,
     previousVersionId: null as string | null,
     hadLegacyCurrentInstallWithoutVersionMarkers: false,
   })),
+  quiesceInstalledCliWindowsPayloadOwnersMock: vi.fn<(params: unknown) => Promise<void>>(async () => undefined),
 }));
 const { maybeRunVersionGatedRuntimeMigrationMock } = vi.hoisted(() => ({
   maybeRunVersionGatedRuntimeMigrationMock: vi.fn<(params: unknown) => Promise<boolean>>(async () => false),
@@ -25,11 +29,16 @@ vi.mock('./self/maybeRunVersionGatedRuntimeMigration', () => ({
   maybeRunVersionGatedRuntimeMigration: (params: unknown) => maybeRunVersionGatedRuntimeMigrationMock(params),
 }));
 
+vi.mock('@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners', () => ({
+  quiesceInstalledCliWindowsPayloadOwners: (params: unknown) => quiesceInstalledCliWindowsPayloadOwnersMock(params),
+}));
+
 describe('happier self __install-payload', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.resetModules();
     maybeRunVersionGatedRuntimeMigrationMock.mockReset();
+    quiesceInstalledCliWindowsPayloadOwnersMock.mockReset();
   });
 
   it('promotes an extracted first-party payload through the shared runtime installer', async () => {
@@ -50,6 +59,13 @@ describe('happier self __install-payload', () => {
         processEnv: process.env,
         versionId: '1.2.3',
       });
+      expect(quiesceInstalledCliWindowsPayloadOwnersMock).toHaveBeenCalledWith({
+        channel: 'stable',
+        processEnv: process.env,
+      });
+      expect(quiesceInstalledCliWindowsPayloadOwnersMock.mock.invocationCallOrder[0]).toBeLessThan(
+        installVersionedPayloadMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+      );
     } finally {
       logSpy.mockRestore();
     }

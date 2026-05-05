@@ -13,6 +13,13 @@ function createCredentialsStub(): Credentials {
   };
 }
 
+function createCredentialsStubWithToken(token: string): Credentials {
+  return {
+    ...createCredentialsStub(),
+    token,
+  };
+}
+
 function mutableConfigurationForTest(): {
   serverUrl: string;
   apiServerUrl: string;
@@ -171,6 +178,58 @@ describe('bootstrapAccountSettingsContext', () => {
 
     expect(res.source).toBe('cache');
     expect(fetchFromServer).not.toHaveBeenCalled();
+  });
+
+  it('resolves the disk cache path from the authenticated credentials', async () => {
+    const nowMs = 1_000_000;
+    const tokenA = 'token-account-a';
+    const tokenB = 'token-account-b';
+    const resolveCachePath = vi.fn((credentials?: Credentials) => `/tmp/server/${credentials?.token ?? 'missing'}/account.settings.cache.json`);
+
+    await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStubWithToken(tokenA),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath,
+        readCache: async () => ({
+          version: 1,
+          cachedAt: nowMs - 1_000,
+          settingsCiphertext: 'cipher-a',
+          settingsVersion: 9,
+        }),
+        decryptCiphertext: async () => ({ notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true } }),
+        fetchFromServer: async () => ({ settingsCiphertext: null, settingsVersion: 999 }),
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    });
+
+    await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStubWithToken(tokenB),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath,
+        readCache: async () => ({
+          version: 1,
+          cachedAt: nowMs - 1_000,
+          settingsCiphertext: 'cipher-b',
+          settingsVersion: 10,
+        }),
+        decryptCiphertext: async () => ({ notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true } }),
+        fetchFromServer: async () => ({ settingsCiphertext: null, settingsVersion: 999 }),
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(resolveCachePath).toHaveBeenCalledWith(expect.objectContaining({ token: tokenA }));
+    expect(resolveCachePath).toHaveBeenCalledWith(expect.objectContaining({ token: tokenB }));
   });
 
   it('forces Codex appServer default for schemaVersion < 6', async () => {

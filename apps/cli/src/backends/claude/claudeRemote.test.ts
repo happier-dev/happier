@@ -36,7 +36,7 @@ vi.mock('./utils/remoteSystemPrompt', () => ({
   getClaudeRemoteSystemPrompt: () => 'REMOTE_PROMPT',
 }));
 
-vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
   ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
 }));
 

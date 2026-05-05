@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentBackend, SessionId, StartSessionResult } from '@/agent/core/AgentBackend';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
-import { resumeBackendControllerForResumableRun } from './resumeBackendController';
+import { resumeBackendControllerForResumableRun } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 
 describe('resumeBackendControllerForResumableRun', () => {
   it('resumes using loadSession when loadSessionWithReplayCapture is unavailable', async () => {

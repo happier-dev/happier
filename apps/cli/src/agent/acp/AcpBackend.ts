@@ -4,6 +4,10 @@
  * This module provides a universal backend implementation using the official
  * @agentclientprotocol/sdk. Agent-specific behavior (timeouts, filtering,
  * error handling) is delegated to TransportHandler implementations.
+ *
+ * A.15.2 marker: runtime definition normalization belongs in
+ * agent/acp/runtime/definition; this file remains the low-level ACP process
+ * client and must not regain catalog/configured/plugin normalization logic.
  */
 
 import type { ChildProcess } from 'node:child_process';
@@ -167,6 +171,9 @@ export interface AcpBackendOptions {
 
   /** Optional permission handler for tool approval */
   permissionHandler?: AcpPermissionHandler;
+
+  /** Optional per-backend ACP fs capability override */
+  fsEnabled?: boolean;
 
   /** Transport handler for agent-specific behavior (timeouts, filtering, etc.) */
   transportHandler?: TransportHandler;
@@ -581,7 +588,8 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
       lastSelectedPermissionOptionIdByToolCallId: this.lastSelectedPermissionOptionIdByToolCallId,
     });
 
-    if (isAcpFsEnabled()) {
+    const fsEnabled = this.options.fsEnabled ?? isAcpFsEnabled();
+    if (fsEnabled) {
       Object.assign(
         client,
         createAcpClientFsMethods({
@@ -601,6 +609,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
     const initRequest = buildInitializeRequest({
       clientName: 'happier-cli',
       clientVersion: packageJson.version,
+      fsEnabled,
     });
 
     // Some ACP agents (notably Gemini CLI) can swallow early stdin before their ACP

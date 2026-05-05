@@ -26,20 +26,28 @@ function hasCrossedMigrationBoundary(params: Readonly<{
 export function resolveApplicableHappierRuntimeMigrations(params: Readonly<{
     fromVersion: string | null | undefined;
     toVersion: string | null | undefined;
+    hadLegacyCurrentInstallWithoutVersionMarkers?: boolean;
 }>): HappierRuntimeMigrationEntry[] {
     const fromVersion = normalizeVersionId(params.fromVersion);
     const toVersion = normalizeVersionId(params.toVersion);
 
-    return HAPPIER_RUNTIME_MIGRATION_CATALOG.filter((entry) => hasCrossedMigrationBoundary({
-        fromVersion,
-        toVersion,
-        boundaryVersion: entry.boundaryVersion,
-    }));
+    return HAPPIER_RUNTIME_MIGRATION_CATALOG.filter((entry) => {
+        if (!fromVersion && params.hadLegacyCurrentInstallWithoutVersionMarkers === true && toVersion) {
+            return compareVersions(toVersion, entry.boundaryVersion) >= 0;
+        }
+
+        return hasCrossedMigrationBoundary({
+            fromVersion,
+            toVersion,
+            boundaryVersion: entry.boundaryVersion,
+        });
+    });
 }
 
 export function hasApplicableHappierRuntimeMigrations(params: Readonly<{
     fromVersion: string | null | undefined;
     toVersion: string | null | undefined;
+    hadLegacyCurrentInstallWithoutVersionMarkers?: boolean;
 }>): boolean {
     return resolveApplicableHappierRuntimeMigrations(params).length > 0;
 }

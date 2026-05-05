@@ -68,7 +68,7 @@ describe('ReviewProfile', () => {
     expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
-  it('fails CodeRabbit plain output in the core review profile without a runtimeCore-owned normalizer', () => {
+  it('normalizes CodeRabbit plain output in the core review profile', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
@@ -103,9 +103,9 @@ describe('ReviewProfile', () => {
       finishedAtMs: 2,
     });
 
-    expect(res.status).toBe('failed');
-    expect(res.structuredMeta).toBeUndefined();
-    expect((res.toolResultOutput as { error?: { code?: string } }).error?.code).toBe('invalid_output');
+    expect(res.status).toBe('succeeded');
+    expect(res.structuredMeta?.kind).toBe('review_findings.v2');
+    expect((res.structuredMeta as { payload?: { findings?: unknown[] } }).payload?.findings).toHaveLength(1);
   });
 
   it('rejects triage actions when start params are missing required policy fields', () => {

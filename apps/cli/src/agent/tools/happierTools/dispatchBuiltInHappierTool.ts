@@ -2,7 +2,6 @@ import { type ActionId, type ResolvedActionOption } from '@happier-dev/protocol'
 import {
   getActionToolIdForToolName,
   getEquivalentActionIdForBuiltInTool,
-  isActionKnownToToolCatalog,
   isActionAvailableOnToolSurface,
 } from './actionToolCatalog';
 import type { HappierBuiltInToolDispatchResult } from './types';
@@ -93,7 +92,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   args: unknown;
   sessionId: string;
   surface?: 'mcp' | 'cli' | 'session_agent';
-  registry?: import('@/extensions/registry/types').ResolvedContributionRegistry;
+  registry?: import('@/plugins/projection/registry/types').ResolvedContributionRegistry;
   deps: DispatchDeps;
 }>): Promise<HappierBuiltInToolDispatchResult> {
   const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
@@ -164,10 +163,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   if (params.toolName === 'action_execute') {
     const parsed = actionExecuteToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid action execute request');
-    const actionKnownToLocalCatalog = isActionKnownToToolCatalog(parsed.data.actionId, {
-      registry: params.registry,
-    });
-    if (actionKnownToLocalCatalog && !isActionAvailableOnToolSurface({
+    if (!isActionAvailableOnToolSurface({
       actionId: parsed.data.actionId,
       surface,
       isActionEnabled,

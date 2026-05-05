@@ -1,5 +1,5 @@
 import type { ResolvedConfiguredAcpBackend } from '@/agent/acp/catalog/configured/resolveBackend';
-import type { AcpAuthSpecV1 } from '@happier-dev/extension-sdk';
+import type { AcpAuthSpecV1 } from '@happier-dev/plugin-sdk';
 
 import type {
   AcpRuntimeDefinitionInitV1,
@@ -70,9 +70,16 @@ function buildConfiguredDefinitionInit(params: Readonly<{
       supportsToolUse: true,
       supportsPermissionRequests: true,
     },
+    ...(params.backend.timeouts ? { timeouts: params.backend.timeouts } : {}),
     ...(auth ? { auth } : {}),
+    ...(typeof params.backend.fsEnabled === 'boolean' ? { fsEnabled: params.backend.fsEnabled } : {}),
+    ...(params.backend.transportLifecycle ? { transportLifecycle: params.backend.transportLifecycle } : {}),
+    ...(params.backend.permissionModeArgv ? { permissionModeArgv: params.backend.permissionModeArgv } : {}),
+    ...(params.backend.sessionIdHeaderName ? { sessionIdHeaderName: params.backend.sessionIdHeaderName } : {}),
+    ...(params.backend.bootstrap ? { bootstrap: params.backend.bootstrap } : {}),
+    ...(params.backend.messageMeta ? { messageMeta: params.backend.messageMeta } : {}),
     mcp: {
-      policy: 'pass_through',
+      policy: params.backend.mcp?.policy ?? 'pass_through',
     },
   };
 }

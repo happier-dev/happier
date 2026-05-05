@@ -9,7 +9,7 @@ import { resolveHappyHomeDirFromEnvironment } from '../providers/resolveHappyHom
 import type { FirstPartyComponentId } from './componentCatalog.js';
 
 const DEFAULT_MANAGED_RELEASE_CHANNEL: PublicReleaseRingId = 'stable';
-const DEFAULT_RELEASE_CHANNEL_COMPONENT_IDS = new Set<FirstPartyComponentId>(['happier-cli']);
+const DEFAULT_RELEASE_CHANNEL_COMPONENT_IDS = new Set<FirstPartyComponentId>(['happier-cli', 'happier-daemon']);
 
 export function shouldPersistDefaultManagedReleaseChannel(componentId: FirstPartyComponentId): boolean {
     return DEFAULT_RELEASE_CHANNEL_COMPONENT_IDS.has(componentId);

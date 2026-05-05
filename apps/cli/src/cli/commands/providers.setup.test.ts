@@ -35,8 +35,8 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
   };
 });
 
-vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
   return {
     ...actual,
     resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,

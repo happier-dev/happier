@@ -11,7 +11,7 @@ vi.mock('child_process', () => ({
   spawn: spawnMock,
 }));
 
-vi.mock('@/runtime/js/requireJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/requireJavaScriptRuntimeExecutable', () => ({
   requireJavaScriptRuntimeExecutable: requireJavaScriptRuntimeExecutableMock,
 }));
 

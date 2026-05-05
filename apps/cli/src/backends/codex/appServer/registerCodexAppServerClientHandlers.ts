@@ -5,6 +5,7 @@ import { buildCodexAppServerTokenCountSessionMessage } from '../usage/buildCodex
 import type { DisposableCodexAppServerClient } from './client/createCodexAppServerClient';
 import {
     createCodexAppServerTurnFailure,
+    isCodexAppServerAuthAccountChangedError,
     readCodexTurnStatus,
     readRecord,
     readThreadId,
@@ -55,6 +56,11 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
     ) => Promise<unknown>;
     schedulePendingTurnFinalization: (flushReason: 'turn-end' | 'abort') => void;
     abortPendingTurnWithFailure: (failure: Error) => Promise<void>;
+    finishPendingTurn: (options?: Readonly<{
+        error?: Error;
+        flushReason?: 'turn-end' | 'abort';
+        insideBridgeWork?: boolean;
+    }>) => Promise<void>;
     sendCodexMessage: (message: Record<string, unknown>) => void;
     getCurrentModelId: () => string | null;
 }>): void {
@@ -101,7 +107,16 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
             if (!params.notificationMatchesPendingTurn(notificationParams)) return;
             const notificationRecord = readRecord(notificationParams);
             if (notificationRecord?.willRetry === true) return;
-            await params.abortPendingTurnWithFailure(createCodexAppServerTurnFailure(notificationParams));
+            const failure = createCodexAppServerTurnFailure(notificationParams);
+            if (isCodexAppServerAuthAccountChangedError(failure)) {
+                await params.finishPendingTurn({
+                    error: failure,
+                    flushReason: 'abort',
+                    insideBridgeWork: true,
+                });
+                return;
+            }
+            await params.abortPendingTurnWithFailure(failure);
         });
     });
 
@@ -131,7 +146,16 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
             await params.runBridgeWork(async () => {
                 if (params.notificationMatchesPendingTurn(notificationParams)) {
                     if (method === 'turn/completed' && readCodexTurnStatus(notificationParams) === 'failed') {
-                        await params.abortPendingTurnWithFailure(createCodexAppServerTurnFailure(notificationParams));
+                        const failure = createCodexAppServerTurnFailure(notificationParams);
+                        if (isCodexAppServerAuthAccountChangedError(failure)) {
+                            await params.finishPendingTurn({
+                                error: failure,
+                                flushReason: 'abort',
+                                insideBridgeWork: true,
+                            });
+                            return;
+                        }
+                        await params.abortPendingTurnWithFailure(failure);
                         return;
                     }
                     params.schedulePendingTurnFinalization(

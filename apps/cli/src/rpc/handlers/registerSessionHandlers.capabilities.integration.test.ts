@@ -6,8 +6,9 @@
  * These replace legacy detect-cli / detect-capabilities / dep-status.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as tar from 'tar';
 import { registerSessionHandlers } from './registerSessionHandlers';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -24,7 +25,8 @@ import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID, SAMPLE_PLUGIN_MANIFEST_PATH } from '@/extensions/testkit/samplePackage';
+import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/plugins/testkit/marketplaceCatalog';
+import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 
 function createTestRpcManager(params?: { scopePrefix?: string }) {
     const scopePrefix = params?.scopePrefix ?? 'machine-test';
@@ -46,6 +48,20 @@ function expectCapabilityData(
         throw new Error(`Expected capability ${capabilityId} to return object data`);
     }
     return entry.data as Readonly<Record<string, unknown>>;
+}
+
+async function createSamplePluginArchive(): Promise<Readonly<{ sourceRoot: string; archivePath: string }>> {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-cli-marketplace-source-'));
+    const pluginRootName = 'sample-plugin';
+    await materializeSamplePluginFixture(join(sourceRoot, pluginRootName));
+    const archivePath = join(sourceRoot, `${pluginRootName}.tar.gz`);
+    await tar.c({
+        gzip: true,
+        file: archivePath,
+        cwd: sourceRoot,
+        portable: true,
+    }, [pluginRootName]);
+    return { sourceRoot, archivePath };
 }
 
 describe('registerCommonHandlers capabilities', () => {
@@ -465,30 +481,24 @@ describe('registerCommonHandlers capabilities', () => {
         envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
         reloadConfiguration();
 
-        const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-cli-marketplace-source-'));
-        await materializeSamplePluginFixture(sourceRoot);
-        const manifest = JSON.parse(await readFile(SAMPLE_PLUGIN_MANIFEST_PATH, 'utf8')) as Readonly<Record<string, unknown>>;
+        const { sourceRoot, archivePath } = await createSamplePluginArchive();
         const catalogPath = join(home, 'catalog.json');
         await writeFile(
             catalogPath,
-            JSON.stringify({
-                t: 'happier_plugin_marketplace_catalog_v1',
-                schemaVersion: 1,
+            JSON.stringify(createMarketplaceCatalogDocument({
                 sourceUrl: catalogPath,
                 title: 'Curated plugins',
                 description: 'Descriptor-only plugin discovery',
                 entries: [
-                    {
-                        ...manifest,
-                        source: {
-                            kind: 'path',
-                            locator: sourceRoot,
-                            trustPolicy: 'local_trusted',
-                            installPolicy: 'link',
-                        },
-                    },
+                    createMarketplaceCatalogEntry({
+                        pluginId: SAMPLE_PLUGIN_ID,
+                        title: 'Acme Sample',
+                        description: 'Sample plugin from the local test marketplace',
+                        sourceUrl: `${catalogPath}#${SAMPLE_PLUGIN_ID}`,
+                        packageUrl: archivePath,
+                    }),
                 ],
-            }, null, 2),
+            }), null, 2),
             'utf8',
         );
 
@@ -625,6 +635,7 @@ describe('registerCommonHandlers capabilities', () => {
             envScope.restore();
             reloadConfiguration();
             await removeTempDir(home);
+            await rm(sourceRoot, { recursive: true, force: true });
         }
     });
 });

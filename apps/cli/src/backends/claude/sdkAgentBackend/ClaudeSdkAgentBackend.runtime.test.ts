@@ -7,7 +7,7 @@ vi.mock('@/backends/claude/sdk/query', () => ({
   query: queryMock,
 }));
 
-vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
   ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
 }));
 

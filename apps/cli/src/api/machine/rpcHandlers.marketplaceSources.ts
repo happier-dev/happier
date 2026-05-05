@@ -1,7 +1,7 @@
 import { MarketplaceSourceRegistryV1Schema, type MarketplaceSourceRegistryV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createMarketplaceSourceRegistryStore } from '@/extensions/marketplace/sources/store';
+import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplace/sources/store';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 

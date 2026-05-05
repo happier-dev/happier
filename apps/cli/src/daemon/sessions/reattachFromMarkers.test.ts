@@ -48,7 +48,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     isOwnedLiveDaemonSessionProcessCommandMock.mockReturnValue(true);
   });
 
-  it('removes dead markers and keeps a reattach-only contract', async () => {
+  it('returns orphaned dead daemon sessions when removing dead markers', async () => {
     const marker = {
       pid: 43210,
       happySessionId: 'session-123',
@@ -69,7 +69,14 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const pidToTrackedSession = new Map<number, any>();
     const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual({
+      orphanedDeadDaemonSessions: [
+        {
+          sessionId: 'session-123',
+          pid: 43210,
+        },
+      ],
+    });
     expect(removeSessionMarker).toHaveBeenCalledWith(43210);
     expect(adoptSessionsFromMarkers).toHaveBeenCalledWith({
       markers: [],
@@ -96,7 +103,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const pidToTrackedSession = new Map<number, any>();
     const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ orphanedDeadDaemonSessions: [] });
     expect(pidToTrackedSession.get(54321)).toMatchObject({
       pid: 54321,
       startedBy: 'daemon',
@@ -476,7 +483,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const pidToTrackedSession = new Map<number, any>();
     const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ orphanedDeadDaemonSessions: [] });
     expect(pidToTrackedSession.size).toBe(0);
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });

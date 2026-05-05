@@ -30,6 +30,7 @@ import { gitRemotePublish } from './operations/publishOperations';
 import { gitDiffCommit, gitDiffFile, gitLogList } from './operations/readOperations';
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remoteOperations';
+import { gitRepositoryInit } from './operations/repositoryInitOperations';
 import { gitStashApply, gitStashDrop, gitStashList, gitStashPop, gitStashShow } from './operations/stashOperations';
 import { gitWorktreeCreate, gitWorktreePrune, gitWorktreeRemove } from './operations/worktreeOperations';
 
@@ -54,6 +55,7 @@ function createUnsupportedGitModeCapabilities() {
         writeRemotePull: false,
         writeRemotePush: false,
         writeRemotePublish: false,
+        writeRepositoryInit: false,
         worktreeCreate: false,
         readBranches: false,
         writeBranchCreate: false,
@@ -132,6 +134,7 @@ export function createGitBackend(): ScmBackend {
         remotePull: gitRemotePull,
         remotePush: gitRemotePush,
         remotePublish: gitRemotePublish,
+        repositoryInit: gitRepositoryInit,
         stashList: gitStashList,
         stashDrop: gitStashDrop,
         stashPop: gitStashPop,

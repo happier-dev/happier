@@ -13,14 +13,14 @@ import { encodeBase64, encrypt } from '@/api/encryption';
 import { readSessionAttachFromEnv } from '@/agent/runtime/sessionAttach';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { CommandHandler } from '@/cli/commandRegistry';
-import { createPluginStateStore } from '@/extensions/store/state';
+import { createPluginStateStore } from '@/plugins/store/state';
 
 const { resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
   resolveMergedContributionRegistryMock: vi.fn(),
 }));
 
-vi.mock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
   resolveMergedContributionRegistryMock.mockImplementation(actual.resolveMergedContributionRegistry);
   return {
     ...actual,
@@ -529,6 +529,52 @@ describe('happier resume', () => {
 
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).toContain('No resumable sessions found.');
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('prints the attach footer when interactive resume only finds active sessions', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const credentials: Credentials = {
+        token: 'token-1',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) },
+      };
+      const activeSession = createSessionRecordFixture({
+        id: 'sid_active_only_1',
+        active: true,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          flavor: 'claude',
+          path: '/tmp/active-only',
+          machineId: 'machine-local',
+        }),
+      });
+      const fetchSessionByIdFn = vi.fn(async () => {
+        throw new Error('fetchSessionByIdFn should not be called');
+      });
+
+      await handleResumeCommand([], {
+        readCredentialsFn: async () => credentials,
+        readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6, codexBackendMode: 'acp' }),
+        fetchSessionByIdFn,
+        fetchSessionsPageFn: async () => ({
+          sessions: [activeSession],
+          nextCursor: null,
+          hasNext: false,
+        }),
+        canUseInkSelectorFn: () => true,
+      });
+
+      expect(fetchSessionByIdFn).not.toHaveBeenCalled();
+
+      const output = logSpy.mock.calls.flat().join('\n');
+      expect(output).toContain('No resumable sessions found.');
+      expect(output).toContain('happier attach');
     } finally {
       logSpy.mockRestore();
       errorSpy.mockRestore();

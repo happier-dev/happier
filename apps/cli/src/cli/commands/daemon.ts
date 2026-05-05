@@ -23,7 +23,7 @@ import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
-import { handleServiceRepairCliCommand } from './serviceRepair/handleServiceRepairCliCommand';
+import { handleServiceRepairCliCommand } from './service/repair/handleServiceRepairCliCommand';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
 import { renderDaemonOwnerConflict } from '@/daemon/ownership/renderDaemonOwnerConflict';
 import {

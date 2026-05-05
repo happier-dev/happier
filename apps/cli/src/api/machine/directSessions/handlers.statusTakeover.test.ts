@@ -216,6 +216,100 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     );
   });
 
+  it.each([
+    {
+      label: 'takeover',
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER,
+      request: { machineId: 'm1', sessionId: 'sess_happy_direct_no_credentials' },
+    },
+    {
+      label: 'takeoverPersist',
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
+      request: { machineId: 'm1', sessionId: 'sess_happy_direct_no_credentials' },
+    },
+  ])('preserves legacy provider_unavailable when $label cannot read credentials', async ({ method, request }) => {
+    readCredentialsMock.mockResolvedValueOnce(null);
+
+    const spawnSession = vi.fn(async (_options: SpawnSessionOptions): Promise<SpawnSessionResult> => ({
+      type: 'success',
+      sessionId: 'sess_happy_direct_no_credentials',
+    }));
+    const stopSession = vi.fn(async () => true);
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (registeredMethod: string, handler: (params: any) => Promise<any>) => {
+        registered.set(registeredMethod, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+
+    const handler = registered.get(method);
+    expect(handler).toBeDefined();
+
+    const res = await handler!(request);
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'provider_unavailable',
+      error: 'not_authenticated',
+    });
+    expect(fetchSessionByIdMock).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(stopSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: 'takeover',
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER,
+      request: { machineId: 'm1', sessionId: 'sess_happy_direct_bad_metadata' },
+    },
+    {
+      label: 'takeoverPersist',
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
+      request: { machineId: 'm1', sessionId: 'sess_happy_direct_bad_metadata' },
+    },
+  ])('preserves legacy provider_unavailable when $label cannot decrypt linked session metadata', async ({ method, request }) => {
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValueOnce({
+      id: 'sess_happy_direct_bad_metadata',
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadata: '',
+    });
+
+    const spawnSession = vi.fn(async (_options: SpawnSessionOptions): Promise<SpawnSessionResult> => ({
+      type: 'success',
+      sessionId: 'sess_happy_direct_bad_metadata',
+    }));
+    const stopSession = vi.fn(async () => true);
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (registeredMethod: string, handler: (params: any) => Promise<any>) => {
+        registered.set(registeredMethod, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+
+    const handler = registered.get(method);
+    expect(handler).toBeDefined();
+
+    const res = await handler!(request);
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'provider_unavailable',
+      error: 'session_metadata_unavailable',
+    });
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(stopSession).not.toHaveBeenCalled();
+  });
+
   it('requires forceStop before taking over when a trusted local runner still owns the provider session', async () => {
     vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '/tmp/claude-direct');
     readCredentialsMock.mockResolvedValueOnce({

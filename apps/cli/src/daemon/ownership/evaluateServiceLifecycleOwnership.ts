@@ -67,7 +67,7 @@ export function renderDaemonServiceLifecycleOwnershipConflict(params: Readonly<{
       ? 'install the background service'
       : `${params.action} the background service`;
     return {
-      title: 'A manual relay runtime currently owns this relay.',
+      title: 'A manually started daemon currently owns this relay.',
       lines: [
         ...buildOwnerDetails(owner),
         `Use \`happier daemon stop\` before trying to ${actionDescription}.`,
@@ -102,7 +102,7 @@ export function renderDaemonServiceStopOwnershipNote(params: Readonly<{
 
   if (owner.serviceManaged === true) {
     return {
-      title: 'Stopping this background service will not stop the current relay owner.',
+      title: 'Stopping this background service will not stop the current daemon.',
       lines: [
         ...buildOwnerDetails(owner),
         'A different background service currently owns this relay.',
@@ -113,7 +113,7 @@ export function renderDaemonServiceStopOwnershipNote(params: Readonly<{
 
   if (owner.serviceManaged === false) {
     return {
-      title: 'Stopping this background service will not stop the current relay owner.',
+      title: 'Stopping this background service will not stop the current daemon.',
       lines: [
         ...buildOwnerDetails(owner),
         'A manual relay runtime currently owns this relay.',
@@ -123,7 +123,7 @@ export function renderDaemonServiceStopOwnershipNote(params: Readonly<{
   }
 
   return {
-    title: 'Stopping this background service will not stop the current relay owner.',
+      title: 'Stopping this background service will not stop the current daemon.',
     lines: [
       ...buildOwnerDetails(owner),
       'The current relay owner source could not be determined safely.',

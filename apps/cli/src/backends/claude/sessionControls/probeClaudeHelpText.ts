@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process';
 
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
-import { requireJavaScriptRuntimeExecutable } from '../../../runtime/js/requireJavaScriptRuntimeExecutable';
-import { requireProviderCliLaunchSpec } from '../../../runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/requireJavaScriptRuntimeExecutable';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import { isBun } from '../../../utils/runtime';
 import { isClaudeCliJavaScriptFile } from '../utils/resolveClaudeCliPath';
 

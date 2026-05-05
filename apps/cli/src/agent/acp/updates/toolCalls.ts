@@ -1,6 +1,8 @@
 import { logger } from '@/ui/logger';
 import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
 
+// A.15.2 marker: ACP runtime definition normalization lives in
+// agent/acp/runtime/definition; this update mapper remains message-shape logic only.
 import {
   asRecord,
   attachAcpMetadataToArgs,

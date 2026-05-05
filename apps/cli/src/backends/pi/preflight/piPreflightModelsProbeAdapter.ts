@@ -1,5 +1,5 @@
 import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
-import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
+import { resolveProviderCliCommand } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { resolveCliPathOverride } from '@/agent/runtime/cli/resolveCliPathOverride';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';

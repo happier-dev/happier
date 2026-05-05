@@ -10,6 +10,7 @@ import { startDaemonControlServer } from '../controlServer';
 import { createOnChildExited } from '../sessions/onChildExited';
 import { isSessionRunnerActive as isSessionRunnerActiveInDaemon } from '../sessions/isSessionRunnerActive';
 import { createStopSession } from '../sessions/stopSession';
+import { waitForExistingSessionExitIfStopRequested } from '../sessions/waitForExistingSessionExitIfStopRequested';
 import type { TrackedSession } from '../types';
 import type {
     SpawnSessionOptions,
@@ -140,7 +141,7 @@ export async function startDaemonSessionControlRuntime(
 
     const stopSessionCore = createStopSession({ pidToTrackedSession: params.pidToTrackedSession });
     const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
-        enabled: parseBooleanEnv(params.processEnv.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, true),
+        enabled: parseBooleanEnv(params.processEnv.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, false),
         maxRestarts: (() => {
             const maxAttempts = resolvePositiveIntEnv(
                 params.processEnv.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_ATTEMPTS,
@@ -189,7 +190,19 @@ export async function startDaemonSessionControlRuntime(
     };
     const stopSession = async (sessionId: string): Promise<boolean> => {
         sessionRunnerRespawnManager.markStopRequested(sessionId, { reason: 'daemon_stop_session', requestedAtMs: Date.now() });
-        return await stopSessionCore(sessionId);
+        const stopped = await stopSessionCore(sessionId);
+        if (!stopped) return false;
+        if (configuration.daemonStopSessionWaitForExitMs > 0) {
+            await waitForExistingSessionExitIfStopRequested({
+                sessionId,
+                pidToTrackedSession: params.pidToTrackedSession,
+                isSessionRunnerActive,
+                timeoutMs: configuration.daemonStopSessionWaitForExitMs,
+                pollIntervalMs: configuration.daemonStopSessionWaitForExitPollIntervalMs,
+                onExitObserved: (pid, exit) => onChildExited(pid, exit),
+            });
+        }
+        return true;
     };
     const isSessionAlreadyRunning = async (sessionId: string): Promise<boolean> =>
         await isSessionRunnerActive(sessionId);

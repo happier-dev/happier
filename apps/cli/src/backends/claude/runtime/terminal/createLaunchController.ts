@@ -1,5 +1,5 @@
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
-import { resolveTerminalRemoteSwitchRequestTarget } from '../../../../agent/runtimeSwitching/switchTarget';
+import { resolveTerminalRemoteSwitchRequestTarget } from '@/agent/runtime/mode/switching/switchTarget';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { logger } from '@/ui/logger';

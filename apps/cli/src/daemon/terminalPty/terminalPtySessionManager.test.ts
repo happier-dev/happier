@@ -121,6 +121,54 @@ describe('TerminalPtySessionManager', () => {
     expect(read2.nextCursor).toBe(1);
   });
 
+  it('suppresses zsh prompt EOL markers in embedded terminal sessions by default', () => {
+    const provider = new FakePtyProvider();
+    const env: NodeJS.ProcessEnv = { SHELL: '/bin/zsh' };
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig(),
+      now: () => 0,
+      env,
+      platform: 'darwin',
+    });
+
+    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    expect(ensured.ok).toBe(true);
+
+    const spawnedEnv = provider.spawned[0]?.params.options.env;
+    expect(provider.spawned[0]?.params.args).toEqual(['-l', '+o', 'prompt_sp']);
+    expect(spawnedEnv).toMatchObject({
+      SHELL: '/bin/zsh',
+      PROMPT_EOL_MARK: '',
+    });
+    expect(env.PROMPT_EOL_MARK).toBeUndefined();
+  });
+
+  it('uses the configured zsh prompt EOL marker override when provided', () => {
+    const provider = new FakePtyProvider();
+    const env: NodeJS.ProcessEnv = {
+      SHELL: '/bin/zsh',
+      HAPPIER_DAEMON_TERMINAL_PROMPT_EOL_MARK: 'marker',
+    };
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig(),
+      now: () => 0,
+      env,
+      platform: 'darwin',
+    });
+
+    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    expect(ensured.ok).toBe(true);
+
+    expect(provider.spawned[0]?.params.args).toEqual(['-l']);
+    expect(provider.spawned[0]?.params.options.env).toMatchObject({
+      SHELL: '/bin/zsh',
+      HAPPIER_DAEMON_TERMINAL_PROMPT_EOL_MARK: 'marker',
+      PROMPT_EOL_MARK: 'marker',
+    });
+  });
+
   it('emits a gap event when the cursor is too old', () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
@@ -177,4 +225,3 @@ describe('TerminalPtySessionManager', () => {
     expect(read1.done).toBe(true);
   });
 });
-

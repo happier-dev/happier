@@ -542,8 +542,8 @@ export function createClaudeAgentSdkTurnOutputRuntime(params: {
             // Belt-and-suspenders: if assistant text already reached the wire for THIS scope
             // (root or sidechain) via any channel this turn (streamed deltas, full-message emit,
             // buffered stream-event flush), re-emitting from the result message would duplicate
-            // the message AND write a synthetic uuid that later poisons `claudeLastAssistantUuid`
-            // resume anchors. Durable flushing is the preferred signal; this guard catches any
+            // the message AND write a synthetic uuid that could later become an unsafe resume
+            // anchor. Durable flushing is the preferred signal; this guard catches any
             // other delivery path.
             if (sidechainsWithPublishedAssistantTextThisTurn.has(sidechainId)) {
                 return false;

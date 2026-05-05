@@ -100,6 +100,16 @@ describe('AGENTS', () => {
     });
   });
 
+  it('declares opencode CLI model probing through the backend catalog', async () => {
+    const entry = requireCatalogEntry('opencode');
+    expect(entry.getPreflightSessionControlsProbeAdapter).toBeTypeOf('function');
+    const adapter = await entry.getPreflightSessionControlsProbeAdapter!();
+    expect(adapter).toMatchObject({
+      failureCacheStrategy: 'cooldown',
+      cliModelsCommandArgs: ['models', '--verbose'],
+    });
+  });
+
   it('does not define a headless tmux argv transform for codex', () => {
     expect(requireCatalogEntry('codex').getHeadlessTmuxArgvTransform).toBeUndefined();
   });

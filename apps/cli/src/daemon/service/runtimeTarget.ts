@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 
-import { resolvePackagedRuntimeEntrypoint } from '@/runtime/resolvePackagedRuntimeEntrypoint';
+import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 
 const JAVA_SCRIPT_RUNTIME_BASENAMES = new Set([
   'node',
@@ -20,7 +20,7 @@ function isJavaScriptRuntimeExecutable(pathLike: string | null | undefined): boo
 }
 
 function resolveBundledDaemonEntrypoint(): string {
-  return resolvePackagedRuntimeEntrypoint('index.mjs');
+  return resolvePackagedRuntimeEntrypoint('index.mjs', { packageDistOnly: true });
 }
 
 export function resolveDaemonServiceRuntimeTarget(params: Readonly<{

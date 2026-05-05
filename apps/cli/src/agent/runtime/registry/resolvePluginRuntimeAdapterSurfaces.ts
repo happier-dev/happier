@@ -1,8 +1,8 @@
-import { loadPluginDaemonModule } from '../../../extensions/runtime/loadPluginDaemonModule';
-import type { ResolvedExecutablePluginRuntimeRegistry } from '../../../extensions/runtime/resolveExecutablePluginRuntimeRegistry';
-import type { PluginDaemonModuleNamespace, PluginHookHandler } from '../../../extensions/runtime/types';
-import type { PluginCompatibilityDiagnostic } from '../../../extensions/diagnostics/types';
-import { buildBackendRuntimeAdapterDispatchKey } from '../../../extensions/manifest/adapters';
+import { loadPluginDaemonModule } from '../../../plugins/runtime/loadPluginDaemonModule';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { PluginDaemonModuleNamespace, PluginHookHandler } from '../../../plugins/runtime/types';
+import type { PluginCompatibilityDiagnostic } from '../../../plugins/validation/diagnostics/types';
+import { buildBackendRuntimeAdapterDispatchKey } from '../../../plugins/manifest/adapters';
 import type {
     AnyTerminalRuntimeOps,
     DirectSessionProviderOps,
@@ -13,7 +13,7 @@ import type {
     ResolvedBackendContribution,
     ResolvedBackendRuntimeAdapterContribution,
     ResolvedProviderContribution,
-} from '../../../extensions/registry/types';
+} from '../../../plugins/projection/registry/types';
 import type { BackendRuntimeAdapterV1 } from '@happier-dev/protocol';
 import { BackendRuntimeAdapterOperationCatalogV1 as BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1 } from '@happier-dev/protocol';
 
@@ -316,8 +316,8 @@ export async function resolvePluginRuntimeAdapterSurfaces(params: Readonly<{
         );
     }
 
-    const runtimeAdapters = runtimeRegistry.contributions.runtimeAdaptersByBackendId.get(backend.id) ?? [];
-    const activatedHandlers = runtimeRegistry.runtimeAdapterHandlersByBackendId.get(backend.id);
+    const runtimeAdapters = runtimeRegistry.contributes.runtimeCoreHooksByBackendId.get(backend.id) ?? [];
+    const activatedHandlers = runtimeRegistry.runtimeCoreHandlersByBackendId.get(backend.id);
 
     const handlerByAdapterId = new Map<string, PluginHookHandler>();
     if (activatedHandlers && activatedHandlers.size > 0) {

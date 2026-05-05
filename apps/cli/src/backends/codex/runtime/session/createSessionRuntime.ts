@@ -3,12 +3,12 @@ import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProvider
 import { configuration } from '@/configuration';
 import type {
     HostSessionRuntimeConfig,
-} from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+} from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import {
     HOST_SESSION_RUNTIME_PLAN_KIND,
     type HostSessionRuntimePlan,
-} from '@/agent/runtime/sessionLoop/lifecycle';
-import { resolveSessionRollbackRuntimeFacet } from '@/agent/runtime/sessionLoop/sessionRollbackRpc';
+} from '@/agent/runtime/session/loop/lifecycle';
+import { resolveSessionRollbackRuntimeFacet } from '@/agent/runtime/session/loop/sessionRollbackRpc';
 import type { RuntimeTurnStartOrLoadOptions } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
     resolveCodexSpawnExtrasForRuntime,

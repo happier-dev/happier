@@ -53,8 +53,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
     });
 
     expect(uninstallDaemonServiceMock).toHaveBeenCalledWith({
@@ -74,13 +72,15 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
       mode: 'user',
       channel: 'preview',
       targetMode: 'default-following',
       strategy: 'replace-ring',
       runCommands: true,
+    }));
+    expect(installDaemonServiceMock).toHaveBeenCalledWith(expect.not.objectContaining({
+      nodePath: expect.anything(),
+      entryPath: expect.anything(),
     }));
 
     const uninstallOrder = uninstallDaemonServiceMock.mock.invocationCallOrder[0];
@@ -114,7 +114,9 @@ describe('applyBackgroundServiceRepairPlan', () => {
     };
 
     const replacementError = new Error('replacement install failed');
-    installDaemonServiceMock.mockRejectedValueOnce(replacementError);
+    installDaemonServiceMock
+      .mockRejectedValueOnce(replacementError)
+      .mockResolvedValueOnce(undefined);
 
     await expect(applyBackgroundServiceRepairPlan(plan, {
       platform: 'linux',
@@ -122,8 +124,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
     })).rejects.toThrow(replacementError);
 
     expect(uninstallDaemonServiceMock).toHaveBeenCalledWith({
@@ -138,27 +138,26 @@ describe('applyBackgroundServiceRepairPlan', () => {
       installedPath: '/home/tester/.config/systemd/user/happier-daemon.dev.default.service',
       runCommands: true,
     });
+    expect(uninstallDaemonServiceMock).toHaveBeenNthCalledWith(2, {
+      platform: 'linux',
+      uid: 501,
+      userHomeDir: '/home/tester',
+      happierHomeDir: '/home/tester/.happier',
+      mode: 'user',
+      channel: 'preview',
+      targetMode: 'default-following',
+      instanceId: 'default',
+      runCommands: true,
+    });
     expect(installDaemonServiceMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
       platform: 'linux',
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
       mode: 'user',
       channel: 'preview',
       targetMode: 'default-following',
       strategy: 'replace-ring',
-      runCommands: true,
-    }));
-    expect(uninstallDaemonServiceMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      platform: 'linux',
-      uid: 501,
-      userHomeDir: '/home/tester',
-      happierHomeDir: '/home/tester/.happier',
-      mode: 'user',
-      channel: 'preview',
-      targetMode: 'default-following',
       runCommands: true,
     }));
     expect(installDaemonServiceMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
@@ -166,18 +165,15 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
       mode: 'user',
       channel: 'publicdev',
       targetMode: 'default-following',
       runCommands: true,
     }));
-    const replacementInstallOrder = installDaemonServiceMock.mock.invocationCallOrder[0];
-    const rollbackUninstallOrder = uninstallDaemonServiceMock.mock.invocationCallOrder[1];
-    const restoreOrder = installDaemonServiceMock.mock.invocationCallOrder[1];
-    expect(replacementInstallOrder).toBeLessThan(rollbackUninstallOrder);
-    expect(rollbackUninstallOrder).toBeLessThan(restoreOrder);
+
+    const rollbackReplacementRemovalOrder = uninstallDaemonServiceMock.mock.invocationCallOrder[1];
+    const restoredServiceOrder = installDaemonServiceMock.mock.invocationCallOrder[1];
+    expect(rollbackReplacementRemovalOrder).toBeLessThan(restoredServiceOrder);
   });
 
   it('does not uninstall a healthy existing default target when replacement install fails before mutating', async () => {
@@ -216,11 +212,76 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
     })).rejects.toThrow(replacementError);
 
     expect(installDaemonServiceMock).toHaveBeenCalledTimes(1);
     expect(uninstallDaemonServiceMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the repaired default target installed when a later action fails after replacing an existing default service', async () => {
+    const plan: BackgroundServiceRepairPlan = {
+      currentReleaseChannel: 'preview',
+      existingServices: [
+        {
+          serverId: 'default',
+          name: 'happier-daemon.default.service',
+          installed: true,
+          installedDefinitionMatchesExpected: false,
+          path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
+          platform: 'linux',
+          mode: 'user',
+          happierHomeDir: '/home/tester/.happier',
+          releaseChannel: 'preview',
+          label: 'happier-daemon.default',
+          targetMode: 'default-following',
+        },
+      ],
+      manualWarnings: [],
+      actions: [
+        {
+          kind: 'install-default-following-service',
+          releaseChannel: 'preview',
+          mode: 'user',
+        },
+        {
+          kind: 'remove-service',
+          service: {
+            label: 'happier-daemon.preview.server-2',
+            installedPath: '/home/tester/.config/systemd/user/happier-daemon.preview.server-2.service',
+            mode: 'user',
+            releaseChannel: 'preview',
+            targetMode: 'pinned',
+            instanceId: 'server-2',
+          },
+        },
+      ],
+    };
+
+    const laterFailure = new Error('later removal failed');
+    installDaemonServiceMock.mockResolvedValueOnce(undefined);
+    uninstallDaemonServiceMock.mockRejectedValueOnce(laterFailure);
+
+    await expect(applyBackgroundServiceRepairPlan(plan, {
+      platform: 'linux',
+      systemUser: '',
+      uid: 501,
+      userHomeDir: '/home/tester',
+      happierHomeDir: '/home/tester/.happier',
+    })).rejects.toThrow(laterFailure);
+
+    expect(installDaemonServiceMock).toHaveBeenCalledTimes(1);
+    expect(uninstallDaemonServiceMock).toHaveBeenCalledTimes(1);
+    expect(uninstallDaemonServiceMock).toHaveBeenCalledWith({
+      platform: 'linux',
+      uid: 501,
+      userHomeDir: '/home/tester',
+      happierHomeDir: '/home/tester/.happier',
+      mode: 'user',
+      channel: 'preview',
+      targetMode: 'pinned',
+      instanceId: 'server-2',
+      installedPath: '/home/tester/.config/systemd/user/happier-daemon.preview.server-2.service',
+      runCommands: true,
+    });
   });
 });

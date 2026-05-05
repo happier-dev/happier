@@ -6,7 +6,7 @@ import type {
   ExecutionRunManagerStartParams,
   ExecutionRunStartResult,
   ExecutionRunState,
-} from '@/agent/executionRuns/runtime/executionRunTypes';
+} from './executionRunTypes';
 import type { ExecutionRunParentSessionPermissionResponseTarget } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 
 /**

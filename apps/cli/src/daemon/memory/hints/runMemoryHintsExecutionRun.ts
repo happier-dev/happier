@@ -1,7 +1,7 @@
-import type { EphemeralExecutionRunTextPromptBackendFactory } from '@/agent/executionRuns/runtime/ephemeralTextPrompt';
+import type { EphemeralExecutionRunTextPromptRuntimeFactory } from '@/agent/executionRuns/runtime/ephemeralTextPrompt';
 import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
 
-export type MemoryHintsExecutionRunBackendFactory = EphemeralExecutionRunTextPromptBackendFactory;
+export type MemoryHintsExecutionRunBackendFactory = EphemeralExecutionRunTextPromptRuntimeFactory;
 
 export async function runMemoryHintsExecutionRun(params: Readonly<{
   cwd: string;
@@ -23,7 +23,7 @@ export async function runMemoryHintsExecutionRun(params: Readonly<{
     },
     intent: 'memory_hints',
     prompt: params.prompt,
-    createBackend: params.createBackend,
+    createRuntime: params.createBackend,
     timeoutMs: params.timeoutMs,
   });
 }

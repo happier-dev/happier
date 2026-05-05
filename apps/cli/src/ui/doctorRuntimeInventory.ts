@@ -14,6 +14,8 @@ type HappierDoctorServiceInventory = NonNullable<NonNullable<DoctorSnapshot['ser
 type HappierDoctorInstallation = HappierDoctorInstallationInventory['installations'][number];
 type HappierDoctorService = HappierDoctorServiceInventory['services'][number];
 type HappierDoctorWarning = NonNullable<DoctorSnapshot['warnings']>[number];
+type DoctorSnapshotLocalRelay = NonNullable<DoctorSnapshot['localRelays']>['relays'][number];
+type DoctorSnapshotAutomaticStartupEntry = NonNullable<DoctorSnapshot['automaticStartup']>['entries'][number];
 
 function formatUnknown(value: string | null | undefined): string {
   const normalized = String(value ?? '').trim();
@@ -60,9 +62,9 @@ function hasCurrentInvocationOwnerMismatch(snapshot: DoctorSnapshot): boolean {
 function formatActiveInvocationSummary(snapshot: DoctorSnapshot): string {
   const activeInvocation = snapshot.installations?.happier?.activeInvocation ?? null;
   const daemon = snapshot.daemonStatus?.daemon ?? null;
-  const installations = snapshot.installations?.happier?.installations ?? [];
-  const services = snapshot.services?.happier?.services ?? [];
-  const warnings = snapshot.warnings ?? [];
+  const installations: readonly HappierDoctorInstallation[] = snapshot.installations?.happier?.installations ?? [];
+  const services: readonly HappierDoctorService[] = snapshot.services?.happier?.services ?? [];
+  const warnings: readonly HappierDoctorWarning[] = snapshot.warnings ?? [];
 
   return definitionList([
     {
@@ -149,11 +151,98 @@ function formatWarningLines(warningEntry: HappierDoctorWarning): string[] {
   return lines;
 }
 
+function formatFindingCounts(snapshot: DoctorSnapshot): string {
+  const counts = snapshot.repairSummary?.findingCounts;
+  if (!counts) return '(unknown)';
+  const parts = [
+    `total ${counts.total}`,
+    counts.info !== undefined ? `info ${counts.info}` : null,
+    counts.warning !== undefined ? `warning ${counts.warning}` : null,
+    counts.error !== undefined ? `error ${counts.error}` : null,
+    counts.actionable !== undefined ? `actionable ${counts.actionable}` : null,
+  ].filter(Boolean);
+  return parts.join(' • ');
+}
+
+function formatLocalRelayLine(relay: DoctorSnapshotLocalRelay): string {
+  return [
+    relay.id,
+    relay.releaseChannel,
+    relay.version ?? null,
+    relay.relayUrl ?? null,
+    relay.healthy === true ? 'healthy' : relay.healthy === false ? 'needs attention' : null,
+    relay.running === true ? 'running' : relay.running === false ? 'stopped' : null,
+  ].filter(Boolean).join(' • ');
+}
+
+function formatAutomaticStartupLine(entry: DoctorSnapshotAutomaticStartupEntry): string {
+  return [
+    entry.label,
+    entry.releaseChannel ?? null,
+    entry.targetMode ? describeBackgroundServiceTargetMode(entry.targetMode) : null,
+    entry.running === true ? 'running' : entry.running === false ? 'stopped' : null,
+    entry.relayUrl ?? null,
+  ].filter(Boolean).join(' • ');
+}
+
+function renderDoctorSnapshotDiagnostics(snapshot: DoctorSnapshot): string {
+  const sections: string[] = [];
+
+  if (snapshot.repairSummary || snapshot.activeStack || snapshot.serviceHealth) {
+    sections.push(sectionTitle('Doctor snapshot diagnostics'));
+    sections.push(definitionList([
+      {
+        label: 'Repair status',
+        value: formatUnknown(snapshot.repairSummary?.status),
+      },
+      {
+        label: 'Findings',
+        value: formatFindingCounts(snapshot),
+      },
+      {
+        label: 'Active stack',
+        value: [
+          formatUnknown(snapshot.activeStack?.activeServerId),
+          formatUnknown(snapshot.activeStack?.releaseChannel),
+          formatUnknown(snapshot.activeStack?.relayUrl),
+          snapshot.activeStack?.localRelayUrl ?? null,
+        ].filter(Boolean).join(' • '),
+      },
+      {
+        label: 'Background service health',
+        value: [
+          snapshot.serviceHealth?.backgroundService?.healthy === true
+            ? 'healthy'
+            : snapshot.serviceHealth?.backgroundService?.healthy === false
+              ? 'needs attention'
+              : '(unknown)',
+          snapshot.serviceHealth?.backgroundService?.serviceLabel ?? null,
+          snapshot.serviceHealth?.backgroundService?.releaseChannel ?? null,
+        ].filter(Boolean).join(' • '),
+      },
+    ]));
+  }
+
+  const localRelays = snapshot.localRelays?.relays ?? [];
+  if (localRelays.length > 0) {
+    sections.push(sectionTitle('Local relays'));
+    sections.push(bullets(localRelays.map(formatLocalRelayLine)));
+  }
+
+  const automaticStartupEntries = snapshot.automaticStartup?.entries ?? [];
+  if (automaticStartupEntries.length > 0) {
+    sections.push(sectionTitle('Automatic startup'));
+    sections.push(bullets(automaticStartupEntries.map(formatAutomaticStartupLine)));
+  }
+
+  return sections.filter(Boolean).join('\n');
+}
+
 export function renderDoctorHappierRuntimeInventory(snapshot: DoctorSnapshot): string {
   const activeInstallationId = snapshot.installations?.happier?.activeInvocation?.installationId ?? null;
-  const installations = snapshot.installations?.happier?.installations ?? [];
-  const services = snapshot.services?.happier?.services ?? [];
-  const warnings = snapshot.warnings ?? [];
+  const installations: readonly HappierDoctorInstallation[] = snapshot.installations?.happier?.installations ?? [];
+  const services: readonly HappierDoctorService[] = snapshot.services?.happier?.services ?? [];
+  const warnings: readonly HappierDoctorWarning[] = snapshot.warnings ?? [];
 
   const sections: string[] = [
     sectionTitle('Happier runtime'),
@@ -180,6 +269,11 @@ export function renderDoctorHappierRuntimeInventory(snapshot: DoctorSnapshot): s
   if (services.length > 0) {
     sections.push(sectionTitle('Detected services'));
     sections.push(bullets(services.map((service) => formatServiceLine(service))));
+  }
+
+  const diagnostics = renderDoctorSnapshotDiagnostics(snapshot);
+  if (diagnostics.trim()) {
+    sections.push(diagnostics);
   }
 
   if (warnings.length > 0) {

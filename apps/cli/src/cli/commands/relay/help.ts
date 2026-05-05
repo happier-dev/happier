@@ -1,19 +1,16 @@
-import { renderHelpPage } from '@happier-dev/cli-common/output';
-
 export function showRelayHelp(): void {
-  console.log(renderHelpPage({
-    title: 'happier relay',
-    subtitle: 'Relay profile management',
-    usage: [
-      { label: 'happier relay inspect-target [--json]', description: 'Show the resolved active relay target' },
-      { label: 'happier relay set <relay-url> [--use] [--json] [--server-url <url>] [--webapp-url <url>] [--local-server-url <url>] [--name <name>]', description: 'Save or activate a relay profile' },
-      { label: 'happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--ssh-user <user> --ssh-host <host>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--ssh-port <number>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--yes] [--json]', description: 'Manage a hosted relay runtime' },
-      { label: 'happier relay access status [--ssh <user@host>] [--ssh-port <number>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--yes] [--json]', description: 'Show configured method + current share URL (if available)' },
-      { label: 'happier relay access configure --provider <provider-id> [--upstream-url <url>] [--url <url>] [--hostname <hostname>] [--token <token>] [--ssh <user@host>] [--ssh-port <number>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--yes] [--json]', description: 'Configure share URL strategy' },
-      { label: 'happier relay access disable [--ssh <user@host>] [--ssh-port <number>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--yes] [--json]', description: 'Disable share URL strategy (remove persisted config)' },
-    ],
-    notes: [
-      'Detailed relay profile management remains under `happier server ...` for now.',
-    ],
-  }));
+  // Keep help output concise; detailed relay profile management remains under `happier server ...` for now.
+  console.log('happier relay inspect-target [--json]');
+  console.log('happier relay use <relay-url | --local [--local-channel stable|preview|dev]> [--json] [--server-url <url>] [--webapp-url <url>] [--local-server-url <url>] [--name <name>]');
+  console.log('happier relay add <relay-url | --local [--local-channel stable|preview|dev]> [--json] [--server-url <url>] [--webapp-url <url>] [--local-server-url <url>] [--name <name>]');
+  console.log('happier relay set <relay-url | --local [--local-channel stable|preview|dev]> [--use] [--json] [--server-url <url>] [--webapp-url <url>] [--local-server-url <url>] [--name <name>]');
+  console.log('happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--server-binary <path>] [--lan | --expose | --host <ip>] [--yes] [--json]');
+  console.log('  --lan           Bind to a LAN/Tailscale IP (auto-detected; prompts if multiple interfaces found)');
+  console.log('  --expose        Bind to all interfaces (0.0.0.0) - prints verified reachable addresses when possible');
+  console.log('  --host <ip>     Bind to a specific IP address');
+  console.log('happier relay start-daemon [--local-channel stable|preview|dev]   # activate local relay profile + start the daemon');
+  console.log('happier relay auth [--local-channel stable|preview|dev] [auth flags]  # activate local relay profile + `auth login` against it');
+  console.log('');
+  console.log('--local picks the local relay matching the current CLI channel; if none exists, the command errors and lists other channels.');
+  console.log('--local-channel forces an explicit channel.');
 }

@@ -3,7 +3,7 @@ import {
   type BuiltInAcpYesNoAuto,
   type AgentId,
 } from '@happier-dev/agents';
-import type { AcpPromptImageSupportV1 } from '@happier-dev/extension-sdk';
+import type { AcpPromptImageSupportV1 } from '@happier-dev/plugin-sdk';
 
 import type { AcpRuntimeDefinitionV1 } from './_types';
 import { createAcpRuntimeDefinition } from './runtimeCore';

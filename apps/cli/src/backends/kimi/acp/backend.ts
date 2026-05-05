@@ -14,7 +14,7 @@ import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 import type { PermissionMode } from '@/api/types';
 import { kimiTransport } from '@/backends/kimi/acp/transport';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 
 function buildReadOnlyAgentFilePath(): string {
   return join(tmpdir(), `happier-kimi-${process.pid}-readonly-agent.yaml`);

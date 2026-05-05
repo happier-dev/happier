@@ -19,6 +19,7 @@ export {
 } from './plugin';
 export {
   createAcpRuntimeDefinition,
+  createAcpBackendFromDefinition,
   createAcpRuntimeCoreFromDefinition,
 } from './runtimeCore';
 export {

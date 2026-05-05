@@ -1,6 +1,6 @@
 import { resolve } from 'path';
 
-import type { ScmBackendPreference } from '@happier-dev/protocol';
+import { createScmCapabilities, type ScmBackendPreference } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { defaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
@@ -121,11 +121,19 @@ export function createNonRepositoryScmSnapshotResponse(input: {
     cwd: string;
     fetchedAt?: number;
 }) {
+    const snapshot = createNonRepositorySnapshot({
+        projectKey: `${resolve(resolveTildePath(input.workingDirectory))}:${input.cwd}`,
+        fetchedAt: input.fetchedAt ?? Date.now(),
+    });
+
     return {
         success: true,
-        snapshot: createNonRepositorySnapshot({
-            projectKey: `${resolve(resolveTildePath(input.workingDirectory))}:${input.cwd}`,
-            fetchedAt: input.fetchedAt ?? Date.now(),
-        }),
+        snapshot: {
+            ...snapshot,
+            capabilities: createScmCapabilities({
+                ...snapshot.capabilities,
+                writeRepositoryInit: true,
+            }),
+        },
     };
 }

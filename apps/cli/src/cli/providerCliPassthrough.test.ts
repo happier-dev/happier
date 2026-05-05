@@ -29,8 +29,8 @@ const { requireProviderCliLaunchSpecMock } = vi.hoisted(() => ({
   requireProviderCliLaunchSpecMock: vi.fn(),
 }));
 
-vi.mock('@/runtime/managedTools/requireProviderCliLaunchSpec', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/runtime/managedTools/requireProviderCliLaunchSpec')>();
+vi.mock('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec')>();
   return {
     ...original,
     requireProviderCliLaunchSpec: requireProviderCliLaunchSpecMock,
@@ -54,7 +54,7 @@ const tempDirs = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
 
 beforeEach(async () => {
-  const actualLaunch = await vi.importActual<typeof import('@/runtime/managedTools/requireProviderCliLaunchSpec')>('@/runtime/managedTools/requireProviderCliLaunchSpec');
+  const actualLaunch = await vi.importActual<typeof import('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec')>('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec');
   requireProviderCliLaunchSpecMock.mockReset();
   requireProviderCliLaunchSpecMock.mockImplementation(actualLaunch.requireProviderCliLaunchSpec);
 

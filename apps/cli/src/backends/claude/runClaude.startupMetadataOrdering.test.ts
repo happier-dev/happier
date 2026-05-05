@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Credentials } from '@/persistence';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { createClaudeSessionRuntimePlan } from '@/backends/claude/runtime/createSessionPlan';
-import { runHostSessionRuntime } from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+import { runHostSessionRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 
 type Deferred<T> = {
     promise: Promise<T>;
@@ -126,9 +126,7 @@ const testCredentials: Credentials = {
 };
 
 let metadataUpdateDeferred: Deferred<void>;
-let loopDeferred: Deferred<number>;
 let capturedUserMessageHandler: ((message: any) => void) | null = null;
-let lastLoopOptions: any = null;
 let metadataSnapshot: Record<string, unknown> | null = null;
 let currentMetadataVersion = 1;
 const liveHostPathProgress = {
@@ -201,6 +199,7 @@ vi.mock('@/backends/claude/utils/startHookServer', () => ({
 
 vi.mock('@/backends/claude/utils/generateHookSettingsFileWithEnsuredRuntime', () => ({
     generateHookSettingsFileWithEnsuredRuntime: vi.fn(async () => '/tmp/happier-hook-settings.json'),
+    generateHookPluginDirWithEnsuredRuntime: vi.fn(async () => '/tmp/happier-hook-plugin'),
 }));
 
 vi.mock('@/backends/claude/utils/generateHookSettings', () => ({
@@ -264,17 +263,6 @@ vi.mock('@/mcp/runtime/resolveRunnerMcpServers', () => ({
     })),
 }));
 
-vi.mock('@/backends/claude/runtime/session/runModeLoop', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/backends/claude/runtime/session/runModeLoop')>();
-    return {
-        ...actual,
-        runClaudeModeLoop: vi.fn(async (opts: any) => {
-            lastLoopOptions = opts;
-            return await loopDeferred.promise;
-        }),
-    };
-});
-
 async function runClaudeViaLiveHostPath(
     credentials: Credentials,
     options: Record<string, unknown>,
@@ -311,9 +299,7 @@ describe('Claude host-owned startup metadata ordering', () => {
         vi.clearAllMocks();
         readSettingsMock.mockResolvedValue({ machineId: 'machine_1' });
         metadataUpdateDeferred = createDeferred<void>();
-        loopDeferred = createDeferred<number>();
         capturedUserMessageHandler = null;
-        lastLoopOptions = null;
         metadataSnapshot = null;
         currentMetadataVersion = 1;
         liveHostPathProgress.importedPlanModule = false;
@@ -365,7 +351,6 @@ describe('Claude host-owned startup metadata ordering', () => {
 
             metadataUpdateDeferred.resolve();
             await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
-            loopDeferred.resolve(0);
 
             await expect(runPromise).resolves.toBe('resolved');
         });
@@ -401,7 +386,6 @@ describe('Claude host-owned startup metadata ordering', () => {
 
                 metadataUpdateDeferred.resolve();
                 await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
-                loopDeferred.resolve(0);
 
                 await expect(runPromise).resolves.toBe('resolved');
             });
@@ -439,7 +423,6 @@ describe('Claude host-owned startup metadata ordering', () => {
             expect(reportMock.mock.calls.some(([call]) => call?.sessionId === 'PID-12345')).toBe(false);
 
             await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
-            loopDeferred.resolve(0);
 
             await expect(runPromise).resolves.toBe('resolved');
         });
@@ -469,7 +452,6 @@ describe('Claude host-owned startup metadata ordering', () => {
 
             metadataUpdateDeferred.resolve();
             await waitFor(() => initializeRuntimeOverridesSynchronizerMock.mock.calls.length > 0);
-            loopDeferred.resolve(0);
 
             await expect(runPromise).resolves.toBe('resolved');
         });

@@ -92,6 +92,7 @@ export async function runPermissionModePromptLoop(opts: {
   onBeforeReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
   onAfterReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
   onAfterLoopBoundary?: ((params: { reason: PromptLoopBoundaryReason }) => void | Promise<void>) | null;
+  beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   resolveFreshSessionSystemPrompt?: (args: {
     baseOverride?: string | null;
   }) => Promise<string | null | undefined>;
@@ -231,6 +232,7 @@ export async function runPermissionModePromptLoop(opts: {
         messageQueue: opts.messageQueue,
         abortSignal: opts.getAbortSignal(),
         session: opts.session,
+        beforePendingMaterialize: opts.beforePendingMaterialize,
         onMetadataUpdate: async () => {
           await refreshSessionSnapshotBeforeTurnBestEffort();
           syncPermissionModeFromMetadata();

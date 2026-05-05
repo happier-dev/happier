@@ -64,10 +64,10 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
     }
   })();
   const serviceSnapshot = await resolveDaemonServiceInstallationSnapshotFromEnv();
-  const daemonServiceManaged = resolveDaemonStartupSourceServiceManagedState(daemonState?.startupSource);
   const daemonServiceLabel = typeof daemonState?.serviceLabel === 'string'
     ? daemonState.serviceLabel
     : null;
+  const daemonServiceManaged = resolveDaemonStartupSourceServiceManagedState(daemonState?.startupSource, daemonServiceLabel);
   // Treat the current relay as service-installed when the running daemon is already owned
   // by the expected background-service label, even if the filesystem probe lags after takeover.
   const serviceInstalled = serviceSnapshot.installed || (

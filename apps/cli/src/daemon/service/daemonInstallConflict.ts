@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import type { InstalledDaemonServiceEntry } from './discoverInstalledDaemonServiceEntries';
@@ -10,7 +8,7 @@ export type DaemonServiceInstallStrategy = 'require-explicit' | 'add' | 'replace
 
 export type DaemonServiceInstallTarget = Readonly<{
   platform: InstalledDaemonServiceEntry['platform'];
-  mode?: DaemonServiceMode | null;
+  mode: DaemonServiceMode;
   targetMode: DaemonServiceTargetMode;
   ring: PublicReleaseRingId | null;
   instanceId: string | null;
@@ -29,18 +27,13 @@ function matchesTarget(service: InstalledDaemonServiceEntry, target: DaemonServi
   if (service.platform !== target.platform) {
     return false;
   }
-  if (target.mode && service.mode && service.mode !== target.mode) {
+  if ((service.mode ?? 'user') !== target.mode) {
     return false;
   }
   if (service.targetMode !== target.targetMode) {
     return false;
   }
-  const serviceHomeDir = resolveHappierHomeDirComparableKey(service.happierHomeDir);
-  const targetHomeDir = resolveHappierHomeDirComparableKey(target.happierHomeDir);
-  if (serviceHomeDir === null || targetHomeDir === null) {
-    return false;
-  }
-  if (serviceHomeDir !== targetHomeDir) {
+  if (resolveHappierHomeDirComparableKey(service.happierHomeDir) !== resolveHappierHomeDirComparableKey(target.happierHomeDir)) {
     return false;
   }
   if (target.targetMode === 'default-following') {
@@ -49,26 +42,10 @@ function matchesTarget(service: InstalledDaemonServiceEntry, target: DaemonServi
   return service.releaseChannel === target.ring && service.serverId === target.instanceId;
 }
 
-function matchesInstalledDefinitionContents(params: Readonly<{
-  service: InstalledDaemonServiceEntry;
-  expectedContents: string | null | undefined;
-}>): boolean {
-  if (params.expectedContents === null || params.expectedContents === undefined) {
-    return true;
-  }
-
-  try {
-    const installedContents = readFileSync(params.service.path, 'utf8').trim();
-    return installedContents === String(params.expectedContents).trim();
-  } catch {
-    return false;
-  }
-}
-
 function resolveTupleKey(service: InstalledDaemonServiceEntry): string {
   return [
     service.platform,
-    service.mode ?? '',
+    service.mode ?? 'user',
     service.targetMode,
     service.releaseChannel,
     service.serverId,
@@ -83,11 +60,8 @@ function isCompetingService(service: InstalledDaemonServiceEntry, target: Daemon
   if (service.platform !== target.platform) {
     return false;
   }
-  if (target.mode && service.mode && service.mode !== target.mode) {
-    return false;
-  }
   if (target.targetMode === 'default-following') {
-    return true;
+    return service.targetMode === 'default-following';
   }
   if (service.serverId === target.instanceId) {
     return true;
@@ -110,7 +84,7 @@ function isReplaceAllAllowedForeignHomeCleanup(
 ): boolean {
   return target.targetMode === 'default-following'
     && service.targetMode === 'default-following'
-    && (!target.mode || !service.mode || service.mode === target.mode)
+    && (service.mode ?? 'user') === target.mode
     && service.serverId === 'default';
 }
 
@@ -118,7 +92,6 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
   target: DaemonServiceInstallTarget;
   strategy: DaemonServiceInstallStrategy;
   services: readonly InstalledDaemonServiceEntry[];
-  expectedInstalledDefinitionContents?: string | null;
 }>): DaemonServiceInstallConflictPlan {
   const duplicateTupleKeys = new Set<string>();
   const countsByTuple = new Map<string, number>();
@@ -131,13 +104,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     }
   }
 
-  const exactTargetExists = params.services.some((service) =>
-    matchesTarget(service, params.target)
-    && matchesInstalledDefinitionContents({
-      service,
-      expectedContents: params.expectedInstalledDefinitionContents,
-    }),
-  );
+  const exactTargetExists = params.services.some((service) => matchesTarget(service, params.target));
   const competingServices = params.services.filter((service) =>
     isCompetingService(service, params.target) || duplicateTupleKeys.has(resolveTupleKey(service)),
   );

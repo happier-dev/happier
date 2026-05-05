@@ -50,6 +50,7 @@ const TemplateSchema = z.object({
   terminal: SpawnSessionTerminalSchema.optional(),
   windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
   windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
+  windowsTerminalWindowName: z.string().optional(),
   experimentalCodexAcp: z.boolean().optional(),
   codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   agentModeId: z.string().optional(),
@@ -119,6 +120,7 @@ export type ParsedAutomationExecution = Readonly<{
   terminal?: SpawnSessionOptions['terminal'];
   windowsRemoteSessionLaunchMode?: SpawnSessionOptions['windowsRemoteSessionLaunchMode'];
   windowsRemoteSessionConsole?: SpawnSessionOptions['windowsRemoteSessionConsole'];
+  windowsTerminalWindowName?: SpawnSessionOptions['windowsTerminalWindowName'];
   experimentalCodexAcp?: boolean;
   codexBackendMode?: CodexBackendMode;
   agentModeId?: string;
@@ -273,6 +275,9 @@ export function parseAutomationTemplateExecution(
         : {}),
       ...(template.windowsRemoteSessionConsole
         ? { windowsRemoteSessionConsole: template.windowsRemoteSessionConsole }
+        : {}),
+      ...(typeof template.windowsTerminalWindowName === 'string'
+        ? { windowsTerminalWindowName: template.windowsTerminalWindowName }
         : {}),
       ...(template.experimentalCodexAcp !== undefined ? { experimentalCodexAcp: template.experimentalCodexAcp } : {}),
       ...(template.codexBackendMode !== undefined ? { codexBackendMode: template.codexBackendMode } : {}),

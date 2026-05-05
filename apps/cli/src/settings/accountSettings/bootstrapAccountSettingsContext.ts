@@ -53,7 +53,7 @@ function migrateAccountSettingsForCodexAppServerDefault(settings: AccountSetting
 }
 
 type BootstrapDeps = Readonly<{
-  resolveCachePath: () => string;
+  resolveCachePath: (credentials: Credentials) => string;
   readCache: (path: string) => Promise<AccountSettingsCache | null>;
   writeCache: (path: string, cache: AccountSettingsCache) => Promise<void>;
   fetchFromServer: (args: { credentials: Credentials }) => Promise<
@@ -194,7 +194,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     }),
   };
 
-  const cachePath = deps.resolveCachePath();
+  const cachePath = deps.resolveCachePath(params.credentials);
   const scopeKey = `${cachePath}::${tokenScopeKey(params.credentials.token)}`;
 
   const honorModeEnv = params.honorAccountSettingsModeEnv !== false;

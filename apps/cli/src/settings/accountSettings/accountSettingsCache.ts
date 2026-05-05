@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+import { dirname, join } from 'node:path';
 
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 
 export type AccountSettingsCacheV1 = Readonly<{
@@ -29,8 +31,33 @@ function bestEffortChmod0600(path: string): Promise<void> {
   return chmod(path, 0o600).catch(() => {});
 }
 
-export function resolveAccountSettingsCachePath(): string {
-  return `${configuration.activeServerDir}/account.settings.cache.json`;
+function hashCacheScopePart(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 32);
+}
+
+function resolveAccountSettingsCacheAccountScope(token: string | null | undefined): string | null {
+  const normalizedToken = String(token ?? '').trim();
+  if (!normalizedToken) return null;
+
+  const payload = decodeJwtPayload(normalizedToken);
+  const sub = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
+  if (sub) return `sub-${hashCacheScopePart(sub)}`;
+
+  return `token-${hashCacheScopePart(normalizedToken)}`;
+}
+
+export function resolveAccountSettingsCachePath(credentials?: Readonly<{ token?: string | null }>): string {
+  const accountScope = resolveAccountSettingsCacheAccountScope(credentials?.token);
+  if (!accountScope) {
+    return join(configuration.activeServerDir, 'account.settings.cache.json');
+  }
+  return join(
+    configuration.activeServerDir,
+    'account-settings-cache',
+    'by-account',
+    accountScope,
+    'account.settings.cache.json',
+  );
 }
 
 export async function readAccountSettingsCache(path: string): Promise<AccountSettingsCache | null> {

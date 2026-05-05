@@ -1,11 +1,11 @@
 import { readSettings, updateSettings } from '@/persistence';
 import { deriveServerIdFromName, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
-import { configuration } from '@/configuration';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/providers';
 
 function normalizeServerUrlForEnvId(url: string): string {
   return String(url ?? '').trim().replace(/\/+$/, '');
@@ -48,7 +48,7 @@ async function maybeCopyAccessKeyFromDerivedUrlId(params: Readonly<{
   serverUrl: string;
   localServerUrl?: string;
 }>): Promise<void> {
-  const serversDir = configuration.serversDir;
+  const serversDir = join(resolveHappyHomeDirFromEnvironment(process.env), 'servers');
   const targetDir = join(serversDir, params.targetServerId);
   const targetKeyPath = join(targetDir, 'access.key');
   if (existsSync(targetKeyPath)) return;
@@ -141,7 +141,7 @@ function coerceProfile(value: any): ServerProfile | null {
   };
 }
 
-function findProfileIdByIdOrName(servers: Record<string, any>, identifierRaw: string): string | null {
+function findProfileIdByIdentifier(servers: Record<string, any>, identifierRaw: string): string | null {
   const identifier = String(identifierRaw ?? '').trim();
   if (!identifier) return null;
   if (identifier in servers) return identifier;
@@ -153,7 +153,7 @@ function findProfileIdByIdOrName(servers: Record<string, any>, identifierRaw: st
     if (profile.id.toLowerCase() === lowered) return id;
     if (profile.name.toLowerCase() === lowered) return id;
   }
-  return null;
+  return findProfileIdByComparableUrl(servers, identifier);
 }
 
 function findProfileIdByComparableUrl(servers: Record<string, any>, serverUrlRaw: string): string | null {
@@ -185,6 +185,43 @@ function findProfileIdByComparableUrl(servers: Record<string, any>, serverUrlRaw
   return null;
 }
 
+function urlsReferToSameServer(leftRaw: string, rightRaw: string): boolean {
+  const left = String(leftRaw ?? '').trim();
+  const right = String(rightRaw ?? '').trim();
+  if (!left || !right) return false;
+  try {
+    if (createServerUrlComparableKey(left) === createServerUrlComparableKey(right)) return true;
+  } catch {
+    // Fall through to normalized string comparison.
+  }
+  return normalizeServerUrlForEnvId(left) === normalizeServerUrlForEnvId(right);
+}
+
+function findProfileIdByLocalUrlAndWebapp(
+  servers: Record<string, any>,
+  localServerUrlRaw: string,
+  webappUrlRaw: string,
+): string | null {
+  const localMatches: string[] = [];
+  for (const [id, value] of Object.entries(servers)) {
+    const profile = coerceProfile(value);
+    if (!profile) continue;
+    if (
+      urlsReferToSameServer(profile.serverUrl, localServerUrlRaw) ||
+      (profile.localServerUrl ? urlsReferToSameServer(profile.localServerUrl, localServerUrlRaw) : false)
+    ) {
+      localMatches.push(id);
+    }
+  }
+
+  if (localMatches.length === 0) return null;
+  const webappMatch = localMatches.find((id) => {
+    const profile = coerceProfile((servers as any)[id]);
+    return profile ? urlsReferToSameServer(profile.webappUrl, webappUrlRaw) : false;
+  });
+  return webappMatch ?? localMatches[0] ?? null;
+}
+
 export async function listServerProfiles(): Promise<ServerProfile[]> {
   const settings: any = await readSettings();
   const servers = settings?.servers && typeof settings.servers === 'object' ? settings.servers : {};
@@ -198,7 +235,7 @@ export async function getServerProfile(identifierRaw: string): Promise<ServerPro
   const identifier = asStringId(identifierRaw);
   const settings: any = await readSettings();
   const servers = settings?.servers && typeof settings.servers === 'object' ? settings.servers : {};
-  const resolvedId = findProfileIdByIdOrName(servers as any, identifier);
+  const resolvedId = findProfileIdByIdentifier(servers as any, identifier);
   if (!resolvedId) {
     throw new Error(`Server profile not found: ${identifier}`);
   }
@@ -225,7 +262,7 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
   const now = Date.now();
   await updateSettings((current: any) => {
     const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
-    const resolvedId = findProfileIdByIdOrName(servers as any, identifier);
+    const resolvedId = findProfileIdByIdentifier(servers as any, identifier);
     if (!resolvedId) {
       throw new Error(`Server profile not found: ${identifier}`);
     }
@@ -242,6 +279,7 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
       },
     };
   });
+
   const active = await getActiveServerProfile();
   await maybeCopyAccessKeyFromDerivedUrlId({
     targetServerId: active.id,
@@ -308,6 +346,9 @@ export async function addServerProfile(opts: Readonly<{
       serverUrl,
       ...(localServerUrl ? { localServerUrl } : {}),
     });
+  }
+
+  if (shouldUse) {
     return await getActiveServerProfile();
   }
   const profiles = await listServerProfiles();
@@ -335,40 +376,8 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
   let resolvedId: string | null = null;
   await updateSettings((current: any) => {
     const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
-    const comparableKeys: string[] = [];
-    try {
-      comparableKeys.push(createServerUrlComparableKey(serverUrl));
-      if (localServerUrl) comparableKeys.push(createServerUrlComparableKey(localServerUrl));
-    } catch {
-      // Ignore invalid URLs here; addServerProfile() will enforce validity on new entries.
-    }
-
-    const candidateIds: string[] = [];
-    for (const [id, value] of Object.entries(servers)) {
-      const profile = coerceProfile(value);
-      if (!profile) continue;
-      try {
-        if (comparableKeys.includes(createServerUrlComparableKey(profile.serverUrl))) {
-          candidateIds.push(id);
-          continue;
-        }
-        if (profile.localServerUrl && comparableKeys.includes(createServerUrlComparableKey(profile.localServerUrl))) {
-          candidateIds.push(id);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    const activeId = sanitizeServerIdForFilesystem(current?.activeServerId ?? 'cloud', 'cloud');
-    const activeHasCredentials = candidateIds.includes(activeId) && existsSync(join(configuration.serversDir, activeId, 'access.key'));
-    const credentialedId = candidateIds.find((id) => existsSync(join(configuration.serversDir, id, 'access.key'))) ?? null;
-    const matchedId =
-      activeHasCredentials
-        ? activeId
-        : credentialedId
-          ?? (candidateIds.includes(activeId) ? activeId : candidateIds[0] ?? null);
+    const matchedId = findProfileIdByComparableUrl(servers, serverUrl)
+      ?? (localServerUrl ? findProfileIdByLocalUrlAndWebapp(servers, localServerUrl, webappUrl) : null);
     if (!matchedId) {
       return current;
     }
@@ -407,6 +416,9 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
       serverUrl,
       ...(localServerUrl ? { localServerUrl } : {}),
     });
+  }
+
+  if (shouldUse) {
     return await getActiveServerProfile();
   }
   return await getServerProfile(resolvedId);
@@ -422,7 +434,7 @@ export async function removeServerProfile(
   const before = await readSettings();
   const activeServerId = sanitizeServerIdForFilesystem((before as any)?.activeServerId ?? 'cloud', 'cloud');
   const servers = (before as any)?.servers && typeof (before as any).servers === 'object' ? (before as any).servers : {};
-  const resolvedId = findProfileIdByIdOrName(servers, identifier);
+  const resolvedId = findProfileIdByIdentifier(servers, identifier);
   if (!resolvedId) {
     throw new Error(`Server profile not found: ${identifier}`);
   }

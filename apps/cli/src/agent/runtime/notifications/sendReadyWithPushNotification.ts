@@ -4,10 +4,14 @@ import type { SessionClientPort } from '@/api/session/sessionClientPort'
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog'
 import { buildReadyNotificationContent, type AccountSettings } from '@happier-dev/protocol'
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification'
+import {
+  resolveLiveActivityRemoteSender,
+  type LiveActivityRemoteSenderCandidate,
+} from '@/notifications/activity/liveActivity/resolveLiveActivityRemoteSender'
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot'
 import { logger } from '@/ui/logger'
 
-type PushSender = {
+type PushSender = LiveActivityRemoteSenderCandidate & {
   sendToAllDevices?: (title: string, body: string, opts: { sessionId: string }) => void
   sendToAllDevicesAsync?: (title: string, body: string, data: Record<string, unknown>) => Promise<void>
 }
@@ -70,6 +74,7 @@ export function sendReadyWithPushNotification(opts: {
         settings: currentSettingsContext.settings,
         settingsSecretsReadKeys: currentSettingsContext.settingsSecretsReadKeys,
         expoPushSender,
+        liveActivityRemoteSender: resolveLiveActivityRemoteSender(opts.pushSender),
         event: {
           topic: 'ready',
           sessionId: opts.session.sessionId,

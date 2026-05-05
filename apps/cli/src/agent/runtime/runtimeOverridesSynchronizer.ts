@@ -1,4 +1,5 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import { logger } from '@/ui/logger';
 import { delayUnref } from '@/utils/time';
 import {
   createRuntimeOverrideSynchronizers,
@@ -26,7 +27,7 @@ async function runRuntimeMetadataOverridesWatcherLoop(args: Readonly<{
   shouldExit: () => boolean;
   getAbortSignal: () => AbortSignal | undefined;
   waitForMetadataUpdate: (signal?: AbortSignal) => Promise<boolean>;
-  onUpdate: () => void;
+  onUpdate: () => void | Promise<void>;
   abortedBackoffMs?: number;
 }>): Promise<void> {
   const abortedBackoffMs =
@@ -36,14 +37,30 @@ async function runRuntimeMetadataOverridesWatcherLoop(args: Readonly<{
 
   while (!args.shouldExit()) {
     const signal = args.getAbortSignal();
-    const didUpdate = await args.waitForMetadataUpdate(signal);
+    let didUpdate = false;
+    try {
+      didUpdate = await args.waitForMetadataUpdate(signal);
+    } catch (error) {
+      logger.debug('[RuntimeOverridesSynchronizer] Metadata watcher wait failed; retrying after backoff', {
+        error: error instanceof Error ? error.message : String(error ?? 'unknown error'),
+      });
+      await delayUnref(abortedBackoffMs);
+      continue;
+    }
     if (!didUpdate) {
       if (signal?.aborted) {
         await delayUnref(abortedBackoffMs);
       }
       continue;
     }
-    args.onUpdate();
+    try {
+      await args.onUpdate();
+    } catch (error) {
+      logger.debug('[RuntimeOverridesSynchronizer] Metadata watcher update failed; retrying after backoff', {
+        error: error instanceof Error ? error.message : String(error ?? 'unknown error'),
+      });
+      await delayUnref(abortedBackoffMs);
+    }
   }
 }
 

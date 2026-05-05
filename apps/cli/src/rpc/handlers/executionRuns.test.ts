@@ -8,15 +8,45 @@ import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from 
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
-import { FeaturesResponseSchema, type ExecutionRunPublicState, type ExecutionRunStartResponse } from '@happier-dev/protocol';
+import {
+  FeaturesResponseSchema,
+  type BackendTargetRefV1,
+  type ExecutionRunPublicState,
+  type ExecutionRunStartResponse,
+} from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from './executionRuns';
+import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 import { reloadConfiguration } from '@/configuration';
+import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
+
+type TestExecutionRunRuntimeFactory = (opts: Readonly<{
+  runId?: string;
+  backendId: string;
+  backendTarget?: BackendTargetRefV1;
+  permissionMode: string;
+  modelId?: string;
+  accountSettings?: Readonly<Record<string, unknown>> | null;
+  start?: unknown;
+}>) => ExecutionRunHostRuntime;
+
+const runtimeFactoryState = vi.hoisted(() => ({
+  current: null as TestExecutionRunRuntimeFactory | null,
+}));
+
+vi.mock('@/agent/executionRuns/runtime/createExecutionRunRuntime', () => ({
+  createExecutionRunRuntime: vi.fn((opts: Parameters<TestExecutionRunRuntimeFactory>[0]) => {
+    const factory = runtimeFactoryState.current;
+    if (!factory) {
+      throw new Error('Missing test execution-run runtime factory');
+    }
+    return factory(opts);
+  }),
+}));
 
 vi.mock('@/persistence', () => ({
   readCredentials: vi.fn(),
@@ -44,13 +74,27 @@ const voiceEnabledServerSnapshot = {
   }),
 } as const satisfies CliServerFeaturesSnapshot;
 
-const registerExecutionRunHandlers: typeof registerExecutionRunHandlersBase = (rpc, ctx) =>
-  registerExecutionRunHandlersBase(rpc, {
-    ...ctx,
-    getServerFeaturesSnapshot: ctx.getServerFeaturesSnapshot ?? (() => voiceEnabledServerSnapshot),
+type TestExecutionRunHandlerContext = Parameters<typeof registerExecutionRunHandlersBase>[1] & Readonly<{
+  createBackend?: TestExecutionRunRuntimeFactory;
+  actionExecutor?: RpcActionExecutor;
+}>;
+
+const registerExecutionRunHandlers = (
+  rpc: Parameters<typeof registerExecutionRunHandlersBase>[0],
+  ctx: TestExecutionRunHandlerContext,
+) => {
+  const { createBackend, ...baseCtx } = ctx;
+  runtimeFactoryState.current = createBackend ?? (() => {
+    throw new Error('Missing test execution-run runtime factory');
   });
+  registerExecutionRunHandlersBase(rpc, {
+    ...baseCtx,
+    getServerFeaturesSnapshot: baseCtx.getServerFeaturesSnapshot ?? (() => voiceEnabledServerSnapshot),
+  });
+};
 
 beforeEach(async () => {
+  runtimeFactoryState.current = null;
   const { readCredentials } = await import('@/persistence');
   const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
   const { fetchEncryptedTranscriptMessages } = await import('@/session/replay/fetchEncryptedTranscriptMessages');
@@ -318,6 +362,122 @@ function createCancelRaceBackend(params: Readonly<{
 }
 
 describe('executionRuns session RPC handlers', () => {
+  it('dispatches public execution-run RPC calls through the shared action adapter seam', async () => {
+    const calls: unknown[] = [];
+    const actionExecutor: RpcActionExecutor = {
+      execute: async (actionId, input, context) => {
+        calls.push({ actionId, input, context });
+        return { ok: true, result: { runs: [{ runId: 'run_from_action' }] } };
+      },
+    };
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => createStaticBackend('unused'),
+          sendAcp: () => {},
+          actionExecutor,
+        });
+      },
+    });
+
+    const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { limit: 1 });
+
+    expect(listed).toEqual({ runs: [{ runId: 'run_from_action' }] });
+    expect(calls).toEqual([
+      {
+        actionId: 'execution.run.list',
+        input: { limit: 1 },
+        context: {
+          defaultSessionId: 'sess_1',
+          surface: 'rpc',
+        },
+      },
+    ]);
+  });
+
+  it('honors canonical action policy when dispatching public execution-run RPC calls', async () => {
+    const previousActionsSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'execution.run.list': { enabled: true, disabledSurfaces: ['rpc'], disabledPlacements: [] },
+      },
+    });
+
+    try {
+      const client = createEncryptedRpcTestClient({
+        scopePrefix: 'sess_1',
+        registerHandlers: (rpc) => {
+          registerExecutionRunHandlers(rpc, {
+            sessionId: 'sess_1',
+            cwd: process.cwd(),
+            parentProvider: 'claude',
+            createBackend: () => createStaticBackend('unused'),
+            sendAcp: () => {},
+          });
+        },
+      });
+
+      const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { limit: 1 });
+
+      expect(listed).toEqual({
+        ok: false,
+        error: 'action_disabled',
+        errorCode: 'action_disabled',
+      });
+    } finally {
+      if (previousActionsSettings === undefined) {
+        delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      } else {
+        process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousActionsSettings;
+      }
+    }
+  });
+
+  it('fails closed when RPC execution-run actions require approvals before approval storage is wired', async () => {
+    const previousActionsSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'execution.run.list': { enabled: true, disabledSurfaces: [], disabledPlacements: [], approvalRequiredSurfaces: ['rpc'] },
+      },
+    });
+
+    try {
+      const client = createEncryptedRpcTestClient({
+        scopePrefix: 'sess_1',
+        registerHandlers: (rpc) => {
+          registerExecutionRunHandlers(rpc, {
+            sessionId: 'sess_1',
+            cwd: process.cwd(),
+            parentProvider: 'claude',
+            createBackend: () => createStaticBackend('unused'),
+            sendAcp: () => {},
+          });
+        },
+      });
+
+      const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { limit: 1 });
+
+      expect(listed).toEqual({
+        ok: false,
+        error: 'approvals_not_supported',
+        errorCode: 'approvals_not_supported',
+      });
+    } finally {
+      if (previousActionsSettings === undefined) {
+        delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      } else {
+        process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousActionsSettings;
+      }
+    }
+  });
+
   it('passes resolved account settings into built-in backend creation', async () => {
     const createBackend = vi.fn(() => createStaticBackend('ok'));
 
@@ -2373,6 +2533,170 @@ describe('executionRuns session RPC handlers', () => {
     expect(typeof started.sidechainId).toBe('string');
   });
 
+  it('rejects CodeRabbit review runs with no reviewable files before backend creation', async () => {
+    const remote = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-no-files-remote-'));
+    runGit(remote, ['init', '--bare', '--initial-branch=main']);
+
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-no-files-workspace-'));
+    runGit(workspace, ['init', '--initial-branch=main']);
+    runGit(workspace, ['config', 'user.email', 'test@example.com']);
+    runGit(workspace, ['config', 'user.name', 'Test User']);
+    writeFileSync(join(workspace, 'a.txt'), 'base\n');
+    runGit(workspace, ['add', 'a.txt']);
+    runGit(workspace, ['commit', '-m', 'base']);
+    runGit(workspace, ['remote', 'add', 'origin', remote]);
+    runGit(workspace, ['push', '-u', 'origin', 'main']);
+    const createBackend = vi.fn(() => createStaticBackend('unexpected'));
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: workspace,
+          parentProvider: 'claude',
+          createBackend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+      intentInput: {
+        engineIds: ['coderabbit'],
+        instructions: 'Review.',
+        changeType: 'committed',
+        base: { kind: 'none' },
+      },
+    });
+
+    expect(started).toMatchObject({
+      ok: false,
+      errorCode: 'execution_run_not_allowed',
+      error: expect.stringContaining('No reviewable files'),
+    });
+    expect(createBackend).not.toHaveBeenCalled();
+  });
+
+  it('rejects CodeRabbit review runs with no default base before backend creation', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-no-base-workspace-'));
+    runGit(workspace, ['init', '--initial-branch=main']);
+    runGit(workspace, ['config', 'user.email', 'test@example.com']);
+    runGit(workspace, ['config', 'user.name', 'Test User']);
+    writeFileSync(join(workspace, 'a.txt'), 'base\n');
+    runGit(workspace, ['add', 'a.txt']);
+    runGit(workspace, ['commit', '-m', 'base']);
+    const createBackend = vi.fn(() => createStaticBackend('unexpected'));
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: workspace,
+          parentProvider: 'claude',
+          createBackend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+      intentInput: {
+        engineIds: ['coderabbit'],
+        instructions: 'Review.',
+        changeType: 'committed',
+        base: { kind: 'none' },
+      },
+    });
+
+    expect(started).toMatchObject({
+      ok: false,
+      errorCode: 'execution_run_not_allowed',
+      error: expect.stringContaining('Unable to resolve a default base branch'),
+    });
+    expect(createBackend).not.toHaveBeenCalled();
+  });
+
+  it('rejects CodeRabbit review runs with too many reviewable files before backend creation', async () => {
+    const previousLimit = process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
+    process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = '1';
+
+    try {
+      const remote = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-too-many-remote-'));
+      runGit(remote, ['init', '--bare', '--initial-branch=main']);
+
+      const workspace = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-too-many-workspace-'));
+      runGit(workspace, ['init', '--initial-branch=main']);
+      runGit(workspace, ['config', 'user.email', 'test@example.com']);
+      runGit(workspace, ['config', 'user.name', 'Test User']);
+      writeFileSync(join(workspace, 'a.txt'), 'base\n');
+      writeFileSync(join(workspace, 'b.txt'), 'base\n');
+      runGit(workspace, ['add', 'a.txt', 'b.txt']);
+      runGit(workspace, ['commit', '-m', 'base']);
+      runGit(workspace, ['remote', 'add', 'origin', remote]);
+      runGit(workspace, ['push', '-u', 'origin', 'main']);
+      writeFileSync(join(workspace, 'a.txt'), 'changed\n');
+      writeFileSync(join(workspace, 'b.txt'), 'changed\n');
+      runGit(workspace, ['add', 'a.txt', 'b.txt']);
+      runGit(workspace, ['commit', '-m', 'change']);
+      const createBackend = vi.fn(() => createStaticBackend('unexpected'));
+
+      const client = createEncryptedRpcTestClient({
+        scopePrefix: 'sess_1',
+        registerHandlers: (rpc) => {
+          registerExecutionRunHandlers(rpc, {
+            sessionId: 'sess_1',
+            cwd: workspace,
+            parentProvider: 'claude',
+            createBackend,
+            sendAcp: () => {},
+          });
+        },
+      });
+
+      const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+        instructions: 'Review.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'streaming',
+        intentInput: {
+          engineIds: ['coderabbit'],
+          instructions: 'Review.',
+          changeType: 'committed',
+          base: { kind: 'none' },
+        },
+      });
+
+      expect(started).toMatchObject({
+        ok: false,
+        errorCode: 'execution_run_not_allowed',
+        error: expect.stringContaining('Too many reviewable files'),
+      });
+      expect(createBackend).not.toHaveBeenCalled();
+    } finally {
+      if (previousLimit === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
+      else process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = previousLimit;
+    }
+  });
+
   it('rejects plan runs that violate the bounded ephemeral intent matrix before backend creation', async () => {
     const createBackend = vi.fn(() => createStaticBackend('unexpected'));
 
@@ -2438,184 +2762,6 @@ describe('executionRuns session RPC handlers', () => {
       error: 'Unsupported retentionPolicy',
     });
     expect(createBackend).not.toHaveBeenCalled();
-  });
-
-  it('fails early when starting a CodeRabbit review with no reviewable files in the current session scope', async () => {
-    const remote = mkdtempSync(join(tmpdir(), 'happier-execution-run-coderabbit-remote-'));
-    runGit(remote, ['init', '--bare', '--initial-branch=main']);
-
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-execution-run-coderabbit-workspace-'));
-    runGit(workspace, ['init', '--initial-branch=main']);
-    runGit(workspace, ['config', 'user.email', 'test@example.com']);
-    runGit(workspace, ['config', 'user.name', 'Test User']);
-    writeFileSync(join(workspace, 'a.txt'), 'base\n');
-    runGit(workspace, ['add', 'a.txt']);
-    runGit(workspace, ['commit', '-m', 'base']);
-    runGit(workspace, ['remote', 'add', 'origin', remote]);
-    runGit(workspace, ['push', '-u', 'origin', 'main']);
-
-    let createBackendCalls = 0;
-    const client = createEncryptedRpcTestClient({
-      scopePrefix: 'sess_1',
-      registerHandlers: (rpc) => {
-        registerExecutionRunHandlers(rpc, {
-          sessionId: 'sess_1',
-          cwd: workspace,
-          parentProvider: 'claude',
-          createBackend: () => {
-            createBackendCalls += 1;
-            return createStaticBackend(JSON.stringify({ findings: [], summary: 'unexpected' }));
-          },
-          sendAcp: () => {},
-        });
-      },
-    });
-
-    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
-      instructions: 'Review the current scope.',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'streaming',
-      intentInput: {
-        engineId: 'coderabbit',
-        engineIds: ['coderabbit'],
-        instructions: 'Review the current scope.',
-        changeType: 'committed',
-        base: { kind: 'none' },
-      },
-    });
-
-    expect(started).toMatchObject({
-      ok: false,
-      errorCode: 'execution_run_not_allowed',
-    });
-    expect(String(started.error ?? '')).toContain('No reviewable files');
-    expect(createBackendCalls).toBe(0);
-  });
-
-  it('returns a structured error when starting a CodeRabbit review without a resolvable default base branch', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-execution-run-coderabbit-no-base-'));
-    runGit(workspace, ['init', '--initial-branch=main']);
-    runGit(workspace, ['config', 'user.email', 'test@example.com']);
-    runGit(workspace, ['config', 'user.name', 'Test User']);
-    writeFileSync(join(workspace, 'a.txt'), 'base\n');
-    runGit(workspace, ['add', 'a.txt']);
-    runGit(workspace, ['commit', '-m', 'base']);
-    writeFileSync(join(workspace, 'a.txt'), 'changed\n');
-    runGit(workspace, ['add', 'a.txt']);
-    runGit(workspace, ['commit', '-m', 'change']);
-
-    let createBackendCalls = 0;
-    const client = createEncryptedRpcTestClient({
-      scopePrefix: 'sess_1',
-      registerHandlers: (rpc) => {
-        registerExecutionRunHandlers(rpc, {
-          sessionId: 'sess_1',
-          cwd: workspace,
-          parentProvider: 'claude',
-          createBackend: () => {
-            createBackendCalls += 1;
-            return createStaticBackend(JSON.stringify({ findings: [], summary: 'unexpected' }));
-          },
-          sendAcp: () => {},
-        });
-      },
-    });
-
-    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
-      instructions: 'Review the current scope.',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'streaming',
-      intentInput: {
-        engineId: 'coderabbit',
-        engineIds: ['coderabbit'],
-        instructions: 'Review the current scope.',
-        changeType: 'committed',
-        base: { kind: 'none' },
-      },
-    });
-
-    expect(started).toMatchObject({
-      ok: false,
-      errorCode: 'execution_run_not_allowed',
-    });
-    expect(String(started.error ?? '')).toContain('Unable to resolve a default base branch');
-    expect(createBackendCalls).toBe(0);
-  });
-
-  it('fails early when starting a CodeRabbit review whose scope exceeds the configured file limit', async () => {
-    const originalMaxEligibleFiles = process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
-    process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = '1';
-    try {
-      const remote = mkdtempSync(join(tmpdir(), 'happier-execution-run-coderabbit-remote-'));
-      runGit(remote, ['init', '--bare', '--initial-branch=main']);
-
-      const workspace = mkdtempSync(join(tmpdir(), 'happier-execution-run-coderabbit-workspace-'));
-      runGit(workspace, ['init', '--initial-branch=main']);
-      runGit(workspace, ['config', 'user.email', 'test@example.com']);
-      runGit(workspace, ['config', 'user.name', 'Test User']);
-      writeFileSync(join(workspace, 'a.txt'), 'base\n');
-      writeFileSync(join(workspace, 'b.txt'), 'base\n');
-      runGit(workspace, ['add', 'a.txt', 'b.txt']);
-      runGit(workspace, ['commit', '-m', 'base']);
-      runGit(workspace, ['remote', 'add', 'origin', remote]);
-      runGit(workspace, ['push', '-u', 'origin', 'main']);
-      writeFileSync(join(workspace, 'a.txt'), 'changed\n');
-      writeFileSync(join(workspace, 'b.txt'), 'changed\n');
-      runGit(workspace, ['add', 'a.txt', 'b.txt']);
-      runGit(workspace, ['commit', '-m', 'change']);
-
-      let createBackendCalls = 0;
-      const client = createEncryptedRpcTestClient({
-        scopePrefix: 'sess_1',
-        registerHandlers: (rpc) => {
-          registerExecutionRunHandlers(rpc, {
-            sessionId: 'sess_1',
-            cwd: workspace,
-            parentProvider: 'claude',
-            createBackend: () => {
-              createBackendCalls += 1;
-              return createStaticBackend(JSON.stringify({ findings: [], summary: 'unexpected' }));
-            },
-            sendAcp: () => {},
-          });
-        },
-      });
-
-      const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-        intent: 'review',
-        backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
-        instructions: 'Review the current scope.',
-        permissionMode: 'read_only',
-        retentionPolicy: 'ephemeral',
-        runClass: 'bounded',
-        ioMode: 'streaming',
-        intentInput: {
-          engineId: 'coderabbit',
-          engineIds: ['coderabbit'],
-          instructions: 'Review the current scope.',
-          changeType: 'committed',
-          base: { kind: 'none' },
-        },
-      });
-
-      expect(started).toMatchObject({
-        ok: false,
-        errorCode: 'execution_run_not_allowed',
-      });
-      expect(String(started.error ?? '')).toContain('Too many reviewable files');
-      expect(createBackendCalls).toBe(0);
-    } finally {
-      if (originalMaxEligibleFiles === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
-      else process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = originalMaxEligibleFiles;
-    }
   });
 
   it('allows starting a bounded review run with streaming ioMode (sidechain transcript streaming)', async () => {

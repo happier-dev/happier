@@ -63,7 +63,7 @@ describe('createExecutionRunBackend (pi)', () => {
         },
       },
     });
-    const { createExecutionRunRuntime } = await import('./createExecutionRunBackend');
+    const { createExecutionRunRuntime } = await import('./createExecutionRunRuntime');
 
     const executionRuntime = createExecutionRunRuntime({
       cwd: process.cwd(),
@@ -133,7 +133,7 @@ describe('createExecutionRunBackend (pi)', () => {
 
   it('throws when the built-in backend target is disabled in account settings before creating the legacy shell', async () => {
     const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'pi' });
-    const { createExecutionRunRuntime } = await import('./createExecutionRunBackend');
+    const { createExecutionRunRuntime } = await import('./createExecutionRunRuntime');
 
     expect(() =>
       createExecutionRunRuntime({

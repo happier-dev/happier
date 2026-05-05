@@ -16,9 +16,9 @@ export const agent = {
   getConnectedServicesMaterializer: async () =>
     (await import('@/backends/gemini/connectedServices/createGeminiConnectedServicesMaterializer'))
       .createGeminiConnectedServicesMaterializer(),
-  getBindings: async () => {
-    const { createGeminiBindings } = await import('@/backends/gemini/bindings/index');
-    return () => createGeminiBindings();
+  getRuntimeCore: async () => {
+    const { createGeminiRuntimeCore } = await import('@/backends/gemini/runtimeCore/index');
+    return () => createGeminiRuntimeCore();
   },
   vendorResumeSupport: AGENTS_CORE.gemini.resume.vendorResume,
   getAcpBackendFactory: async () => {

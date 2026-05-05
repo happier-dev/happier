@@ -32,6 +32,45 @@ describe('PermissionRequestPushNotifier', () => {
     notifier.dispose();
   });
 
+  it('does not retry when skipped by the unified attention policy', async () => {
+    vi.useFakeTimers();
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const getSettings = vi.fn(() =>
+      accountSettingsParse({
+        attentionDeliveryPolicyV1: {
+          v: 1,
+          channels: {
+            expo_push: {
+              events: {
+                permission_request: { enabled: false },
+              },
+            },
+          },
+        },
+      }),
+    );
+    const notifier = new PermissionRequestPushNotifier({
+      pushSender: { sendToAllDevicesAsync },
+      getSettings,
+      sessionId: 's1',
+      logPrefix: '[test]',
+      retryDelaysMs: [100],
+      maxRetryMs: 10_000,
+      maxEntries: 10,
+    });
+
+    notifier.notify({ permissionId: 'p1', toolName: 'Write' });
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    expect(getSettings).toHaveBeenCalledTimes(1);
+    notifier.dispose();
+  });
+
   it('does not send user-action requests when disabled by settings', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => {});
     const notifier = new PermissionRequestPushNotifier({
@@ -85,6 +124,64 @@ describe('PermissionRequestPushNotifier', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    notifier.dispose();
+  });
+
+  it('sends webhook requests during quiet hours when Expo push is suppressed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-03T12:00:00.000Z'));
+    const fetchSpy = vi.fn(async () => ({ ok: true, status: 202 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const onNotifiedAt = vi.fn();
+    const notifier = new PermissionRequestPushNotifier({
+      pushSender: { sendToAllDevicesAsync },
+      getSettings: () =>
+        accountSettingsParse({
+          attentionDeliveryPolicyV1: {
+            v: 1,
+            quietHours: {
+              enabled: true,
+              timezone: 'UTC',
+              windows: [{ startLocalTime: '00:00', endLocalTime: '23:59' }],
+            },
+          },
+          notificationChannelsV1: [
+            {
+              v: 1,
+              id: 'webhook-primary',
+              kind: 'webhook',
+              enabled: true,
+              url: 'https://hooks.example.test/happier',
+              topics: {
+                ready: false,
+                permissionRequest: true,
+                userActionRequest: false,
+              },
+              signingSecret: {
+                _isSecretValue: true,
+                value: 'webhook-secret',
+              },
+            },
+          ],
+        }),
+      sessionId: 's1',
+      logPrefix: '[test]',
+      retryDelaysMs: [0],
+      maxRetryMs: 10_000,
+      maxEntries: 10,
+      onNotifiedAt,
+    });
+
+    notifier.notify({ permissionId: 'p1', toolName: 'Write' });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(onNotifiedAt).toHaveBeenCalledWith('p1', Date.parse('2026-05-03T12:00:00.000Z'));
     notifier.dispose();
   });
 

@@ -12,7 +12,7 @@ import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { auggieTransport } from '@/backends/auggie/acp/transport';
 import type { PermissionMode } from '@/api/types';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import { buildAuggiePermissionArgs } from './permissions';
 
 export interface AuggieBackendOptions extends AgentFactoryOptions {

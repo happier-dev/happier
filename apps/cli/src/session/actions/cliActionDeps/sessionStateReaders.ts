@@ -6,7 +6,6 @@ import {
   readMetadataAliasValue,
 } from '@happier-dev/agents';
 
-import { readExecutionRunParentSessionPermissionResponseTarget } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import {
   decryptStoredSessionPayload,
   type SessionEncryptionContext,
@@ -58,18 +57,6 @@ export function readSessionMetadata(params: Readonly<{
   });
 }
 
-function readSessionAgentState(params: Readonly<{
-  rawSession?: Readonly<{ agentState?: unknown }> | null;
-  mode?: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
-}>): Record<string, unknown> | null {
-  return readStoredSessionRecord({
-    rawValue: params.rawSession?.agentState,
-    mode: params.mode,
-    ctx: params.ctx,
-  });
-}
-
 export function readSessionModesState(metadata: Record<string, unknown> | null): Readonly<{
   provider?: string;
   availableModes?: readonly Readonly<{ id?: string; name?: string; description?: string }>[];
@@ -98,34 +85,4 @@ export function readSessionModelsState(metadata: Record<string, unknown> | null)
     provider?: string;
     availableModels?: readonly Readonly<{ id?: string; name?: string; description?: string }>[];
   }> | null;
-}
-
-export function readExecutionRunPermissionResponseTargetFromAgentState(params: Readonly<{
-  rawSession: unknown;
-  mode: SessionStoredContentEncryptionMode;
-  ctx: SessionEncryptionContext;
-  requestId: string;
-}>): ReturnType<typeof readExecutionRunParentSessionPermissionResponseTarget> {
-  const agentState = readSessionAgentState({
-    rawSession: params.rawSession as Readonly<{ agentState?: unknown }>,
-    mode: params.mode,
-    ctx: params.ctx,
-  });
-  const requests =
-    agentState?.requests && typeof agentState.requests === 'object' && !Array.isArray(agentState.requests)
-      ? agentState.requests as Record<string, unknown>
-      : null;
-  const request =
-    requests?.[params.requestId] && typeof requests[params.requestId] === 'object' && !Array.isArray(requests[params.requestId])
-      ? requests[params.requestId] as Record<string, unknown>
-      : null;
-  const argumentsValue =
-    request?.arguments && typeof request.arguments === 'object' && !Array.isArray(request.arguments)
-      ? request.arguments as Record<string, unknown>
-      : null;
-  const executionRun =
-    argumentsValue?.executionRun && typeof argumentsValue.executionRun === 'object' && !Array.isArray(argumentsValue.executionRun)
-      ? argumentsValue.executionRun as Record<string, unknown>
-      : null;
-  return readExecutionRunParentSessionPermissionResponseTarget(executionRun?.responseTarget);
 }

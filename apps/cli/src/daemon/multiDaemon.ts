@@ -192,6 +192,7 @@ async function resolveServiceInstallationForServer(serverId: string, serverUrl: 
         ...process.env,
         HAPPIER_DAEMON_SERVICE_INSTANCE_ID: serverId,
         HAPPIER_DAEMON_SERVICE_SERVER_URL: serverUrl,
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
       },
     });
     return { installed: snapshot.installed };

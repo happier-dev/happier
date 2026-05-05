@@ -47,6 +47,26 @@ describe('ACP runtime definitions', () => {
         promptImageSupport: 'yes',
       },
     } satisfies ResolvedConfiguredAcpBackend;
+    Object.assign(backend as unknown as Record<string, unknown>, {
+      fsEnabled: false,
+      timeouts: {
+        initMs: 25,
+        initDelayMs: 5,
+      },
+      permissionModeArgv: {
+        flag: '--permission-mode',
+        map: {
+          default: null,
+          read_only: 'read-only',
+        },
+      },
+      mcp: {
+        policy: 'drop',
+      },
+      messageMeta: {
+        enrichOutgoing: (message: unknown) => ({ message }),
+      },
+    });
 
     const definition = normalizeConfiguredAcpDefinition({
       backend,
@@ -81,11 +101,26 @@ describe('ACP runtime definitions', () => {
       launchEnv: {
         TOKEN: 'secret-token',
       },
+      fsEnabled: false,
+      timeouts: {
+        initMs: 25,
+        initDelayMs: 5,
+      },
+      permissionModeArgv: {
+        flag: '--permission-mode',
+        map: {
+          default: null,
+          read_only: 'read-only',
+        },
+      },
       mcp: {
-        policy: 'pass_through',
+        policy: 'drop',
       },
     });
     expect(definition.capabilities.supportsResume).toBe(true);
+    expect(definition.messageMeta?.enrichOutgoing?.({ id: 'msg-1' }, undefined)).toEqual({
+      message: { id: 'msg-1' },
+    });
     expect('providerId' in definition.identity).toBe(false);
     expect('runtimeKind' in definition).toBe(false);
   });

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createPluginStateStore } from '../../../extensions/store/state';
+import { createPluginStateStore } from '../../../plugins/store/state';
 
 import { resolveCliEngineRegistry } from './engineRegistry';
 
@@ -21,6 +21,17 @@ async function writePlugin(params: Readonly<{
         [
             "import { appendFileSync } from 'node:fs';",
             `appendFileSync(${JSON.stringify(params.sentinelPath)}, 'loaded');`,
+            'export async function activate(api) {',
+            '  api.registerBackendEngine({',
+            '    backendId: "acme.runtime.backend",',
+            '    create: async () => ({',
+            '      runtimeCore: {',
+            '        createSessionRuntime: async () => ({ kind: "plugin-session-plan" }),',
+            '        createExecutionRunBackend: async () => ({ kind: "plugin-execution-run-backend" }),',
+            '      },',
+            '    }),',
+            '  });',
+            '}',
             'export async function bindTranscript() { return "ok"; }',
             '',
         ].join('\n'),
@@ -41,37 +52,41 @@ async function writePlugin(params: Readonly<{
                 },
                 runtime: {
                     apiVersion: 1,
-                    capabilities: ['providers', 'backends', 'hooks'],
+                    capabilities: ['agents', 'backends', 'hooks'],
                 },
                 targets: {
                     daemon: {
                         entry: './daemon.mjs',
                     },
                 },
-                permissions: [],
-                contributions: [
-                    {
-                        kind: 'provider',
+                capabilities: {
+                    permissions: [],
+                },
+                contributes: {
+                    agents: [
+                        {
                         kindVersion: 1,
                         id: 'acme.runtime',
-                        providerAgentId: 'customAcp',
                         display: {
                             name: 'Acme Runtime',
                             tags: ['plugin'],
                         },
                         ownedBackendIds: ['acme.runtime.backend'],
-                    },
-                    {
-                        kind: 'backend',
+                        },
+                    ],
+                    backends: [
+                        {
                         kindVersion: 1,
                         id: 'acme.runtime.backend',
-                        providerId: 'acme.runtime',
-                        runtimeKind: 'acp',
+                        agentId: 'acme.runtime',
+                        engine: {
+                            kind: 'custom',
+                        },
                         capabilities: {},
-                        runtimeAdapters: [],
-                    },
-                    {
-                        kind: 'hook',
+                        },
+                    ],
+                    hooks: [
+                        {
                         hookApiVersion: 1,
                         id: 'backend.terminalRuntime.bindTranscript',
                         category: 'integration',
@@ -81,8 +96,9 @@ async function writePlugin(params: Readonly<{
                             target: 'plugin',
                             exportName: 'bindTranscript',
                         },
-                    },
-                ],
+                        },
+                    ],
+                },
             },
             null,
             2,
@@ -141,8 +157,8 @@ describe('resolveCliEngineRegistry', () => {
         const resolution = await registry.resolveForBackendId('pi');
 
         expect(resolution?.backendId).toBe('pi');
-        expect(resolution?.engineAdapter.bindings.createSessionRuntime).toEqual(expect.any(Function));
-        expect(resolution?.engineAdapter.bindings.createExecutionRunBackend).toEqual(expect.any(Function));
+        expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime).toEqual(expect.any(Function));
+        expect(resolution?.engineAdapter.runtimeCore.createExecutionRunBackend).toEqual(expect.any(Function));
         await expect(access(sentinelPath, fsConstants.F_OK)).rejects.toMatchObject({
             code: 'ENOENT',
         });
@@ -196,8 +212,8 @@ describe('resolveCliEngineRegistry', () => {
         const resolution = await refreshedRegistry.resolveForBackendId('acme.runtime.backend');
 
         expect(resolution?.backendId).toBe('acme.runtime.backend');
-        expect(resolution?.engineAdapter.bindings.createSessionRuntime).toEqual(expect.any(Function));
-        expect(resolution?.engineAdapter.bindings.createExecutionRunBackend).toEqual(expect.any(Function));
+        expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime).toEqual(expect.any(Function));
+        expect(resolution?.engineAdapter.runtimeCore.createExecutionRunBackend).toEqual(expect.any(Function));
         await expect(access(sentinelPath, fsConstants.F_OK)).resolves.toBeUndefined();
     });
 });

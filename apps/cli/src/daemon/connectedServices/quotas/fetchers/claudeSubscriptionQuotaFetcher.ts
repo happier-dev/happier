@@ -1,5 +1,6 @@
 import type { ConnectedServiceQuotaFetcher } from '../types';
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
 const DEFAULT_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const DEFAULT_BETA_HEADER_VALUE = 'oauth-2025-04-20';
@@ -11,6 +12,7 @@ import {
   resolveClaudeSubscriptionOauthClientId,
   resolveClaudeSubscriptionOauthTokenUrl,
 } from '@/daemon/connectedServices/shared/oauthConfig';
+import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
 
 function parseIsoDateMs(value: unknown): number | null {
   if (typeof value !== 'string') return null;
@@ -38,6 +40,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
   betaHeaderValue?: string;
   staleAfterMs?: number;
   userAgent?: string;
+  runtimeFetch?: FetchRuntimeServiceV1;
 }>): ConnectedServiceQuotaFetcher {
   const usageUrl = params?.usageUrl ?? DEFAULT_USAGE_URL;
   const betaHeaderValue = params?.betaHeaderValue ?? DEFAULT_BETA_HEADER_VALUE;
@@ -49,6 +52,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
   const oauthOverrideByProfileId = new Map<string, Readonly<{ accessToken: string; refreshToken: string }>>();
   const tokenUrl = resolveClaudeSubscriptionOauthTokenUrl(process.env) || DEFAULT_OAUTH_TOKEN_URL;
   const oauthClientId = resolveClaudeSubscriptionOauthClientId(process.env) || DEFAULT_OAUTH_CLIENT_ID;
+  const runtimeFetch = params?.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
 
   async function fetchUsage(params: Readonly<{
     usageUrl: string;
@@ -56,8 +60,9 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
     betaHeaderValue: string;
     userAgent: string;
     signal: AbortSignal;
-  }>): Promise<Response> {
-    return fetch(params.usageUrl, {
+  }>): ReturnType<FetchRuntimeServiceV1> {
+    return runtimeFetch({
+      url: params.usageUrl,
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${params.accessToken}`,
@@ -70,7 +75,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
     });
   }
 
-  async function throwUsageError(response: Response): Promise<never> {
+  async function throwUsageError(response: Awaited<ReturnType<FetchRuntimeServiceV1>>): Promise<never> {
     const body = await response.text().catch(() => '');
     if (response.status === 403) {
       const scopeMatch = body.match(/scope requirement\s+([a-z0-9:_-]+)/i);
@@ -89,7 +94,8 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
     refreshToken: string;
     expiresAt: number | null;
   }>> {
-    const response = await fetch(tokenUrl, {
+    const response = await runtimeFetch({
+      url: tokenUrl,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -123,7 +129,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
 
   return {
     serviceId: 'claude-subscription',
-    fetch: async ({ record, now, signal }) => {
+    loadQuota: async ({ record, now, signal }) => {
       if (record.kind !== 'oauth') return null;
       const profileId = String(record.profileId ?? '').trim();
       const oauthOverride = profileId ? (oauthOverrideByProfileId.get(profileId) ?? null) : null;

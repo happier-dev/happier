@@ -55,7 +55,7 @@ function asExecutionRunHostRuntime(backend: AgentBackend) {
 }
 
 function createExecutionRunManager(
-  managerCtor: typeof import('./ExecutionRunManager').ExecutionRunManager,
+  managerCtor: typeof import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge').ExecutionRunHostBridge,
   opts: ConstructorParameters<typeof managerCtor>[0] & Readonly<{ createRuntime: TestRuntimeFactory }>,
 ): InstanceType<typeof managerCtor> {
   const { createRuntime, ...bridgeOptions } = opts;
@@ -120,7 +120,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
   });
 
   it('writes a running marker on start and a terminal marker on completion', async () => {
-    const { ExecutionRunManager } = await import('./ExecutionRunManager');
+    const { ExecutionRunHostBridge: ExecutionRunManager } = await import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge');
     const { listExecutionRunMarkers } = await import('../../../daemon/executionRunRegistry');
 
     const manager = createExecutionRunManager(ExecutionRunManager, {
@@ -196,7 +196,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
   });
 
   it('updates lastActivityAtMs for long-lived sends (best-effort)', async () => {
-    const { ExecutionRunManager } = await import('./ExecutionRunManager');
+    const { ExecutionRunHostBridge: ExecutionRunManager } = await import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge');
     const { listExecutionRunMarkers } = await import('../../../daemon/executionRunRegistry');
 
     let nowMs = 1_700_000_000_000;
@@ -249,7 +249,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
   });
 
   it('passes the concrete configured ACP backend id through execution-run state instead of customAcp', async () => {
-    const { ExecutionRunManager } = await import('./ExecutionRunManager');
+    const { ExecutionRunHostBridge: ExecutionRunManager } = await import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge');
 
     const observedBackendIds: string[] = [];
     const manager = createExecutionRunManager(ExecutionRunManager, {
@@ -290,7 +290,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     reloadConfiguration();
 
     const { createCatalogProviderExecutionRunBackend } = await import('./backends/catalogProvider');
-    const { ExecutionRunManager } = await import('./ExecutionRunManager');
+    const { ExecutionRunHostBridge: ExecutionRunManager } = await import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge');
 
     let isolationRoot = '';
     const nativeRuntime: ExecutionRunHostRuntime = Object.freeze({

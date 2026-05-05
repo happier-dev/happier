@@ -28,8 +28,9 @@ export function isAcpFsEnabled(): boolean {
 export function buildInitializeRequest(params: {
   clientName: string;
   clientVersion: string;
+  fsEnabled?: boolean;
 }): InitializeRequest {
-  const fsEnabled = isAcpFsEnabled();
+  const fsEnabled = params.fsEnabled ?? isAcpFsEnabled();
   return {
     protocolVersion: 1,
     clientCapabilities: {

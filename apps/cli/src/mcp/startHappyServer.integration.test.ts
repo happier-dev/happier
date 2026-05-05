@@ -14,12 +14,51 @@ import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
 import { reloadConfiguration } from '@/configuration';
-import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
+import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from '@/rpc/handlers/executionRuns';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 
 const env = process.env;
+
+type TestExecutionRunRuntimeFactory = (opts: Readonly<{
+  runId?: string;
+  backendId: string;
+  backendTarget?: unknown;
+  permissionMode: string;
+  modelId?: string;
+  accountSettings?: Readonly<Record<string, unknown>> | null;
+  start?: unknown;
+}>) => ExecutionRunHostRuntime;
+
+const runtimeFactoryState = vi.hoisted(() => ({
+  current: null as TestExecutionRunRuntimeFactory | null,
+}));
+
+vi.mock('@/agent/executionRuns/runtime/createExecutionRunRuntime', () => ({
+  createExecutionRunRuntime: vi.fn((opts: Parameters<TestExecutionRunRuntimeFactory>[0]) => {
+    const factory = runtimeFactoryState.current;
+    if (!factory) {
+      throw new Error('Missing test execution-run runtime factory');
+    }
+    return factory(opts);
+  }),
+}));
+
+type TestExecutionRunHandlerContext = Parameters<typeof registerExecutionRunHandlersBase>[1] & Readonly<{
+  createBackend?: TestExecutionRunRuntimeFactory;
+}>;
+
+function registerExecutionRunHandlers(
+  rpc: Parameters<typeof registerExecutionRunHandlersBase>[0],
+  ctx: TestExecutionRunHandlerContext,
+): void {
+  const { createBackend, ...baseCtx } = ctx;
+  runtimeFactoryState.current = createBackend ?? (() => {
+    throw new Error('Missing test execution-run runtime factory');
+  });
+  registerExecutionRunHandlersBase(rpc, baseCtx);
+}
 
 function createStaticBackend(responseText: string): AgentBackend & ExecutionRunHostRuntime {
   const handlers = new Set<(msg: any) => void>();
@@ -280,7 +319,7 @@ describe('startHappyServer (MCP integration)', () => {
       expect(resolvedOptions.options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            value: 'agent:claude',
+            value: 'backend:claude',
             label: expect.any(String),
           }),
         ]),

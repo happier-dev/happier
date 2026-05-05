@@ -10,7 +10,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('@/backends/qwen/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/qwen/cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('@/backends/qwen/cli/auth/qwenCliAuthSpec')).qwenCliAuthSpec,
-  getBindings: async () => (await import('@/backends/qwen/bindings/index')).createQwenBindings(),
+  getRuntimeCore: async () => (await import('@/backends/qwen/runtimeCore/index')).createQwenRuntimeCore(),
   vendorResumeSupport: AGENTS_CORE.qwen.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createQwenBackend } = await import('@/backends/qwen/acp/backend');

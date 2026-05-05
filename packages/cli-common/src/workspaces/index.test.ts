@@ -127,19 +127,19 @@ describe('bundleWorkspacePackage', () => {
 });
 
 describe('resolveWorkspaceBundlesFromPackageJson', () => {
-  it('resolves extension workspaces from packages/extensions/<extensionId>', () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-resolve-extensions-'));
+  it('resolves plugin workspaces from packages/plugins/<pluginId>', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-resolve-plugins-'));
     try {
       writeFileSync(resolve(rootDir, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2), 'utf8');
       writeFileSync(resolve(rootDir, 'yarn.lock'), '', 'utf8');
 
-      const extensionDir = resolve(rootDir, 'packages', 'extensions', 'acme');
-      mkdirSync(resolve(extensionDir, 'dist'), { recursive: true });
+      const pluginDir = resolve(rootDir, 'packages', 'plugins', 'acme');
+      mkdirSync(resolve(pluginDir, 'dist'), { recursive: true });
       writeFileSync(
-        resolve(extensionDir, 'package.json'),
+        resolve(pluginDir, 'package.json'),
         JSON.stringify(
           {
-            name: '@happier-dev/extensions-acme',
+            name: '@happier-dev/plugins-acme',
             version: '0.0.0',
             type: 'module',
             exports: { '.': { default: './dist/index.js' } },
@@ -149,7 +149,7 @@ describe('resolveWorkspaceBundlesFromPackageJson', () => {
         ),
         'utf8',
       );
-      writeFileSync(resolve(extensionDir, 'dist/index.js'), 'export const acme = true;\n', 'utf8');
+      writeFileSync(resolve(pluginDir, 'dist/index.js'), 'export const acme = true;\n', 'utf8');
 
       const hostPackageDir = resolve(rootDir, 'apps', 'cli');
       mkdirSync(hostPackageDir, { recursive: true });
@@ -159,7 +159,7 @@ describe('resolveWorkspaceBundlesFromPackageJson', () => {
           {
             name: '@happier-dev/cli',
             version: '0.0.0',
-            bundledDependencies: ['@happier-dev/extensions-acme'],
+            bundledDependencies: ['@happier-dev/plugins-acme'],
           },
           null,
           2,
@@ -174,9 +174,9 @@ describe('resolveWorkspaceBundlesFromPackageJson', () => {
 
       expect(bundles).toEqual([
         expect.objectContaining({
-          packageName: '@happier-dev/extensions-acme',
-          srcDir: resolve(rootDir, 'packages', 'extensions', 'acme'),
-          destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', 'extensions-acme'),
+          packageName: '@happier-dev/plugins-acme',
+          srcDir: resolve(rootDir, 'packages', 'plugins', 'acme'),
+          destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', 'plugins-acme'),
         }),
       ]);
     } finally {

@@ -3,10 +3,9 @@ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process
 import { AGENTS_CORE } from '@happier-dev/agents';
 
 import {
-  normalizeClaudeRuntimeStartingMode,
-  type ClaudeRuntimeMode,
   type StartOptions,
 } from '@/backends/claude/runtime/claudeSessionRuntimeOptions';
+import { normalizeStartingMode } from '@/agent/runtime/session/loop/resolveStartingMode';
 import { isClaudeCliJavaScriptFile } from '@/backends/claude/utils/resolveClaudeCliPath';
 import { readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
@@ -14,9 +13,9 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { readCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
-import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
-import { readProviderCliOverride } from '@/runtime/managedTools/providerCliResolution';
+import { requireJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/requireJavaScriptRuntimeExecutable';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+import { readProviderCliOverride } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { isBun } from '@/utils/runtime';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { handleResumeCommand } from '@/cli/commands/resume';
@@ -324,10 +323,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
       agentIdForAccountSettings: AGENTS_CORE.claude.id,
       resolveExtraOptions: (args) => {
         const startingModeRaw = readOptionalFlagValue(args, '--happy-starting-mode');
-        const startingMode: ClaudeRuntimeMode | undefined =
-          startingModeRaw === 'terminal' || startingModeRaw === 'local' || startingModeRaw === 'remote'
-            ? normalizeClaudeRuntimeStartingMode(startingModeRaw)
-            : undefined;
+        const startingMode = normalizeStartingMode(startingModeRaw) ?? undefined;
         if (startingModeRaw && typeof startingMode === 'undefined') {
           console.error(chalk.red(`Invalid --happy-starting-mode: ${startingModeRaw}. Use "terminal" or "remote".`));
           process.exit(1);

@@ -330,11 +330,17 @@ export type { EngineSpec, RuntimeKindSpec } from './runtime/engine/contracts.js'
 export type {
   EngineAdapter,
   MaybePromise,
-  RuntimeBindings,
   RuntimeControlSurface,
+  RuntimeCore,
   RuntimeFacets,
   RuntimeTranscriptSourceFacet,
 } from './runtime/engine/contracts.js';
+export type {
+  AttachSurfaceV1,
+  ExternalSessionSurfaceV1,
+  SessionHandoffSurfaceV1,
+  TerminalRuntimeSurfaceV1,
+} from './runtime/surfaces/index.js';
 export type { RuntimeDescriptor } from './runtime/identity/runtimeDescriptor.js';
 export {
   publishRuntimeIdentity,

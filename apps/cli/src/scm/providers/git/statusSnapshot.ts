@@ -25,7 +25,9 @@ function isMeaningfulStatus(statusChar: string): boolean {
 }
 
 export function createGitCapabilities() {
-    return createGitScmCapabilities();
+    return createGitScmCapabilities({
+        writeRepositoryInit: true,
+    });
 }
 
 export function buildGitSnapshot(input: {

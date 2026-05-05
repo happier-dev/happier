@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { compareVersions } from '@happier-dev/cli-common/update';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { resolvePublicReleaseRingLabelForId } from '@happier-dev/release-runtime/releaseRings';
-import { ensureJavaScriptRuntimeExecutable } from '../../../runtime/js/ensureJavaScriptRuntimeExecutable';
+import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable';
 import { isBun } from '../../../utils/runtime';
 
 function packageJsonPathForNodeModules(params: Readonly<{ rootDir: string; packageName: string }>): string | null {

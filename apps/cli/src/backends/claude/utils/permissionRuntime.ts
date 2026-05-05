@@ -6,7 +6,7 @@ import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
 import type { PermissionResult } from '../sdk/types';
 import type { Session } from '../runtime/session/ClaudeSession';
-import type { EnhancedMode, PermissionMode } from '../runtime/session/runModeLoop';
+import type { EnhancedMode, PermissionMode } from '../runtime/claudeEnhancedMode';
 
 import { getToolDescriptor } from './getToolDescriptor';
 import { getToolName } from './getToolName';

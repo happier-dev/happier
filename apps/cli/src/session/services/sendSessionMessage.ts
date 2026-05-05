@@ -7,6 +7,7 @@ import {
   type PermissionIntent,
 } from '@happier-dev/agents';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
 import { waitForTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
@@ -44,6 +45,10 @@ function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
 }
 
 function isFallbackSafeRuntimeRpcError(error: unknown): boolean {
+  if (readRpcErrorCode(error) === 'session_not_found') {
+    return true;
+  }
+
   const errorMessage = error instanceof Error ? error.message : String(error ?? '');
   if (
     errorMessage === 'Method not found'

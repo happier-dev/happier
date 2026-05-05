@@ -3,7 +3,7 @@ import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSes
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { logger } from '@/ui/logger';
 import { Future } from '@/utils/future';
-import { resolveTerminalRemoteSwitchRequestTarget } from '../../../../agent/runtimeSwitching/switchTarget';
+import { resolveTerminalRemoteSwitchRequestTarget } from '@/agent/runtime/mode/switching/switchTarget';
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
 import { createClaudeRemoteBatchWaiter, type ClaudeRemoteQueuedPromptBatch } from './createBatchWaiter';
 
@@ -291,11 +291,6 @@ export function createClaudeRemoteLaunchController(params: Readonly<{
 
             if (!exitReason) {
                 const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await params.session.getOrCreateHappierMcpBridge();
-                const resumeSessionAt = (() => {
-                    const snapshot = params.session.client.getMetadataSnapshot?.() as any;
-                    const value = typeof snapshot?.claudeLastAssistantUuid === 'string' ? snapshot.claudeLastAssistantUuid.trim() : '';
-                    return value.length > 0 ? value : null;
-                })();
 
                 await seedClaudeRemoteTeamInboxFromTranscriptPath({
                     sessionId: params.session.sessionId,
@@ -324,7 +319,6 @@ export function createClaudeRemoteLaunchController(params: Readonly<{
                     path: params.session.path,
                     hookSettingsPath: params.session.hookSettingsPath,
                     jsRuntime: params.session.jsRuntime,
-                    resumeSessionAt,
                     happierMcpServers: baseMcpServers,
                     happierMcpConfigJson: baseMcpConfigJson,
                     streamedTranscriptWriter: params.streamedTranscriptWriter,

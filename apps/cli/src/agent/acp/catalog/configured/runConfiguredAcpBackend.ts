@@ -1,7 +1,7 @@
 import type { Credentials } from '@/persistence';
 import type { PermissionMode } from '@/api/types';
-import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
-import { runHostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/lifecycle';
+import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import { runHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import { createConfiguredAcpSessionRuntimePlan } from './sessionPlan';
 
 export async function runConfiguredAcpBackend(

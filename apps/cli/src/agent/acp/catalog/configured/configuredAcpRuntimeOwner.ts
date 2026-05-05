@@ -6,12 +6,17 @@ import type { Credentials } from '@/persistence';
 import { createConfiguredAcpBackend } from './createConfiguredAcpBackend';
 import { materializeConfiguredAcpEnvironment } from './materializeEnvironment';
 import {
+  normalizeConfiguredAcpDefinition,
+  type AcpRuntimeDefinitionV1,
+} from '@/agent/acp/runtime/definition';
+import {
   resolveConfiguredAcpBackendFromAccountSettingsOrPlugins,
   type ResolvedConfiguredAcpBackend,
 } from './resolveBackend';
 
 export type ConfiguredAcpRuntimeOwner = Readonly<{
   backend: ResolvedConfiguredAcpBackend;
+  definition: AcpRuntimeDefinitionV1;
   providerId: string;
   loggerLabel: string;
   launchEnv: Readonly<Record<string, string>>;
@@ -78,6 +83,10 @@ export async function resolveConfiguredAcpRuntimeOwner(params: Readonly<{
     accountSettings: params.accountSettings,
     credentials: params.credentials,
   });
+  const definition = normalizeConfiguredAcpDefinition({
+    backend,
+    launchEnv,
+  });
   const providerId = `acp:${backend.backendId}`;
   const loggerLabel = `${backend.title}ACP`;
   const createBackend: ConfiguredAcpRuntimeOwner['createBackend'] = ({
@@ -89,7 +98,7 @@ export async function resolveConfiguredAcpRuntimeOwner(params: Readonly<{
   }) => createConfiguredAcpBackend({
     cwd,
     env,
-    backend,
+    definition,
     launchEnv,
     mcpServers,
     permissionHandler,
@@ -98,6 +107,7 @@ export async function resolveConfiguredAcpRuntimeOwner(params: Readonly<{
 
   return {
     backend,
+    definition,
     providerId,
     loggerLabel,
     launchEnv,

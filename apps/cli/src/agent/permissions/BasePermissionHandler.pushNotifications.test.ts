@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
+import type { AgentStateRequestResponseTarget } from './agentStateRequestStore';
 
 class FakeRpcHandlerManager {
   handlers = new Map<string, (payload: any) => any>();
@@ -43,6 +44,31 @@ class TestPermissionHandler extends BasePermissionHandler {
     return new Promise<PermissionResult>((resolve, reject) => {
       this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
       this.addPendingRequestToState(toolCallId, toolName, input);
+    });
+  }
+
+  seedPendingRequest(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    metadata: Readonly<{
+      responseTarget?: AgentStateRequestResponseTarget;
+      subagentRef?: unknown;
+      sidechainId?: string;
+      permissionSuggestions?: readonly unknown[];
+    }>,
+  ): void {
+    this.pendingRequests.set(toolCallId, {
+      resolve: () => undefined,
+      reject: () => undefined,
+      toolName,
+      input,
+      ...(typeof metadata.responseTarget !== 'undefined' ? { responseTarget: metadata.responseTarget } : {}),
+      ...(typeof metadata.subagentRef !== 'undefined' ? { subagentRef: metadata.subagentRef } : {}),
+      ...(typeof metadata.sidechainId === 'string' ? { sidechainId: metadata.sidechainId } : {}),
+      ...(Array.isArray(metadata.permissionSuggestions)
+        ? { permissionSuggestions: metadata.permissionSuggestions }
+        : {}),
     });
   }
 }
@@ -159,6 +185,60 @@ describe('BasePermissionHandler push notifications', () => {
     const rpc = session2.rpcHandlerManager.handlers.get('permission');
     await rpc?.({ id: 'perm-1', approved: false, decision: 'denied' });
     await promise;
+  });
+
+  it('republishes pending requests with routing metadata after a session swap', () => {
+    const session1 = new FakeSession();
+    session1.agentState.requests['perm-1'] = {
+      tool: 'Write',
+      arguments: { path: '/tmp/x', content: 'hi' },
+      createdAt: 123,
+      responseTarget: {
+        kind: 'test_target',
+        requestOwner: 'owner-1',
+      },
+      subagentRef: {
+        runId: 'run-1',
+        callId: 'call-1',
+      },
+      sidechainId: 'sidechain-1',
+      permissionSuggestions: [{ behavior: 'allow', tool: 'Write' }],
+    };
+
+    const session2 = new FakeSession();
+    session2.sessionId = 'session-two';
+    const handler = new TestPermissionHandler(session1 as any);
+    handler.seedPendingRequest('perm-1', 'Write', { path: '/tmp/x', content: 'hi' }, {
+      responseTarget: {
+        kind: 'test_target',
+        requestOwner: 'owner-1',
+      },
+      subagentRef: {
+        runId: 'run-1',
+        callId: 'call-1',
+      },
+      sidechainId: 'sidechain-1',
+      permissionSuggestions: [{ behavior: 'allow', tool: 'Write' }],
+    });
+
+    handler.updateSession(session2 as any);
+
+    expect(session2.agentState.requests['perm-1']).toEqual(
+      expect.objectContaining({
+        tool: 'Write',
+        arguments: { path: '/tmp/x', content: 'hi' },
+        responseTarget: {
+          kind: 'test_target',
+          requestOwner: 'owner-1',
+        },
+        subagentRef: {
+          runId: 'run-1',
+          callId: 'call-1',
+        },
+        sidechainId: 'sidechain-1',
+        permissionSuggestions: [{ behavior: 'allow', tool: 'Write' }],
+      }),
+    );
   });
 
   it('signs webhook notifications when account settings secrets read keys are provided', async () => {

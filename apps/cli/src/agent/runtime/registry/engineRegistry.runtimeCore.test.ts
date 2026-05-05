@@ -15,7 +15,7 @@ const {
     pluginReloadControllerStateMock,
 } = vi.hoisted(() => ({
     resolveMergedContributionRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
-    getExecutionRunBackendDescriptorMock: vi.fn((..._args: unknown[]) => {
+    getExecutionRunBackendDescriptorMock: vi.fn<(...args: unknown[]) => unknown>((..._args: unknown[]) => {
         throw new Error('legacy executionRunBackendRegistry must not be used when runtimeCore exist');
     }),
     resolveExecutablePluginRuntimeRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
@@ -108,6 +108,36 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         }>;
         abort?: Readonly<{
             signal?: unknown;
+        }>;
+        storage?: Readonly<{
+            ephemeral?: unknown;
+            session?: unknown;
+            local?: unknown;
+            synced?: unknown;
+        }>;
+        settings?: Readonly<{
+            get?: unknown;
+            set?: unknown;
+            onChange?: unknown;
+            describeFields?: unknown;
+            projectForm?: unknown;
+        }>;
+        secrets?: Readonly<{
+            get?: unknown;
+            set?: unknown;
+            delete?: unknown;
+            list?: unknown;
+        }>;
+        events?: Readonly<{
+            emit?: unknown;
+            subscribe?: unknown;
+        }>;
+        auth?: Readonly<{
+            getIdentity?: unknown;
+            onChange?: unknown;
+            services?: Readonly<{
+                materialize?: unknown;
+            }>;
         }>;
     }>;
 
@@ -836,7 +866,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         expect(observedContext).toEqual(expect.any(Object));
-        const context = observedContext as ObservedPluginRuntimeContext;
+        const context = observedContext as unknown as ObservedPluginRuntimeContext;
         expect(context.config?.values?.currentCliVersion).toBe(configuration.currentCliVersion);
         expect(context.logger?.debug).toEqual(expect.any(Function));
         expect(context.features?.isEnabled).toEqual(expect.any(Function));
@@ -1501,6 +1531,114 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         }
     });
 
+    it('injects A.11 persistence, event, and narrow auth services into plugin runtime context', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                directSessions: null,
+                attach: null,
+                sessionHandoff: null,
+            },
+            diagnostics: [],
+        });
+
+        let observedContext: ObservedPluginRuntimeContext | null = null;
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            backendEnginesByBackendId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: ObservedPluginRuntimeContext) => {
+                            observedContext = ctx;
+                            return {
+                                runtimeCore: {
+                                    createSessionRuntime: async () => ({
+                                        kind: 'hostSessionRuntimePlan',
+                                        config: {},
+                                    }),
+                                    createExecutionRunBackend: vi.fn(),
+                                },
+                            };
+                        },
+                    },
+                }],
+            ]),
+            eventSubscriptionPermissionsByPluginId: new Map([
+                ['acme.sample', new Set(['session.subscribe'])],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            dispose: vi.fn(async () => undefined),
+        });
+        getExecutionRunBackendDescriptorMock.mockReturnValueOnce(null);
+        const authMaterializeAdapter = vi.fn(async () => ({
+            env: { TOKEN: 'value' },
+        }));
+
+        await expect(resolveBackendEngineAdapterResolution('acme.sample.backend', {
+            authMaterializeAdapter,
+        })).resolves.toMatchObject({
+            backendId: 'acme.sample.backend',
+        });
+
+        expect(observedContext).toMatchObject({
+            storage: {
+                ephemeral: expect.any(Object),
+                session: expect.any(Object),
+                local: expect.any(Object),
+                synced: expect.any(Object),
+            },
+            settings: {
+                get: expect.any(Function),
+                set: expect.any(Function),
+                onChange: expect.any(Function),
+                describeFields: expect.any(Function),
+                projectForm: expect.any(Function),
+            },
+            secrets: {
+                get: expect.any(Function),
+                set: expect.any(Function),
+                delete: expect.any(Function),
+                list: expect.any(Function),
+            },
+            events: {
+                emit: expect.any(Function),
+                subscribe: expect.any(Function),
+            },
+            auth: {
+                getIdentity: expect.any(Function),
+                onChange: expect.any(Function),
+                services: {
+                    materialize: expect.any(Function),
+                },
+            },
+        });
+        const context = observedContext as unknown as ObservedPluginRuntimeContext;
+        expect('getConnectedServices' in (context.auth ?? {})).toBe(false);
+        expect('startConnect' in (context.auth ?? {})).toBe(false);
+        expect('disconnect' in (context.auth ?? {})).toBe(false);
+
+        const sessionListener = vi.fn();
+        expect(() => (
+            context.events?.subscribe as (eventName: string, listener: (event: unknown) => void) => { unsubscribe: () => void }
+        )('@happier/session/ready', sessionListener)).not.toThrow();
+
+        await expect((context.auth?.services?.materialize as (request: unknown) => Promise<unknown>)({
+            serviceId: 'openai-codex',
+            profileId: 'default',
+        })).resolves.toEqual({ env: { TOKEN: 'value' } });
+        expect(authMaterializeAdapter).toHaveBeenCalledWith({
+            serviceId: 'openai-codex',
+            profileId: 'default',
+        });
+    });
+
     it('proves built-in parity: SessionHostBridge and createExecutionRunBackend both route through EngineRegistry runtimeCore for codex', async () => {
         const createdPlan = {
             kind: 'hostSessionRuntimePlan',
@@ -1530,7 +1668,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
 
         await expect(bridge.createSessionRuntime('codex', { cwd: '/tmp/codex', resume: 'resume-1' })).resolves.toEqual(createdPlan);
 
-        const runtime = (await import('@/agent/executionRuns/runtime/createExecutionRunBackend')).createExecutionRunRuntime({
+        const runtime = (await import('@/agent/executionRuns/runtime/createExecutionRunRuntime')).createExecutionRunRuntime({
             cwd: '/tmp/codex',
             backendId: 'codex',
             permissionMode: 'read_only',

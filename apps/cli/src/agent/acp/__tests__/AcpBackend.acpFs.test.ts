@@ -35,6 +35,20 @@ describe('AcpBackend ACP FS capability experiment', () => {
     expect(req.clientCapabilities?.fs?.writeTextFile).toBe(true);
   });
 
+  it('lets runtime definitions disable ACP fs per backend without mutating global env', () => {
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
+
+    const req = buildInitializeRequest({
+      clientName: 'test',
+      clientVersion: '0.0.0',
+      fsEnabled: false,
+    });
+
+    expect(req.clientCapabilities?.fs?.readTextFile).toBe(false);
+    expect(req.clientCapabilities?.fs?.writeTextFile).toBe(false);
+    expect(process.env.HAPPIER_ACP_FS).toBe('1');
+  });
+
   it('writeTextFile is permission-gated when ACP fs is enabled', async () => {
     envScope.patch({ HAPPIER_ACP_FS: '1' });
 

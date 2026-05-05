@@ -193,6 +193,25 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(tIndex).toBeLessThan(commandIndex);
     });
 
+    it('creates tmux windows detached so existing attached clients keep their active window', async () => {
+        const tmux = new FakeTmuxUtilities();
+
+        await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', cwd: '/tmp' },
+            {},
+        );
+
+        const newWindowCall = tmux.calls.find((call) => call.cmd[0] === 'new-window');
+        expect(newWindowCall).toBeDefined();
+        if (!newWindowCall) return;
+
+        const commandIndex = newWindowCall.cmd.indexOf("'echo' 'hello'");
+        const detachedIndex = newWindowCall.cmd.indexOf('-d');
+        expect(detachedIndex).toBeGreaterThanOrEqual(0);
+        expect(detachedIndex).toBeLessThan(commandIndex);
+    });
+
     it('quotes command arguments for tmux shell command safely', async () => {
         const tmux = new FakeTmuxUtilities();
         await tmux.spawnInTmux(['echo', 'a b', "c'd", '$(rm -rf /)'], { sessionName: 'my-session', windowName: 'my-window' }, {});

@@ -15,7 +15,7 @@ import type { ConnectedServiceQuotaFetcher } from './types';
 
 type QuotaApi = ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'];
 type RegisterArgs = Parameters<QuotaApi['registerConnectedServiceQuotaSnapshotSealed']>[0];
-type FetchArgs = Parameters<ConnectedServiceQuotaFetcher['fetch']>[0];
+type FetchArgs = Parameters<ConnectedServiceQuotaFetcher['loadQuota']>[0];
 type SealedCredentialResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceCredentialSealed']>>>;
 type SealedQuotaSnapshotResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceQuotaSnapshotSealed']>>>;
 
@@ -58,7 +58,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
         v: 1,
         serviceId: inputRecord.serviceId,
         profileId: inputRecord.profileId,
@@ -144,7 +144,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
         v: 1,
         serviceId: inputRecord.serviceId,
         profileId: inputRecord.profileId,
@@ -186,7 +186,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
 
-    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
     expect(api.registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(1);
     expect(typeof uploadedCiphertext).toBe('string');
     expect(uploadedStatus).toBe('ok');
@@ -253,7 +253,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
         v: 1,
         serviceId: inputRecord.serviceId,
         profileId: inputRecord.profileId,
@@ -347,7 +347,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async (_args: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+      loadQuota: vi.fn(async (_args: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
         v: 1,
         serviceId: record.serviceId,
         profileId: record.profileId,
@@ -377,7 +377,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
     expect(api.getConnectedServiceCredentialSealed).toHaveBeenCalledWith({ serviceId: 'openai-codex', profileId: 'work:us' });
-    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
   });
 
   it('does not wedge the tick if a fetcher ignores AbortSignal', async () => {
@@ -426,7 +426,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async (_args: FetchArgs) => new Promise<null>(() => {})),
+      loadQuota: vi.fn(async (_args: FetchArgs) => new Promise<null>(() => {})),
     };
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -508,7 +508,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
 	    const fetcher: ConnectedServiceQuotaFetcher = {
 	      serviceId: 'openai-codex',
-	      fetch: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+	      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
 	        v: 1,
 	        serviceId: inputRecord.serviceId,
 	        profileId: inputRecord.profileId,
@@ -594,7 +594,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       registerConnectedServiceQuotaSnapshotSealed: vi.fn(),
     } satisfies QuotaApi;
 
-    const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'openai-codex', fetch: vi.fn(async (_args: FetchArgs) => null) };
+    const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'openai-codex', loadQuota: vi.fn(async (_args: FetchArgs) => null) };
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
@@ -613,7 +613,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
 
     await coordinator.tickOnce();
-    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
   });
 
   it('aborts quota fetchers that exceed the timeout', async () => {
@@ -662,7 +662,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
 	    const fetcher: ConnectedServiceQuotaFetcher = {
 	      serviceId: 'openai-codex',
-	      fetch: vi.fn(async ({ signal }: FetchArgs) => {
+	      loadQuota: vi.fn(async ({ signal }: FetchArgs) => {
 	        await new Promise<void>((_resolve, reject) => {
 	          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
 	        });
@@ -690,7 +690,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const pending = coordinator.tickOnce();
     await vi.advanceTimersByTimeAsync(10);
     await expect(pending).resolves.toBeUndefined();
-    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
   });
 
   it('skips fetching when the server snapshot is still fresh', async () => {
@@ -712,7 +712,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 	      registerConnectedServiceQuotaSnapshotSealed: vi.fn(),
 	    } satisfies QuotaApi;
 
-	    const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'openai-codex', fetch: vi.fn(async (_args: FetchArgs) => null) };
+	    const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'openai-codex', loadQuota: vi.fn(async (_args: FetchArgs) => null) };
 
 	    const coordinator = new ConnectedServiceQuotasCoordinator({
 	      api,
@@ -731,7 +731,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
 
     await coordinator.tickOnce();
-    expect(fetcher.fetch).not.toHaveBeenCalled();
+    expect(fetcher.loadQuota).not.toHaveBeenCalled();
     expect(api.registerConnectedServiceQuotaSnapshotSealed).not.toHaveBeenCalled();
   });
 
@@ -779,7 +779,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
 	    const fetcher: ConnectedServiceQuotaFetcher = {
 	      serviceId: 'openai-codex',
-	      fetch: vi.fn(async (_args: FetchArgs) => {
+	      loadQuota: vi.fn(async (_args: FetchArgs) => {
 	        throw new Error('boom');
 	      }),
 	    };
@@ -853,7 +853,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async () => {
+      loadQuota: vi.fn(async () => {
         throw new Error('provider down');
       }),
     };
@@ -881,11 +881,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await coordinator.tickOnce();
     await coordinator.tickOnce();
 
-    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
 
     now += 10_000;
     await coordinator.tickOnce();
-    expect(fetcher.fetch).toHaveBeenCalledTimes(2);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(2);
   });
 
   it('applies failure backoff even when refreshRequestedAt remains newer than fetchedAt', async () => {
@@ -937,7 +937,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async () => {
+      loadQuota: vi.fn(async () => {
         throw new Error('provider down');
       }),
     };
@@ -964,11 +964,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
     await coordinator.tickOnce();
-    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
 
     now += 10_000;
     await coordinator.tickOnce();
-    expect(fetcher.fetch).toHaveBeenCalledTimes(2);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(2);
   });
 
   it('can discover connected profiles when enabled', async () => {
@@ -1023,7 +1023,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      fetch: vi.fn(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+      loadQuota: vi.fn(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
         v: 1,
         serviceId: 'openai-codex',
         profileId: 'work',
@@ -1049,7 +1049,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await coordinator.tickOnce();
 
     expect((api as any).listConnectedServiceProfiles).toHaveBeenCalled();
-    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
     expect(typeof uploadedCiphertext).toBe('string');
   });
 });

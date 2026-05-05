@@ -5,17 +5,29 @@ import {
   type AccountSettings,
 } from '@happier-dev/protocol';
 import type { PermissionMode } from '@/api/types';
+import type { PushNotificationDeliveryOptions } from '@/api/pushNotifications';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 import type { AgentRequestKind } from '@/agent/permissions/requestKind';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
+import {
+  resolveLiveActivityRemoteSender,
+  type LiveActivityRemoteSenderCandidate,
+} from '@/notifications/activity/liveActivity/resolveLiveActivityRemoteSender';
 import { logger } from '@/ui/logger';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-import { shouldSendPermissionRequestPushNotification, shouldSendUserActionRequestPushNotification } from './notificationsPolicy';
+export type PermissionRequestPushSender = LiveActivityRemoteSenderCandidate & Readonly<{
+  sendToAllDevicesAsync: (
+    title: string,
+    body: string,
+    data: Record<string, unknown>,
+    options?: PushNotificationDeliveryOptions,
+  ) => Promise<void>;
+}>;
 
-export type PermissionRequestPushSender = Readonly<{
-  sendToAllDevicesAsync: (title: string, body: string, data: Record<string, unknown>) => Promise<void>;
+export type AgentRequestPushNotificationResult = Readonly<{
+  status: 'delivered' | 'skipped' | 'failed';
 }>;
 
 export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
@@ -28,12 +40,7 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   toolInput?: unknown;
   toolDetails?: string | null;
-}>): Promise<boolean> {
-  const shouldSend = params.kind === 'user_action'
-    ? shouldSendUserActionRequestPushNotification(params.settings)
-    : shouldSendPermissionRequestPushNotification(params.settings);
-  if (!shouldSend) return false;
-
+}>): Promise<AgentRequestPushNotificationResult> {
   const details = typeof params.toolDetails === 'string' && params.toolDetails.trim()
     ? params.toolDetails.trim()
     : summarizeToolInputForNotification(params.toolName, params.toolInput);
@@ -42,6 +49,7 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
       settings: params.settings,
       settingsSecretsReadKeys: params.settingsSecretsReadKeys,
       expoPushSender: params.pushSender,
+      liveActivityRemoteSender: resolveLiveActivityRemoteSender(params.pushSender),
       event: {
         topic: params.kind === 'user_action' ? 'user_action_request' : 'permission_request',
         sessionId: params.sessionId,
@@ -51,13 +59,15 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
         toolDetails: details,
       },
     });
-    return result.deliveredChannels > 0;
+    if (result.deliveredChannels > 0) return { status: 'delivered' };
+    if (result.attemptedChannels === 0) return { status: 'skipped' };
+    return { status: 'failed' };
   } catch (error) {
     logger.debug(
       '[permissionRequestPush] Failed to send request push',
       axios.isAxiosError(error) ? serializeAxiosErrorForLog(error) : error,
     );
-    return false;
+    return { status: 'failed' };
   }
 }
 
@@ -71,7 +81,7 @@ export async function sendPermissionRequestPushNotificationAsync(params: Readonl
   toolInput?: unknown;
   toolDetails?: string | null;
 }>): Promise<boolean> {
-  return sendAgentRequestPushNotificationAsync({
+  const result = await sendAgentRequestPushNotificationAsync({
     pushSender: params.pushSender,
     sessionId: params.sessionId,
     requestId: params.permissionId,
@@ -82,6 +92,7 @@ export async function sendPermissionRequestPushNotificationAsync(params: Readonl
     toolInput: params.toolInput,
     toolDetails: params.toolDetails,
   });
+  return result.status === 'delivered';
 }
 
 export function sendPermissionRequestPushNotification(params: Readonly<{

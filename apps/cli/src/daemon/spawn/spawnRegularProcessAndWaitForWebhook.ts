@@ -62,6 +62,8 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       env: baseEnv,
+    }, {
+      preferWindowsPackagedBinary: true,
     });
 
   if (process.env.DEBUG) {

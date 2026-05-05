@@ -4,12 +4,12 @@ const { activeRuntimeRegistryState } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@/extensions/reload/singleton', () => ({
+vi.mock('@/plugins/runtime/reload/singleton', () => ({
   pluginReloadController: {
     getState: () => ({
       generation: 1,
       activeRegistry: activeRuntimeRegistryState.registry
-        ? { contributions: activeRuntimeRegistryState.registry }
+        ? { contributes: activeRuntimeRegistryState.registry }
         : null,
       lastResult: null,
     }),
@@ -18,8 +18,8 @@ vi.mock('@/extensions/reload/singleton', () => ({
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 const env = process.env;
 
@@ -57,13 +57,13 @@ function createRegistryWithPluginTool(params?: Readonly<{
             : { mcpToolName: params?.toolName ?? 'acme_review_start' },
           examples: null,
           surfaces: {
-            ui_button: false,
-            ui_slash_command: false,
-            voice_tool: false,
-            voice_action_block: false,
+            ui: false,
+            voice: false,
             session_agent: true,
             mcp: true,
             cli: true,
+            rpc: false,
+            sdk: false,
           },
           inputHints: null,
           inputSchema: {

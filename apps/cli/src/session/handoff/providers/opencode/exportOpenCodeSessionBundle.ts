@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process';
 
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import { readOpenCodeSessionAffinityFromMetadata } from '@/session/opencode/opencodeSessionAffinity';
 import type { OpenCodeSessionBundle } from '@/session/handoff/types';
 

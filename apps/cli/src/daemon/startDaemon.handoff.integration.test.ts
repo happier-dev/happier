@@ -144,6 +144,7 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
 vi.mock('@/backends/catalog', () => ({
     AGENTS: {},
     getVendorResumeSupport: vi.fn(async () => () => true),
+    getManagedServerShutdownCleanup: vi.fn(async () => null),
     requireCatalogEntry: vi.fn(),
     resolveAgentCliSubcommand: vi.fn(),
     resolveCatalogAgentId: vi.fn(() => 'codex'),

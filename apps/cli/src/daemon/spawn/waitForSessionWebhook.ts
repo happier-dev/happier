@@ -2,8 +2,9 @@ import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers'
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 
 import type { TrackedSession } from '../types';
+import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from './sessionWebhookTimeoutPolicy';
 
-export const DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS = 5 * 60_000;
+export { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS };
 const SESSION_WEBHOOK_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS';
 
 type WaitForSessionWebhookParams = {

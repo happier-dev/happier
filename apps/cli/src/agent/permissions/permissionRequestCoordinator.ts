@@ -155,8 +155,11 @@ export class PermissionRequestCoordinator<TResult> {
         }
 
         const cached = this.cachedDecisions.get(request.requestId);
-        if (cached && isCompatibleCachedDecision(cached, request)) {
-            return Promise.resolve(cached.result);
+        if (cached) {
+            this.cachedDecisions.delete(request.requestId);
+            if (isCompatibleCachedDecision(cached, request)) {
+                return Promise.resolve(cached.result);
+            }
         }
 
         entry = {
@@ -279,13 +282,16 @@ export class PermissionRequestCoordinator<TResult> {
             });
 
             const waiters = [...entry.waiters.values()];
+            const hasLiveWaiters = waiters.some((waiter) => !waiter.aborted);
             entry.waiters.clear();
             this.pendingRequests.delete(entry.requestId);
-            this.cachedDecisions.set(entry.requestId, {
-                result: completion.result,
-                toolName: entry.toolName,
-                toolInput: entry.toolInput,
-            });
+            if (!hasLiveWaiters) {
+                this.cachedDecisions.set(entry.requestId, {
+                    result: completion.result,
+                    toolName: entry.toolName,
+                    toolInput: entry.toolInput,
+                });
+            }
 
             for (const waiter of waiters) {
                 if (waiter.aborted) continue;

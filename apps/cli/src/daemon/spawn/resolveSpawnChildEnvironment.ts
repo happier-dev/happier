@@ -9,7 +9,7 @@ import { buildAuthEnvUnexpandedErrorMessage, findUnexpandedAuthEnvironmentRefere
 import { resolveCodexBackendModeForRun } from '@/backends/codex/utils/resolveCodexBackendModeForRun';
 import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import { dispatchDaemonSpawnHookEvent } from '@/extensions/hooks/execution/dispatchDaemonSpawnHookEvent';
+import { dispatchDaemonSpawnHookEvent } from '@/plugins/runtime/hooks/execution/dispatchDaemonSpawnHookEvent';
 
 function sanitizeCodexAcpFallbackDetail(detail: string): string {
   const normalized = detail.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();

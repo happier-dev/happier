@@ -48,6 +48,7 @@ import {
     catchUpSessionMessagesViaPort,
     scheduleNextStartupCatchUpRetryViaPort,
 } from './client/lifecycle/startupCatchUpRuntime';
+import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -73,6 +74,7 @@ export class ApiSessionClient extends EventEmitter {
     private metadata: Metadata | null;
     private metadataVersion: number;
     private agentState: AgentState | null;
+    private agentStateRequestStore: AgentStateRequestStore | null = null;
     private agentStateVersion: number;
     private socket!: Socket<ServerToClientEvents, ClientToServerEvents>;
     private userSocket: Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -126,6 +128,14 @@ export class ApiSessionClient extends EventEmitter {
      */
     getAgentStateSnapshot(): AgentState | null {
         return this.agentState;
+    }
+
+    bindAgentStateRequestStore(store: AgentStateRequestStore): void {
+        this.agentStateRequestStore = store;
+    }
+
+    getAgentStateRequestStore(): AgentStateRequestStore | null {
+        return this.agentStateRequestStore;
     }
 
     // Keep the historical test-touch points wired to the extracted owners on the live snapshot.
@@ -366,6 +376,7 @@ export class ApiSessionClient extends EventEmitter {
             sendUserTextMessageCommitted: (text, opts) => this.sendUserTextMessageCommitted(text, opts),
             sendAgentMessageCommitted: (provider, body, opts) => this.sendAgentMessageCommitted(provider, body, opts),
             sendAgentMessageEphemeral: (provider, body, opts) => this.sendAgentMessageEphemeral(provider, body, opts),
+            getAgentStateRequestStore: () => this.getAgentStateRequestStore(),
             persistVoiceAgentRunMetadataFromPublicRun: (run, welcomedEpoch) =>
                 this.persistVoiceAgentRunMetadataFromPublicRun(run, welcomedEpoch),
             socketEmitExecutionRunUpdated: (run) => {

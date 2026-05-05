@@ -6,12 +6,14 @@
  */
 
 import { randomBytes } from 'crypto';
+import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 import { generatePkceCodes } from '@/cloud/pkce';
 import { openBrowser } from '@/ui/openBrowser';
 import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
 import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
 import { promptInput } from '@/terminal/prompts/promptInput';
 import { resolveGeminiOauthClientId, resolveGeminiOauthClientSecret, resolveGeminiOauthTokenUrl } from '@/daemon/connectedServices/shared/oauthConfig';
+import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
 
 export interface GeminiAuthTokens {
     access_token: string;
@@ -35,11 +37,14 @@ export async function exchangeGeminiAuthorizationCodeForTokens(params: Readonly<
     code: string;
     verifier: string;
     redirectUri: string;
+    runtimeFetch?: FetchRuntimeServiceV1;
 }>): Promise<GeminiAuthTokens> {
     const clientId = resolveGeminiOauthClientId(process.env);
     const clientSecret = resolveGeminiOauthClientSecret(process.env);
     const tokenUrl = resolveGeminiOauthTokenUrl(process.env);
-    const response = await fetch(tokenUrl, {
+    const runtimeFetch = params.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
+    const response = await runtimeFetch({
+        url: tokenUrl,
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -76,12 +81,14 @@ function generateState(): string {
 async function exchangeCodeForTokens(
     code: string,
     verifier: string,
-    port: number
+    port: number,
+    runtimeFetch?: FetchRuntimeServiceV1,
 ): Promise<GeminiAuthTokens> {
     return exchangeGeminiAuthorizationCodeForTokens({
         code,
         verifier,
         redirectUri: `http://localhost:${port}/oauth2callback`,
+        runtimeFetch,
     });
 }
 

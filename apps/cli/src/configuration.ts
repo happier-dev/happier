@@ -9,8 +9,8 @@ import { chmodSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeCliArgv } from './cli/parseArgs'
 import {
-  inferPublicReleaseRingIdFromEnvAndArgv,
-} from './cli/runtime/publicReleaseChannel'
+  resolveManagedCliReleaseChannelSync,
+} from '@happier-dev/cli-common/firstPartyRuntime'
 import { CANONICAL_DAEMON_STATE_BASENAME } from './daemon/ownership/daemonOwnershipPaths'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId'
 import packageJson from '../package.json'
@@ -81,6 +81,10 @@ class Configuration {
   // briefly for the runner to exit so we don't strand the session stopped due to idempotency.
   public readonly daemonSpawnExistingSessionWaitForExitMs: number
   public readonly daemonSpawnExistingSessionWaitForExitPollIntervalMs: number
+  // Stop coordination: after requesting a tracked session stop, wait briefly for exit observation
+  // so server-side active=false can be published before callers continue with archive/delete flows.
+  public readonly daemonStopSessionWaitForExitMs: number
+  public readonly daemonStopSessionWaitForExitPollIntervalMs: number
   // Managed runtime installable auto-update background check interval.
   public readonly installablesRuntimeAutoUpdateCheckIntervalMs: number
   // File system RPC limits (Files tab + transfers).
@@ -216,7 +220,7 @@ class Configuration {
     // Check if we're running as daemon based on process args
     const args = normalizeCliArgv(process.argv.slice(2))
     this.isDaemonProcess = isDaemonProcessArgv(args)
-    this.publicReleaseRing = inferPublicReleaseRingIdFromEnvAndArgv({ env: process.env, argv: process.argv })
+    this.publicReleaseRing = resolveManagedCliReleaseChannelSync({ processEnv: process.env, argv: process.argv }).ringId
 
     // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
     this.happyHomeDir = resolveCliHappyHomeDir(process.env)
@@ -290,6 +294,16 @@ class Configuration {
     this.daemonSpawnExistingSessionWaitForExitPollIntervalMs = resolveIntEnvWithBounds(
       'HAPPIER_DAEMON_SPAWN_EXISTING_SESSION_WAIT_FOR_EXIT_POLL_INTERVAL_MS',
       { min: 10, max: 2_000, default: 50 },
+    );
+    // Default: 15s. Set to 0 to disable waiting.
+    this.daemonStopSessionWaitForExitMs = resolveIntEnvWithBounds(
+      'HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_MS',
+      { min: 0, max: 60_000, default: 15_000 },
+    );
+    // Default: 100ms. Defensive bounds protect against busy-wait.
+    this.daemonStopSessionWaitForExitPollIntervalMs = resolveIntEnvWithBounds(
+      'HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_POLL_INTERVAL_MS',
+      { min: 10, max: 2_000, default: 100 },
     );
 
     // Default: 6 hours. Defensive minimum: 1 minute.

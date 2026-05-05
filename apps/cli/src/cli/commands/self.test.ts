@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeSelfUpdateSpec,
   detectInstallSource,
+  doesVersionMatchChannel,
   packageJsonPathForNodeModules,
   parseSelfChannel,
   resolveSelfUpdateCommandForRing,
@@ -77,5 +78,18 @@ describe('self command helpers', () => {
     expect(resolveSelfUpdateCommandForRing('stable')).toBe('happier self update');
     expect(resolveSelfUpdateCommandForRing('preview')).toBe('hprev self update');
     expect(resolveSelfUpdateCommandForRing('publicdev')).toBe('hdev self update');
+  });
+
+  it.each([
+    { channel: 'stable' as const, version: '1.2.3', expected: true },
+    { channel: 'stable' as const, version: '1.2.3-preview.1', expected: false },
+    { channel: 'stable' as const, version: '1.2.3-dev.1', expected: false },
+    { channel: 'preview' as const, version: '1.2.3-preview.1', expected: true },
+    { channel: 'preview' as const, version: '1.2.3-dev.1', expected: false },
+    { channel: 'publicdev' as const, version: '1.2.3-dev.1', expected: true },
+    { channel: 'publicdev' as const, version: '1.2.3-preview.1', expected: false },
+    { channel: 'stable' as const, version: 'not-a-version', expected: false },
+  ])('matches candidate version $version to channel $channel', ({ channel, version, expected }) => {
+    expect(doesVersionMatchChannel(version, channel)).toBe(expected);
   });
 });

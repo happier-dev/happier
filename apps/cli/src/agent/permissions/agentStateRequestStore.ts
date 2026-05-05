@@ -348,6 +348,7 @@ export class AgentStateRequestStore {
     dispose(): void {
         this.permissionRequestPushNotifier?.dispose();
         this.permissionRequestPushNotifier = null;
+        this.responseTargetHandlers.clear();
     }
 
     notifyPermissionRequestPushBestEffort(params: Readonly<{

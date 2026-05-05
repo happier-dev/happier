@@ -199,4 +199,92 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
     expect(permissionMode).toEqual({ current: 'plan', updatedAt: 20 });
     expect(modelOverride).toEqual({ current: 'gpt-5', updatedAt: 21 });
   });
+
+  it('retries metadata watching after transient waitForMetadataUpdate failures', async () => {
+    vi.useFakeTimers();
+    try {
+      let shouldExit = false;
+      let attempts = 0;
+
+      await setupRuntimeMetadataDrivenOverridesSync({
+        explicitPermissionMode: undefined,
+        sessionKind: 'fresh',
+        session: {
+          getMetadataSnapshot: () => ({ permissionMode: 'default', permissionModeUpdatedAt: 1 } as any),
+          fetchLatestUserPermissionIntentFromTranscript: async () => null,
+          waitForMetadataUpdate: async () => {
+            attempts += 1;
+            if (attempts === 1) {
+              throw new Error('transient metadata wait failure');
+            }
+            shouldExit = true;
+            return false;
+          },
+        },
+        permissionMode: { current: 'default' as any, updatedAt: 0 },
+        modelOverride: { current: null, updatedAt: 0 },
+        persistStartupOverridesCache: () => {},
+        shouldExit: () => shouldExit,
+        getAbortSignal: () => undefined,
+      });
+
+      await Promise.resolve();
+      expect(attempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(25);
+      expect(attempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps watching metadata after update application fails', async () => {
+    vi.useFakeTimers();
+    try {
+      let shouldExit = false;
+      let attempts = 0;
+      const onModelOverrideApplied = vi.fn(() => {
+        throw new Error('metadata apply failed');
+      });
+
+      await setupRuntimeMetadataDrivenOverridesSync({
+        explicitPermissionMode: undefined,
+        sessionKind: 'fresh',
+        session: {
+          getMetadataSnapshot: () =>
+            ({
+              permissionMode: 'default',
+              permissionModeUpdatedAt: 1,
+              ...(attempts > 0
+                ? { modelOverrideV1: { v: 1, updatedAt: 10 + attempts, modelId: `gpt-${attempts}` } }
+                : {}),
+            }) as any,
+          fetchLatestUserPermissionIntentFromTranscript: async () => null,
+          waitForMetadataUpdate: async () => {
+            attempts += 1;
+            if (attempts === 1) {
+              return true;
+            }
+            shouldExit = true;
+            return false;
+          },
+        },
+        permissionMode: { current: 'default' as any, updatedAt: 0 },
+        modelOverride: { current: null, updatedAt: 0 },
+        onModelOverrideApplied,
+        persistStartupOverridesCache: () => {},
+        shouldExit: () => shouldExit,
+        getAbortSignal: () => undefined,
+      });
+
+      await Promise.resolve();
+      expect(attempts).toBe(1);
+      expect(onModelOverrideApplied).toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(25);
+      expect(attempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

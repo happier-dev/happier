@@ -1,5 +1,7 @@
 import { URLSearchParams } from 'node:url';
 
+import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+
 import {
   resolveClaudeSubscriptionOauthClientId,
   resolveClaudeSubscriptionOauthTokenUrl,
@@ -9,6 +11,7 @@ import {
   resolveOpenAiCodexOauthClientId,
   resolveOpenAiCodexOauthTokenUrl,
 } from '@/daemon/connectedServices/shared/oauthConfig';
+import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -17,6 +20,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export async function refreshOpenAiCodexOauthTokens(params: Readonly<{
   refreshToken: string;
   now: number;
+  runtimeFetch?: FetchRuntimeServiceV1;
 }>): Promise<Readonly<{
   accessToken: string;
   refreshToken: string;
@@ -25,7 +29,9 @@ export async function refreshOpenAiCodexOauthTokens(params: Readonly<{
 }>> {
   const tokenUrl = resolveOpenAiCodexOauthTokenUrl(process.env);
   const clientId = resolveOpenAiCodexOauthClientId(process.env);
-  const response = await fetch(tokenUrl, {
+  const runtimeFetch = params.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
+  const response = await runtimeFetch({
+    url: tokenUrl,
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -59,6 +65,7 @@ export async function refreshOpenAiCodexOauthTokens(params: Readonly<{
 export async function refreshClaudeSubscriptionOauthTokens(params: Readonly<{
   refreshToken: string;
   now: number;
+  runtimeFetch?: FetchRuntimeServiceV1;
 }>): Promise<Readonly<{
   accessToken: string;
   refreshToken: string;
@@ -66,7 +73,9 @@ export async function refreshClaudeSubscriptionOauthTokens(params: Readonly<{
 }>> {
   const tokenUrl = resolveClaudeSubscriptionOauthTokenUrl(process.env);
   const clientId = resolveClaudeSubscriptionOauthClientId(process.env);
-  const response = await fetch(tokenUrl, {
+  const runtimeFetch = params.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
+  const response = await runtimeFetch({
+    url: tokenUrl,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -99,6 +108,7 @@ export async function refreshClaudeSubscriptionOauthTokens(params: Readonly<{
 export async function refreshGeminiOauthTokens(params: Readonly<{
   refreshToken: string;
   now: number;
+  runtimeFetch?: FetchRuntimeServiceV1;
 }>): Promise<Readonly<{
   accessToken: string;
   refreshToken: string;
@@ -108,7 +118,9 @@ export async function refreshGeminiOauthTokens(params: Readonly<{
   const tokenUrl = resolveGeminiOauthTokenUrl(process.env);
   const clientId = resolveGeminiOauthClientId(process.env);
   const clientSecret = resolveGeminiOauthClientSecret(process.env);
-  const response = await fetch(tokenUrl, {
+  const runtimeFetch = params.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
+  const response = await runtimeFetch({
+    url: tokenUrl,
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { detectCliSnapshotOnDaemonPath } from './cliSnapshot';
-import { resolveProviderCliManagedCommandPath } from '@/runtime/managedTools/providerCliResolution';
+import { resolveProviderCliManagedCommandPath } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';

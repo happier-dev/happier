@@ -386,6 +386,30 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value.transcriptStorage).toBe('direct');
   });
 
+  it('parses Windows Terminal window names from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Windows Terminal run',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            windowsRemoteSessionLaunchMode: 'windows_terminal',
+            windowsTerminalWindowName: 'happier',
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.windowsRemoteSessionLaunchMode).toBe('windows_terminal');
+    expect(parsed.value.windowsTerminalWindowName).toBe('happier');
+  });
+
   it('rejects templates with invalid permissionMode values', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun({

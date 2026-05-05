@@ -27,6 +27,7 @@ const harness = vi.hoisted(() => {
   let resolveShutdown: ((value: { source: ShutdownSource; errorMessage?: string }) => void) | null = null;
   let requestShutdownRef: ((source: ShutdownSource, errorMessage?: string) => void) | null = null;
   let spawnSessionRef: ((options: any) => Promise<any>) | null = null;
+  let stopSessionRef: ((sessionId: string) => Promise<boolean>) | null = null;
   let beforeShutdownRef: (() => Promise<void>) | null = null;
   let machineConnectionStateListener: ((state: any) => void) | null = null;
 
@@ -72,10 +73,19 @@ const harness = vi.hoisted(() => {
       spawnSessionRef = fn;
     },
     getSpawnSession: () => spawnSessionRef,
+    setStopSession: (fn: (sessionId: string) => Promise<boolean>) => {
+      stopSessionRef = fn;
+    },
+    getStopSession: () => stopSessionRef,
     setBeforeShutdown: (fn: () => Promise<void>) => {
       beforeShutdownRef = fn;
     },
     getBeforeShutdown: () => beforeShutdownRef,
+    resetControlRefs: () => {
+      spawnSessionRef = null;
+      stopSessionRef = null;
+      beforeShutdownRef = null;
+    },
   };
 });
 
@@ -129,6 +139,8 @@ vi.mock('@/configuration', () => ({
     serverUrl: 'http://localhost:9999',
     daemonSpawnExistingSessionWaitForExitMs: 5_000,
     daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
+    daemonStopSessionWaitForExitMs: 15_000,
+    daemonStopSessionWaitForExitPollIntervalMs: 100,
   },
 }));
 
@@ -141,7 +153,7 @@ vi.mock('@/ui/doctor', () => ({
   getEnvironmentInfo: vi.fn(() => ({})),
 }));
 
-const spawnHappyCLI = vi.hoisted(() => vi.fn((argv: string[], _opts?: unknown) => ({
+const spawnHappyCLI = vi.hoisted(() => vi.fn((argv: string[], _opts?: unknown, _launchOptions?: unknown) => ({
   pid: 12345,
   stdout: null,
   stderr: null,
@@ -158,6 +170,36 @@ const cgroupMigrationCapture = vi.hoisted(() => {
   };
   return capture;
 });
+
+const sessionRespawnManagerCapture = vi.hoisted(() => ({
+  createSessionRunnerRespawnManager: vi.fn((params: { enabled: boolean }) => ({
+    markStopRequested: vi.fn(),
+    clearStopRequested: vi.fn(),
+    handleUnexpectedExit: vi.fn(),
+    __params: params,
+  })),
+}));
+
+const onChildExitedCapture = vi.hoisted(() => {
+  const onChildExited = vi.fn();
+  return {
+    onChildExited,
+    createOnChildExited: vi.fn(() => onChildExited),
+  };
+});
+
+const stopSessionCapture = vi.hoisted(() => ({
+  createStopSession: vi.fn(({ pidToTrackedSession }: { pidToTrackedSession: Map<number, any> }) =>
+    vi.fn(async (sessionId: string) => {
+      for (const trackedSession of pidToTrackedSession.values()) {
+        if (trackedSession.happySessionId === sessionId) {
+          trackedSession.stopRequestedAtMs = Date.now();
+        }
+      }
+      return true;
+    }),
+  ),
+}));
 
 const buildCgroupSelfMigratingHappyCliLaunchSpec = vi.hoisted(() => vi.fn(async () => ({
   filePath: '/bin/sh',
@@ -198,6 +240,10 @@ vi.mock('./platform/linux/migrateTrackedSessionsOutOfDaemonServiceCgroup', () =>
   migrateTrackedSessionProcessesOutOfDaemonServiceCgroup: cgroupMigrationCapture.migrateTrackedSessionProcessesOutOfDaemonServiceCgroup,
 }));
 
+vi.mock('./processSupervision/sessionRunnerRespawn', () => ({
+  createSessionRunnerRespawnManager: sessionRespawnManagerCapture.createSessionRunnerRespawnManager,
+}));
+
 vi.mock('./platform/windows/windowsSessionConsoleMode', () => ({
   resolveWindowsRemoteSessionConsoleMode: vi.fn(() => 'hidden'),
 }));
@@ -224,6 +270,7 @@ vi.mock('@/backends/catalog', () => ({
     vendorResumeSupport: 'supported',
   })),
   getVendorResumeSupport: vi.fn(async () => () => true),
+  getManagedServerShutdownCleanup: vi.fn(async () => null),
   resolveAgentCliSubcommand: vi.fn(() => 'codex'),
   resolveCatalogAgentId: vi.fn(() => 'codex'),
 }));
@@ -244,12 +291,15 @@ vi.mock('./controlClient', () => ({
 vi.mock('./controlServer', () => ({
   startDaemonControlServer: vi.fn(async ({
     spawnSession,
+    stopSession,
     beforeShutdown,
   }: {
     spawnSession: (options: any) => Promise<any>;
+    stopSession: (sessionId: string) => Promise<boolean>;
     beforeShutdown?: () => Promise<void>;
   }) => {
     harness.setSpawnSession(spawnSession);
+    harness.setStopSession(stopSession);
     if (beforeShutdown) {
       harness.setBeforeShutdown(beforeShutdown);
     }
@@ -261,7 +311,9 @@ vi.mock('./controlServer', () => ({
 }));
 
 vi.mock('./sessions/reattachFromMarkers', () => ({
-  reattachTrackedSessionsFromMarkers: vi.fn(async () => {}),
+  reattachTrackedSessionsFromMarkers: vi.fn(async () => ({
+    orphanedDeadDaemonSessions: [],
+  })),
 }));
 
 vi.mock('./sessions/onHappySessionWebhook', () => ({
@@ -273,7 +325,7 @@ vi.mock('./sessions/isSessionRunnerActive', () => ({
 }));
 
 vi.mock('./sessions/onChildExited', () => ({
-  createOnChildExited: vi.fn(() => vi.fn()),
+  createOnChildExited: onChildExitedCapture.createOnChildExited,
 }));
 
 vi.mock('./sessions/visibleConsoleSpawnWaiter', () => ({
@@ -281,7 +333,7 @@ vi.mock('./sessions/visibleConsoleSpawnWaiter', () => ({
 }));
 
 vi.mock('./sessions/stopSession', () => ({
-  createStopSession: vi.fn(() => vi.fn(async () => ({ stopped: true }))),
+  createStopSession: stopSessionCapture.createStopSession,
 }));
 
 vi.mock('./sessions/resolveSpawnWebhookResult', () => ({
@@ -408,12 +460,117 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    harness.resetControlRefs();
+    onChildExitedCapture.onChildExited.mockClear();
+    onChildExitedCapture.createOnChildExited.mockClear();
+    stopSessionCapture.createStopSession.mockClear();
     if (ORIGINAL_PLATFORM_DESCRIPTOR) {
       Object.defineProperty(process, 'platform', ORIGINAL_PLATFORM_DESCRIPTOR);
     }
     delete process.env.HAPPIER_DAEMON_STARTUP_SOURCE;
     delete process.env.HAPPIER_DAEMON_DIAGNOSTIC_DISABLE_MACHINE_SYNC;
     delete process.env.HAPPIER_DAEMON_DIAGNOSTIC_DISABLE_AUTOMATION_WORKER;
+    delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED;
+    delete process.env.HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_MS;
+    delete process.env.HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_POLL_INTERVAL_MS;
+    sessionRespawnManagerCapture.createSessionRunnerRespawnManager.mockClear();
+  });
+
+  it('leaves daemon session runner respawn disabled unless explicitly enabled', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED;
+
+    try {
+      const { startDaemon } = await import('./startDaemon');
+
+      const run = startDaemon();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (sessionRespawnManagerCapture.createSessionRunnerRespawnManager.mock.calls.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(sessionRespawnManagerCapture.createSessionRunnerRespawnManager).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: false }),
+      );
+
+      harness.requestShutdown('happier-cli');
+      await run;
+    } finally {
+      if (refreshEnvOriginal === undefined) {
+        delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      } else {
+        process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      }
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('waits for a stop-requested tracked runner to be observed exited before stop returns', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    let run: Promise<void> | null = null;
+
+    try {
+      vi.resetModules();
+      harness.resetControlRefs();
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ pidToTrackedSession }) => {
+        pidToTrackedSession.set(6480, {
+          pid: 6480,
+          startedBy: 'daemon',
+          happySessionId: 'sess-stop-6480',
+          reattachedFromDiskMarker: true,
+          stopRequestedAtMs: 123,
+        } as any);
+        return { orphanedDeadDaemonSessions: [] };
+      });
+
+      const waitForExitModule = await import('./sessions/waitForExistingSessionExitIfStopRequested');
+      const waitForExitSpy = vi.spyOn(waitForExitModule, 'waitForExistingSessionExitIfStopRequested')
+        .mockImplementation(async (params: any) => {
+          params.onExitObserved?.(6480, { reason: 'process-missing', code: null, signal: null });
+        });
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (harness.getStopSession()) break;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      const stopSession = harness.getStopSession();
+      if (!stopSession) {
+        throw new Error('Expected stopSession to be registered');
+      }
+
+      await expect(stopSession('sess-stop-6480')).resolves.toBe(true);
+
+      expect(waitForExitSpy).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess-stop-6480',
+      }));
+      expect(onChildExitedCapture.onChildExited).toHaveBeenCalledWith(6480, {
+        reason: 'process-missing',
+        code: null,
+        signal: null,
+      });
+    } finally {
+      if (run) {
+        harness.requestShutdown('happier-cli');
+        await run;
+      }
+      if (refreshEnvOriginal === undefined) {
+        delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      } else {
+        process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      }
+      exitSpy.mockRestore();
+    }
   });
 
   it('derives vendor resume id from existing session metadata and passes --resume to the spawned runner', async () => {
@@ -448,6 +605,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       const argv = firstCall[0];
       expect(argv).toEqual(expect.arrayContaining(['--existing-session', 'sess_plain']));
       expect(argv).toEqual(expect.arrayContaining(['--resume', 'vendor-plain-1']));
+      expect(firstCall[2]).toEqual({ preferWindowsPackagedBinary: true });
 
       harness.requestShutdown('happier-cli');
       await run;
@@ -1561,6 +1719,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
           happySessionId: 'sess-6480',
           reattachedFromDiskMarker: true,
         });
+        return { orphanedDeadDaemonSessions: [] };
       });
 
       const { startDaemon } = await import('./startDaemon');

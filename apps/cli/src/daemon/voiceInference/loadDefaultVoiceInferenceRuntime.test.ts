@@ -104,7 +104,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
         envScope.restore();
         envScope = createEnvKeyScope(envKeys);
         vi.resetModules();
-        vi.doUnmock('@/runtime/assets/resolveCliRuntimeAssetPath');
+        vi.doUnmock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath');
         await Promise.all(tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true }).catch(() => undefined)));
     });
 
@@ -117,7 +117,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
         await createRuntimeModule({ filePath: packagedModulePath, transcribeText: 'packaged-runtime' });
         await createRuntimeModule({ filePath: overrideModulePath, transcribeText: 'env-override-runtime' });
         process.env.HAPPIER_VOICE_INFERENCE_RUNTIME_MODULE = pathToFileURL(overrideModulePath).href;
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 
@@ -138,7 +138,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
 
         await createRuntimeModule({ filePath: overrideModulePath, transcribeText: 'env-override-runtime' });
         process.env.HAPPIER_VOICE_INFERENCE_RUNTIME_MODULE = pathToFileURL(overrideModulePath).href;
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 
@@ -160,7 +160,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
         process.env.HAPPIER_VOICE_INFERENCE_RUNTIME_MODULE = pathToFileURL(
             join(runtimeRoot, 'missing', 'voiceInferenceOverride.mjs'),
         ).href;
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 
@@ -195,7 +195,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
             ].join('\n'),
             'utf8',
         );
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 
@@ -265,7 +265,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
             'utf8',
         );
         process.env.HAPPIER_VOICE_INFERENCE_RUNTIME_MODULE = pathToFileURL(overrideModulePath).href;
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 
@@ -292,7 +292,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
             ].join('\n'),
             'utf8',
         );
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 
@@ -346,7 +346,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
             cwd: payloadRoot,
             portable: true,
         }, ['node_modules']);
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 
@@ -411,7 +411,7 @@ describe('loadDefaultVoiceInferenceRuntime', () => {
             portable: true,
         }, ['node_modules', 'sherpa-target']);
 
-        vi.doMock('@/runtime/assets/resolveCliRuntimeAssetPath', () => ({
+        vi.doMock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
             resolveCliRuntimeAssetPath: (...segments: string[]) => join(runtimeRoot, ...segments),
         }));
 

@@ -5,7 +5,7 @@ import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist } from
 import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
 
 import type { Session } from '../runtime/session/ClaudeSession';
-import type { PermissionMode } from '../runtime/session/runModeLoop';
+import type { PermissionMode } from '../runtime/claudeEnhancedMode';
 
 import {
     advertiseClaudePermissionCapabilities,

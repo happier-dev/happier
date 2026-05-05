@@ -1,6 +1,12 @@
 import type { ExecutionRunBackendDescriptor, ExecutionRunBackendFactory } from './executionRunBackendTypes';
+import { executionRunBackendFactory as coderabbitExecutionRunBackendFactory } from '@/agent/reviews/engines/coderabbit/executionRunBackendFactory';
+import { runCodeRabbitReviewStartPreflight } from '@/agent/reviews/engines/coderabbit/runCodeRabbitReviewStartPreflight';
 
 const REGISTRY: Record<string, ExecutionRunBackendDescriptor> = {
+  coderabbit: {
+    factory: coderabbitExecutionRunBackendFactory,
+    startPreflight: runCodeRabbitReviewStartPreflight,
+  },
 };
 
 export function resolveExecutionRunBackendDescriptor(backendId: string): ExecutionRunBackendDescriptor | null {

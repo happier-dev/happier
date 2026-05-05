@@ -4,7 +4,7 @@ const { handleServiceRepairCliCommandMock } = vi.hoisted(() => ({
     handleServiceRepairCliCommandMock: vi.fn<(params: unknown) => Promise<void>>(async () => {}),
 }));
 
-vi.mock('./serviceRepair/handleServiceRepairCliCommand', () => ({
+vi.mock('./service/repair/handleServiceRepairCliCommand', () => ({
     handleServiceRepairCliCommand: (params: unknown) => handleServiceRepairCliCommandMock(params),
 }));
 

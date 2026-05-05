@@ -1,22 +1,23 @@
 import React from 'react';
 
+import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import { createAcpBackend } from '@/agent/acp/createAcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import { createCatalogProviderExecutionRunBackend } from '@/agent/executionRuns/runtime/backends/catalogProvider';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 import type {
   CliEngineAdapter,
-  CliRuntimeBindings,
+  CliRuntimeCore,
 } from '@/agent/runtime/registry/engineRegistryTypes';
 import { BuiltInAcpTerminalDisplay } from '@/agent/acp/catalog/builtIn/ui/TerminalDisplay';
 import {
   createCatalogHostSessionRuntimeConfig,
   createCatalogHostSessionRuntimePlan,
-} from '@/agent/runtime/sessionLoop/catalogPlan';
+} from '@/agent/runtime/session/loop/catalogPlan';
 import type {
   HostSessionRuntimeConfig,
   HostSessionRuntimeRunOptions,
-} from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+} from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
 import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
 import type { AcpRuntimeBackend } from '@/agent/acp/runtime/createAcpRuntime';
@@ -102,14 +103,14 @@ function adaptAcpBackendToRuntimeBackend(
   return Object.freeze(adapted);
 }
 
-function createBackendFromDefinition(params: Readonly<{
+export function createAcpBackendFromDefinition(params: Readonly<{
   definition: AcpRuntimeDefinitionV1;
   cwd: string;
   env?: Readonly<Record<string, string | undefined>>;
   permissionMode?: string;
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
-}>): AcpRuntimeBackend {
+}>): AcpBackend {
   const launch = resolveAcpRuntimeLaunch({
     definition: params.definition,
     cwd: params.cwd,
@@ -120,7 +121,7 @@ function createBackendFromDefinition(params: Readonly<{
     ? undefined
     : params.mcpServers;
 
-  const backend = createAcpBackend({
+  return createAcpBackend({
     agentName: params.definition.backendId,
     cwd: params.cwd,
     command: launch.command,
@@ -131,7 +132,17 @@ function createBackendFromDefinition(params: Readonly<{
     ...(typeof params.definition.fsEnabled === 'boolean' ? { fsEnabled: params.definition.fsEnabled } : {}),
     transportHandler: createAcpTransportHandlerFromDefinition(params.definition),
   });
-  return adaptAcpBackendToRuntimeBackend(backend);
+}
+
+function createRuntimeBackendFromDefinition(params: Readonly<{
+  definition: AcpRuntimeDefinitionV1;
+  cwd: string;
+  env?: Readonly<Record<string, string | undefined>>;
+  permissionMode?: string;
+  mcpServers?: Record<string, McpServerConfig>;
+  permissionHandler?: AcpPermissionHandler;
+}>): AcpRuntimeBackend {
+  return adaptAcpBackendToRuntimeBackend(createAcpBackendFromDefinition(params));
 }
 
 function createSessionRuntimePlan(
@@ -179,7 +190,7 @@ function createSessionRuntimePlan(
           onThinkingChange: setThinking,
           memoryRecallGuidanceEnabled,
           getPermissionMode,
-          createBackend: () => createBackendFromDefinition({
+          createBackend: () => createRuntimeBackendFromDefinition({
             definition,
             cwd: directory,
             mcpServers,
@@ -201,14 +212,14 @@ export function createAcpRuntimeCoreFromDefinition(
     backendId: definition.backendId,
     messageMeta: definition.messageMeta,
   });
-  const bindings: CliRuntimeBindings = Object.freeze({
+  const runtimeCore: CliRuntimeCore = Object.freeze({
     async createSessionRuntime(sessionParams: unknown) {
       return createSessionRuntimePlan(definition, sessionParams);
     },
     createExecutionRunBackend(opts: CreateCliExecutionRunBackendParams) {
       return createCatalogProviderExecutionRunBackend({
         providerId: definition.backendId,
-        createRuntime: (runtimeOptions) => createBackendFromDefinition({
+        createRuntime: (runtimeOptions) => createRuntimeBackendFromDefinition({
           definition,
           cwd: runtimeOptions.cwd,
           permissionMode: runtimeOptions.permissionMode,
@@ -225,7 +236,7 @@ export function createAcpRuntimeCoreFromDefinition(
   });
 
   return Object.freeze({
-    bindings,
+    runtimeCore,
     ...(messageMeta ? { messageMeta } : {}),
   });
 }

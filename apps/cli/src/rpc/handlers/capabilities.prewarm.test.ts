@@ -3,7 +3,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CapabilitiesDescribeResponse } from '@happier-dev/protocol';
 import type { Capability } from '@/capabilities/service';
 import type { AgentCatalogEntry } from '@/backends/types';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
   return {
@@ -14,7 +14,7 @@ function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry
     uiDescriptors: [],
     activationTargets: [],
     hookRegistrations: [],
-    runtimeAdaptersByBackendId: new Map(),
+    runtimeCoreHooksByBackendId: new Map(),
     catalogEntriesById: {},
     providerDefinitionsById: new Map(),
     backendDefinitionsById: new Map(),
@@ -32,7 +32,7 @@ function createCodexCatalogEntry(loaderSpy: () => Promise<Capability>): AgentCat
 }
 
 function mockProviderCliResolution(): void {
-  vi.doMock('@/runtime/managedTools/providerCliResolution', () => ({
+  vi.doMock('@/packagedRuntime/managedTools/providerCliResolution', () => ({
     readBackendCliSourcePreference: () => 'system-first',
     readProviderCliOverride: () => null,
     resolveProviderCliCommand: () => null,
@@ -62,8 +62,8 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     mockProviderCliResolution();
 
-    vi.doMock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
       return {
         ...actual,
         primeResolvedContributionRegistry: primeResolvedContributionRegistrySpy,
@@ -119,8 +119,8 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     mockProviderCliResolution();
 
-    vi.doMock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
       return {
         ...actual,
         primeResolvedContributionRegistry: primeResolvedContributionRegistrySpy,
@@ -177,8 +177,8 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     mockProviderCliResolution();
 
-    vi.doMock('@/extensions/registry/createResolvedContributionRegistry', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/extensions/registry/createResolvedContributionRegistry')>();
+    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
       return {
         ...actual,
         primeResolvedContributionRegistry: primeResolvedContributionRegistrySpy,

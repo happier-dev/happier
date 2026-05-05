@@ -83,6 +83,24 @@ describe('computeDaemonSpawnRequestKey', () => {
     expect(a.key).not.toBe(b.key);
   });
 
+  it('includes Windows Terminal window name in the new-session key', () => {
+    const a = computeDaemonSpawnRequestKey({
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      windowsRemoteSessionLaunchMode: 'windows_terminal',
+      windowsTerminalWindowName: 'happier',
+    } satisfies SpawnSessionOptions);
+    const b = computeDaemonSpawnRequestKey({
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      windowsRemoteSessionLaunchMode: 'windows_terminal',
+      windowsTerminalWindowName: 'happier-qa',
+    } satisfies SpawnSessionOptions);
+    expect(a.kind).toBe('new');
+    expect(b.kind).toBe('new');
+    expect(a.key).not.toBe(b.key);
+  });
+
   it('includes codexBackendMode in the new-session key', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',

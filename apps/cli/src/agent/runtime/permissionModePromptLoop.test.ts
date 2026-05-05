@@ -172,6 +172,60 @@ describe('runPermissionModePromptLoop', () => {
     expect(onAfterLoopBoundary).toHaveBeenCalledWith({ reason: 'turn_completed' });
   });
 
+  it('passes pending materialization through the lifecycle handoff gate', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    let metadataWaitCount = 0;
+    session.waitForMetadataUpdate = vi.fn(async () => {
+      metadataWaitCount += 1;
+      if (metadataWaitCount === 1) {
+        queue.push({ text: 'after-gate', localId: 'local-gate' }, { permissionMode: 'default' });
+        return true;
+      }
+      return false;
+    });
+    session.popPendingMessage = vi.fn(async () => {
+      queue.push({ text: 'should-not-pop', localId: 'local-pop' }, { permissionMode: 'default' });
+      return true;
+    });
+    const beforePendingMaterialize = vi.fn(async () => false);
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      beforePendingMaterialize,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(beforePendingMaterialize).toHaveBeenCalled();
+    expect(session.popPendingMessage).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('after-gate');
+  });
+
   it('does not emit ready or turn_completed when runtime startup exits before the turn begins', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();

@@ -1,13 +1,13 @@
 import { listActionSpecs, type ActionId } from '@happier-dev/protocol';
 
-import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type {
   ResolvedActionContribution,
   ResolvedContributionProvenance,
   ResolvedContributionRegistry,
   ResolvedContributionSourceKind,
-} from '@/extensions/registry/types';
-import { pluginReloadController } from '@/extensions/reload/singleton';
+} from '@/plugins/projection/registry/types';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { HappierBuiltInToolDefinition } from './types';
 
 type ActionEnabledPredicate = (id: ActionId) => boolean;
@@ -38,6 +38,9 @@ const BUILT_IN_ACTION_TOOL_ENTRIES = Object.freeze(
     }))
     .filter((entry) => entry.toolName.length > 0),
 );
+const BUILT_IN_ACTION_SPECS_BY_ID = new Map(
+  listActionSpecs().map((spec) => [String(spec.id), spec] as const),
+);
 
 const MANUAL_TOOL_EQUIVALENT_ACTION_IDS = new Map<string, ActionId>([
   ['change_title', 'session.title.set'],
@@ -49,7 +52,7 @@ const MANUAL_TOOL_EQUIVALENT_ACTION_IDS = new Map<string, ActionId>([
 function resolveActionToolRegistry(params?: Readonly<{
   registry?: ResolvedContributionRegistry;
 }>): ResolvedContributionRegistry {
-  const activeRegistry = pluginReloadController.getState().activeRegistry?.contributions;
+  const activeRegistry = pluginReloadController.getState().activeRegistry?.contributes;
   return params?.registry ?? activeRegistry ?? getResolvedContributionRegistry();
 }
 
@@ -110,6 +113,45 @@ function getActionToolEntryById(actionId: string, params?: Readonly<{
   return listActionToolEntries(params).find((entry) => entry.id === actionId) ?? null;
 }
 
+function getTrustedPluginActionContributionById(
+  actionId: string,
+  params?: Readonly<{ registry?: ResolvedContributionRegistry }>,
+): ResolvedActionContribution | null {
+  return resolveActionToolRegistry(params).actions.find((action) => (
+    action.definition.id === actionId
+    && isTrustedPluginToolContribution(action)
+  )) ?? null;
+}
+
+function resolveActionAvailabilityEntry(
+  actionId: string,
+  params?: Readonly<{ registry?: ResolvedContributionRegistry }>,
+): Readonly<{
+  id: string;
+  surfaces: Readonly<Record<HappierBuiltInToolSurface, boolean>>;
+  provenance: ResolvedContributionProvenance;
+}> | null {
+  const builtInSpec = BUILT_IN_ACTION_SPECS_BY_ID.get(actionId);
+  if (builtInSpec) {
+    return {
+      id: String(builtInSpec.id),
+      surfaces: builtInSpec.surfaces,
+      provenance: 'first_party',
+    };
+  }
+
+  const pluginAction = getTrustedPluginActionContributionById(actionId, params);
+  if (!pluginAction) {
+    return null;
+  }
+
+  return {
+    id: pluginAction.definition.id,
+    surfaces: pluginAction.definition.surfaces,
+    provenance: pluginAction.provenance,
+  };
+}
+
 export function isActionKnownToToolCatalog(
   actionId: ActionId | string,
   params?: Readonly<{ registry?: ResolvedContributionRegistry }>,
@@ -154,7 +196,7 @@ export function isActionAvailableOnToolSurface(params: Readonly<{
 }>): boolean {
   const surface = params.surface ?? 'session_agent';
   const isActionEnabled = params.isActionEnabled ?? (() => true);
-  const actionEntry = getActionToolEntryById(String(params.actionId), { registry: params.registry });
+  const actionEntry = resolveActionAvailabilityEntry(String(params.actionId), { registry: params.registry });
   if (!actionEntry) {
     return false;
   }

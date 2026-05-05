@@ -51,7 +51,7 @@ export type RuntimeFacets = Readonly<{
   transcriptSource?: RuntimeTranscriptSourceFacet;
 }>;
 
-export type RuntimeBindings<
+export type RuntimeCore<
   TCreateSessionRuntimeParams = unknown,
   TSessionRuntime = unknown,
   TCreateExecutionRunBackendParams = unknown,
@@ -67,7 +67,7 @@ export type EngineAdapter<
   TCreateExecutionRunBackendParams = unknown,
   TExecutionRunBackend = unknown,
 > = Readonly<{
-  bindings: RuntimeBindings<
+  runtimeCore: RuntimeCore<
     TCreateSessionRuntimeParams,
     TSessionRuntime,
     TCreateExecutionRunBackendParams,

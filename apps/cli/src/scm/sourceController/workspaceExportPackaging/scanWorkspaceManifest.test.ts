@@ -52,6 +52,12 @@ function createAdministrativePathTestBackend(matchesAdministrativeWorkspacePath:
             writeRemotePull: true,
             writeRemotePush: true,
             writeRemotePublish: true,
+            writeRemoteAdd: true,
+            writeRemoteSetUrl: true,
+            writeRemoteRemove: true,
+            writeBranchMerge: true,
+            writeBranchRebase: true,
+            writeBranchOperationControl: true,
             worktreeCreate: false,
             changeSetModel: 'index',
             supportedDiffAreas: ['included', 'pending', 'both'],
@@ -98,6 +104,18 @@ function createAdministrativePathTestBackend(matchesAdministrativeWorkspacePath:
         branchCheckout: async () => {
             throw new Error('not needed in this test');
         },
+        branchMerge: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchRebase: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchOperationContinue: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchOperationAbort: async () => {
+            throw new Error('not needed in this test');
+        },
         worktreeCreate: async () => {
             throw new Error('not needed in this test');
         },
@@ -105,6 +123,15 @@ function createAdministrativePathTestBackend(matchesAdministrativeWorkspacePath:
             throw new Error('not needed in this test');
         },
         worktreePrune: async () => {
+            throw new Error('not needed in this test');
+        },
+        remoteAdd: async () => {
+            throw new Error('not needed in this test');
+        },
+        remoteSetUrl: async () => {
+            throw new Error('not needed in this test');
+        },
+        remoteRemove: async () => {
             throw new Error('not needed in this test');
         },
         remoteFetch: async () => {

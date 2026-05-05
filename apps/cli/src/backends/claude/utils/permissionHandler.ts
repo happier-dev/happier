@@ -1,7 +1,7 @@
 import { logger } from "@/lib";
 import { SDKMessage } from "../sdk";
 import { Session } from "../runtime/session/ClaudeSession";
-import type { EnhancedMode, PermissionMode } from "../runtime/session/runModeLoop";
+import type { EnhancedMode, PermissionMode } from "../runtime/claudeEnhancedMode";
 import type { PermissionResult } from "../sdk/types";
 
 import type { PermissionResponse } from './permissionCore';

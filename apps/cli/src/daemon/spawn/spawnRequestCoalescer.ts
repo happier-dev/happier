@@ -84,6 +84,7 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
   const terminal = options.terminal ?? null;
   const windowsRemoteSessionLaunchMode = normalizeNonEmptyString(options.windowsRemoteSessionLaunchMode);
   const windowsRemoteSessionConsole = normalizeNonEmptyString(options.windowsRemoteSessionConsole);
+  const windowsTerminalWindowName = normalizeNonEmptyString(options.windowsTerminalWindowName);
 
   const permissionMode = normalizeNonEmptyString(options.permissionMode);
   const agentModeId = normalizeNonEmptyString(options.agentModeId);
@@ -112,6 +113,7 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
     terminal: toStableJson(terminal, new WeakSet()),
     windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode ?? null,
     windowsRemoteSessionConsole: windowsRemoteSessionConsole ?? null,
+    windowsTerminalWindowName: windowsTerminalWindowName ?? null,
     permissionMode: permissionMode ?? null,
     agentModeId: agentModeId ?? null,
     modelId: modelId ?? null,

@@ -11,6 +11,7 @@ import {
 describe('spawnHappyCLI runtime executable selection', () => {
   const envScope = createSpawnHappyCliEnvScope();
   const originalGlobalBun = (globalThis as typeof globalThis & { Bun?: unknown }).Bun;
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
   afterEach(() => {
     vi.doUnmock('child_process');
@@ -22,6 +23,9 @@ describe('spawnHappyCLI runtime executable selection', () => {
       delete (globalThis as typeof globalThis & { Bun?: unknown }).Bun;
     } else {
       (globalThis as typeof globalThis & { Bun?: unknown }).Bun = originalGlobalBun;
+    }
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
   });
 
@@ -116,6 +120,95 @@ describe('spawnHappyCLI runtime executable selection', () => {
         runtime: 'node',
       });
       expect(launchSpec.filePath).toMatch(/node(?:\.exe)?$/i);
+    });
+  });
+
+  it('prefers the sibling packaged Windows binary for daemon session runners when requested', async () => {
+    if (!originalPlatformDescriptor) {
+      throw new Error('Expected process.platform descriptor to be available');
+    }
+
+    await withTempDir('happier-windows-package-', async (dir) => {
+      const packageDistDir = join(dir, 'package-dist');
+      const entrypoint = join(packageDistDir, 'index.mjs');
+      const binaryPath = join(dir, 'happier.exe');
+      mkdirSync(packageDistDir, { recursive: true });
+      writeFileSync(entrypoint, 'export {};\n', 'utf8');
+      writeFileSync(binaryPath, '', 'utf8');
+
+      Object.defineProperty(process, 'platform', {
+        ...originalPlatformDescriptor,
+        value: 'win32',
+      });
+
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+        HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0',
+        HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0',
+        HAPPIER_VARIANT: undefined,
+        HAPPIER_STACK_REPO_DIR: undefined,
+        HAPPIER_STACK_CLI_ROOT_DIR: undefined,
+        HAPPIER_STACK_STACK: undefined,
+        HAPPIER_WINDOWS_SESSION_RUNNER_BINARY: undefined,
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const launchSpec = mod.buildHappyCliSubprocessLaunchSpec(['codex', '--started-by', 'daemon'], {
+        preferWindowsPackagedBinary: true,
+      });
+
+      expect(launchSpec.runtime).toBe('binary');
+      expect(launchSpec.filePath).toBe(binaryPath);
+      expect(launchSpec.args).toEqual(['codex', '--started-by', 'daemon']);
+    });
+  });
+
+  it('falls back to the JavaScript runtime when the Windows session runner binary preference is disabled', async () => {
+    if (!originalPlatformDescriptor) {
+      throw new Error('Expected process.platform descriptor to be available');
+    }
+
+    await withTempDir('happier-windows-package-disabled-', async (dir) => {
+      const packageDistDir = join(dir, 'package-dist');
+      const entrypoint = join(packageDistDir, 'index.mjs');
+      const binaryPath = join(dir, 'happier.exe');
+      mkdirSync(packageDistDir, { recursive: true });
+      writeFileSync(entrypoint, 'export {};\n', 'utf8');
+      writeFileSync(binaryPath, '', 'utf8');
+
+      Object.defineProperty(process, 'platform', {
+        ...originalPlatformDescriptor,
+        value: 'win32',
+      });
+
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+        HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0',
+        HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0',
+        HAPPIER_VARIANT: undefined,
+        HAPPIER_STACK_REPO_DIR: undefined,
+        HAPPIER_STACK_CLI_ROOT_DIR: undefined,
+        HAPPIER_STACK_STACK: undefined,
+        HAPPIER_WINDOWS_SESSION_RUNNER_BINARY: '0',
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const launchSpec = mod.buildHappyCliSubprocessLaunchSpec(['codex', '--started-by', 'daemon'], {
+        preferWindowsPackagedBinary: true,
+      });
+
+      expect(launchSpec.runtime).toBe('node');
+      expect(launchSpec.filePath).not.toBe(binaryPath);
+      expect(launchSpec.args).toEqual(expect.arrayContaining([
+        '--no-warnings',
+        '--no-deprecation',
+        entrypoint,
+        'codex',
+        '--started-by',
+        'daemon',
+      ]));
     });
   });
 

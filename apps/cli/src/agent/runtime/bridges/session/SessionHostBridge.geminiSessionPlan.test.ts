@@ -18,13 +18,13 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
 }));
 
 describe('SessionHostBridge (gemini session plan)', () => {
-  it('returns a host-owned Gemini session plan through bindings', async () => {
+  it('returns a host-owned Gemini session plan through runtimeCore', async () => {
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'gemini',
       providerId: 'gemini',
       source: 'built_in',
       engineAdapter: {
-        bindings: {
+        runtimeCore: {
           createSessionRuntime: createSessionRuntimeMock,
         },
       },

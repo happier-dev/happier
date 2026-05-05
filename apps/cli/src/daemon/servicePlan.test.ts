@@ -32,6 +32,7 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.content).toContain('<string>/usr/local/lib/node_modules/@happier-dev/cli/dist/index.mjs</string>');
     expect(plan.files[0]?.content).toContain('<string>daemon</string>');
     expect(plan.files[0]?.content).toContain('<string>start-sync</string>');
+    expect(plan.files[0]?.content).toContain('<string>--takeover</string>');
     expect(plan.files[0]?.content).toContain('<key>HAPPIER_HOME_DIR</key>');
     expect(plan.files[0]?.content).toContain('<key>HAPPIER_ACTIVE_SERVER_ID</key>');
     expect(plan.files[0]?.content).toContain('<key>HAPPIER_SERVER_URL</key>');
@@ -135,7 +136,7 @@ describe('daemon service install plan', () => {
 
     expect(plan.files).toHaveLength(1);
     expect(plan.files[0]?.path).toBe('/home/test/.config/systemd/user/happier-daemon.cloud.service');
-    expect(plan.files[0]?.content).toContain('ExecStart=/usr/bin/node /usr/lib/node_modules/@happier-dev/cli/dist/index.mjs daemon start-sync');
+    expect(plan.files[0]?.content).toContain('ExecStart=/usr/bin/node /usr/lib/node_modules/@happier-dev/cli/dist/index.mjs daemon start-sync --takeover');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/test/.happier');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_ACTIVE_SERVER_ID=cloud');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_SERVER_URL=https://api.happier.dev');
@@ -223,7 +224,7 @@ describe('daemon service install plan', () => {
 
     expect(plan.files).toHaveLength(1);
     expect(plan.files[0]?.path).toBe('/etc/systemd/system/happier-daemon.cloud.service');
-    expect(plan.files[0]?.content).toContain('ExecStart=/usr/local/bin/happier daemon start-sync');
+    expect(plan.files[0]?.content).toContain('ExecStart=/usr/local/bin/happier daemon start-sync --takeover');
     expect(plan.files[0]?.content).toContain('User=happier');
     expect(plan.files[0]?.content).toContain('WorkingDirectory=/home/happier');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/happier/.happier');
@@ -273,7 +274,7 @@ describe('daemon service install plan', () => {
     });
 
     expect(plan.files).toHaveLength(1);
-    expect(plan.files[0]?.content).toContain('ExecStart="/opt/Node With Spaces/bin/node" "/home/test/Library/Application Support/Happier/dist/index.mjs" daemon start-sync');
+    expect(plan.files[0]?.content).toContain('ExecStart="/opt/Node With Spaces/bin/node" "/home/test/Library/Application Support/Happier/dist/index.mjs" daemon start-sync --takeover');
   });
 
   it('plans instance-specific unit names (linux)', () => {

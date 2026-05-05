@@ -1,6 +1,15 @@
+import { randomUUID } from 'node:crypto';
+
 import type { McpServerConfig } from '@/agent';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { DeferredStartupPushSender } from '@/agent/runtime/startup/deferredStartupTypes';
+import { normalizeStartingMode } from '@/agent/runtime/session/loop/resolveStartingMode';
+import type {
+    HostSessionTerminalRemoteHandoffReason,
+    HostSessionTerminalRemoteHandoffResult,
+    HostSessionTerminalRemoteModeRuntime,
+} from '@/agent/runtime/session/loop/terminalRemoteModeRuntime';
 import type {
     RuntimeTurnCompletionOptions,
     RuntimeTurnConfigUpdate,
@@ -13,9 +22,12 @@ import { logger } from '@/ui/logger';
 
 import { createClaudeEnhancedModeMessageQueue, type EnhancedMode } from './claudeEnhancedMode';
 import { cleanupClaudeRuntimeAdjuncts } from './cleanupRuntimeAdjuncts';
-import { mapClaudeRuntimeModeToSessionMode, type ClaudeSessionRuntimeOptions } from './claudeSessionRuntimeOptions';
-import { runClaudeModeLoop } from './session/runModeLoop';
-import type { Session } from './session/ClaudeSession';
+import {
+    mapClaudeRuntimeModeToSessionMode,
+    type ClaudeSessionRuntimeOptions,
+} from './claudeSessionRuntimeOptions';
+import { launchClaudeRemoteSession } from './remote/launcher';
+import { Session } from './session/ClaudeSession';
 import { createClaudeRuntimeAdjunctState } from '../utils/createClaudeRuntimeAdjunctState';
 
 type ClaudeRuntimeTurnOperationsParams = Readonly<{
@@ -35,13 +47,23 @@ type ClaudeRuntimeTurnOperationsParams = Readonly<{
     deferredPushSenderRef: { current: DeferredStartupPushSender | null };
 }>;
 
-export function createClaudeRuntimeTurnOperations(params: ClaudeRuntimeTurnOperationsParams): RuntimeTurnOperations {
+type ClaudeTerminalLaunch = (params: Readonly<{
+    session: Session;
+    options?: Readonly<{ entry?: 'initial' | 'switch' }>;
+}>) => Promise<{ type: 'switch' } | { type: 'exit'; code: number }>;
+
+export function createClaudeRuntimeTurnOperations(
+    params: ClaudeRuntimeTurnOperationsParams,
+): RuntimeTurnOperations & HostSessionTerminalRemoteModeRuntime {
     const messageQueue = createClaudeEnhancedModeMessageQueue();
     const subscribers = new Set<RuntimeTurnMessageHandler>();
-    let providerLoop: Promise<number> | null = null;
+    let sessionReadyPromise: Promise<Session> | null = null;
+    let terminalLaunchPromise: Promise<ClaudeTerminalLaunch> | null = null;
+    let vendorSpawnNotified = false;
     let disposed = false;
     let currentMode: EnhancedMode = params.initialMode;
     let activeTurnCompletion: { promise: Promise<void>; resolve: () => void } | null = null;
+    let activeRuntimeTaskId: string | null = null;
 
     const notifySubscribers = (message: unknown) => {
         for (const subscriber of subscribers) {
@@ -56,58 +78,114 @@ export function createClaudeRuntimeTurnOperations(params: ClaudeRuntimeTurnOpera
         completion.resolve();
     };
 
-    const ensureProviderLoopStarted = async () => {
-        if (providerLoop) return;
+    const notifyVendorSpawnInvoked = () => {
+        if (vendorSpawnNotified) return;
+        vendorSpawnNotified = true;
         params.opts.onVendorSpawnInvoked?.();
-        const launchTerminal = await requireTerminalRuntimeLaunch<
+    };
+
+    const ensureTerminalLaunch = async (): Promise<ClaudeTerminalLaunch> => {
+        terminalLaunchPromise ??= requireTerminalRuntimeLaunch<
             { session: Session; options?: { entry?: 'initial' | 'switch' } },
             { type: 'switch' } | { type: 'exit'; code: number }
         >('claude');
-        providerLoop = runClaudeModeLoop({
+        return terminalLaunchPromise;
+    };
+
+    const bindSessionInstance = (sessionInstance: Session): void => {
+        params.currentSessionRef.current = sessionInstance;
+        params.localPermissionBridgeManager.setSession(sessionInstance);
+        const originalOnThinkingChange = sessionInstance.onThinkingChange.bind(sessionInstance);
+        sessionInstance.onThinkingChange = (thinking: boolean) => {
+            originalOnThinkingChange(thinking);
+            params.setThinking(thinking);
+            if (thinking) {
+                if (!activeRuntimeTaskId) {
+                    activeRuntimeTaskId = randomUUID();
+                    notifySubscribers({ type: 'task_started', id: activeRuntimeTaskId });
+                }
+                notifySubscribers({ type: 'thinking', thinking });
+                return;
+            }
+
+            const taskId = activeRuntimeTaskId;
+            activeRuntimeTaskId = null;
+            if (taskId) {
+                notifySubscribers({ type: 'task_complete', id: taskId });
+            }
+            notifySubscribers({ type: 'thinking', thinking });
+            resolveActiveTurn();
+        };
+        const pushSender = params.deferredPushSenderRef.current;
+        if (pushSender) {
+            sessionInstance.setPushSender(pushSender);
+        }
+    };
+
+    const createSessionInstance = (): Session => {
+        notifyVendorSpawnInvoked();
+        const sessionInstance = new Session({
+            client: params.session as SessionClientPort,
+            pushSender: null,
+            accountSettings: params.opts.accountSettings ?? params.opts.accountSettingsContext?.settings ?? null,
+            accountSettingsSecretsReadKeys: params.opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
             path: params.directory,
-            model: params.opts.model ?? params.opts.modelId,
-            permissionMode: params.opts.permissionMode,
-            permissionModeUpdatedAt: params.opts.permissionModeUpdatedAt,
-            startingMode: params.opts.startingMode,
-            claudeCodeExperimentalAgentTeamsEnabled: params.initialMode.claudeCodeExperimentalAgentTeamsEnabled,
-            startedBy: params.opts.startedBy,
+            sessionId: null,
+            claudeArgs: params.opts.claudeArgs,
+            logPath: logger.logFilePath,
+            messageQueue,
+            onModeChange: (mode) => {
+                params.session.sendSessionEvent({ type: 'switch', mode });
+            },
             hookSettingsPath: params.hookSettingsPath,
             hookPluginDir: params.hookPluginDir,
-            claudeArgs: params.opts.claudeArgs,
             jsRuntime: params.opts.jsRuntime,
+            startedBy: params.opts.startedBy ?? 'terminal',
+            terminalRuntime: params.opts.terminalRuntime ?? null,
             defaultSystemPromptText: undefined,
-            messageQueue,
-            session: params.session,
-            pushSender: null,
-            accountSettings: params.opts.accountSettings ?? null,
             precomputedMcpBridge: {
                 mcpServers: params.mcpServers,
                 stop: () => undefined,
             },
-            launchTerminal,
-            onModeChange: (newMode) => {
-                params.session.sendSessionEvent({ type: 'switch', mode: mapClaudeRuntimeModeToSessionMode(newMode) });
-            },
-            onSessionReady: (sessionInstance) => {
-                params.currentSessionRef.current = sessionInstance;
-                params.localPermissionBridgeManager.setSession(sessionInstance);
-                const originalOnThinkingChange = sessionInstance.onThinkingChange.bind(sessionInstance);
-                sessionInstance.onThinkingChange = (thinking: boolean) => {
-                    originalOnThinkingChange(thinking);
-                    params.setThinking(thinking);
-                    notifySubscribers({ type: 'thinking', thinking });
-                    if (!thinking) {
-                        resolveActiveTurn();
-                    }
-                };
-                const pushSender = params.deferredPushSenderRef.current;
-                if (pushSender) {
-                    sessionInstance.setPushSender(pushSender);
-                }
-            },
-        }).finally(() => {
-            resolveActiveTurn();
         });
+        sessionInstance.claudeCodeExperimentalAgentTeamsEnabled =
+            params.initialMode.claudeCodeExperimentalAgentTeamsEnabled === true;
+
+        const snapshot = params.session.getMetadataSnapshot?.();
+        const snapshotRecord = snapshot && typeof snapshot === 'object'
+            ? snapshot as Readonly<Record<string, unknown>>
+            : null;
+        const snapshotMode = typeof snapshotRecord?.permissionMode === 'string'
+            ? snapshotRecord.permissionMode as EnhancedMode['permissionMode']
+            : null;
+        const snapshotUpdatedAt = typeof snapshotRecord?.permissionModeUpdatedAt === 'number'
+            ? snapshotRecord.permissionModeUpdatedAt
+            : 0;
+        if (snapshotMode && snapshotUpdatedAt > 0) {
+            sessionInstance.adoptLastPermissionModeFromMetadata(snapshotMode, snapshotUpdatedAt);
+        } else {
+            sessionInstance.lastPermissionMode = params.opts.permissionMode ?? 'default';
+            sessionInstance.lastPermissionModeUpdatedAt =
+                typeof params.opts.permissionModeUpdatedAt === 'number' ? params.opts.permissionModeUpdatedAt : 0;
+        }
+        bindSessionInstance(sessionInstance);
+        return sessionInstance;
+    };
+
+    const ensureSessionReady = async (): Promise<Session> => {
+        if (disposed) {
+            throw new Error('Claude runtime turn operations have been disposed');
+        }
+        const existingSession = params.currentSessionRef.current;
+        if (existingSession) {
+            return existingSession;
+        }
+        sessionReadyPromise ??= Promise.resolve()
+            .then(() => createSessionInstance())
+            .finally(() => {
+                sessionReadyPromise = null;
+            });
+        return await sessionReadyPromise;
     };
 
     const resolveModeForNextPrompt = (): EnhancedMode => ({
@@ -116,6 +194,22 @@ export function createClaudeRuntimeTurnOperations(params: ClaudeRuntimeTurnOpera
         agentModeId: params.opts.sessionModeId ?? currentMode.agentModeId ?? null,
         model: params.opts.model ?? params.opts.modelId ?? currentMode.model,
     });
+
+    const requestGracefulRemoteHandoff = async (
+        reason: HostSessionTerminalRemoteHandoffReason,
+    ): Promise<HostSessionTerminalRemoteHandoffResult> => {
+        await ensureSessionReady();
+        const result = await params.session.rpcHandlerManager.invokeLocal('switch', { to: 'remote', reason });
+        if (result && typeof result === 'object') {
+            const record = result as Readonly<Record<string, unknown>>;
+            if (typeof record.error === 'string') {
+                return { ok: false, detail: record.error };
+            }
+        }
+        return result === false
+            ? { ok: false, detail: 'remote_handoff_rejected' }
+            : { ok: true };
+    };
 
     return Object.freeze({
         beginTurnLifecycle() {
@@ -128,17 +222,15 @@ export function createClaudeRuntimeTurnOperations(params: ClaudeRuntimeTurnOpera
             })();
         },
         async startOrLoadSession(_opts?: RuntimeTurnStartOrLoadOptions) {
-            if (disposed) {
-                throw new Error('Claude runtime turn operations have been disposed');
-            }
-            await ensureProviderLoopStarted();
+            await ensureSessionReady();
         },
         async sendTurnPrompt(prompt: string) {
-            await ensureProviderLoopStarted();
+            await ensureSessionReady();
             currentMode = resolveModeForNextPrompt();
             messageQueue.push(prompt, currentMode);
         },
         async steerInFlightTurn(message: string) {
+            await ensureSessionReady();
             messageQueue.push(message, resolveModeForNextPrompt());
         },
         async waitForTurnCompletion(opts?: RuntimeTurnCompletionOptions) {
@@ -167,6 +259,11 @@ export function createClaudeRuntimeTurnOperations(params: ClaudeRuntimeTurnOpera
                 currentSession?.noteUserAbortRequested();
                 await currentSession?.abortCurrentTurn();
             } finally {
+                const taskId = activeRuntimeTaskId;
+                activeRuntimeTaskId = null;
+                if (taskId) {
+                    notifySubscribers({ type: 'turn_aborted', id: taskId, reason: 'interrupted' });
+                }
                 messageQueue.reset();
                 resolveActiveTurn();
             }
@@ -194,14 +291,33 @@ export function createClaudeRuntimeTurnOperations(params: ClaudeRuntimeTurnOpera
                 hookSettingsPath: params.hookSettingsPath,
                 hookPluginDir: params.hookPluginDir,
             });
+            activeRuntimeTaskId = null;
             resolveActiveTurn();
-            try {
-                await providerLoop?.catch((error) => {
-                    logger.debug('[claude] Provider loop exited during reset/dispose', error);
-                });
-            } catch {
-                // The catch above is defensive; reset/dispose must stay best-effort.
-            }
+        },
+        resolveTerminalRemoteSessionModeLoop() {
+            return {
+                startingMode: normalizeStartingMode(params.opts.startingMode) ?? 'terminal',
+                remoteExitCode: 0,
+                onBeforeIteration: (mode) => {
+                    logger.debug(`[loop] Iteration with mode: ${mode}`);
+                },
+                runTerminal: async ({ entry }) => {
+                    const session = await ensureSessionReady();
+                    const launchTerminal = await ensureTerminalLaunch();
+                    return await launchTerminal({ session, options: { entry } });
+                },
+                runRemote: async () => await launchClaudeRemoteSession(await ensureSessionReady()),
+                onModeChange: (mode) => {
+                    params.currentSessionRef.current?.onModeChange(mapClaudeRuntimeModeToSessionMode(mode));
+                },
+                getResumeReadiness: () => {
+                    const sessionId = params.currentSessionRef.current?.sessionId;
+                    return typeof sessionId === 'string' && sessionId.trim().length > 0
+                        ? { ready: true }
+                        : { ready: false, detail: 'missing_runtime_session_identity' };
+                },
+                requestGracefulRemoteHandoff,
+            };
         },
     });
 }

@@ -75,7 +75,7 @@ describe('createExecutionRunRuntime configured ACP registry convergence', () => 
             diagnostics: [],
         });
 
-        const { createExecutionRunRuntime } = await import('./createExecutionRunBackend');
+        const { createExecutionRunRuntime } = await import('./createExecutionRunRuntime');
         const configuredRuntime = createExecutionRunRuntime({
             cwd: '/tmp/workspace',
             backendId: 'customAcp',

@@ -1,20 +1,27 @@
 import { join } from 'node:path';
 
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
 import {
     buildConnectedServiceOauthAuthEntry,
     requireConnectedServiceOauthCredentialRecordWithExpiry,
     requireConnectedServiceTokenCredentialRecord,
 } from '@/daemon/connectedServices/shared/connectedServiceCredentialRecord';
 
-async function validateOpenAiCodexRefreshTokenOrThrow(record: ConnectedServiceCredentialRecordV1): Promise<void> {
+async function validateOpenAiCodexRefreshTokenOrThrow(params: Readonly<{
+    record: ConnectedServiceCredentialRecordV1;
+    runtimeFetch: FetchRuntimeServiceV1;
+}>): Promise<void> {
+    const { record } = params;
     const oauth = requireConnectedServiceOauthCredentialRecordWithExpiry(record);
 
     // This is intentionally a "stale token probe" rather than a full auth flow. The tests
     // stub `fetch`, and the concrete endpoint/shape is not part of a published contract yet.
-    const response = await fetch('https://api.openai.com/v1/oauth/token', {
+    const response = await params.runtimeFetch({
+        url: 'https://api.openai.com/v1/oauth/token',
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -50,6 +57,7 @@ export async function materializeOpenCodeConnectedServiceAuth(params: Readonly<{
     openaiCodex: ConnectedServiceCredentialRecordV1 | null;
     openai: ConnectedServiceCredentialRecordV1 | null;
     anthropic: ConnectedServiceCredentialRecordV1 | null;
+    runtimeFetch?: FetchRuntimeServiceV1;
 }>): Promise<Readonly<{ env: Record<string, string> }>> {
     const xdgDataHome = join(params.rootDir, 'xdg', 'data');
     const xdgCacheHome = join(params.rootDir, 'xdg', 'cache');
@@ -57,9 +65,13 @@ export async function materializeOpenCodeConnectedServiceAuth(params: Readonly<{
     const xdgStateHome = join(params.rootDir, 'xdg', 'state');
 
     const auth: Record<string, unknown> = {};
+    const runtimeFetch = params.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
 
     if (params.openaiCodex) {
-        await validateOpenAiCodexRefreshTokenOrThrow(params.openaiCodex);
+        await validateOpenAiCodexRefreshTokenOrThrow({
+            record: params.openaiCodex,
+            runtimeFetch,
+        });
         const record = requireConnectedServiceOauthCredentialRecordWithExpiry(params.openaiCodex);
         auth.openai = buildConnectedServiceOauthAuthEntry(record);
     } else if (params.openai) {

@@ -6,10 +6,9 @@ import type {
 
 export type ConnectedServiceQuotaFetcher = Readonly<{
   serviceId: ConnectedServiceId;
-  fetch: (params: Readonly<{
+  loadQuota: (params: Readonly<{
     record: ConnectedServiceCredentialRecordV1;
     now: number;
     signal: AbortSignal;
   }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
 }>;
-

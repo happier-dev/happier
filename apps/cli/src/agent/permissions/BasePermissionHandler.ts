@@ -20,12 +20,20 @@ import type {
 } from '@/settings/notifications/permissionRequestPush';
 import { resolveAgentRequestKind } from './requestKind';
 import { AgentStateRequestStore } from './agentStateRequestStore';
+import type {
+    AgentStateOutstandingRequest,
+    AgentStateRequestResponseTarget,
+} from './agentStateRequestStore';
 import {
     createPermissionRequestCoordinator,
     type PermissionRequestCoordinator,
     type PermissionRequestCoordinatorCompletedRequest,
     type PermissionRequestCoordinatorContext,
 } from './permissionRequestCoordinator';
+
+type AgentStateRequestStoreBindableSession = Readonly<{
+    bindAgentStateRequestStore?: (store: AgentStateRequestStore) => void;
+}>;
 
 export type PermissionRequestPushSender = PermissionRequestPushSenderFromSettings;
 
@@ -60,6 +68,10 @@ export interface PendingRequest {
     reject: (error: Error) => void;
     toolName: string;
     input: unknown;
+    responseTarget?: AgentStateRequestResponseTarget;
+    subagentRef?: unknown;
+    sidechainId?: string;
+    permissionSuggestions?: readonly unknown[];
     coordinatorManaged?: boolean;
 }
 
@@ -122,6 +134,7 @@ export abstract class BasePermissionHandler {
                     ? opts.getAccountSettingsSecretsReadKeys
                     : (() => []),
         });
+        this.bindRequestStoreToSession(session);
         this.requestCoordinator = createPermissionRequestCoordinator<PermissionResult>({
             store: this.requestStore,
         });
@@ -143,6 +156,11 @@ export abstract class BasePermissionHandler {
      * This is critical for avoiding stale session references after onSessionSwap.
      */
     updateSession(newSession: ApiSessionClient): void {
+        const pendingMetadataById = new Map<string, AgentStateOutstandingRequest | null>();
+        for (const id of this.pendingRequests.keys()) {
+            pendingMetadataById.set(id, this.requestStore.readOutstandingRequest(id));
+        }
+
         logger.debug(`${this.getLogPrefix()} Session reference updated`);
         this.session = newSession;
         // Re-setup RPC handler with new session
@@ -151,17 +169,38 @@ export abstract class BasePermissionHandler {
         // The new session snapshot will re-seed any persisted per-session approvals.
         this.allowedToolIdentifiers.clear();
         this.requestStore.updateSession(newSession);
+        this.bindRequestStoreToSession(newSession);
         this.seedAllowedToolsFromAgentState();
 
         // If we were mid-permission when the session reference swapped (offline reconnect),
         // republish still-pending items into the new agentState and re-attempt push notifications.
         for (const [id, pending] of this.pendingRequests.entries()) {
             if (!this.requestStore.hasOutstandingRequest(id)) {
+                const priorOutstanding = pendingMetadataById.get(id);
                 this.requestStore.publishRequest({
                     requestId: id,
                     toolName: pending.toolName,
                     toolInput: pending.input,
-                    createdAt: Date.now(),
+                    createdAt: priorOutstanding?.createdAt ?? Date.now(),
+                    ...(typeof priorOutstanding?.kind === 'string' ? { kind: priorOutstanding.kind } : {}),
+                    ...(priorOutstanding?.responseTarget ?? pending.responseTarget
+                        ? { responseTarget: priorOutstanding?.responseTarget ?? pending.responseTarget ?? null }
+                        : {}),
+                    ...(typeof priorOutstanding?.subagentRef !== 'undefined'
+                        ? { subagentRef: priorOutstanding.subagentRef }
+                        : typeof pending.subagentRef !== 'undefined'
+                            ? { subagentRef: pending.subagentRef }
+                            : {}),
+                    ...(typeof priorOutstanding?.sidechainId === 'string'
+                        ? { sidechainId: priorOutstanding.sidechainId }
+                        : typeof pending.sidechainId === 'string'
+                            ? { sidechainId: pending.sidechainId }
+                            : {}),
+                    ...(Array.isArray(priorOutstanding?.permissionSuggestions)
+                        ? { permissionSuggestions: priorOutstanding.permissionSuggestions }
+                        : Array.isArray(pending.permissionSuggestions)
+                            ? { permissionSuggestions: pending.permissionSuggestions }
+                            : {}),
                 });
             } else {
                 this.requestStore.notifyPermissionRequestPushBestEffort({
@@ -171,6 +210,12 @@ export abstract class BasePermissionHandler {
                 });
             }
         }
+    }
+
+    private bindRequestStoreToSession(session: ApiSessionClient): void {
+        const binder = (session as AgentStateRequestStoreBindableSession).bindAgentStateRequestStore;
+        if (typeof binder !== 'function') return;
+        binder.call(session, this.requestStore);
     }
 
     private seedAllowedToolsFromAgentState(): void {

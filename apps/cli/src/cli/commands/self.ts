@@ -8,6 +8,8 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import {
   FIRST_PARTY_COMPONENT_IDS,
   installVersionedPayload,
+  resolveManagedCliReleaseChannelSync,
+  resolveManagedCliToolNameForRing,
   resolveInstalledFirstPartyComponentPaths,
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -23,21 +25,23 @@ import {
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import {
   normalizePublicReleaseRingId,
-  resolveCliInvokerNameForPublicRing,
   resolvePublicReleaseRingLabelForId,
   type PublicReleaseRingId,
 } from '@happier-dev/release-runtime/releaseRings';
-import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import {
   resolveCliBinaryAssetBundleFromReleaseAssets,
   updateInstalledCliPayloadFromReleaseAssets,
 } from '@/cli/runtime/update/binarySelfUpdate';
+import { doesVersionMatchChannel } from '@/cli/runtime/update/doesVersionMatchChannel';
+import { quiesceInstalledCliWindowsPayloadOwners } from '@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners';
 import { handleSelfMigrateCommand } from './self/handleSelfMigrateCommand';
 import { handleSelfReleaseChannelCommand } from './self/handleSelfReleaseChannelCommand';
 import { maybeRunVersionGatedRuntimeMigration } from './self/maybeRunVersionGatedRuntimeMigration';
 import { maybeRunDoctorRepair } from './self/maybeRunDoctorRepair';
 
 type SelfChannel = PublicReleaseRingId;
+
+export { doesVersionMatchChannel } from '@/cli/runtime/update/doesVersionMatchChannel';
 
 function usage(): string {
   return [
@@ -111,8 +115,21 @@ function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' {
   return channel === 'stable' ? 'latest' : 'next';
 }
 
+function resolveSelfReleaseChannel(params: Readonly<{
+  args: readonly string[];
+  rawArgv?: readonly string[];
+  invokedPath?: string | null;
+}>): ReturnType<typeof resolveManagedCliReleaseChannelSync> {
+  return resolveManagedCliReleaseChannelSync({
+    args: params.args,
+    argv: params.rawArgv ?? process.argv,
+    invokedPath: params.invokedPath ?? process.argv[1] ?? '',
+    processEnv: process.env,
+  });
+}
+
 export function parseSelfChannel(args: string[], invokedPath = process.argv[1] ?? ''): SelfChannel {
-  return resolvePublicReleaseRingIdFromCliArgs({ args, invokedPath });
+  return resolveSelfReleaseChannel({ args, invokedPath }).ringId;
 }
 
 export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
@@ -135,7 +152,7 @@ export function detectInstallSource(path: string): 'npm' | 'binary' {
 }
 
 export function resolveSelfUpdateCommandForRing(ring: SelfChannel): string {
-  return `${resolveCliInvokerNameForPublicRing(ring)} self update`;
+  return `${resolveManagedCliToolNameForRing(ring)} self update`;
 }
 
 function resolveBinaryUpdateRepo(env: NodeJS.ProcessEnv): string {
@@ -210,8 +227,8 @@ async function runSelfUpdateStep<T>(
   }
 }
 
-async function cmdCheck(argv: string[]): Promise<void> {
-  const channel = parseSelfChannel(argv);
+async function cmdCheck(argv: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
+  const channel = resolveSelfReleaseChannel({ args: argv, rawArgv }).ringId;
   const quiet = argv.includes('--quiet');
   const installSource = detectInstallSource(process.argv[1] ?? '');
 
@@ -225,7 +242,7 @@ async function cmdCheck(argv: string[]): Promise<void> {
     const assets = typeof release === 'object' && release != null && 'assets' in release ? (release as any).assets : null;
     const bundle = resolveCliBinaryAssetBundleFromReleaseAssets({ assets, os, arch, preferVersion: null });
 
-    const latest = bundle.version;
+    const latest = doesVersionMatchChannel(bundle.version, channel) ? bundle.version : null;
     const invokerVersion = configuration.currentCliVersion;
     const current = invokerVersion || null;
     const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
@@ -260,7 +277,8 @@ async function cmdCheck(argv: string[]): Promise<void> {
   const invokerVersion = configuration.currentCliVersion;
   const current = runtimeVersion || invokerVersion || null;
 
-  const latest = readNpmDistTagVersion({ packageName: pkgName, distTag, cwd: process.cwd(), env: process.env });
+  const resolvedLatest = readNpmDistTagVersion({ packageName: pkgName, distTag, cwd: process.cwd(), env: process.env });
+  const latest = !resolvedLatest || doesVersionMatchChannel(resolvedLatest, channel) ? resolvedLatest : null;
   const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
 
   const existing = readUpdateCache(updateCachePath(channel));
@@ -283,14 +301,14 @@ async function cmdCheck(argv: string[]): Promise<void> {
   }
   if (updateAvailable) {
     console.log(chalk.yellow(`Update available: ${current ?? 'current'} → ${latest}`));
-    console.log(chalk.gray('Run:'), chalk.cyan('happier self update'));
+    console.log(chalk.gray('Run:'), chalk.cyan(resolveSelfUpdateCommandForRing(channel)));
     return;
   }
   console.log(chalk.green('Up to date.'));
 }
 
-async function cmdUpdate(argv: string[]): Promise<void> {
-  const channel = parseSelfChannel(argv);
+async function cmdUpdate(argv: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
+  const channel = resolveSelfReleaseChannel({ args: argv, rawArgv }).ringId;
   const steps = createStepPrinter({ enabled: true });
   const toArg = (() => {
     const i = argv.indexOf('--to');
@@ -330,11 +348,23 @@ async function cmdUpdate(argv: string[]): Promise<void> {
     });
   });
   const assets = typeof release === 'object' && release != null && 'assets' in release ? (release as any).assets : null;
-  resolveCliBinaryAssetBundleFromReleaseAssets({
+  const bundle = resolveCliBinaryAssetBundleFromReleaseAssets({
     assets,
     os,
     arch,
     preferVersion: effective.preferVersion,
+  });
+  if (!doesVersionMatchChannel(bundle.version, effective.channel)) {
+    const channelLabel = resolvePublicReleaseRingLabelForId(effective.channel);
+    throw new Error(`Resolved binary update candidate ${bundle.version} does not match the ${channelLabel} release channel`);
+  }
+
+  await quiesceInstalledCliWindowsPayloadOwners({
+    channel: effective.channel,
+    processEnv: {
+      ...process.env,
+      HAPPIER_HOME_DIR: configuration.happyHomeDir,
+    },
   });
 
   const result = await runSelfUpdateStep(steps, 'Downloading and installing payload', async () => {
@@ -361,13 +391,14 @@ async function cmdUpdate(argv: string[]): Promise<void> {
           : []),
     ]);
   });
-  console.log(chalk.green(`✓ Updated happier to ${result.updatedTo}`));
+  const updatedToolName = resolveManagedCliToolNameForRing(effective.channel);
+  console.log(chalk.green(`✓ Updated ${updatedToolName} to ${result.updatedTo}`));
   const migrationRan = await maybeRunVersionGatedRuntimeMigration({
     fromVersion: result.previousVersionId,
     toVersion: result.updatedTo,
     hadLegacyCurrentInstallWithoutVersionMarkers: result.hadLegacyCurrentInstallWithoutVersionMarkers,
     argv: ['repair'],
-    commandPath: 'happier self migrate',
+    commandPath: `${updatedToolName} self migrate`,
   });
   await maybeRunDoctorRepair({
     migrationRan,
@@ -390,17 +421,25 @@ function parseFirstPartyComponentId(value: string): FirstPartyComponentId {
   throw new Error(`Unknown first-party component: ${value}`);
 }
 
-async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
+async function cmdInternalInstallPayload(argv: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
   const componentId = parseFirstPartyComponentId(resolveInternalInstallPayloadArgValue(argv, '--component'));
   const payloadRoot = resolveInternalInstallPayloadArgValue(argv, '--payload-root');
   const versionId = resolveInternalInstallPayloadArgValue(argv, '--version');
-  const channel = normalizePublicReleaseRingId(resolveInternalInstallPayloadArgValue(argv, '--channel')) || parseSelfChannel(argv);
+  const channel = normalizePublicReleaseRingId(resolveInternalInstallPayloadArgValue(argv, '--channel'))
+    || resolveSelfReleaseChannel({ args: argv, rawArgv }).ringId;
 
   if (!payloadRoot) {
     throw new Error('--payload-root is required');
   }
   if (!versionId) {
     throw new Error('--version is required');
+  }
+
+  if (componentId === 'happier-cli') {
+    await quiesceInstalledCliWindowsPayloadOwners({
+      channel,
+      processEnv: process.env,
+    });
   }
 
   const promotion = await installVersionedPayload({
@@ -423,7 +462,7 @@ async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
       hadLegacyCurrentInstallWithoutVersionMarkers: promotion.hadLegacyCurrentInstallWithoutVersionMarkers,
       argv: ['repair'],
       installedRuntimeNodePath: installedPaths.binaryPath,
-      commandPath: 'happier self migrate',
+      commandPath: `${resolveManagedCliToolNameForRing(channel)} self migrate`,
     });
   }
 }
@@ -438,17 +477,17 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
       return;
     }
     if (sub === 'check') {
-      await cmdCheck(argv.slice(1));
+      await cmdCheck(argv.slice(1), context.rawArgv);
       process.exitCode = 0;
       return;
     }
     if (sub === 'update') {
-      await cmdUpdate(argv.slice(1));
+      await cmdUpdate(argv.slice(1), context.rawArgv);
       process.exitCode = 0;
       return;
     }
     if (sub === '__install-payload') {
-      await cmdInternalInstallPayload(argv.slice(1));
+      await cmdInternalInstallPayload(argv.slice(1), context.rawArgv);
       process.exitCode = 0;
       return;
     }

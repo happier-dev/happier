@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 import { commandExistsInPath } from '@/daemon/service/commandExistsInPath';
-import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
+import { resolveProviderCliCommand } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 const CODEX_APP_SERVER_OVERRIDE_KEYS = [

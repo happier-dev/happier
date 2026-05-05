@@ -5,7 +5,7 @@ import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContr
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentLookupId } from '@/backends/types';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
-import { resolveProviderCliCommandForRuntime } from '@/runtime/managedTools/providerCliResolution';
+import { resolveProviderCliCommandForRuntime } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import {
   getAgentModelConfig,
@@ -89,6 +89,10 @@ const ProbeConfigOptionCandidateSchema = z.object({
   name: z.string().optional(),
   options: z.array(z.unknown()).optional(),
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 export function resetAgentModelsProbeCacheForTests(): void {
   agentModelsProbeCache.clear();
@@ -224,6 +228,141 @@ function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
   });
 }
 
+function isSimpleCliModelIdLine(line: string): boolean {
+  return !line.startsWith('-') && !line.endsWith(':') && /^[a-z0-9._/:+-]+$/i.test(line);
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readJsonObjectBlock(
+  lines: ReadonlyArray<string>,
+  startIndex: number,
+): Readonly<{ value: unknown; endIndex: number }> | null {
+  const firstLine = lines[startIndex];
+  if (!firstLine?.startsWith('{')) return null;
+
+  let raw = '';
+  for (let index = startIndex; index < lines.length; index += 1) {
+    raw = raw.length > 0 ? `${raw}\n${lines[index]}` : lines[index] ?? '';
+    try {
+      return { value: JSON.parse(raw) as unknown, endIndex: index };
+    } catch {
+      // Keep accumulating until the pretty-printed JSON object is complete.
+    }
+  }
+  return null;
+}
+
+function formatProbeOptionChoiceName(value: string): string {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function normalizeReasoningEffortOption(variantsRaw: unknown): ProbedAgentModelOption | null {
+  if (!isRecord(variantsRaw)) return null;
+
+  const options = Object.entries(variantsRaw)
+    .map(([variantId, variantRaw]) => {
+      const variant = isRecord(variantRaw) ? variantRaw : {};
+      const effort = readNonEmptyString(variant.reasoningEffort) ?? readNonEmptyString(variantId);
+      if (!effort) return null;
+      return {
+        value: effort,
+        name: formatProbeOptionChoiceName(effort),
+      };
+    })
+    .filter((option): option is Readonly<{ value: string; name: string }> => option !== null);
+
+  if (options.length === 0) return null;
+
+  const medium = options.find((option) => option.value === 'medium')?.value;
+  return {
+    id: 'reasoning_effort',
+    name: 'Reasoning effort',
+    type: 'enum',
+    currentValue: medium ?? options[0]?.value ?? null,
+    options,
+  };
+}
+
+function normalizeVerboseCliModel(modelRaw: unknown, displayedId?: string): ProbedAgentModel | null {
+  if (!isRecord(modelRaw)) return null;
+
+  const modelId = readNonEmptyString(modelRaw.id);
+  const providerId =
+    readNonEmptyString(modelRaw.providerID)
+    ?? readNonEmptyString(modelRaw.providerId)
+    ?? readNonEmptyString(modelRaw.provider);
+  const id = readNonEmptyString(displayedId) ?? (providerId && modelId ? `${providerId}/${modelId}` : modelId);
+  if (!id) return null;
+
+  const name = readNonEmptyString(modelRaw.name) ?? id;
+  const description = readNonEmptyString(modelRaw.description);
+  const reasoningEffortOption = normalizeReasoningEffortOption(modelRaw.variants);
+
+  return {
+    id,
+    name,
+    ...(description ? { description } : {}),
+    ...(reasoningEffortOption ? { modelOptions: [reasoningEffortOption] } : {}),
+  };
+}
+
+function parseCliModelsOutput(stdout: string): ProbedAgentModel[] {
+  const lines = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const parsed: ProbedAgentModel[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    const lowerLine = line.toLowerCase();
+    if (lowerLine === 'available models:' || lowerLine === 'available models') {
+      continue;
+    }
+
+    if (isSimpleCliModelIdLine(line)) {
+      const jsonBlock = readJsonObjectBlock(lines, index + 1);
+      if (jsonBlock) {
+        const model = normalizeVerboseCliModel(jsonBlock.value, line);
+        if (model) parsed.push(model);
+        index = jsonBlock.endIndex;
+        continue;
+      }
+    }
+
+    const jsonBlock = readJsonObjectBlock(lines, index);
+    if (jsonBlock) {
+      const model = normalizeVerboseCliModel(jsonBlock.value);
+      if (model) parsed.push(model);
+      index = jsonBlock.endIndex;
+      continue;
+    }
+
+    const bracket = line.match(/^[-*]?\s*(.*?)\s*\[([^\]]+)\]\s*$/);
+    if (bracket) {
+      const name = String(bracket[1] ?? '').trim();
+      const id = String(bracket[2] ?? '').trim();
+      if (id && name) {
+        parsed.push({ id, name });
+      }
+      continue;
+    }
+
+    if (isSimpleCliModelIdLine(line)) {
+      parsed.push({ id: line, name: line });
+    }
+  }
+
+  return parsed;
+}
+
 async function probeModelsFromCliModelsCommand(params: {
   command: string;
   args: ReadonlyArray<string>;
@@ -294,32 +433,7 @@ async function probeModelsFromCliModelsCommand(params: {
       clearTimeout(timer);
       if (typeof code !== 'number' || code !== 0) return finish(null);
 
-      const lines = stdout
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-
-      const parsed: ProbedAgentModel[] = [];
-      for (const line of lines) {
-        if (line.toLowerCase() === 'available models:' || line.toLowerCase() === 'available models') {
-          continue;
-        }
-
-        const bracket = line.match(/^[-*]?\s*(.*?)\s*\[([^\]]+)\]\s*$/);
-        if (bracket) {
-          const name = String(bracket[1] ?? '').trim();
-          const id = String(bracket[2] ?? '').trim();
-          if (id && name) {
-            parsed.push({ id, name });
-          }
-          continue;
-        }
-
-        if (!line.startsWith('-') && !line.endsWith(':') && /^[a-z0-9._/:+-]+$/i.test(line)) {
-          parsed.push({ id: line, name: line });
-        }
-      }
-
+      const parsed = parseCliModelsOutput(stdout);
       if (parsed.length === 0) return finish(null);
 
       const models: ProbedAgentModel[] = [{ id: 'default', name: 'Default' }, ...parsed.filter((m) => m.id !== 'default')];
@@ -509,7 +623,7 @@ export async function probeAgentModelsBestEffort(params: {
 
       // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
       // This avoids needing to start a full ACP session just to populate a menu.
-      const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs ?? null;
+      const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs;
       if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
         const command =
           resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(params.agentId))?.command

@@ -31,7 +31,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     const scriptPath = join(params.dir, 'fake-codex-app-server.mjs');
     const script = [
         '#!/usr/bin/env node',
-        'import { appendFile } from "node:fs/promises";',
+        'import { appendFile, readFile } from "node:fs/promises";',
         'import readline from "node:readline";',
         `const requestLogPath = ${JSON.stringify(params.requestLogPath)};`,
         'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
@@ -72,6 +72,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '    if (msg.method === "turn/start") {',
         '        const text = Array.isArray(msg.params?.input) ? String(msg.params.input[0]?.text ?? "unknown") : "unknown";',
         '        const turnId = `turn-${text}`;',
+        '        const matchingTurnStartCount = (await readFile(requestLogPath, "utf8").catch(() => "")).split("\\n").filter((line) => { try { const entry = JSON.parse(line); return entry.method === "turn/start" && Array.isArray(entry.params?.input) && String(entry.params.input[0]?.text ?? "") === text; } catch { return false; } }).length;',
         '        const completionDelayMs = text === "cancel-me" ? 50 : 15;',
         '        const respondDelayMs = text === "steer-delay" ? 60 : 0;',
         '        setTimeout(() => {',
@@ -246,6 +247,16 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId, status: "failed", error: { message: "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header", codexErrorInfo: "other", additionalDetails: null } } } }) + "\\n");',
         '            }, 18);',
+        '            continue;',
+        '        }',
+        '        if (text === "account-mismatch-once" && matchingTurnStartCount === 1) {',
+        '            const authAccountChangedMessage = "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.";',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "error", params: { threadId: msg.params?.threadId ?? null, turnId, willRetry: false, error: { message: authAccountChangedMessage, codexErrorInfo: "unauthorized", additionalDetails: null } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId, status: "failed", error: { message: authAccountChangedMessage, codexErrorInfo: "unauthorized", additionalDetails: null } } } }) + "\\n");',
+        '            }, 14);',
         '            continue;',
         '        }',
         '        if (text === "bridge-completed-only-command-result") {',
@@ -1588,16 +1599,70 @@ describe('createCodexAppServerRuntime', () => {
         });
     });
 
-    it('suppresses retryable Codex errors until a later hard failure aborts the pending turn', async () => {
-        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-retry-then-failed-turn-');
+    it('restarts the app-server process and resumes the same thread when Codex reports the cached auth account changed', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-auth-account-change-');
 
         const sendCodexMessage = vi.fn();
+        const sendSessionEvent = vi.fn();
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
             session: {
                 updateMetadata: vi.fn(),
                 sendCodexMessage,
+                sendSessionEvent,
+            } as any,
+        });
+
+        await runtime.startOrLoad({});
+
+        await expect(runtime.sendPrompt('account-mismatch-once')).resolves.toBeUndefined();
+
+        expect(runtime.getSessionId()).toBe('thread-started');
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog.filter((entry: { method: string }) => entry.method === 'initialize')).toHaveLength(2);
+        expect(requestLog).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                method: 'thread/resume',
+                params: expect.objectContaining({
+                    threadId: 'thread-started',
+                    persistExtendedHistory: true,
+                }),
+            }),
+        ]));
+        const retriedTurnStarts = requestLog.filter((entry: { method: string; params?: { input?: Array<{ text?: string }>; threadId?: string } }) =>
+            entry.method === 'turn/start' && entry.params?.input?.[0]?.text === 'account-mismatch-once',
+        );
+        expect(retriedTurnStarts).toHaveLength(2);
+        expect(retriedTurnStarts.map((entry: { params?: { threadId?: string } }) => entry.params?.threadId)).toEqual([
+            'thread-started',
+            'thread-started',
+        ]);
+        expect(sendCodexMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+            type: 'message',
+            message: expect.stringContaining('access token could not be refreshed'),
+        }));
+        expect(sendCodexMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+            type: 'turn_aborted',
+        }));
+        expect(sendSessionEvent).toHaveBeenCalledWith({
+            type: 'message',
+            message: expect.stringContaining('refused to continue in the current process'),
+        });
+    });
+
+    it('suppresses retryable Codex errors until a later hard failure aborts the pending turn', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-retry-then-failed-turn-');
+
+        const sendCodexMessage = vi.fn();
+        const sendSessionEvent = vi.fn();
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendCodexMessage,
+                sendSessionEvent,
             } as any,
         });
 
@@ -1618,6 +1683,10 @@ describe('createCodexAppServerRuntime', () => {
         expect(sendCodexMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'turn_aborted',
         }));
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog.filter((entry: { method: string }) => entry.method === 'initialize')).toHaveLength(1);
+        expect(sendSessionEvent).not.toHaveBeenCalled();
     });
 
     it('rolls back the latest conversation turn through the app-server thread API and records its transcript seq range', async () => {

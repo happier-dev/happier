@@ -12,6 +12,7 @@ import type {
 
 import type { LoadedLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import { createPollingDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createPollingDirectSessionFollowLease';
 
 export type DirectSessionCandidatesPage = Readonly<{
   candidates: DirectSessionCandidateV1[];
@@ -137,13 +138,21 @@ export function createDirectSessionTranscriptProviderOps<TItem>(params: Readonly
     readAfterTranscript: async (input) => {
       return await params.readAfter(input);
     },
-    ...(params.acquireFollowLease
-      ? {
-          acquireFollowLease: async (input) => {
-            return await params.acquireFollowLease!(input);
-          },
-        }
-      : {}),
+    acquireFollowLease: async (input) => {
+      if (params.acquireFollowLease) {
+        return await params.acquireFollowLease(input);
+      }
+      return await createPollingDirectSessionFollowLease<TItem>({
+        readAfterTranscript: ({ cursor, maxBytes, maxItems }) =>
+          params.readAfter({
+            source: input.source,
+            remoteSessionId: input.remoteSessionId,
+            cursor,
+            maxBytes,
+            maxItems,
+          }),
+      });
+    },
   };
 }
 

@@ -1,7 +1,7 @@
 import type {
     HostSessionRuntimeConfig,
     HostSessionRuntimeRunOptions,
-} from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+} from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { CodexBackendMode } from '@happier-dev/agents';
 

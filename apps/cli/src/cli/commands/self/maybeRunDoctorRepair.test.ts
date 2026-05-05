@@ -42,7 +42,7 @@ vi.mock('@/diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPla
   resolveBackgroundServiceRepairPlanForCurrentRuntime: (params: unknown) => resolveBackgroundServiceRepairPlanForCurrentRuntimeMock(params),
 }));
 
-vi.mock('../serviceRepair/handleServiceRepairCliCommand', () => ({
+vi.mock('../service/repair/handleServiceRepairCliCommand', () => ({
   handleServiceRepairCliCommand: (params: unknown) => handleServiceRepairCliCommandMock(params),
 }));
 

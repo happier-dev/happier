@@ -59,7 +59,7 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
         getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
         resolveBackendEngineAdapterResolutionMock.mockResolvedValue(null);
 
-        const { createExecutionRunRuntime } = await import('./createExecutionRunBackend');
+        const { createExecutionRunRuntime } = await import('./createExecutionRunRuntime');
         const backend = createExecutionRunRuntime({
             cwd: '/tmp',
             backendId: TEST_SECONDARY_BACKEND_ID,
@@ -99,7 +99,7 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
             diagnostics: [],
         });
 
-        const { createExecutionRunRuntime } = await import('./createExecutionRunBackend');
+        const { createExecutionRunRuntime } = await import('./createExecutionRunRuntime');
         const backend = createExecutionRunRuntime({
             cwd: '/tmp',
             backendId: reviewId,

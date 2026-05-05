@@ -41,7 +41,7 @@ describe('createOpenAiCodexQuotaFetcher', () => {
       staleAfterMs: 300_000,
     });
 
-    const snapshot = await fetcher.fetch({ record, now, signal: new AbortController().signal });
+    const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
     const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
     expect(parsed.success).toBe(true);
     if (parsed.success) {

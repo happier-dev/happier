@@ -7,6 +7,24 @@ import {
   SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 
+function metadataHasConcreteDefaultSessionMode(metadata: Metadata | null | undefined): boolean {
+  const candidate = metadata as {
+    sessionModesV1?: unknown;
+    acpSessionModesV1?: unknown;
+  } | null | undefined;
+  const states = [candidate?.sessionModesV1, candidate?.acpSessionModesV1];
+  return states.some((state) => {
+    if (!state || typeof state !== 'object') return false;
+    const availableModes = (state as { availableModes?: unknown }).availableModes;
+    if (!Array.isArray(availableModes)) return false;
+    return availableModes.some((mode) => (
+      mode !== null
+      && typeof mode === 'object'
+      && (mode as { id?: unknown }).id === 'default'
+    ));
+  });
+}
+
 export function resolvePermissionIntentFromMetadataSnapshot(opts: {
   metadata: Metadata | null | undefined;
 }): { intent: PermissionMode; updatedAt: number } | null {
@@ -24,10 +42,9 @@ export function resolveSessionModeOverrideFromMetadataSnapshot(opts: {
     resolveMetadataStringOverrideV1(opts.metadata ?? null, SESSION_MODE_OVERRIDE_KEY, 'modeId') ??
     resolveMetadataStringOverrideV1(opts.metadata ?? null, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY, 'modeId');
   if (!resolved) return null;
-  // "default" is a UI sentinel meaning "clear override" while still carrying an updatedAt signal.
-  // Normalize it to an empty string so call sites can treat it as "no agent mode selected",
-  // while override synchronizers still receive a monotonic updatedAt for clearing.
-  if (resolved.value === 'default') return { modeId: '', updatedAt: resolved.updatedAt };
+  if (resolved.value === 'default' && !metadataHasConcreteDefaultSessionMode(opts.metadata)) {
+    return { modeId: '', updatedAt: resolved.updatedAt };
+  }
   return { modeId: resolved.value, updatedAt: resolved.updatedAt };
 }
 

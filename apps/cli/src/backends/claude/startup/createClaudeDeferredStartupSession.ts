@@ -9,11 +9,9 @@ import { initialMachineMetadata } from '@/daemon/startDaemon';
 import type { Credentials } from '@/persistence';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 import { logger } from '@/ui/logger';
+import { normalizeStartingMode } from '@/agent/runtime/session/loop/resolveStartingMode';
 
-import {
-  normalizeClaudeRuntimeStartingMode,
-  type StartOptions,
-} from '../runtime/claudeSessionRuntimeOptions';
+import type { StartOptions } from '../runtime/claudeSessionRuntimeOptions';
 import { inferPermissionIntentFromClaudeArgs } from '../utils/inferPermissionIntentFromArgs';
 import { synchronizeClaudeStartupOverrides } from './synchronizeClaudeStartupOverrides';
 
@@ -26,7 +24,7 @@ function hasAttachFile(): boolean {
 
 export function shouldUseClaudeDeferredStartup(options: StartOptions): boolean {
   const startedBy = options.startedBy ?? 'terminal';
-  const startingMode = normalizeClaudeRuntimeStartingMode(options.startingMode);
+  const startingMode = normalizeStartingMode(options.startingMode) ?? 'terminal';
   const existingSessionId =
     typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0
       ? options.existingSessionId.trim()

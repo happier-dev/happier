@@ -199,7 +199,7 @@ describe('spawnHappyCLI fallback invocation', () => {
           };
         });
 
-        vi.doMock('@/runtime/resolvePackagedRuntimeEntrypoint', () => ({
+        vi.doMock('@/packagedRuntime/resolvePackagedRuntimeEntrypoint', () => ({
           resolvePackagedRuntimeEntrypoint: () => '/Users/tester/.happier/cli-dev/current/package-dist/index.mjs',
         }));
 

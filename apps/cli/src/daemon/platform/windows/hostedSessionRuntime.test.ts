@@ -4,30 +4,53 @@ import {
   buildWindowsHostedTerminalArgs,
   buildWindowsHostedTerminalAttachment,
   buildWindowsTerminalWindowIdentity,
+  normalizeWindowsTerminalWindowName,
+  resolveWindowsTerminalWindowName,
 } from './windowsHostedSessionRuntime';
 
 describe('windowsHostedSessionRuntime', () => {
-  it('builds a stable Windows Terminal window id from the existing session id', () => {
+  it('uses the shared Windows Terminal window name while keeping per-session tab titles', () => {
     expect(buildWindowsTerminalWindowIdentity({
       existingSessionId: 'sess_123',
       agentCommand: 'codex',
+      windowName: 'happier',
       now: () => 123,
       randomHex: () => 'abcd1234',
     })).toEqual({
-      windowId: 'happy-codex-sess_123',
+      windowId: 'happier',
       title: 'Happier codex sess_123',
     });
   });
 
-  it('falls back to a generated window identity when no session id is available', () => {
+  it('keeps generated spawn titles without changing the shared window id', () => {
     expect(buildWindowsTerminalWindowIdentity({
       agentCommand: 'claude',
+      windowName: 'happier',
       now: () => 42,
       randomHex: () => 'beefcafe',
     })).toEqual({
-      windowId: 'happy-claude-spawn-42-beefcafe',
+      windowId: 'happier',
       title: 'Happier claude spawn-42-beefcafe',
     });
+  });
+
+  it('normalizes Windows Terminal window names', () => {
+    expect(normalizeWindowsTerminalWindowName('  happier qa  ')).toBe('happier qa');
+    expect(normalizeWindowsTerminalWindowName('')).toBe('happier');
+    expect(normalizeWindowsTerminalWindowName('last')).toBe('happier');
+    expect(normalizeWindowsTerminalWindowName('-1')).toBe('happier');
+  });
+
+  it('lets environment override the requested Windows Terminal window name', () => {
+    expect(resolveWindowsTerminalWindowName({
+      requested: 'from-settings',
+      env: { HAPPIER_WINDOWS_TERMINAL_WINDOW_NAME: 'from-env' },
+    })).toBe('from-env');
+
+    expect(resolveWindowsTerminalWindowName({
+      requested: 'from-settings',
+      env: {},
+    })).toBe('from-settings');
   });
 
   it('adds Windows Terminal runtime flags to the base args', () => {

@@ -2,7 +2,7 @@ import type { PermissionMode } from '@/api/types';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 
-import { discardQueuedAndPendingForTerminalSwitch } from '../../../agent/runtimeSwitching/discardQueuedAndPendingForSwitch';
+import { discardQueuedAndPendingForTerminalSwitch } from '@/agent/runtime/mode/switching/discardQueuedAndPendingForSwitch';
 import { requireTerminalRuntimeLaunch } from '@/agent/terminalRuntime/providers/requireTerminalRuntimeLaunch';
 
 import type { CodexTerminalRuntimeLaunchResult } from '../terminalRuntime/launchTerminalRuntime';

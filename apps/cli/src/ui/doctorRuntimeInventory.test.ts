@@ -144,6 +144,67 @@ describe('renderDoctorHappierRuntimeInventory', () => {
           ],
         },
       },
+      repairSummary: {
+        schemaVersion: 1,
+        status: 'needs_attention',
+        findingCounts: {
+          total: 2,
+          warning: 1,
+          error: 1,
+          actionable: 1,
+        },
+        findingKinds: ['background_service_not_running'],
+      },
+      localRelays: {
+        relays: [
+          {
+            id: 'local-relay-preview',
+            releaseChannel: 'preview',
+            relayUrl: 'http://127.0.0.1:3025',
+            version: '1.2.3-preview.1',
+            installed: true,
+            running: true,
+            healthy: true,
+            serviceEnabled: true,
+            port: 3025,
+            installRoot: '/opt/happier/relay-preview',
+          },
+        ],
+      },
+      automaticStartup: {
+        entries: [
+          {
+            id: 'daemon:com.happier.cli.daemon.preview.cloud',
+            label: 'com.happier.cli.daemon.preview.cloud',
+            releaseChannel: 'preview',
+            targetMode: 'default-following',
+            scope: 'user',
+            installed: true,
+            running: true,
+            definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.preview.cloud.plist',
+            relayUrl: 'https://relay.preview.example.test',
+          },
+        ],
+        defaultFollowingCount: 1,
+        pinnedCount: 0,
+      },
+      activeStack: {
+        activeServerId: 'cloud',
+        releaseChannel: 'preview',
+        relayUrl: 'https://relay.preview.example.test',
+        localRelayUrl: 'http://127.0.0.1:3025',
+        source: 'settings',
+      },
+      serviceHealth: {
+        backgroundService: {
+          installed: true,
+          running: true,
+          healthy: true,
+          serviceLabel: 'com.happier.cli.daemon.preview.cloud',
+          releaseChannel: 'preview',
+          relayUrl: 'https://relay.preview.example.test',
+        },
+      },
       warnings: [
         {
           code: 'MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH',
@@ -177,6 +238,16 @@ describe('renderDoctorHappierRuntimeInventory', () => {
     expect(rendered).toContain('dev.happier.stack.dev-built');
     expect(rendered).toContain('Self-host service');
     expect(rendered).toContain('happier-server-preview');
+    expect(rendered).toContain('Doctor snapshot diagnostics');
+    expect(rendered).toContain('Repair status:');
+    expect(rendered).toContain('needs_attention');
+    expect(rendered).toContain('Findings:');
+    expect(rendered).toContain('total 2');
+    expect(rendered).toContain('Active stack');
+    expect(rendered).toContain('Local relays');
+    expect(rendered).toContain('local-relay-preview');
+    expect(rendered).toContain('Automatic startup');
+    expect(rendered).toContain('Background service health');
     expect(rendered).toContain('Warnings');
     expect(rendered).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
     expect(rendered).toContain('happier service install --replace-existing=ring --yes');

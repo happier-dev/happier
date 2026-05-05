@@ -1,5 +1,5 @@
 import type { DaemonSpawnHooks } from '../../../daemon/spawnHooks';
-import { validateProviderCliSpawn } from '../../../runtime/managedTools/validateProviderCliSpawn';
+import { validateProviderCliSpawn } from '@/packagedRuntime/managedTools/validateProviderCliSpawn';
 import { resolveClaudeConfigDirOverride } from '../utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
 

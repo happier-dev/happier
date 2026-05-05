@@ -1,9 +1,11 @@
 import type { ProviderMessageMetaEnricher } from '@happier-dev/agents';
 import { describe, expect, it, vi } from 'vitest';
 
+import { SessionHostBridge } from './SessionHostBridge';
+
 type MinimalEngineAdapterResolution = Readonly<{
   engineAdapter: Readonly<{
-    bindings: Readonly<{
+    runtimeCore: Readonly<{
       createSessionRuntime: (params: unknown) => Promise<unknown>;
     }>;
     messageMeta?: ProviderMessageMetaEnricher;
@@ -41,12 +43,11 @@ describe('SessionHostBridge message-meta injection', () => {
 
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       engineAdapter: {
-        bindings: { createSessionRuntime },
+        runtimeCore: { createSessionRuntime },
         messageMeta: messageMetaEnricher,
       },
     });
 
-    const { SessionHostBridge } = await import('./SessionHostBridge');
     const bridge = new SessionHostBridge();
 
     await bridge.createSessionRuntime('claude', { startedBy: 'terminal' });

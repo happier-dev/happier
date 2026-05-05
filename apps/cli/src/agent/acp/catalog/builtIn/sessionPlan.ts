@@ -12,8 +12,8 @@ import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProvider
 import {
   createCatalogHostSessionRuntimeConfig,
   createCatalogHostSessionRuntimePlan,
-} from '@/agent/runtime/sessionLoop/catalogPlan';
-import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/sessionLoop/runHostSessionRuntime';
+} from '@/agent/runtime/session/loop/catalogPlan';
+import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
 import type { Credentials } from '@/persistence';
 import type { PermissionMode } from '@/api/types';

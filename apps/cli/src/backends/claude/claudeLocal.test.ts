@@ -404,7 +404,7 @@ describe('claudeLocal --continue handling', () => {
         vi.doMock('@/utils/runtime', () => ({
             isBun: () => true,
         }));
-        vi.doMock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+        vi.doMock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
             ensureJavaScriptRuntimeExecutable: async () => null,
         }));
 
@@ -421,7 +421,7 @@ describe('claudeLocal --continue handling', () => {
 
             expect(mockSpawn).not.toHaveBeenCalled();
         } finally {
-            vi.doUnmock('@/runtime/js/ensureJavaScriptRuntimeExecutable');
+            vi.doUnmock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable');
             vi.doUnmock('@/utils/runtime');
             vi.resetModules();
         }
@@ -435,7 +435,7 @@ describe('claudeLocal --continue handling', () => {
         vi.doMock('@/utils/runtime', () => ({
             isBun: () => true,
         }));
-        vi.doMock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+        vi.doMock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
             ensureJavaScriptRuntimeExecutable: async () => '/managed/js-runtime',
         }));
 
@@ -453,7 +453,7 @@ describe('claudeLocal --continue handling', () => {
             expect(mockSpawn).toHaveBeenCalled();
             expect(mockSpawn.mock.calls[0]?.[0]).toBe('/managed/js-runtime');
         } finally {
-            vi.doUnmock('@/runtime/js/ensureJavaScriptRuntimeExecutable');
+            vi.doUnmock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable');
             vi.doUnmock('@/utils/runtime');
             vi.resetModules();
         }
@@ -470,7 +470,7 @@ describe('claudeLocal --continue handling', () => {
         vi.doMock('@/utils/runtime', () => ({
             isBun: () => true,
         }));
-        vi.doMock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+        vi.doMock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
             ensureJavaScriptRuntimeExecutable: async () => '/managed/js-runtime',
         }));
         vi.doMock('node:fs', async () => {
@@ -499,7 +499,7 @@ describe('claudeLocal --continue handling', () => {
             expect(mockSpawn.mock.calls[0]?.[1]?.[0]).toBe('/$bunfs/scripts/claude_local_launcher.cjs');
         } finally {
             vi.doUnmock('node:fs');
-            vi.doUnmock('@/runtime/js/ensureJavaScriptRuntimeExecutable');
+            vi.doUnmock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable');
             vi.doUnmock('@/utils/runtime');
             vi.doUnmock('@/projectPath');
             vi.resetModules();

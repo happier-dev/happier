@@ -28,4 +28,17 @@ describe('resolveApplicableHappierRuntimeMigrations', () => {
             toVersion: 'v0.2.3',
         })).toBe(true);
     });
+
+    it('selects the background-service migration for legacy current installs without version markers', () => {
+        expect(resolveApplicableHappierRuntimeMigrations({
+            fromVersion: null,
+            toVersion: '0.2.3',
+            hadLegacyCurrentInstallWithoutVersionMarkers: true,
+        })).toEqual([
+            expect.objectContaining({
+                id: 'v0_2_3-BackgroundServiceAndReleaseChannelMigration',
+                boundaryVersion: '0.2.3',
+            }),
+        ]);
+    });
 });

@@ -4,7 +4,7 @@ import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createInferenceRuntimeLoader } from '@/daemon/inference/inferenceRuntimeLoader';
-import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 
 import type {
   VoiceInferenceRuntime,

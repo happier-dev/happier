@@ -1,6 +1,6 @@
 import type { AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import type { PermissionMode } from '@/api/types';
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import { providers } from '@happier-dev/agents';
 
 import { PiRpcBackend } from './PiRpcBackend';

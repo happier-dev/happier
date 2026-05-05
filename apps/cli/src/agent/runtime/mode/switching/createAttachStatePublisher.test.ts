@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Credentials } from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
-import { createProviderAttachStatePublisher } from './createAttachStatePublisher';
+import { createAgentAttachStatePublisher } from './createAttachStatePublisher';
 
-describe('createProviderAttachStatePublisher', () => {
-  it('publishes shared writable runtime-switch state for provider-attach sessions', async () => {
+describe('createAgentAttachStatePublisher', () => {
+  it('publishes shared writable runtime-switch state for agent-attach sessions', async () => {
     const credentials: Credentials = {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -28,7 +28,7 @@ describe('createProviderAttachStatePublisher', () => {
       params.setAgentStateVersion(params.getAgentStateVersion() + 1);
     });
 
-    const publisher = createProviderAttachStatePublisher({
+    const publisher = createAgentAttachStatePublisher({
       agentId: 'opencode',
       sessionId: 'sid_opencode_1',
       credentials,
@@ -77,7 +77,7 @@ describe('createProviderAttachStatePublisher', () => {
     expect(socket.disconnect).toHaveBeenCalledTimes(2);
   });
 
-  it('returns null for agents without provider-native attach', () => {
+  it('returns null for agents without agent-native attach', () => {
     const credentials: Credentials = {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -88,7 +88,7 @@ describe('createProviderAttachStatePublisher', () => {
       metadata: JSON.stringify({ flavor: 'claude' }),
     });
 
-    const publisher = createProviderAttachStatePublisher({
+    const publisher = createAgentAttachStatePublisher({
       agentId: 'claude',
       sessionId: 'sid_claude_1',
       credentials,

@@ -50,7 +50,7 @@ export class VoiceAgentManager {
   private static readonly MAX_TURN_TEXT_CHARS = 4_000;
   private static readonly MIN_IDLE_TTL_SECONDS = 60;
   private static readonly MAX_IDLE_TTL_SECONDS = 6 * 60 * 60; // 6h
-  private readonly createBackend: BackendFactory;
+  private readonly createRuntime: BackendFactory;
   private readonly resolveSystemAppendBlocks: (args: ResolveVoiceSystemAppendBlocksArgs) => Promise<readonly string[]>;
   private readonly responseTimeoutMs: number;
   private readonly getNowMs: () => number;
@@ -77,13 +77,18 @@ export class VoiceAgentManager {
   }
 
   constructor(opts: Readonly<{
-    createBackend: BackendFactory;
+    createRuntime?: BackendFactory;
+    createBackend?: BackendFactory;
     resolveSystemAppendBlocks?: (args: ResolveVoiceSystemAppendBlocksArgs) => Promise<readonly string[]>;
     responseTimeoutMs?: number;
     getNowMs?: () => number;
     reaperIntervalMs?: number;
   }>) {
-    this.createBackend = opts.createBackend;
+    const createRuntime = opts.createRuntime ?? opts.createBackend;
+    if (!createRuntime) {
+      throw new Error('VoiceAgentManager requires a runtime factory');
+    }
+    this.createRuntime = createRuntime;
     this.resolveSystemAppendBlocks = opts.resolveSystemAppendBlocks ?? (async () => []);
     this.responseTimeoutMs =
       typeof opts.responseTimeoutMs === 'number' && Number.isFinite(opts.responseTimeoutMs) && opts.responseTimeoutMs > 0
@@ -122,7 +127,7 @@ export class VoiceAgentManager {
 
     let commitBackend: ExecutionRunHostRuntime | null = null;
     try {
-      commitBackend = this.createBackend({
+      commitBackend = this.createRuntime({
         agentId: voiceAgent.agentId,
         modelId: voiceAgent.commitModelId,
         permissionPolicy: voiceAgent.permissionPolicy,
@@ -147,7 +152,7 @@ export class VoiceAgentManager {
       voiceAgent.commitBackend = commitBackend;
       voiceAgent.commitSessionId = sessionId;
       voiceAgent.commitResumeSessionId = null;
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (commitBackend) await commitBackend.dispose().catch(() => {});
       throw new VoiceAgentError('VOICE_AGENT_START_FAILED', e instanceof Error ? e.message : 'commit backend unavailable');
     }
@@ -171,7 +176,7 @@ export class VoiceAgentManager {
       ? params.disabledActionIds.map((value) => String(value ?? '').trim()).filter(Boolean)
       : [];
     const memoryRecallGuidanceEnabled = await resolveCliMemoryRecallGuidanceEnabled({
-      surfaces: ['voice_action_block'],
+      surfaces: ['voice'],
     });
     const systemAppendBlocks = await this.resolveSystemAppendBlocks({
       profileId: params.profileId ?? null,
@@ -192,7 +197,7 @@ export class VoiceAgentManager {
         };
       })();
 
-      const chatBackend = (chatBackendForCleanup = this.createBackend({
+      const chatBackend = (chatBackendForCleanup = this.createRuntime({
         agentId: params.agentId,
         modelId: params.chatModelId,
         permissionPolicy: params.permissionPolicy,
@@ -310,7 +315,7 @@ export class VoiceAgentManager {
           permissionPolicy: params.permissionPolicy,
         },
       };
-    } catch (e: any) {
+    } catch (e: unknown) {
       const disposals: Promise<unknown>[] = [];
       if (chatBackendForCleanup) disposals.push(chatBackendForCleanup.dispose());
       await Promise.allSettled(disposals);

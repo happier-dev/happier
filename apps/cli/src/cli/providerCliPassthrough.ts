@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type { CatalogAgentLookupId } from '@/backends/types';
 
-import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-v', '--version']);

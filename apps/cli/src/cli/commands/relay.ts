@@ -6,6 +6,16 @@ import { errorFrame } from '@happier-dev/cli-common/output';
 import { showRelayHelp } from './relay/help';
 import { runRelaySubcommand } from './relay/subcommands';
 
+function isArgumentUsageError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message ?? '';
+  return /^Unknown relay /i.test(message)
+    || /^Unknown relay host /i.test(message)
+    || /^Usage:/i.test(message)
+    || /Missing (required )?(value for|argument|flag)/i.test(message)
+    || /^Invalid /i.test(message);
+}
+
 export async function handleRelayCommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const subcommand = args[0];
@@ -69,7 +79,9 @@ export async function handleRelayCliCommand(context: CommandContext): Promise<vo
       return;
     }
     console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
-    showRelayHelp();
+    if (isArgumentUsageError(error)) {
+      showRelayHelp();
+    }
     if (process.env.DEBUG) console.error(error);
     process.exitCode = typeof process.exitCode === 'number' && process.exitCode > 1 ? process.exitCode : 1;
   }

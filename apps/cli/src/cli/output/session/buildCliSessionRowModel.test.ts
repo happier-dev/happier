@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { buildCliSessionRowModel } from './buildCliSessionRowModel';
 
 const credentials: Credentials = {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 import { listBuiltInHappierTools } from './listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
@@ -235,7 +235,7 @@ describe('built-in Happier tools', () => {
   it('does not expose non-MCP action specs through the shared discovery tools', async () => {
     const getResult = await dispatchBuiltInHappierTool({
       toolName: 'action_spec_get',
-      args: { id: 'session.mode.set' },
+      args: { id: 'ui.voice_global.reset' },
       sessionId: 'sess-1',
       surface: 'mcp',
       deps: {
@@ -669,13 +669,13 @@ describe('built-in Happier tools', () => {
               },
               examples: null,
               surfaces: {
-                ui_button: false,
-                ui_slash_command: false,
-                voice_tool: false,
-                voice_action_block: false,
+                ui: false,
+                voice: false,
                 session_agent: true,
                 mcp: true,
                 cli: true,
+                rpc: false,
+                sdk: false,
               },
               inputHints: null,
               inputSchema: {
@@ -719,5 +719,259 @@ describe('built-in Happier tools', () => {
       },
       'sess-1',
     );
+  });
+
+  it('allows action_execute to target trusted non-MCP plugin actions on the CLI surface', async () => {
+    const executeActionByToolName = vi.fn(
+      async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
+        ok({ toolName, args, defaultSessionId }),
+    );
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_execute',
+      args: {
+        actionId: 'acme.cli.review.start',
+        input: { scope: 'diff' },
+      },
+      sessionId: 'sess-1',
+      surface: 'cli',
+      registry: createResolvedContributionRegistry({
+        providers: [],
+        backends: [],
+        actions: [
+          {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.review.plugin',
+            manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
+            manifestDigest: 'sha256:acme-review',
+            daemonEntryPath: '/plugins/acme/review/daemon.mjs',
+            sourceSpec: {
+              kind: 'path',
+              locator: '/plugins/acme/review',
+              trustPolicy: 'local_trusted',
+              installPolicy: 'link',
+            },
+            definition: {
+              kindVersion: 1,
+              id: 'acme.cli.review.start',
+              title: 'Acme CLI Review Start',
+              description: 'Start a CLI-only plugin-defined review workflow',
+              safety: 'safe',
+              placements: [],
+              slash: null,
+              bindings: {},
+              examples: null,
+              surfaces: {
+                ui: false,
+                voice: false,
+                session_agent: true,
+                mcp: false,
+                cli: true,
+                rpc: false,
+                sdk: false,
+              },
+              inputHints: null,
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: true,
+              },
+              execution: {
+                routing: 'plugin',
+                handler: {
+                  target: 'plugin',
+                  exportName: 'startCliReview',
+                },
+              },
+            },
+          },
+        ],
+      }),
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        toolName: 'action_execute',
+        args: {
+          actionId: 'acme.cli.review.start',
+          input: { scope: 'diff' },
+        },
+        defaultSessionId: 'sess-1',
+      },
+    });
+    expect(executeActionByToolName).toHaveBeenCalledWith(
+      'action_execute',
+      {
+        actionId: 'acme.cli.review.start',
+        input: { scope: 'diff' },
+      },
+      'sess-1',
+    );
+  });
+
+  it('rejects action_execute for plugin actions that are not trusted by the authoritative registry', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_execute',
+      args: {
+        actionId: 'acme.review.start',
+        input: { scope: 'diff' },
+      },
+      sessionId: 'sess-1',
+      surface: 'cli',
+      registry: createResolvedContributionRegistry({
+        providers: [],
+        backends: [],
+        actions: [
+          {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.review.plugin',
+            manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
+            manifestDigest: 'sha256:acme-review',
+            daemonEntryPath: '/plugins/acme/review/daemon.mjs',
+            sourceSpec: {
+              kind: 'path',
+              locator: '/plugins/acme/review',
+              trustPolicy: 'prompt',
+              installPolicy: 'link',
+            },
+            definition: {
+              kindVersion: 1,
+              id: 'acme.review.start',
+              title: 'Acme Review Start',
+              description: 'Start a plugin-defined review workflow',
+              safety: 'safe',
+              placements: [],
+              slash: null,
+              bindings: {
+                mcpToolName: 'acme_review_start',
+              },
+              examples: null,
+              surfaces: {
+                ui: false,
+                voice: false,
+                session_agent: true,
+                mcp: true,
+                cli: true,
+                rpc: false,
+                sdk: false,
+              },
+              inputHints: null,
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: true,
+              },
+              execution: {
+                routing: 'plugin',
+                handler: {
+                  target: 'plugin',
+                  exportName: 'startReview',
+                },
+              },
+            },
+          },
+        ],
+      }),
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
+  it('rejects action_execute for plugin actions hidden from the current surface', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_execute',
+      args: {
+        actionId: 'acme.review.start',
+        input: { scope: 'diff' },
+      },
+      sessionId: 'sess-1',
+      surface: 'cli',
+      registry: createResolvedContributionRegistry({
+        providers: [],
+        backends: [],
+        actions: [
+          {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.review.plugin',
+            manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
+            manifestDigest: 'sha256:acme-review',
+            daemonEntryPath: '/plugins/acme/review/daemon.mjs',
+            sourceSpec: {
+              kind: 'path',
+              locator: '/plugins/acme/review',
+              trustPolicy: 'local_trusted',
+              installPolicy: 'link',
+            },
+            definition: {
+              kindVersion: 1,
+              id: 'acme.review.start',
+              title: 'Acme Review Start',
+              description: 'Start a plugin-defined review workflow',
+              safety: 'safe',
+              placements: [],
+              slash: null,
+              bindings: {
+                mcpToolName: 'acme_review_start',
+              },
+              examples: null,
+              surfaces: {
+                ui: false,
+                voice: false,
+                session_agent: true,
+                mcp: true,
+                cli: false,
+                rpc: false,
+                sdk: false,
+              },
+              inputHints: null,
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: true,
+              },
+              execution: {
+                routing: 'plugin',
+                handler: {
+                  target: 'plugin',
+                  exportName: 'startReview',
+                },
+              },
+            },
+          },
+        ],
+      }),
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 });

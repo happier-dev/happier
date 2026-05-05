@@ -18,11 +18,11 @@ const {
     planDaemonServiceInstallMock: vi.fn(() => ({ files: [], commands: [] })),
 }));
 
-vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
     ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
 }));
 
-vi.mock('@/runtime/js/resolveJavaScriptRuntimeExecutable', () => ({
+vi.mock('@/packagedRuntime/js/resolveJavaScriptRuntimeExecutable', () => ({
     resolveJavaScriptRuntimeExecutable: resolveJavaScriptRuntimeExecutableMock,
 }));
 

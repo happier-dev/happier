@@ -4,7 +4,7 @@ import {
 } from '@happier-dev/protocol';
 import { createActionToolNameToIdMap } from './actionToolCatalog';
 import { normalizeExecutionRunToolResult } from './executionRunToolResult';
-import type { ResolvedContributionRegistry } from '@/extensions/registry/types';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 type ActionExecutorResult = Readonly<
   | { ok: true; result: unknown }

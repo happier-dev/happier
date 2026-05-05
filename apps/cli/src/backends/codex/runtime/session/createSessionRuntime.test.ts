@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '@/api/types';
-import { resolveSessionRollbackRuntimeFacet } from '@/agent/runtime/sessionLoop/sessionRollbackRpc';
+import { resolveSessionRollbackRuntimeFacet } from '@/agent/runtime/session/loop/sessionRollbackRpc';
 
 const {
     createCodexAcpRuntimeMock,
