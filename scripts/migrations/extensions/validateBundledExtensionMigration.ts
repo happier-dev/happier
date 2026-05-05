@@ -78,11 +78,11 @@ export function collectForbiddenBundledExtensionMigrationFindings(
         if (isMigrationAssetPath(file.filePath)) {
             continue;
         }
-        if (file.filePath === 'packages/protocol/src/extensions/pluginManifestV1.ts') {
+        if (file.filePath === 'packages/protocol/src/plugins/pluginManifestV1.ts') {
             findings.push({
                 filePath: file.filePath,
-                pattern: 'packages/protocol/src/extensions/pluginManifestV1.ts',
-                replacement: 'Delete V1 manifest; use packages/protocol/src/extensions/manifest/v2.ts',
+                pattern: 'packages/protocol/src/plugins/pluginManifestV1.ts',
+                replacement: 'Delete V1 manifest; use packages/protocol/src/plugins/manifest/v2.ts',
             });
             flaggedFilePaths.add(file.filePath);
             continue;
@@ -243,16 +243,16 @@ function detectUiTsLeftover(filePath: string): ForbiddenExtensionUnificationFind
     if (/^packages\/extensions\/[^/]+\/src\/ui\.ts$/u.test(filePath)) {
         return {
             filePath,
-            pattern: 'packages/extensions/<extensionId>/src/ui.ts',
-            replacement: 'Use packages/extensions/<extensionId>/src/ui/index.ts (ui folder) instead',
+            pattern: 'packages/plugins/<extensionId>/src/ui.ts',
+            replacement: 'Use packages/plugins/<extensionId>/src/ui/index.ts (ui folder) instead',
         };
     }
 
     if (/^packages\/extensions\/[^/]+\/src\/agent\/ui\.ts$/u.test(filePath)) {
         return {
             filePath,
-            pattern: 'packages/extensions/<extensionId>/src/agent/ui.ts',
-            replacement: 'Use packages/extensions/<extensionId>/src/agent/ui/** (folder) instead',
+            pattern: 'packages/plugins/<extensionId>/src/agent/ui.ts',
+            replacement: 'Use packages/plugins/<extensionId>/src/agent/ui/** (folder) instead',
         };
     }
 
@@ -260,7 +260,7 @@ function detectUiTsLeftover(filePath: string): ForbiddenExtensionUnificationFind
         return {
             filePath,
             pattern: 'apps/ui/sources/agents/providers/<providerId>/ui.ts',
-            replacement: 'Migrate UI contributions into packages/extensions/<extensionId>/src/ui/** (or bridge-only host-local export)',
+            replacement: 'Migrate UI contributions into packages/plugins/<extensionId>/src/ui/** (or bridge-only host-local export)',
         };
     }
 
@@ -268,7 +268,7 @@ function detectUiTsLeftover(filePath: string): ForbiddenExtensionUnificationFind
         return {
             filePath,
             pattern: 'packages/agents/src/providers/<providerId>/ui.ts',
-            replacement: 'Migrate UI contributions into packages/extensions/<extensionId>/src/agent/ui/** (or bridge-only host-local export)',
+            replacement: 'Migrate UI contributions into packages/plugins/<extensionId>/src/agent/ui/** (or bridge-only host-local export)',
         };
     }
 
@@ -276,7 +276,7 @@ function detectUiTsLeftover(filePath: string): ForbiddenExtensionUnificationFind
 }
 
 function detectForbiddenHostImportsInExtensionPackage(file: InventoryFile): ForbiddenExtensionUnificationFinding | null {
-    if (!file.filePath.startsWith('packages/extensions/')) {
+    if (!file.filePath.startsWith('packages/plugins/')) {
         return null;
     }
 
@@ -304,10 +304,10 @@ function detectForbiddenHostImportsInExtensionPackage(file: InventoryFile): Forb
 
 function isPluginSubstratePath(filePath: string): boolean {
     return (
-        filePath.startsWith('apps/cli/src/extensions/')
+        filePath.startsWith('apps/cli/src/plugins/')
         || filePath.startsWith('apps/ui/sources/agents/')
         || filePath.startsWith('apps/ui/sources/components/settings/plugins/')
-        || filePath.startsWith('packages/protocol/src/extensions/')
+        || filePath.startsWith('packages/protocol/src/plugins/')
     );
 }
 
@@ -318,9 +318,9 @@ function isTestFilePath(filePath: string): boolean {
 const ALLOWLISTED_BUILT_IN_PLUGIN_TRUTH_PATHS = new Set<string>([
     // Transitional plugin-substrate modules that still model legacy source kinds.
     // These are owned by the host-local substrate work and are intentionally not migrated yet.
-    'apps/cli/src/extensions/registry/projection/v2.ts',
-    'apps/cli/src/extensions/registry/resolveBuiltInContributions.ts',
-    'apps/cli/src/extensions/registry/types.ts',
+    'apps/cli/src/plugins/registry/projection/v2.ts',
+    'apps/cli/src/plugins/registry/resolveBuiltInContributions.ts',
+    'apps/cli/src/plugins/registry/types.ts',
 ]);
 
 function detectBuiltInPluginArchitecturalTruth(file: InventoryFile): ForbiddenExtensionUnificationFinding | null {
@@ -396,7 +396,7 @@ function detectHostLocalOwnershipForMigratedAgent(
         return {
             filePath: file.filePath,
             pattern: `dual-ownership: apps/ui/sources/agents/providers/${uiMatch[1]}/**`,
-            replacement: `Migrate authored ownership into packages/extensions/${uiMatch[1]}/**; host-local tree must be bridge-only or deleted`,
+            replacement: `Migrate authored ownership into packages/plugins/${uiMatch[1]}/**; host-local tree must be bridge-only or deleted`,
         };
     }
 
@@ -405,7 +405,7 @@ function detectHostLocalOwnershipForMigratedAgent(
         return {
             filePath: file.filePath,
             pattern: `dual-ownership: packages/agents/src/providers/${agentsMatch[1]}/**`,
-            replacement: `Migrate authored ownership into packages/extensions/${agentsMatch[1]}/**; host-local tree must be bridge-only or deleted`,
+            replacement: `Migrate authored ownership into packages/plugins/${agentsMatch[1]}/**; host-local tree must be bridge-only or deleted`,
         };
     }
 
@@ -414,7 +414,7 @@ function detectHostLocalOwnershipForMigratedAgent(
         return {
             filePath: file.filePath,
             pattern: `dual-ownership: apps/cli/src/backends/${cliMatch[1]}/**`,
-            replacement: `Migrate authored ownership into packages/extensions/${cliMatch[1]}/**; host-local tree must be bridge-only or deleted`,
+            replacement: `Migrate authored ownership into packages/plugins/${cliMatch[1]}/**; host-local tree must be bridge-only or deleted`,
         };
     }
 

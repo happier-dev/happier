@@ -13,8 +13,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-store-state-utils',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/store/pluginStateStore.ts',
-      'apps/cli/src/extensions/store/state.ts',
+      'apps/cli/src/plugins/plugins/store/pluginStateStore.ts',
+      'apps/cli/src/plugins/store/state.ts',
     ],
     from: '../../../utils/fs/writeJsonAtomic',
     to: '../../utils/fs/writeJsonAtomic',
@@ -22,8 +22,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-store-paths-config',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/store/pluginPaths.ts',
-      'apps/cli/src/extensions/store/paths.ts',
+      'apps/cli/src/plugins/plugins/store/pluginPaths.ts',
+      'apps/cli/src/plugins/store/paths.ts',
     ],
     from: '../../../configuration',
     to: '../../configuration',
@@ -31,8 +31,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-manifest-validate-config',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/manifest/validatePluginManifest.ts',
-      'apps/cli/src/extensions/manifest/validate.ts',
+      'apps/cli/src/plugins/plugins/manifest/validatePluginManifest.ts',
+      'apps/cli/src/plugins/manifest/validate.ts',
     ],
     from: '../../../configuration',
     to: '../../configuration',
@@ -40,8 +40,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-marketplace-sources-paths',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/store/marketplaceSourceRegistryStore.ts',
-      'apps/cli/src/extensions/marketplace/sources/store.ts',
+      'apps/cli/src/plugins/plugins/store/marketplaceSourceRegistryStore.ts',
+      'apps/cli/src/plugins/marketplace/sources/store.ts',
     ],
     from: './paths',
     to: '../../store/paths',
@@ -49,8 +49,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-marketplace-summary',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/catalog/marketplaceCatalog.ts',
-      'apps/cli/src/extensions/marketplace/catalog.ts',
+      'apps/cli/src/plugins/plugins/catalog/marketplaceCatalog.ts',
+      'apps/cli/src/plugins/marketplace/catalog.ts',
     ],
     from: './pluginCatalogSummary',
     to: '../catalog/summary',
@@ -58,8 +58,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-catalog-summary',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/catalog/pluginCatalog.ts',
-      'apps/cli/src/extensions/catalog/installed.ts',
+      'apps/cli/src/plugins/plugins/catalog/pluginCatalog.ts',
+      'apps/cli/src/plugins/catalog/installed.ts',
     ],
     from: './pluginCatalogSummary',
     to: './summary',
@@ -67,8 +67,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-load-installed-test',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/loader/loadInstalledPlugins.test.ts',
-      'apps/cli/src/extensions/load/installed.test.ts',
+      'apps/cli/src/plugins/plugins/loader/loadInstalledPlugins.test.ts',
+      'apps/cli/src/plugins/load/installed.test.ts',
     ],
     from: './loadInstalledPlugins',
     to: './installed',
@@ -76,8 +76,8 @@ const SOURCE_AWARE_RULES: readonly (RewriteRule & { filePathSuffixes: readonly s
   {
     id: 'extension-source-aware-normalize-load-installed',
     filePathSuffixes: [
-      'apps/cli/src/extensions/plugins/loader/buildPluginContributionRegistry.ts',
-      'apps/cli/src/extensions/registry/normalize/package.ts',
+      'apps/cli/src/plugins/plugins/loader/buildPluginContributionRegistry.ts',
+      'apps/cli/src/plugins/registry/normalize/package.ts',
     ],
     from: './loadInstalledPlugins',
     to: '../../load/installed',
@@ -181,7 +181,7 @@ function parseCliArgs(argv: readonly string[]): Readonly<{ mode: 'dry-run' | 'wr
 
 function printUsage(): void {
   console.log([
-    'Usage: node --experimental-strip-types scripts/migrations/extensions/rewrite-extension-imports.ts [--dry-run|--write] [--root DIR] [--scope PATH...]',
+    'Usage: node --experimental-strip-types scripts/migrations/plugins/rewrite-extension-imports.ts [--dry-run|--write] [--root DIR] [--scope PATH...]',
     '',
     'Rewrites imports for the CLI extension packaging move map. Defaults to dry-run.',
   ].join('\n'));

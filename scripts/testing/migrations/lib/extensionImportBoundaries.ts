@@ -30,7 +30,7 @@ function extractImportSpecifiers(content: string): string[] {
 }
 
 function extensionPackageRootFor(filePath: string): string | null {
-  // Expected: packages/extensions/<extensionId>/...
+  // Expected: packages/plugins/<extensionId>/...
   const parts = normalizeRepoPath(filePath).split('/');
   if (parts.length < 3) {
     return null;
@@ -42,7 +42,7 @@ function extensionPackageRootFor(filePath: string): string | null {
   if (!extensionId) {
     return null;
   }
-  return `packages/extensions/${extensionId}`;
+  return `packages/plugins/${extensionId}`;
 }
 
 function resolveRelativeImport(importerFilePath: string, specifier: string): string {
@@ -63,7 +63,7 @@ export function validateExtensionImportBoundaries(options?: {
       include: /\.[cm]?[jt]sx?$/,
     });
 
-  const extensionSourceFiles = inventory.filter((file) => normalizeRepoPath(file.filePath).startsWith('packages/extensions/'));
+  const extensionSourceFiles = inventory.filter((file) => normalizeRepoPath(file.filePath).startsWith('packages/plugins/'));
   if (extensionSourceFiles.length === 0) {
     return {
       ok: true,

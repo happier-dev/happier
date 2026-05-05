@@ -93,18 +93,18 @@ test('planImportRewritesForFilePaths only rewrites targeted files', () => {
     [
       {
         filePath: 'apps/cli/src/backends/catalog.ts',
-        content: "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';",
+        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
       },
       {
         filePath: 'apps/ui/sources/example.tsx',
-        content: "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';",
+        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
       },
     ],
     [
       {
         id: 'rewrite-resolved-contribution-registry',
-        from: '@/extensions/registry/createResolvedContributionRegistry',
-        to: '@/extensions/registry/createResolvedContributionRegistryV2',
+        from: '@/plugins/registry/createResolvedContributionRegistry',
+        to: '@/plugins/registry/createResolvedContributionRegistryV2',
       },
     ],
     ['apps/cli/src/backends/catalog.ts'],
@@ -114,7 +114,7 @@ test('planImportRewritesForFilePaths only rewrites targeted files', () => {
   assert.equal(plan.edits[0]?.filePath, 'apps/cli/src/backends/catalog.ts');
   assert.equal(
     plan.edits[0]?.after,
-    "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistryV2';",
+    "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistryV2';",
   );
 });
 
@@ -124,25 +124,25 @@ test('applyRewritePlan writes planned edits to disk and refuses mismatched conte
   const untouchedPath = join(rootDir, 'apps/ui/sources/example.tsx');
   mkdirSync(dirname(targetPath), { recursive: true });
   mkdirSync(dirname(untouchedPath), { recursive: true });
-  writeFileSync(targetPath, "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';", 'utf8');
-  writeFileSync(untouchedPath, "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';", 'utf8');
+  writeFileSync(targetPath, "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';", 'utf8');
+  writeFileSync(untouchedPath, "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';", 'utf8');
 
   const plan = planImportRewritesForFilePaths(
     [
       {
         filePath: 'apps/cli/src/backends/catalog.ts',
-        content: "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';",
+        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
       },
       {
         filePath: 'apps/ui/sources/example.tsx',
-        content: "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';",
+        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
       },
     ],
     [
       {
         id: 'rewrite-resolved-contribution-registry',
-        from: '@/extensions/registry/createResolvedContributionRegistry',
-        to: '@/extensions/registry/createResolvedContributionRegistryV2',
+        from: '@/plugins/registry/createResolvedContributionRegistry',
+        to: '@/plugins/registry/createResolvedContributionRegistryV2',
       },
     ],
     ['apps/cli/src/backends/catalog.ts'],
@@ -154,9 +154,9 @@ test('applyRewritePlan writes planned edits to disk and refuses mismatched conte
   assert.equal(result.appliedEdits[0]?.filePath, 'apps/cli/src/backends/catalog.ts');
   assert.equal(
     readFileSync(targetPath, 'utf8'),
-    "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistryV2';",
+    "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistryV2';",
   );
-  assert.equal(readFileSync(untouchedPath, 'utf8'), "import { getResolvedContributionRegistry } from '@/extensions/registry/createResolvedContributionRegistry';");
+  assert.equal(readFileSync(untouchedPath, 'utf8'), "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';");
 
   const mismatched = applyRewritePlan(rootDir, plan);
   assert.equal(mismatched.appliedEdits.length, 0);

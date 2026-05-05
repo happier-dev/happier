@@ -12,7 +12,7 @@
     "provider-auth-preferences-connected-services-message-meta": 42,
     "command-handler-help-manifest": 130,
     "execution-run-intent-profiles": 11,
-    "acp-shared-session-compatibility-surfaces": 5,
+    "acp-shared-session-compatibility-surfaces": 6,
     "implicit-abi-surfaces": 8,
     "provider-session-loop-primitive-imports": 7,
     "codex-legacy-direct-session-runner-imports": 0,

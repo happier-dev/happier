@@ -1,0 +1,74 @@
+import type {
+  ScmHostingRepositoryDescribePublishTargetsRequest,
+  ScmHostingRepositoryDescribePublishTargetsResponse,
+  ScmHostingRepositoryPublishRequest,
+  ScmHostingRepositoryPublishResponse,
+  ScmPullRequestCheckoutRequest,
+  ScmPullRequestCheckoutResponse,
+  ScmPullRequestGetRequest,
+  ScmPullRequestGetResponse,
+  ScmPullRequestListRequest,
+  ScmPullRequestListResponse,
+  ScmPullRequestOpenComposeRequest,
+  ScmPullRequestOpenComposeResponse,
+  ScmPullRequestOpenOrReuseRequest,
+  ScmPullRequestOpenOrReuseResponse,
+  ScmPullRequestPrepareWorktreeRequest,
+  ScmPullRequestPrepareWorktreeResponse,
+  ScmPullRequestRunStackedRequest,
+  ScmPullRequestRunStackedResponse,
+  ScmRepositoryInitRequest,
+  ScmRepositoryInitResponse,
+  ScmRepositoryRemoveIndexLockRequest,
+  ScmRepositoryRemoveIndexLockResponse,
+} from '@happier-dev/protocol';
+
+export type PluginSdkActionMethodV1<Input = unknown, Output = unknown> = (input: Input) => Promise<Output>;
+
+export type PluginActionsV1 = Readonly<{
+  scm: Readonly<{
+    pullRequest: Readonly<{
+      list: PluginSdkActionMethodV1<ScmPullRequestListRequest, ScmPullRequestListResponse>;
+      get: PluginSdkActionMethodV1<ScmPullRequestGetRequest, ScmPullRequestGetResponse>;
+      openOrReuse: PluginSdkActionMethodV1<
+        ScmPullRequestOpenOrReuseRequest,
+        ScmPullRequestOpenOrReuseResponse
+      >;
+      openCompose: PluginSdkActionMethodV1<
+        ScmPullRequestOpenComposeRequest,
+        ScmPullRequestOpenComposeResponse
+      >;
+      checkout: PluginSdkActionMethodV1<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>;
+      prepareWorktree: PluginSdkActionMethodV1<
+        ScmPullRequestPrepareWorktreeRequest,
+        ScmPullRequestPrepareWorktreeResponse
+      >;
+      runStacked: PluginSdkActionMethodV1<
+        ScmPullRequestRunStackedRequest,
+        ScmPullRequestRunStackedResponse
+      >;
+    }>;
+    repository: Readonly<{
+      /** `ctx.actions.scm.repository.init(...)`. */
+      init: PluginSdkActionMethodV1<ScmRepositoryInitRequest, ScmRepositoryInitResponse>;
+      /** `ctx.actions.scm.repository.removeIndexLock(...)`. */
+      removeIndexLock: PluginSdkActionMethodV1<
+        ScmRepositoryRemoveIndexLockRequest,
+        ScmRepositoryRemoveIndexLockResponse
+      >;
+    }>;
+    hostingRepository: Readonly<{
+      /** `ctx.actions.scm.hostingRepository.describePublishTargets(...)`. */
+      describePublishTargets: PluginSdkActionMethodV1<
+        ScmHostingRepositoryDescribePublishTargetsRequest,
+        ScmHostingRepositoryDescribePublishTargetsResponse
+      >;
+      /** `ctx.actions.scm.hostingRepository.publish(...)`. */
+      publish: PluginSdkActionMethodV1<
+        ScmHostingRepositoryPublishRequest,
+        ScmHostingRepositoryPublishResponse
+      >;
+    }>;
+  }>;
+}>;
+export type PluginActionsServiceV1 = PluginActionsV1;

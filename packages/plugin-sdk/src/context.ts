@@ -3,7 +3,12 @@ import type { BackendEngineV1 } from './engine';
 import type { FetchRuntimeServiceV1 } from './fetch';
 import type { PluginActionsServiceV1 } from './generated/actions';
 import type { PluginSessionsServiceV1 } from './sessions';
-import type { AccountSettings, ProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol';
+import type {
+    AccountSettings,
+    PluginSettingsFieldDescriptorV1,
+    ProjectKeyV1,
+    WorkspaceRefV1,
+} from '@happier-dev/protocol';
 
 export interface LoggerServiceV1 {
     debug(message: string, fields?: Readonly<Record<string, unknown>>): void;
@@ -102,6 +107,107 @@ export interface SubscriptionV1 {
     unsubscribe(): void;
 }
 
+export type PluginStorageScopeV1 = 'ephemeral' | 'session' | 'local' | 'synced';
+
+export interface PluginStorageScopeServiceV1 {
+    get<T = unknown>(key: string): Promise<T | null>;
+    set(key: string, value: unknown): Promise<void>;
+    delete(key: string): Promise<void>;
+    listKeys(): Promise<readonly string[]>;
+}
+
+export interface PluginStorageServiceV1 {
+    readonly ephemeral: PluginStorageScopeServiceV1;
+    readonly session: PluginStorageScopeServiceV1;
+    readonly local: PluginStorageScopeServiceV1;
+    readonly synced: PluginStorageScopeServiceV1;
+}
+
+export type PluginSettingsChangeListenerV1 = (settings: Readonly<Record<string, unknown>>) => void;
+
+export type PluginSettingsFormFieldV1 = Readonly<
+    Pick<
+        PluginSettingsFieldDescriptorV1,
+        | 'id'
+        | 'kind'
+        | 'version'
+        | 'valueSchema'
+        | 'control'
+        | 'displayKey'
+        | 'descriptionKey'
+        | 'groupId'
+        | 'order'
+        | 'redaction'
+        | 'hidden'
+        | 'defaultValue'
+        | 'defaultBooleanValue'
+        | 'clearWhenEmpty'
+    > & {
+        readonly capabilityGates: readonly string[];
+        readonly permissionGates: readonly string[];
+    }
+>;
+
+export type PluginSettingsFormProjectionV1 = Readonly<{
+    fields: readonly PluginSettingsFormFieldV1[];
+}>;
+
+export interface PluginSettingsServiceV1 {
+    get(): Promise<Readonly<Record<string, unknown>>>;
+    get<T = unknown>(key: string): Promise<T | null>;
+    set(key: string, value: unknown): Promise<void>;
+    onChange(listener: PluginSettingsChangeListenerV1): SubscriptionV1;
+    describeFields(): readonly PluginSettingsFieldDescriptorV1[];
+    projectForm(): PluginSettingsFormProjectionV1;
+}
+
+export type PluginSecretListEntryV1 = Readonly<{
+    name: string;
+}>;
+
+export interface PluginSecretsServiceV1 {
+    get(name: string): Promise<string | null>;
+    set(name: string, value: string): Promise<void>;
+    delete(name: string): Promise<void>;
+    list(): Promise<readonly PluginSecretListEntryV1[]>;
+}
+
+export type PluginEventListenerV1 = (event: Readonly<{ name: string; payload: unknown }>) => void | Promise<void>;
+
+export interface PluginEventsServiceV1 {
+    emit(name: string, payload?: unknown): Promise<void>;
+    subscribe(name: string, listener: PluginEventListenerV1): SubscriptionV1;
+}
+
+export type PluginAuthIdentityV1 = Readonly<{
+    accountId: string | null;
+    email?: string | null;
+    profileId?: string | null;
+}>;
+
+export type PluginAuthMaterializeRequestV1 = Readonly<{
+    serviceId: string;
+    profileId?: string | null;
+    reason?: string | null;
+}>;
+
+export type PluginAuthMaterializedServiceV1 = Readonly<{
+    env?: Readonly<Record<string, string>>;
+    headers?: Readonly<Record<string, string>>;
+    files?: Readonly<Record<string, string>>;
+    metadata?: Readonly<Record<string, unknown>>;
+}>;
+
+export type PluginAuthChangeListenerV1 = (identity: PluginAuthIdentityV1 | null) => void;
+
+export interface PluginAuthServiceV1 {
+    getIdentity(): Promise<PluginAuthIdentityV1 | null>;
+    onChange(listener: PluginAuthChangeListenerV1): SubscriptionV1;
+    readonly services: Readonly<{
+        materialize(request: PluginAuthMaterializeRequestV1): Promise<PluginAuthMaterializedServiceV1 | null>;
+    }>;
+}
+
 export type ProjectsChangeListenerV1 = (workspaceRefs: readonly WorkspaceRefV1[]) => void;
 
 export interface ProjectsServiceV1 {
@@ -186,6 +292,11 @@ export interface PluginContextV1 {
     readonly acp: AcpAuthoringServiceV1;
     readonly connection: ConnectionRuntimeServiceV1;
     readonly fetch: FetchRuntimeServiceV1;
+    readonly storage: PluginStorageServiceV1;
+    readonly settings: PluginSettingsServiceV1;
+    readonly secrets: PluginSecretsServiceV1;
+    readonly events: PluginEventsServiceV1;
+    readonly auth: PluginAuthServiceV1;
     readonly projects: ProjectsServiceV1;
     readonly account: AccountServiceV1;
     readonly sessions: PluginSessionsServiceV1;

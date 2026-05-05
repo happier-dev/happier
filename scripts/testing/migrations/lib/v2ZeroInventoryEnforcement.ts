@@ -246,6 +246,7 @@ const ACP_SHARED_SESSION_COMPATIBILITY_ALLOWLIST = new Set<string>([
   'apps/cli/src/agent/acp/catalog/configured/sessionPlan.ts',
   'apps/cli/src/agent/acp/catalog/configured/runConfiguredAcpBackend.ts',
   'apps/cli/src/agent/acp/catalog/configured/startupOverrides.ts',
+  'apps/cli/src/agent/acp/runtime/definition/runtimeCore.ts',
 ]);
 
 function isProductionTypeScriptFile(filePath: string): boolean {

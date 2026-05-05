@@ -2,12 +2,33 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
+import {
+  getAllBackendDefinitions,
+  getAllBackendDefinitionContracts,
+  getAllProviderDefinitionContracts,
+  getProviderDefinition,
+  getProviderCliRuntimeSpec,
+} from '@happier-dev/agents';
+
+const PLUGIN_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 type Mode = 'write' | 'check';
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+type PluginManifestJson = Readonly<Record<string, unknown> & { id: string }>;
+type BundledPluginPackage = Readonly<{
+  pluginPackageId: string;
+  pluginId: string;
+  packageName: string;
+  packageVersion: string;
+  agentId?: string;
+  agentDefinition?: JsonValue;
+}>;
+type AgentBundledPluginPackage = BundledPluginPackage & Readonly<{
+  agentId: string;
+  agentDefinition: JsonValue;
+}>;
 
 function readJson(path: string): any {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -55,12 +76,20 @@ function printUsage(): void {
   console.log([
     'Usage: node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts [--root DIR] [--mode write|check]',
     '',
-    'Generates/patches bundled extension entry maps from packages/extensions/*.',
+    'Generates/patches bundled plugin entry maps from packages/plugins/*.',
   ].join('\n'));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isReservationOnlyPluginPackage(pkgJson: { happier?: unknown } | null | undefined): boolean {
+  const happier = pkgJson?.happier;
+  if (!isRecord(happier)) return false;
+  const pluginScaffold = happier.pluginScaffold ?? happier.extensionScaffold;
+  if (!isRecord(pluginScaffold)) return false;
+  return pluginScaffold.shipping === 'reservation_only';
 }
 
 function assertJsonSerializable(value: unknown, path: string[] = []): asserts value is JsonValue {
@@ -102,8 +131,8 @@ function renderJsonLiteral(value: JsonValue, indent = 2): string {
   return JSON.stringify(deepSortJson(value), null, indent) ?? 'null';
 }
 
-async function loadExtensionAgentDefinition(repoRoot: string, extensionId: string): Promise<JsonValue> {
-  const definitionPath = resolve(repoRoot, 'packages/extensions', extensionId, 'src/agent/definition.ts');
+async function loadPluginAgentDefinition(repoRoot: string, pluginPackageId: string): Promise<JsonValue> {
+  const definitionPath = resolve(repoRoot, 'packages/plugins', pluginPackageId, 'src/agent/definition.ts');
   if (!existsSync(definitionPath)) {
     throw new Error(`Missing required agent definition at ${definitionPath}`);
   }
@@ -119,63 +148,93 @@ async function loadExtensionAgentDefinition(repoRoot: string, extensionId: strin
   if (!isRecord(definition) || typeof definition.id !== 'string') {
     throw new Error(`Invalid AGENT_DEFINITION in ${definitionPath} (expected object with string id)`);
   }
-  if (definition.id !== extensionId) {
-    throw new Error(`AGENT_DEFINITION.id mismatch for ${extensionId}: got ${definition.id}`);
-  }
 
   return definition;
 }
 
-async function readBundledExtensionPackages(repoRoot: string): Promise<ReadonlyArray<{
-  extensionId: string;
-  packageName: string;
-  agentDefinition: JsonValue;
-}>> {
-  const extensionsRoot = resolve(repoRoot, 'packages', 'extensions');
-  if (!existsSync(extensionsRoot)) return [];
-
-  const out: Array<{ extensionId: string; packageName: string; agentDefinition: JsonValue }> = [];
-  for (const dirent of readdirSync(extensionsRoot, { withFileTypes: true })) {
-    if (!dirent.isDirectory()) continue;
-    const extensionId = dirent.name;
-    if (extensionId.startsWith('_')) {
-      continue;
-    }
-    const pkgJsonPath = resolve(extensionsRoot, extensionId, 'package.json');
-    if (!existsSync(pkgJsonPath)) continue;
-    const pkgJson = readJson(pkgJsonPath) as { name?: unknown };
-
-    const expectedPackageName = `${EXTENSIONS_PACKAGE_PREFIX}${extensionId}`;
-    if (pkgJson.name !== expectedPackageName) {
-      throw new Error(`Invalid extension package name for ${extensionId}: expected ${expectedPackageName}, got ${String(pkgJson.name)}`);
-    }
-
-    const agentDefinition = await loadExtensionAgentDefinition(repoRoot, extensionId);
-    out.push({ extensionId, packageName: expectedPackageName, agentDefinition });
+async function loadPluginManifest(repoRoot: string, pluginPackageId: string): Promise<PluginManifestJson> {
+  const manifestPath = resolve(repoRoot, 'packages/plugins', pluginPackageId, 'src/manifest.ts');
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Missing required plugin manifest for shippable plugin package ${pluginPackageId}: ${manifestPath}`);
   }
 
-  out.sort((a, b) => a.extensionId.localeCompare(b.extensionId));
-  return out;
+  const mod = await import(pathToFileURL(manifestPath).href) as { PLUGIN_MANIFEST?: unknown };
+  if (!('PLUGIN_MANIFEST' in mod)) {
+    throw new Error(`Expected PLUGIN_MANIFEST export in ${manifestPath}`);
+  }
+
+  const manifest = mod.PLUGIN_MANIFEST;
+
+  if (!isRecord(manifest) || typeof manifest.id !== 'string') {
+    throw new Error(`Invalid PLUGIN_MANIFEST in ${manifestPath} (expected object with string id)`);
+  }
+
+  return manifest;
 }
 
-function renderPackageNameListTs(params: Readonly<{
-  header: string;
-  exportedConstName: string;
-  packageNames: readonly string[];
-}>): string {
-  const lines: string[] = [];
-  lines.push('/* eslint-disable @typescript-eslint/naming-convention */');
-  lines.push('/**');
-  for (const l of params.header.split('\n')) lines.push(` * ${l}`);
-  lines.push(' */');
-  lines.push('');
-  lines.push(`export const ${params.exportedConstName}: readonly string[] = Object.freeze([`);
-  for (const pkg of params.packageNames) {
-    lines.push(`  ${JSON.stringify(pkg)},`);
+function manifestDeclaresAgentRuntime(manifest: JsonValue): boolean {
+  if (!isRecord(manifest)) return false;
+
+  const runtime = manifest.runtime;
+  if (isRecord(runtime) && Array.isArray(runtime.capabilities)) {
+    if (runtime.capabilities.some((capability) => capability === 'agents' || capability === 'backends')) {
+      return true;
+    }
   }
-  lines.push(']);');
-  lines.push('');
-  return lines.join('\n');
+
+  const contributes = manifest.contributes;
+  if (!isRecord(contributes)) return false;
+  return ['agents', 'backends'].some((family) => Array.isArray(contributes[family]) && contributes[family].length > 0);
+}
+
+async function readBundledPluginPackages(repoRoot: string): Promise<readonly BundledPluginPackage[]> {
+  const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
+  if (!existsSync(pluginsRoot)) return [];
+
+  const out: BundledPluginPackage[] = [];
+  for (const dirent of readdirSync(pluginsRoot, { withFileTypes: true })) {
+    if (!dirent.isDirectory()) continue;
+    const pluginPackageId = dirent.name;
+    if (pluginPackageId.startsWith('_')) {
+      continue;
+    }
+    const pkgJsonPath = resolve(pluginsRoot, pluginPackageId, 'package.json');
+    if (!existsSync(pkgJsonPath)) continue;
+    const pkgJson = readJson(pkgJsonPath) as { name?: unknown; version?: unknown };
+    if (isReservationOnlyPluginPackage(pkgJson)) {
+      continue;
+    }
+
+    const expectedPackageName = `${PLUGIN_PACKAGE_PREFIX}${pluginPackageId}`;
+    if (pkgJson.name !== expectedPackageName) {
+      throw new Error(`Invalid plugin package name for ${pluginPackageId}: expected ${expectedPackageName}, got ${String(pkgJson.name)}`);
+    }
+    if (typeof pkgJson.version !== 'string' || pkgJson.version.trim().length === 0) {
+      throw new Error(`Invalid plugin package version for ${pluginPackageId}: expected non-empty string`);
+    }
+
+    const manifest = await loadPluginManifest(repoRoot, pluginPackageId);
+    const definitionPath = resolve(pluginsRoot, pluginPackageId, 'src/agent/definition.ts');
+    const agentDefinition = existsSync(definitionPath)
+      ? await loadPluginAgentDefinition(repoRoot, pluginPackageId)
+      : undefined;
+    if (!agentDefinition && manifestDeclaresAgentRuntime(manifest)) {
+      throw new Error(
+        `Missing required agent definition for agent-capable plugin package ${pluginPackageId}: ${definitionPath}`,
+      );
+    }
+
+    out.push({
+      pluginPackageId,
+      pluginId: manifest.id,
+      packageName: expectedPackageName,
+      packageVersion: pkgJson.version,
+      ...(agentDefinition ? { agentId: agentDefinition.id, agentDefinition } : {}),
+    });
+  }
+
+  out.sort((a, b) => a.packageName.localeCompare(b.packageName));
+  return out;
 }
 
 function renderBundledAgentDefinitionsTs(params: Readonly<{
@@ -205,7 +264,7 @@ function renderBundledAgentDefinitionsTs(params: Readonly<{
   for (const id of params.agentIds) {
     const definition = params.agentDefinitionsById[id];
     if (!definition) continue;
-    lines.push(`  ${JSON.stringify(id)}: Object.freeze(${renderJsonLiteral(definition)}),`);
+    lines.push(`  ${JSON.stringify(id)}: Object.freeze((${renderJsonLiteral(definition)}) as const),`);
   }
   lines.push('}) as const satisfies Readonly<Record<string, AgentDefinition>>;');
   lines.push('');
@@ -218,21 +277,204 @@ function renderBundledAgentDefinitionsTs(params: Readonly<{
   return lines.join('\n');
 }
 
-function patchBundledPackageNamesConstant(params: Readonly<{
+function renderCliBundledPluginEntriesTs(params: Readonly<{
+  pluginPackages: readonly BundledPluginPackage[];
+}>): string {
+  const metadata = params.pluginPackages.map((entry) => ({
+    ...(entry.agentId ? { agentId: entry.agentId } : {}),
+    manifestDigest: `bundled:${entry.packageName}@${entry.packageVersion}`,
+    manifestPath: `bundled:${entry.pluginId}`,
+    packageName: entry.packageName,
+    packageVersion: entry.packageVersion,
+    pluginId: entry.pluginId,
+    pluginPackageId: entry.pluginPackageId,
+  }));
+
+  const lines: string[] = [];
+  lines.push('/* eslint-disable @typescript-eslint/naming-convention */');
+  lines.push('/**');
+  lines.push(' * GENERATED FILE CONTRACT (PS-04)');
+  lines.push(' *');
+  lines.push(' * This file is emitted by:');
+  lines.push(' * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`');
+  lines.push(' *');
+  lines.push(' * Runtime reads this local artifact; executable plugin packages are only named as locators.');
+  lines.push(' */');
+  lines.push('');
+  lines.push('import {');
+  lines.push('  getAllBackendDefinitions,');
+  lines.push('  getAllBackendDefinitionContracts,');
+  lines.push('  getAllProviderDefinitionContracts,');
+  lines.push('  getProviderDefinition,');
+  lines.push('  getProviderCliRuntimeSpec,');
+  lines.push('  isAgentId,');
+  lines.push('} from \'@happier-dev/agents\';');
+  lines.push('import type { AgentId } from \'@happier-dev/agents\';');
+  lines.push('');
+  lines.push('import type {');
+  lines.push('  ResolvedActivationTarget,');
+  lines.push('  ResolvedBackendContribution,');
+  lines.push('  ResolvedCatalogEntry,');
+  lines.push('  ResolvedProviderContribution,');
+  lines.push('} from \'../types\';');
+  lines.push('');
+  lines.push('export type BundledFirstPartyPluginMetadata = Readonly<{');
+  lines.push('  agentId?: string;');
+  lines.push('  pluginId: string;');
+  lines.push('  pluginPackageId: string;');
+  lines.push('  packageName: string;');
+  lines.push('  packageVersion: string;');
+  lines.push('  manifestPath: string;');
+  lines.push('  manifestDigest: string;');
+  lines.push('}>;');
+  lines.push('');
+  lines.push('type BundledContributionMetadataFields = Pick<');
+  lines.push('  ResolvedActivationTarget,');
+  lines.push('  \'pluginId\' | \'manifestPath\' | \'manifestDigest\' | \'daemonEntryPath\' | \'sourceSpec\'');
+  lines.push('>;');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze([');
+  for (const entry of params.pluginPackages) {
+    lines.push(`  ${JSON.stringify(entry.packageName)},`);
+  }
+  lines.push(']);');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_PLUGIN_METADATA: readonly BundledFirstPartyPluginMetadata[] = Object.freeze(');
+  lines.push(`${renderJsonLiteral(metadata)});`);
+  lines.push('');
+  lines.push('const bundledPluginMetadataByAgentId = new Map(');
+  lines.push('  BUNDLED_FIRST_PARTY_PLUGIN_METADATA');
+  lines.push('    .filter((entry): entry is BundledFirstPartyPluginMetadata & Readonly<{ agentId: string }> => typeof entry.agentId === \'string\')');
+  lines.push('    .map((entry) => [entry.agentId, entry] as const),');
+  lines.push(');');
+  lines.push('');
+  lines.push('type BuiltInBackendCatalogDefinition = (ReturnType<typeof getAllBackendDefinitions>)[number];');
+  lines.push('');
+  lines.push('function buildBundledSourceSpec(metadata: BundledFirstPartyPluginMetadata) {');
+  lines.push('  return {');
+  lines.push('    kind: \'package\' as const,');
+  lines.push('    locator: metadata.packageName,');
+  lines.push('    trustPolicy: \'local_trusted\' as const,');
+  lines.push('    installPolicy: \'link\' as const,');
+  lines.push('    resolvedVersion: metadata.packageVersion,');
+  lines.push('    resolvedDigest: metadata.manifestDigest,');
+  lines.push('  };');
+  lines.push('}');
+  lines.push('');
+  lines.push('function readBundledPluginMetadata(agentId: string): BundledFirstPartyPluginMetadata | null {');
+  lines.push('  return bundledPluginMetadataByAgentId.get(agentId) ?? null;');
+  lines.push('}');
+  lines.push('');
+  lines.push('function requireBuiltInAgentId(value: string, subject: string): AgentId {');
+  lines.push('  if (!isAgentId(value)) {');
+  lines.push('    throw new Error(`Expected built-in ${subject} id, received \'${value}\'`);');
+  lines.push('  }');
+  lines.push('  return value;');
+  lines.push('}');
+  lines.push('');
+  lines.push('function buildBundledMetadataFields(agentId: string): Partial<BundledContributionMetadataFields> {');
+  lines.push('  const metadata = readBundledPluginMetadata(agentId);');
+  lines.push('  if (!metadata) return {};');
+  lines.push('  return {');
+  lines.push('    pluginId: metadata.pluginId,');
+  lines.push('    manifestPath: metadata.manifestPath,');
+  lines.push('    manifestDigest: metadata.manifestDigest,');
+  lines.push('    daemonEntryPath: metadata.packageName,');
+  lines.push('    sourceSpec: buildBundledSourceSpec(metadata),');
+  lines.push('  };');
+  lines.push('}');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS: readonly ResolvedActivationTarget[] = Object.freeze(');
+  lines.push('  BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((metadata): ResolvedActivationTarget => ({');
+  lines.push('    provenance: \'external\',');
+  lines.push('    source: { kind: \'bundled\' },');
+  lines.push('    pluginId: metadata.pluginId,');
+  lines.push('    manifestPath: metadata.manifestPath,');
+  lines.push('    manifestDigest: metadata.manifestDigest,');
+  lines.push('    daemonEntryPath: metadata.packageName,');
+  lines.push('    sourceSpec: buildBundledSourceSpec(metadata),');
+  lines.push('  })),');
+  lines.push(');');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS: readonly ResolvedProviderContribution[] = Object.freeze(');
+  lines.push('  getAllProviderDefinitionContracts().map((definition): ResolvedProviderContribution => {');
+  lines.push('    const providerId = requireBuiltInAgentId(definition.id, \'provider\');');
+  lines.push('    const richDefinition = getProviderDefinition(providerId);');
+  lines.push('    if (!richDefinition) {');
+  lines.push('      throw new Error(`Missing built-in provider catalog definition \'${definition.id}\'`);');
+  lines.push('    }');
+  lines.push('    const catalogEntry = Object.freeze({');
+  lines.push('      id: definition.id,');
+  lines.push('      cliSubcommand: richDefinition.core.cliSubcommand,');
+  lines.push('      vendorResumeSupport: richDefinition.core.resume.vendorResume,');
+  lines.push('    } satisfies ResolvedCatalogEntry);');
+  lines.push('    return Object.freeze({');
+  lines.push('      id: definition.id,');
+  lines.push('      provenance: \'first_party\',');
+  lines.push('      source: { kind: \'bundled\' },');
+  lines.push('      definition,');
+  lines.push('      richDefinition: {');
+  lines.push('        provenance: \'first_party\',');
+  lines.push('        definition: richDefinition,');
+  lines.push('      },');
+  lines.push('      runtimeSpec: getProviderCliRuntimeSpec(providerId),');
+  lines.push('      catalogEntry,');
+  lines.push('      ...buildBundledMetadataFields(definition.id),');
+  lines.push('    } satisfies ResolvedProviderContribution);');
+  lines.push('  }),');
+  lines.push(');');
+  lines.push('');
+  lines.push('const backendCatalogDefinitionsById = new Map<AgentId, BuiltInBackendCatalogDefinition>(');
+  lines.push('  getAllBackendDefinitions().map((definition) => [definition.id, definition] as const),');
+  lines.push(');');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_BACKEND_CONTRIBUTIONS: readonly ResolvedBackendContribution[] = Object.freeze(');
+  lines.push('  getAllBackendDefinitionContracts().map((definition): ResolvedBackendContribution => {');
+  lines.push('    const backendId = requireBuiltInAgentId(definition.id, \'backend\');');
+  lines.push('    const richDefinition = backendCatalogDefinitionsById.get(backendId);');
+  lines.push('    if (!richDefinition) {');
+  lines.push('      throw new Error(`Missing built-in backend catalog definition \'${definition.id}\'`);');
+  lines.push('    }');
+  lines.push('    return Object.freeze({');
+  lines.push('      id: definition.id,');
+  lines.push('      providerId: definition.providerId,');
+  lines.push('      provenance: \'first_party\',');
+  lines.push('      source: { kind: \'bundled\' },');
+  lines.push('      definition,');
+  lines.push('      richDefinition: {');
+  lines.push('        provenance: \'first_party\',');
+  lines.push('        definition: richDefinition,');
+  lines.push('      },');
+  lines.push('      runtimeKind: richDefinition.engine?.defaultRuntimeKind ?? \'native\',');
+  lines.push('      ...buildBundledMetadataFields(definition.providerId),');
+  lines.push('    } satisfies ResolvedBackendContribution);');
+  lines.push('  }),');
+  lines.push(');');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_CATALOG_ENTRIES: readonly ResolvedCatalogEntry[] = Object.freeze(');
+  lines.push('  BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS.map((provider) => provider.catalogEntry)');
+  lines.push('    .filter((entry): entry is ResolvedCatalogEntry => Boolean(entry)),');
+  lines.push(');');
+  lines.push('');
+  return lines.join('\n');
+}
+
+function patchBundledPluginPackageNamesConstant(params: Readonly<{
   filePath: string;
   packageNames: readonly string[];
 }>): void {
   const existing = readFileSync(params.filePath, 'utf8');
-  const replacement = `export const BUNDLED_FIRST_PARTY_EXTENSION_PACKAGE_NAMES: readonly string[] = Object.freeze(${JSON.stringify(params.packageNames, null, 2)});\n`;
+  const replacement = `export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze(${JSON.stringify(params.packageNames, null, 2)});\n`;
+  const pattern = /export const BUNDLED_FIRST_PARTY_(?:EXTENSION|PLUGIN)_PACKAGE_NAMES:[^=]*=\s*Object\.freeze\([\s\S]*?\);\n?/;
 
-  const next = existing.replace(
-    /export const BUNDLED_FIRST_PARTY_EXTENSION_PACKAGE_NAMES:[^=]*=\s*Object\.freeze\([\s\S]*?\);\n?/,
-    replacement,
-  );
-
-  if (next === existing) {
+  if (!pattern.test(existing)) {
     // If the file doesn't match the expected pattern, refuse to mutate it implicitly.
-    throw new Error(`Unable to patch BUNDLED_FIRST_PARTY_EXTENSION_PACKAGE_NAMES in ${params.filePath}`);
+    throw new Error(`Unable to patch bundled first-party plugin package names in ${params.filePath}`);
+  }
+
+  const next = existing.replace(pattern, replacement);
+  if (next === existing) {
+    return;
   }
 
   writeFileAtomic(params.filePath, next);
@@ -257,12 +499,21 @@ function renderBundledUiBehaviorOverridesPlaceholderTs(): string {
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const options = parseCliArgs(argv);
-  const extensionPackages = await readBundledExtensionPackages(options.rootDir);
-  const packageNames = extensionPackages.map((entry) => entry.packageName);
-  const agentIds = extensionPackages.map((entry) => entry.extensionId);
-  const agentDefinitionsById = Object.fromEntries(extensionPackages.map((entry) => [entry.extensionId, entry.agentDefinition]));
+  const pluginPackages = await readBundledPluginPackages(options.rootDir);
+  const packageNames = pluginPackages.map((entry) => entry.packageName);
+  const agentIds = pluginPackages
+    .map((entry) => entry.agentId)
+    .filter((agentId): agentId is string => typeof agentId === 'string')
+    .sort((a, b) => a.localeCompare(b));
+  const agentDefinitionsById = Object.fromEntries(
+    pluginPackages
+      .filter((entry): entry is AgentBundledPluginPackage => (
+        typeof entry.agentId === 'string' && entry.agentDefinition !== undefined
+      ))
+      .map((entry) => [entry.agentId, entry.agentDefinition]),
+  );
 
-  const cliOutPath = resolve(options.rootDir, 'apps/cli/src/extensions/registry/sources/generatedBundledPlugins.ts');
+  const cliOutPath = resolve(options.rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts');
   const uiOutPath = resolve(options.rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
   const uiBehaviorOverridesOutPath = resolve(
     options.rootDir,
@@ -270,15 +521,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   );
   const agentsOutPath = resolve(options.rootDir, 'packages/agents/src/generated/bundledAgentDefinitions.ts');
 
-  const cliOut = renderPackageNameListTs({
-    header: [
-      'GENERATED FILE CONTRACT (PS-04)',
-      '',
-      'Bundled first-party extension package names (lexical order).',
-    ].join('\n'),
-    exportedConstName: 'BUNDLED_FIRST_PARTY_EXTENSION_PACKAGE_NAMES',
-    packageNames,
-  });
+  const cliOut = renderCliBundledPluginEntriesTs({ pluginPackages });
 
   const agentsOut = renderBundledAgentDefinitionsTs({ agentIds, agentDefinitionsById });
 
@@ -300,7 +543,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   writeFileAtomic(agentsOutPath, agentsOut);
 
   if (existsSync(uiOutPath)) {
-    patchBundledPackageNamesConstant({ filePath: uiOutPath, packageNames });
+    patchBundledPluginPackageNamesConstant({ filePath: uiOutPath, packageNames });
   }
 
   if (!existsSync(uiBehaviorOverridesOutPath)) {

@@ -12,24 +12,24 @@ test('extension unification move map includes the CLI packaging lane moves', () 
   const moves = new Map(EXTENSION_UNIFICATION_MOVE_MAP.map((entry) => [entry.from, entry.to]));
 
   assert.equal(
-    moves.get('apps/cli/src/extensions/plugins/store/pluginStateStore.ts'),
-    'apps/cli/src/extensions/store/state.ts',
+    moves.get('apps/cli/src/plugins/plugins/store/pluginStateStore.ts'),
+    'apps/cli/src/plugins/store/state.ts',
   );
   assert.equal(
-    moves.get('apps/cli/src/extensions/plugins/install/installPluginFromSource.ts'),
-    'apps/cli/src/extensions/install/source.ts',
+    moves.get('apps/cli/src/plugins/plugins/install/installPluginFromSource.ts'),
+    'apps/cli/src/plugins/install/source.ts',
   );
   assert.equal(
-    moves.get('apps/cli/src/extensions/plugins/catalog/marketplaceCatalog.ts'),
-    'apps/cli/src/extensions/marketplace/catalog.ts',
+    moves.get('apps/cli/src/plugins/plugins/catalog/marketplaceCatalog.ts'),
+    'apps/cli/src/plugins/marketplace/catalog.ts',
   );
   assert.equal(
-    moves.get('apps/cli/src/extensions/plugins/loader/loadInstalledPlugins.ts'),
-    'apps/cli/src/extensions/load/installed.ts',
+    moves.get('apps/cli/src/plugins/plugins/loader/loadInstalledPlugins.ts'),
+    'apps/cli/src/plugins/load/installed.ts',
   );
   assert.equal(
-    moves.get('apps/cli/src/extensions/plugins/testkit/samplePluginFixture.ts'),
-    'apps/cli/src/extensions/testkit/samplePackage.ts',
+    moves.get('apps/cli/src/plugins/plugins/testkit/samplePluginFixture.ts'),
+    'apps/cli/src/plugins/testkit/samplePackage.ts',
   );
   assert.equal(
     EXTENSION_UNIFICATION_MOVE_MAP.some((entry) => entry.to.includes('/plugins/')),
@@ -42,16 +42,16 @@ test('extension unification rewrite rules rewrite old absolute plugin packaging 
   const rulesByFrom = new Map(rules.map((rule) => [rule.from, rule.to]));
 
   assert.equal(
-    rulesByFrom.get('@/extensions/plugins/store/pluginStateStore'),
-    '@/extensions/store/state',
+    rulesByFrom.get('@/plugins/plugins/store/pluginStateStore'),
+    '@/plugins/store/state',
   );
   assert.equal(
-    rulesByFrom.get('@/extensions/plugins/shared/resolvePluginDaemonEntryPath'),
-    '@/extensions/manifest/daemonEntry',
+    rulesByFrom.get('@/plugins/plugins/shared/resolvePluginDaemonEntryPath'),
+    '@/plugins/manifest/daemonEntry',
   );
   assert.equal(
-    rulesByFrom.get('@/extensions/plugins/catalog/pluginCatalog'),
-    '@/extensions/catalog/installed',
+    rulesByFrom.get('@/plugins/plugins/catalog/pluginCatalog'),
+    '@/plugins/catalog/installed',
   );
 });
 
@@ -59,19 +59,19 @@ test('extension unification validation reports forbidden old paths', () => {
   const findings = collectForbiddenExtensionUnificationFindings([
     {
       filePath: 'apps/cli/src/cli/commands/plugins.ts',
-      content: "import { readInstalledPluginCatalog } from '@/extensions/plugins/catalog/pluginCatalog';\n",
+      content: "import { readInstalledPluginCatalog } from '@/plugins/plugins/catalog/pluginCatalog';\n",
     },
     {
-      filePath: 'apps/cli/src/extensions/store/state.ts',
-      content: "import { readInstalledPluginCatalog } from '@/extensions/catalog/installed';\n",
+      filePath: 'apps/cli/src/plugins/store/state.ts',
+      content: "import { readInstalledPluginCatalog } from '@/plugins/catalog/installed';\n",
     },
   ]);
 
   assert.deepEqual(findings, [
     {
       filePath: 'apps/cli/src/cli/commands/plugins.ts',
-      pattern: '@/extensions/plugins/catalog/pluginCatalog',
-      replacement: '@/extensions/catalog/installed',
+      pattern: '@/plugins/plugins/catalog/pluginCatalog',
+      replacement: '@/plugins/catalog/installed',
     },
   ]);
 });
@@ -80,15 +80,15 @@ test('extension unification import rewrite planner rewrites old packaging import
   const plan = planExtensionUnificationImportRewrites([
     {
       filePath: 'apps/cli/src/cli/commands/plugins.ts',
-      content: "import { readInstalledPluginCatalog } from '@/extensions/plugins/catalog/pluginCatalog';\n",
+      content: "import { readInstalledPluginCatalog } from '@/plugins/plugins/catalog/pluginCatalog';\n",
     },
     {
-      filePath: 'apps/cli/src/extensions/catalog/installed.ts',
+      filePath: 'apps/cli/src/plugins/catalog/installed.ts',
       content: "import { createPluginStateStore } from '../store/pluginStateStore';\n",
     },
     {
       filePath: 'apps/cli/src/agent/runtime/registry/engineRegistry.test.ts',
-      content: "import { createPluginStateStore } from '../../../extensions/plugins/store/pluginStateStore';\n",
+      content: "import { createPluginStateStore } from '../../../plugins/plugins/store/pluginStateStore';\n",
     },
   ]);
 
@@ -97,15 +97,15 @@ test('extension unification import rewrite planner rewrites old packaging import
     [
       [
         'apps/cli/src/cli/commands/plugins.ts',
-        "import { readInstalledPluginCatalog } from '@/extensions/catalog/installed';\n",
+        "import { readInstalledPluginCatalog } from '@/plugins/catalog/installed';\n",
       ],
       [
-        'apps/cli/src/extensions/catalog/installed.ts',
+        'apps/cli/src/plugins/catalog/installed.ts',
         "import { createPluginStateStore } from '../store/state';\n",
       ],
       [
         'apps/cli/src/agent/runtime/registry/engineRegistry.test.ts',
-        "import { createPluginStateStore } from '../../../extensions/store/state';\n",
+        "import { createPluginStateStore } from '../../../plugins/store/state';\n",
       ],
     ],
   );

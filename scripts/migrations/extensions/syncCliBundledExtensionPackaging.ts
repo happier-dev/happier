@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
+const PLUGIN_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 type Mode = 'write' | 'check';
 
@@ -51,25 +51,43 @@ function printUsage(): void {
   console.log([
     'Usage: node --experimental-strip-types scripts/migrations/extensions/syncCliBundledExtensionPackaging.ts [--root DIR] [--mode write|check]',
     '',
-    'Syncs apps/cli/package.json#bundledDependencies with packages/extensions/* workspace set.',
+    'Syncs apps/cli/package.json#bundledDependencies with packages/plugins/* workspace set.',
   ].join('\n'));
 }
 
-function readBundledExtensionPackageNames(repoRoot: string): readonly string[] {
-  const extensionsRoot = resolve(repoRoot, 'packages', 'extensions');
-  if (!existsSync(extensionsRoot)) return [];
+function isReservationOnlyPluginPackage(pkgJson: { happier?: unknown } | null | undefined): boolean {
+  const happier = pkgJson?.happier;
+  if (typeof happier !== 'object' || happier === null) return false;
+  const pluginScaffold = (happier as { pluginScaffold?: unknown; extensionScaffold?: unknown }).pluginScaffold
+    ?? (happier as { extensionScaffold?: unknown }).extensionScaffold;
+  if (typeof pluginScaffold !== 'object' || pluginScaffold === null) return false;
+  return (pluginScaffold as { shipping?: unknown }).shipping === 'reservation_only';
+}
+
+function readBundledPluginPackageNames(repoRoot: string): readonly string[] {
+  const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
+  if (!existsSync(pluginsRoot)) return [];
 
   const out: string[] = [];
-  for (const dirent of readdirSync(extensionsRoot, { withFileTypes: true })) {
+  for (const dirent of readdirSync(pluginsRoot, { withFileTypes: true })) {
     if (!dirent.isDirectory()) continue;
-    const extensionId = dirent.name;
-    const pkgJsonPath = resolve(extensionsRoot, extensionId, 'package.json');
+    const pluginPackageId = dirent.name;
+    if (pluginPackageId.startsWith('_')) continue;
+    const pkgJsonPath = resolve(pluginsRoot, pluginPackageId, 'package.json');
     if (!existsSync(pkgJsonPath)) continue;
     const pkgJson = readJson(pkgJsonPath) as { name?: unknown };
+    if (isReservationOnlyPluginPackage(pkgJson)) continue;
 
-    const expectedPackageName = `${EXTENSIONS_PACKAGE_PREFIX}${extensionId}`;
+    const manifestPath = resolve(pluginsRoot, pluginPackageId, 'src/manifest.ts');
+    if (!existsSync(manifestPath)) {
+      throw new Error(
+        `Missing required plugin manifest for shippable plugin package ${pluginPackageId}: ${manifestPath}`,
+      );
+    }
+
+    const expectedPackageName = `${PLUGIN_PACKAGE_PREFIX}${pluginPackageId}`;
     if (pkgJson.name !== expectedPackageName) {
-      throw new Error(`Invalid extension package name for ${extensionId}: expected ${expectedPackageName}, got ${String(pkgJson.name)}`);
+      throw new Error(`Invalid plugin package name for ${pluginPackageId}: expected ${expectedPackageName}, got ${String(pkgJson.name)}`);
     }
 
     out.push(expectedPackageName);
@@ -87,35 +105,35 @@ function normalizeBundledDependencies(raw: unknown): string[] {
 
 function syncBundledDependencies(params: Readonly<{
   existing: readonly string[];
-  bundledExtensionPackageNames: readonly string[];
+  bundledPluginPackageNames: readonly string[];
 }>): string[] {
-  const withoutOldExtensions = params.existing.filter((name) => !name.startsWith(EXTENSIONS_PACKAGE_PREFIX));
-  const merged = new Set<string>(withoutOldExtensions);
-  for (const pkg of params.bundledExtensionPackageNames) merged.add(pkg);
+  const withoutOldPlugins = params.existing.filter((name) => !name.startsWith(PLUGIN_PACKAGE_PREFIX));
+  const merged = new Set<string>(withoutOldPlugins);
+  for (const pkg of params.bundledPluginPackageNames) merged.add(pkg);
 
-  // Keep stable order: non-extension entries stay in their existing order, then extensions sorted.
-  const extensionsSorted = [...params.bundledExtensionPackageNames].slice().sort((a, b) => a.localeCompare(b));
-  const nonExtensions = withoutOldExtensions.filter((name) => !name.startsWith(EXTENSIONS_PACKAGE_PREFIX));
-  const nonExtensionsDeduped: string[] = [];
+  // Keep stable order: non-plugin entries stay in their existing order, then plugin packages sorted.
+  const pluginsSorted = [...params.bundledPluginPackageNames].slice().sort((a, b) => a.localeCompare(b));
+  const nonPlugins = withoutOldPlugins.filter((name) => !name.startsWith(PLUGIN_PACKAGE_PREFIX));
+  const nonPluginsDeduped: string[] = [];
   const seen = new Set<string>();
-  for (const name of nonExtensions) {
+  for (const name of nonPlugins) {
     if (seen.has(name)) continue;
     seen.add(name);
-    nonExtensionsDeduped.push(name);
+    nonPluginsDeduped.push(name);
   }
-  for (const ext of extensionsSorted) {
-    if (!seen.has(ext)) {
-      nonExtensionsDeduped.push(ext);
-      seen.add(ext);
+  for (const pluginPackageName of pluginsSorted) {
+    if (!seen.has(pluginPackageName)) {
+      nonPluginsDeduped.push(pluginPackageName);
+      seen.add(pluginPackageName);
     }
   }
 
-  // Ensure we didn't accidentally drop any non-extension entries.
+  // Ensure we didn't accidentally drop any non-plugin entries.
   for (const name of merged) {
-    if (!nonExtensionsDeduped.includes(name)) nonExtensionsDeduped.push(name);
+    if (!nonPluginsDeduped.includes(name)) nonPluginsDeduped.push(name);
   }
 
-  return nonExtensionsDeduped;
+  return nonPluginsDeduped;
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
@@ -125,14 +143,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     throw new Error(`Missing CLI package.json: ${cliPackageJsonPath}`);
   }
 
-  const bundledExtensionPackageNames = readBundledExtensionPackageNames(options.rootDir);
+  const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir);
   const cliPackageJson = readJson(cliPackageJsonPath) as Record<string, unknown>;
   const existingBundled = normalizeBundledDependencies(cliPackageJson.bundledDependencies);
-  const nextBundled = syncBundledDependencies({ existing: existingBundled, bundledExtensionPackageNames });
+  const nextBundled = syncBundledDependencies({ existing: existingBundled, bundledPluginPackageNames });
 
   if (options.mode === 'check') {
     if (JSON.stringify(existingBundled) !== JSON.stringify(nextBundled)) {
-      throw new Error('apps/cli bundledDependencies are out of sync with packages/extensions/*');
+      throw new Error('apps/cli bundledDependencies are out of sync with packages/plugins/*');
     }
     return;
   }

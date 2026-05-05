@@ -9,7 +9,7 @@ import { collectForbiddenBundledExtensionMigrationFindings } from './validateBun
 test('validator fails on V1 manifest leftovers (pluginManifestV1.ts)', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'packages/protocol/src/extensions/pluginManifestV1.ts',
+      filePath: 'packages/protocol/src/plugins/pluginManifestV1.ts',
       content: 'export const PluginManifestV1Schema = {};\n',
     },
     {
@@ -20,9 +20,9 @@ test('validator fails on V1 manifest leftovers (pluginManifestV1.ts)', () => {
 
   assert.deepEqual(findings, [
     {
-      filePath: 'packages/protocol/src/extensions/pluginManifestV1.ts',
-      pattern: 'packages/protocol/src/extensions/pluginManifestV1.ts',
-      replacement: 'Delete V1 manifest; use packages/protocol/src/extensions/manifest/v2.ts',
+      filePath: 'packages/protocol/src/plugins/pluginManifestV1.ts',
+      pattern: 'packages/protocol/src/plugins/pluginManifestV1.ts',
+      replacement: 'Delete V1 manifest; use packages/protocol/src/plugins/manifest/v2.ts',
     },
   ]);
 });
@@ -30,7 +30,7 @@ test('validator fails on V1 manifest leftovers (pluginManifestV1.ts)', () => {
 test('validator fails on ui.ts leftovers in bundled extension topology', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'packages/extensions/acme/src/ui.ts',
+      filePath: 'packages/plugins/acme/src/ui.ts',
       content: 'export const UI = {};\n',
     },
     {
@@ -41,9 +41,9 @@ test('validator fails on ui.ts leftovers in bundled extension topology', () => {
 
   assert.deepEqual(findings, [
     {
-      filePath: 'packages/extensions/acme/src/ui.ts',
-      pattern: 'packages/extensions/<extensionId>/src/ui.ts',
-      replacement: 'Use packages/extensions/<extensionId>/src/ui/index.ts (ui folder) instead',
+      filePath: 'packages/plugins/acme/src/ui.ts',
+      pattern: 'packages/plugins/<extensionId>/src/ui.ts',
+      replacement: 'Use packages/plugins/<extensionId>/src/ui/index.ts (ui folder) instead',
     },
   ]);
 });
@@ -51,7 +51,7 @@ test('validator fails on ui.ts leftovers in bundled extension topology', () => {
 test('validator ignores built_in|plugin architectural truth in allowlisted plugin substrate paths', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'apps/cli/src/extensions/registry/types.ts',
+      filePath: 'apps/cli/src/plugins/registry/types.ts',
       content: "export type ResolvedContributionSource = 'built_in' | 'plugin';\n",
     },
     {
@@ -66,7 +66,7 @@ test('validator ignores built_in|plugin architectural truth in allowlisted plugi
 test('validator ignores built_in|plugin architectural truth in test files', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'apps/cli/src/extensions/registry/mergedRegistry.test.ts',
+      filePath: 'apps/cli/src/plugins/registry/mergedRegistry.test.ts',
       content: "export const sourceKind = 'plugin';\nexport const legacy = 'built_in';\n",
     },
     {
@@ -81,7 +81,7 @@ test('validator ignores built_in|plugin architectural truth in test files', () =
 test('validator still fails on built_in|plugin architectural truth outside allowlisted paths', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'packages/protocol/src/extensions/manifest/v2.ts',
+      filePath: 'packages/protocol/src/plugins/manifest/v2.ts',
       content: "export type ResolvedContributionSource = 'built_in' | 'plugin';\n",
     },
     {
@@ -92,7 +92,7 @@ test('validator still fails on built_in|plugin architectural truth outside allow
 
   assert.deepEqual(findings, [
     {
-      filePath: 'packages/protocol/src/extensions/manifest/v2.ts',
+      filePath: 'packages/protocol/src/plugins/manifest/v2.ts',
       pattern: "'built_in' | 'plugin'",
       replacement: "Replace built_in|plugin split with provenance ('first_party'|'external') + source.kind",
     },
@@ -102,7 +102,7 @@ test('validator still fails on built_in|plugin architectural truth outside allow
 test('validator fails on dual-ownership for migrated families (non-bridge host-local code)', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'packages/extensions/acme/src/agent/definition.ts',
+      filePath: 'packages/plugins/acme/src/agent/definition.ts',
       content: 'export const AGENT_DEFINITION = Object.freeze({ id: \"acme\" });\n',
     },
     {
@@ -119,7 +119,7 @@ test('validator fails on dual-ownership for migrated families (non-bridge host-l
     {
       filePath: 'apps/ui/sources/agents/providers/acme/core.ts',
       pattern: 'dual-ownership: apps/ui/sources/agents/providers/acme/**',
-      replacement: 'Migrate authored ownership into packages/extensions/acme/**; host-local tree must be bridge-only or deleted',
+      replacement: 'Migrate authored ownership into packages/plugins/acme/**; host-local tree must be bridge-only or deleted',
     },
   ]);
 });
@@ -127,12 +127,12 @@ test('validator fails on dual-ownership for migrated families (non-bridge host-l
 test('dual-ownership check allows bridge-only host-local modules', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'packages/extensions/acme/src/agent/definition.ts',
+      filePath: 'packages/plugins/acme/src/agent/definition.ts',
       content: 'export const AGENT_DEFINITION = Object.freeze({ id: \"acme\" });\n',
     },
     {
       filePath: 'apps/ui/sources/agents/providers/acme/index.ts',
-      content: "export * from '@happier-dev/extensions-acme/dist/agent/ui/index.js';\n",
+      content: "export * from '@happier-dev/plugins-acme/dist/agent/ui/index.js';\n",
     },
     {
       filePath: 'packages/agents/src/generated/bundledAgentDefinitions.ts',
@@ -193,14 +193,14 @@ test('validator fails on forbidden families identifiers', () => {
       content: 'export const bundledAgentDefinitions = Object.freeze({});\n',
     },
     {
-      filePath: 'packages/extensions/acme/src/agent/definition.ts',
+      filePath: 'packages/plugins/acme/src/agent/definition.ts',
       content: 'export const AGENT_DEFINITION_FAMILY = Object.freeze({ id: \"acme\" });\n',
     },
   ]);
 
   assert.deepEqual(findings, [
     {
-      filePath: 'packages/extensions/acme/src/agent/definition.ts',
+      filePath: 'packages/plugins/acme/src/agent/definition.ts',
       pattern: 'AGENT_DEFINITION_FAMILY',
       replacement: 'Rename to AGENT_DEFINITION',
     },
@@ -227,7 +227,7 @@ test('validator fails on reintroduced bundledAgentDefinitionFamilies naming', ()
 test('validator fails when extension package imports host internals (@/ alias)', () => {
   const findings = collectForbiddenBundledExtensionMigrationFindings([
     {
-      filePath: 'packages/extensions/acme/src/agent/runtime/createRuntime.ts',
+      filePath: 'packages/plugins/acme/src/agent/runtime/createRuntime.ts',
       content: "import { logger } from '@/ui/logger';\n",
     },
     {
@@ -238,7 +238,7 @@ test('validator fails when extension package imports host internals (@/ alias)',
 
   assert.deepEqual(findings, [
     {
-      filePath: 'packages/extensions/acme/src/agent/runtime/createRuntime.ts',
+      filePath: 'packages/plugins/acme/src/agent/runtime/createRuntime.ts',
       pattern: "from '@/…'",
       replacement: 'Extension packages must not import host internals; use injected ExtensionContextV1 services instead',
     },
@@ -257,7 +257,7 @@ test('validator enforces bundledAgentDefinitions export contract from filesystem
     const findings = collectForbiddenBundledExtensionMigrationFindings([
       // Any packages file triggers generated-agent contract enforcement.
       {
-        filePath: 'packages/protocol/src/extensions/manifest/v2.ts',
+        filePath: 'packages/protocol/src/plugins/manifest/v2.ts',
         content: 'export const whatever = 1;\n',
       },
     ]);
@@ -295,7 +295,7 @@ test('validator fails when legacy bundledAgentDefinitionFamilies.ts exists on fi
     const findings = collectForbiddenBundledExtensionMigrationFindings([
       // Any packages file triggers generated-agent contract enforcement.
       {
-        filePath: 'packages/protocol/src/extensions/manifest/v2.ts',
+        filePath: 'packages/protocol/src/plugins/manifest/v2.ts',
         content: 'export const whatever = 1;\n',
       },
     ]);

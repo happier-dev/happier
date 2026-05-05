@@ -8,9 +8,9 @@ type TemplateFile = Readonly<{ relativePath: string; content: string }>;
 
 function printUsage(): void {
   console.log([
-    'Usage: node --experimental-strip-types scripts/migrations/extensions/bootstrapExtensionPackage.ts <extensionId> [--root DIR] [--mode write|check]',
+    'Usage: node --experimental-strip-types scripts/migrations/plugins/bootstrapExtensionPackage.ts <extensionId> [--root DIR] [--mode write|check]',
     '',
-    'Scaffolds a new first-party bundled extension package under `packages/extensions/<extensionId>` from `packages/extensions/_template`.',
+    'Scaffolds a new first-party bundled extension package under `packages/plugins/<extensionId>` from `packages/plugins/_template`.',
   ].join('\n'));
 }
 
@@ -241,7 +241,7 @@ function ensureScaffoldSourceFiles(extensionRoot: string, extensionId: string): 
 }
 
 function renderPackageJson(templateJson: any, extensionId: string): any {
-  const expectedName = `@happier-dev/extensions-${extensionId}`;
+  const expectedName = `@happier-dev/plugins-${extensionId}`;
   return {
     ...templateJson,
     name: expectedName,
@@ -253,8 +253,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const canonicalAgentIds = await loadCanonicalAgentIds(options.rootDir);
   validateExtensionId({ extensionId: options.extensionId, canonicalAgentIds });
 
-  const templateRoot = resolve(options.rootDir, 'packages/extensions/_template');
-  const extensionRoot = resolve(options.rootDir, 'packages/extensions', options.extensionId);
+  const templateRoot = resolve(options.rootDir, 'packages/plugins/_template');
+  const extensionRoot = resolve(options.rootDir, 'packages/plugins', options.extensionId);
 
   if (statSync(extensionRoot, { throwIfNoEntry: false })) {
     throw new Error(`Extension package already exists: ${extensionRoot}`);

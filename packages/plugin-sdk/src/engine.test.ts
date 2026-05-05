@@ -12,7 +12,12 @@ import type {
     PluginContextV1,
     NotificationsServiceV1,
     ProjectsServiceV1,
+    PluginAuthServiceV1,
     AccountSettingsServiceV1,
+    PluginEventsServiceV1,
+    PluginSecretsServiceV1,
+    PluginSettingsServiceV1,
+    PluginStorageServiceV1,
     RegisterBackendEngineV1,
     SubagentRefInputV1,
     WorkspaceRefV1,
@@ -172,6 +177,44 @@ describe('plugin SDK engine contracts', () => {
 
         const api = {} as PluginApiV1;
         expect('fetch' in api).toBe(false);
+    });
+
+    it('exposes A.11 persistence, event, and narrow auth services only on runtime context', async () => {
+        const storage = {} as PluginContextV1['storage'];
+        const settings = {} as PluginContextV1['settings'];
+        const secrets = {} as PluginContextV1['secrets'];
+        const events = {} as PluginContextV1['events'];
+        const auth = {} as PluginContextV1['auth'];
+
+        const storageService: PluginStorageServiceV1 = storage;
+        const settingsService: PluginSettingsServiceV1 = settings;
+        const secretsService: PluginSecretsServiceV1 = secrets;
+        const eventsService: PluginEventsServiceV1 = events;
+        const authService: PluginAuthServiceV1 = auth;
+
+        const context = {
+            storage: storageService,
+            settings: settingsService,
+            secrets: secretsService,
+            events: eventsService,
+            auth: authService,
+        } as PluginContextV1;
+
+        expect(context.storage).toBe(storageService);
+        expect(context.settings).toBe(settingsService);
+        expect(context.secrets).toBe(secretsService);
+        expect(context.events).toBe(eventsService);
+        expect(context.auth).toBe(authService);
+        expect('getConnectedServices' in context.auth).toBe(false);
+        expect('startConnect' in context.auth).toBe(false);
+        expect('disconnect' in context.auth).toBe(false);
+
+        const api = {} as PluginApiV1;
+        expect('storage' in api).toBe(false);
+        expect('settings' in api).toBe(false);
+        expect('secrets' in api).toBe(false);
+        expect('events' in api).toBe(false);
+        expect('auth' in api).toBe(false);
     });
 
     it('exposes projects and account settings on runtime context without putting them on activate api', async () => {

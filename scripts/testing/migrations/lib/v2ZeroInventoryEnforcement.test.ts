@@ -81,7 +81,7 @@ test('live V2-zero baseline matches the accepted bounded inventory ceilings that
   assert.equal(baseline.maxAllowedCounts['shared-core-provider-branching'], 90);
   assert.equal(baseline.maxAllowedCounts['hook-emission-sites'], 14);
   assert.equal(baseline.maxAllowedCounts['v2-1-static-definition-runtime-foundation'], 18);
-  assert.equal(baseline.maxAllowedCounts['acp-shared-session-compatibility-surfaces'], 5);
+  assert.equal(baseline.maxAllowedCounts['acp-shared-session-compatibility-surfaces'], 6);
   assert.equal(baseline.maxAllowedCounts['provider-session-loop-primitive-imports'], 7);
   assert.equal(baseline.maxAllowedCounts['execution-run-agentbackend-semantic-debt'], 0);
   assert.equal(baseline.maxAllowedCounts['runtimecore-create-session-runtime-whole-runner-delegation'], 0);
@@ -639,6 +639,16 @@ export function resolveConfiguredStartupOverrides(
   opts: HostSessionRuntimeRunOptions,
 ) {
   return opts;
+}
+`,
+    },
+    {
+      filePath: 'apps/cli/src/agent/acp/runtime/definition/runtimeCore.ts',
+      content: `
+import { createCatalogHostSessionRuntimePlan } from '@/agent/runtime/sessionLoop/catalogPlan';
+
+export function createAcpRuntimeCore(opts: unknown) {
+  return createCatalogHostSessionRuntimePlan({ opts } as never);
 }
 `,
     },

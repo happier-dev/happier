@@ -2,9 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  ACCEPTED_COMPAT_CLOSURE_INVENTORY,
   PROTOCOL_WIRE_COMPATIBILITY_INVENTORY,
+  validateAcceptedCompatClosureInventory,
   validateProtocolWireCompatibilityInventory,
+  type AcceptedCompatClosureInventoryEntry,
+  type AcceptedCompatClosureInventoryValidationResult,
 } from './protocolWireCompatibilityInventory.ts';
+
+function readAcceptedCompatClosureInventory(): readonly AcceptedCompatClosureInventoryEntry[] {
+  return ACCEPTED_COMPAT_CLOSURE_INVENTORY;
+}
+
+function validateAcceptedCompatClosureInventoryForTest(params: Readonly<{
+  rootDir: string;
+  inventory: readonly AcceptedCompatClosureInventoryEntry[];
+  pathExists: (absolutePath: string, relativePath: string) => boolean;
+}>): AcceptedCompatClosureInventoryValidationResult {
+  return validateAcceptedCompatClosureInventory(params);
+}
 
 test('validateProtocolWireCompatibilityInventory rejects non-boundary translation modules', () => {
   const result = validateProtocolWireCompatibilityInventory({
@@ -54,9 +70,9 @@ test('validateProtocolWireCompatibilityInventory treats CLI plugin/extensions pa
       {
         id: 'extensions-contracts',
         title: 'Plugin manifest and hook envelopes',
-        protocolModules: ['packages/protocol/src/extensions/pluginManifestV1.ts'],
-        boundaryModules: ['apps/cli/src/extensions/manifest/read.ts'],
-        proofTests: ['packages/protocol/src/extensions/contractsV1.test.ts'],
+        protocolModules: ['packages/protocol/src/plugins/pluginManifestV1.ts'],
+        boundaryModules: ['apps/cli/src/plugins/manifest/read.ts'],
+        proofTests: ['packages/protocol/src/plugins/contractsV1.test.ts'],
       },
     ],
     pathExists: () => true,
@@ -88,20 +104,20 @@ test('the plugin and hook ABI inventory pins hook catalogs and bridge lifecycle 
   assert.ok(entry.protocolModules.includes('packages/protocol/src/hooks/hookExecutionSemantics.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/hooks/bridgeLifecycleHookCatalog.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/hooks/daemonSpawnHookCatalog.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/extensions/extensionSourceSpecV1.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/extensions/manifest/read.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/extensions/registry/normalize/package.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/extensions/manifest/daemonEntry.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/extensions/hooks/execution/bridgeLifecycleHookEmissionInventory.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/extensions/runtime/loadPluginDaemonModule.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/extensions/runtime/resolvePluginHookHandlerRegistry.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/extensions/runtime/resolveExecutablePluginRuntimeRegistry.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/extensions/manifest/read.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/extensions/registry/normalize/package.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/extensions/manifest/daemonEntry.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/extensions/runtime/loadPluginDaemonModule.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/extensions/runtime/resolvePluginHookHandlerRegistry.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/extensions/runtime/resolveExecutablePluginRuntimeRegistry.test.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/plugins/extensionSourceSpecV1.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/manifest/read.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/registry/normalize/package.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/manifest/daemonEntry.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/hooks/execution/bridgeLifecycleHookEmissionInventory.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/runtime/loadPluginDaemonModule.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/runtime/resolvePluginHookHandlerRegistry.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/manifest/read.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/registry/normalize/package.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/manifest/daemonEntry.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/loadPluginDaemonModule.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/resolvePluginHookHandlerRegistry.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.test.ts'));
   assert.ok(entry.proofTests.includes('packages/tests/suites/core-e2e/bridge.lifecycleHookDispatch.slow.e2e.test.ts'));
   assert.ok(entry.proofTests.includes('packages/tests/suites/core-e2e/plugins.hookExecution.slow.e2e.test.ts'));
 });
@@ -149,3 +165,126 @@ test('the authoritative protocol wire compatibility inventory pins canonical run
   assert.ok(entry.proofTests.includes('apps/ui/sources/sync/ops/sessionHandoffs.test.ts'));
   assert.ok(entry.proofTests.includes('apps/ui/sources/sync/domains/state/storageTypes.terminal.test.ts'));
 });
+
+test('the accepted compat closure inventory pins every F4 source-reality row to a terminal state', () => {
+  const entries = readAcceptedCompatClosureInventory();
+  const byId = new Map(entries.map((entry) => [entry.id, entry] as const));
+
+  assert.deepEqual(
+    Array.from(byId.keys()).filter((id) => id.startsWith('F4-SR-')).sort(),
+    [
+      'F4-SR-01',
+      'F4-SR-02',
+      'F4-SR-03',
+      'F4-SR-04',
+      'F4-SR-05',
+      'F4-SR-06',
+      'F4-SR-07',
+      'F4-SR-08',
+      'F4-SR-09',
+      'F4-SR-10',
+      'F4-SR-11',
+      'F4-SR-12',
+      'F4-SR-13',
+      'F4-SR-14',
+    ],
+  );
+
+  for (const entry of entries.filter((candidate) => candidate.id.startsWith('F4-SR-'))) {
+    assert.ok(
+      ['PERMANENT_WIRE_EDGE', 'PERMANENT_PERSISTED_EDGE', 'DELETE_PROOF', 'HANDOFF'].includes(entry.classification),
+      `${entry.id} has terminal classification ${entry.classification}`,
+    );
+  }
+});
+
+test('the accepted compat closure inventory records kept edge proofs', () => {
+  const byId = new Map(readAcceptedCompatClosureInventory().map((entry) => [entry.id, entry] as const));
+
+  const persistedMetadata = byId.get('F4-SR-03');
+  assert.equal(persistedMetadata?.classification, 'PERMANENT_PERSISTED_EDGE');
+  assert.match(persistedMetadata?.keptBecause ?? '', /legacy persisted/i);
+  assert.match(persistedMetadata?.compatibilityInput ?? '', /agentRuntimeDescriptorV1/);
+  assert.equal(persistedMetadata?.canonicalOutput, 'runtimeDescriptorV1');
+  assert.ok(persistedMetadata?.proofTests?.includes('packages/protocol/src/sessionMetadata/compat/runtimeDescriptorMetadata.test.ts'));
+
+  const rpcIngress = byId.get('F4-SR-06');
+  assert.equal(rpcIngress?.classification, 'PERMANENT_WIRE_EDGE');
+  assert.match(rpcIngress?.boundary ?? '', /RPC ingress/i);
+  assert.ok(rpcIngress?.proofTests?.includes('apps/cli/src/rpc/handlers/spawnSessionOptionsContract.test.ts'));
+
+  const connectedServices = byId.get('F4-SR-11');
+  assert.equal(connectedServices?.classification, 'HANDOFF');
+  assert.match(connectedServices?.handoffOwner ?? '', /SCM-AUTH-1/);
+});
+
+test('the accepted compat closure inventory pins broad compat package delete proofs', () => {
+  const byId = new Map(readAcceptedCompatClosureInventory().map((entry) => [entry.id, entry] as const));
+
+  for (const [id, sourcePath] of [
+    ['F4-DP-01', 'packages/protocol/src/compat'],
+    ['F4-DP-02', 'packages/protocol/src/wireCompat'],
+  ] as const) {
+    const entry = byId.get(id);
+    assert.equal(entry?.classification, 'DELETE_PROOF');
+    assert.equal(entry?.sourceStatus, 'stale');
+    assert.equal(entry?.sourcePath, sourcePath);
+    assert.ok(entry?.absenceProofs?.some((proof) => proof.includes(sourcePath)));
+  }
+});
+
+test('the accepted compat closure inventory pins plugin/auth hard-break deny-list rows', () => {
+  const byId = new Map(readAcceptedCompatClosureInventory().map((entry) => [entry.id, entry] as const));
+
+  for (const id of ['F4-HB-01', 'F4-HB-02', 'F4-HB-03', 'F4-HB-04']) {
+    const entry = byId.get(id);
+    assert.equal(entry?.classification, 'HARD_BREAK_DENY_LIST');
+    assert.equal(entry?.sourceStatus, 'not-path');
+    assert.ok((entry?.denyListReason ?? '').trim().length > 0);
+  }
+});
+
+test('validateAcceptedCompatClosureInventory rejects incomplete permanent edges', () => {
+  const result = validateAcceptedCompatClosureInventoryForTest({
+    rootDir: '/repo',
+    inventory: [
+      {
+        id: 'F4-SR-X',
+        classification: 'PERMANENT_WIRE_EDGE',
+        sourcePath: 'apps/cli/src/rpc/handlers/spawnSessionOptionsContract.ts',
+        sourceStatus: 'current',
+        boundary: 'RPC ingress',
+        compatibilityInput: 'legacy input',
+        canonicalOutput: 'canonical output',
+        keptBecause: 'legacy client compatibility',
+        proofTests: [],
+      },
+    ],
+    pathExists: () => true,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join('\n'), /proof test/i);
+});
+
+for (const stalePath of ['packages/protocol/src/compat', 'packages/protocol/src/wireCompat']) {
+  test(`validateProtocolWireCompatibilityInventory rejects broad compat package reintroduction at ${stalePath}`, () => {
+    const result = validateProtocolWireCompatibilityInventory({
+      rootDir: '/repo',
+      acceptedCompatClosures: readAcceptedCompatClosureInventory(),
+      pathExists: (_absolutePath, relativePath) => {
+        if (relativePath === stalePath) {
+          return true;
+        }
+        if (relativePath === 'packages/protocol/src/compat' || relativePath === 'packages/protocol/src/wireCompat') {
+          return false;
+        }
+        return true;
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /must remain absent/i);
+    assert.match(result.errors.join('\n'), new RegExp(stalePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+}

@@ -48,7 +48,7 @@ function parseCliArgs(argv: readonly string[]): Readonly<{ rootDir: string; sear
 
 function printUsage(): void {
   console.log([
-    'Usage: node --experimental-strip-types scripts/migrations/extensions/validate-extension-unification.ts [--root DIR] [--scope PATH...]',
+    'Usage: node --experimental-strip-types scripts/migrations/plugins/validate-extension-unification.ts [--root DIR] [--scope PATH...]',
     '',
     'Fails when old CLI extension packaging imports or moved source files remain.',
   ].join('\n'));
