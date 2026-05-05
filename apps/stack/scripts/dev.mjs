@@ -148,10 +148,10 @@ async function main() {
   const startTauri = flags.has('--tauri') || flags.has('--with-tauri');
   const startUi = !flags.has('--no-ui');
   const startDaemon = !flags.has('--no-daemon');
-  const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
   const openReactNativeDevtools = flags.has('--rn-devtools') || flags.has('--react-native-devtools');
   const noBrowser = startTauri || flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
+  const startMobile = flags.has('--mobile') || flags.has('--with-mobile') || expoTailscale;
 
   if (startTauri && !startUi) {
     throw new Error('[local] --tauri requires the ui');

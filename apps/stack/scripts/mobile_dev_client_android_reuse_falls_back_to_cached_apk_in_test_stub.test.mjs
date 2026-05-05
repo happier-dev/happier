@@ -14,9 +14,41 @@ test('hstack mobile-dev-client --platform=android --reuse falls back to cached A
     includeStorageDir: true,
   });
 
-  const cachedApkAbs = join(fixture.homeDir, 'mobile-dev-client', 'android', 'happier-dev-client-android.apk');
+  const cachedApkAbs = join(fixture.homeDir, 'mobile-dev-client', 'internaldev', 'android', 'happier-dev-client-android.apk');
   await mkdir(dirname(cachedApkAbs), { recursive: true });
   await writeFile(cachedApkAbs, 'apk-bytes', 'utf-8');
+
+  await fixture.writeAdbDevicesBin();
+  await fixture.writeXcrunListBin();
+
+  const env = fixture.buildEnv();
+  const res = await fixture.run(['--install', '--platform=android', '--reuse'], { env });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+
+  const parsed = JSON.parse(res.stdout.trim() || '{}');
+  assert.equal(parsed.platform, 'android');
+  assert.equal(parsed.strategy, 'reuse_apk');
+
+  const step0 = parsed.steps?.[0];
+  assert.equal(step0?.cmd, 'adb');
+  assert.deepEqual(step0?.args, ['install', '-r', cachedApkAbs]);
+});
+
+test('hstack mobile-dev-client --platform=android --reuse prefers the selected profile cache over a shared dist APK', async (t) => {
+  const fixture = await createMobileDevClientTestFixture(t, {
+    importMetaUrl: import.meta.url,
+    prefix: 'hstack-mobile-dev-client-reuse-profile-cache-',
+    includeRepoDir: true,
+    includeHomeDir: true,
+    includeStorageDir: true,
+  });
+
+  const sharedDistApkAbs = join(fixture.repoDir, 'dist', 'ui-mobile', 'happier-dev-client-android.apk');
+  const cachedApkAbs = join(fixture.homeDir, 'mobile-dev-client', 'internaldev', 'android', 'happier-dev-client-android.apk');
+  await mkdir(dirname(sharedDistApkAbs), { recursive: true });
+  await writeFile(sharedDistApkAbs, 'publicdev-apk-bytes', 'utf-8');
+  await mkdir(dirname(cachedApkAbs), { recursive: true });
+  await writeFile(cachedApkAbs, 'internaldev-apk-bytes', 'utf-8');
 
   await fixture.writeAdbDevicesBin();
   await fixture.writeXcrunListBin();

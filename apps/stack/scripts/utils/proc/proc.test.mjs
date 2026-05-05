@@ -100,6 +100,37 @@ test('spawnProc can tee output to an env-scoped tee dir when no explicit teeFile
   assert.match(raw, /\[server\] oops/);
 });
 
+test('spawnProc reports complete stdout and stderr lines to onLine', async () => {
+  const observed = [];
+  const child = spawnProc(
+    'line-test',
+    process.execPath,
+    [
+      '-e',
+      [
+        "process.stdout.write('one\\npa');",
+        "setTimeout(() => { process.stdout.write('rt\\n'); process.stderr.write('err\\n'); }, 25);",
+      ].join(''),
+    ],
+    process.env,
+    {
+      silent: true,
+      onLine: (event) => observed.push(event),
+    }
+  );
+
+  await new Promise((resolve, reject) => {
+    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`child exited ${code}`))));
+    child.on('error', reject);
+  });
+
+  assert.deepEqual(observed, [
+    { stream: 'stdout', line: 'one' },
+    { stream: 'stdout', line: 'part' },
+    { stream: 'stderr', line: 'err' },
+  ]);
+});
+
 test('resolveDefaultShellForCommand enables a shell for Yarn shims on Windows', () => {
   assert.equal(resolveDefaultShellForCommand('yarn', { platform: 'win32' }), true);
   assert.equal(resolveDefaultShellForCommand('yarn.cmd', { platform: 'win32' }), true);

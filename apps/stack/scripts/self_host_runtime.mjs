@@ -28,6 +28,7 @@ import {
   buildLaunchdPath,
   buildLaunchdPlistXml,
   buildServiceDefinition,
+  buildWindowsScheduledTaskPowerShellAction,
   planServiceAction,
   renderSystemdServiceUnit,
   renderWindowsScheduledTaskWrapperPs1,
@@ -996,7 +997,7 @@ export function buildUpdaterScheduledTaskCreateArgs({ backend, taskName, definit
   const parsedAt = parseDailyAtTime(at);
   const minutesRaw = Number(intervalMinutes);
   const minutes = Number.isFinite(minutesRaw) ? Math.max(15, Math.floor(minutesRaw)) : 1440;
-  const ps = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${definition}"`;
+  const ps = buildWindowsScheduledTaskPowerShellAction({ definitionPath: definition });
 
   return [
     '/Create',

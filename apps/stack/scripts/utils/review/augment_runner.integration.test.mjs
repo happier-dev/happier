@@ -13,6 +13,13 @@ function resolveRepoRoot() {
   return path.resolve(here, '..', '..', '..', '..', '..');
 }
 
+function buildToolStubPath(binDir) {
+  const nodeBinDir = path.dirname(process.execPath);
+  const existing = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  const rest = existing.filter((entry) => entry !== binDir && entry !== nodeBinDir);
+  return [binDir, nodeBinDir, ...rest].join(path.delimiter);
+}
+
 test('review script provides a non-empty prompt to augment in normal uncommitted mode', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-review-auggie-'));
   const binDir = path.join(tmp, 'bin');
@@ -36,8 +43,8 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
   const repoRoot = resolveRepoRoot();
   const env = {
     ...process.env,
-    // Ensure our stub is used.
-    PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+    // Keep the real Node bin available without letting its real auggie binary shadow our stub.
+    PATH: buildToolStubPath(binDir),
     // Keep Augment cache writes out of the repo.
     HAPPIER_STACK_AUGMENT_CACHE_DIR: path.join(tmp, 'augment-home'),
     HAPPIER_STACK_REPO_DIR: repoRoot,
@@ -78,7 +85,7 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
   const repoRoot = resolveRepoRoot();
   const env = {
     ...process.env,
-    PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+    PATH: buildToolStubPath(binDir),
     HAPPIER_STACK_AUGMENT_CACHE_DIR: path.join(tmp, 'augment-home'),
     // Do NOT set HAPPIER_STACK_REPO_DIR here; we want it inferred from cwd.
   };

@@ -7,6 +7,13 @@ import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpo
 import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
 import { pathExists } from '../fs/fs.mjs';
 import { applyExpoNodeHeapEnv } from './expoNodeHeapEnv.mjs';
+import { repairExpoYarnPackageBinShims } from './expoPackageBinShims.mjs';
+import { ensureReactNativeLibsodiumNativeBuild } from './libsodiumNativeBuild.mjs';
+import {
+  ensureReactNativeSkiaAndroidBinaries,
+  ensureReactNativeSkiaIosBinaries,
+  resolveReactNativeSkiaAndroidArchitecturesFromEnv,
+} from './skiaPrebuiltBinaries.mjs';
 
 const DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE = 1;
 
@@ -100,6 +107,14 @@ export function maybeAddExpoClear({ args, env }) {
   return next;
 }
 
+function isIosRunCommand(args) {
+  return Array.isArray(args) && args[0] === 'run:ios';
+}
+
+function isAndroidRunCommand(args) {
+  return Array.isArray(args) && args[0] === 'run:android';
+}
+
 export async function expoExec({
   dir,
   projectDir,
@@ -113,6 +128,20 @@ export async function expoExec({
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
   await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
+  await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
+  if (isIosRunCommand(args)) {
+    await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
+    await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
+  }
+  if (isAndroidRunCommand(args)) {
+    await ensureReactNativeSkiaAndroidBinaries({
+      runnerDir,
+      projectDir: workspaceDepsDir,
+      architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(env),
+      env,
+      quiet,
+    });
+  }
   const expoBin = await resolveExpoBin(runnerDir);
   const effectiveEnv = applyExpoNodeHeapEnv(env, {
     envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
@@ -136,6 +165,20 @@ export async function expoSpawn({
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
   await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
+  await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
+  if (isIosRunCommand(args)) {
+    await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
+    await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
+  }
+  if (isAndroidRunCommand(args)) {
+    await ensureReactNativeSkiaAndroidBinaries({
+      runnerDir,
+      projectDir: workspaceDepsDir,
+      architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(env),
+      env,
+      quiet,
+    });
+  }
   const expoBin = await resolveExpoBin(runnerDir);
   const effectiveEnv = applyExpoNodeHeapEnv(env, {
     envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',

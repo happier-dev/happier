@@ -44,9 +44,9 @@ async function readPortsFromEnvFile(envPath) {
   return listPortsFromEnvObject(parsed, STACK_RESERVED_PORT_KEYS);
 }
 
-export async function collectReservedStackPorts({ excludeStackName = null } = {}) {
+export async function collectReservedStackPorts({ excludeStackName = null, env = process.env } = {}) {
   const reserved = new Set();
-  const roots = [getStacksStorageRoot()];
+  const roots = [getStacksStorageRoot(env)];
 
   for (const root of roots) {
     let entries = [];

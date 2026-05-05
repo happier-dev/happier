@@ -13,6 +13,7 @@ import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.
 import { expandHome } from '../paths/canonical_home.mjs';
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
+import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 export { isCliDistBuildLockActive } from './cliDistBuildLock.mjs';
 
 function sha256Hex(s) {
@@ -21,6 +22,26 @@ function sha256Hex(s) {
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
+}
+
+async function collectWorkspacePackageDirsByName(monorepoRoot) {
+  const paths = await collectWorkspacePackageJsonPaths(monorepoRoot);
+  const out = new Map();
+
+  for (const pkgJsonPath of paths) {
+    let pkgJson = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      pkgJson = await readJson(pkgJsonPath);
+    } catch {
+      continue;
+    }
+    const pkgName = typeof pkgJson?.name === 'string' ? pkgJson.name.trim() : '';
+    if (!pkgName) continue;
+    out.set(pkgName, dirname(pkgJsonPath));
+  }
+
+  return out;
 }
 
 function isServiceMode(env = process.env) {
@@ -614,6 +635,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     return;
   }
 
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   const installDir = resolveComponentInstallDir(componentDir);
 
   const installPkgJson = join(installDir, 'package.json');
@@ -662,7 +684,16 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       }
     };
 
-    const componentPkgMtimeMs = async () => {
+    const workspacePkgMtimeMs = async () => {
+      if (monorepoRoot && installDir === monorepoRoot) {
+        const workspacePkgJsonPaths = await collectWorkspacePackageJsonPaths(monorepoRoot);
+        let max = 0;
+        for (const pkgJsonPath of workspacePkgJsonPaths) {
+          const m = await mtimeMs(pkgJsonPath);
+          if (m > max) max = m;
+        }
+        return max;
+      }
       if (installDir === componentDir) return 0;
       return await mtimeMs(componentPkgJson);
     };
@@ -692,14 +723,14 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     if (pm.name === 'yarn' && (await pathExists(yarnLock))) {
       const lockM = await mtimeMs(yarnLock);
       const pkgM = await mtimeMs(installPkgJson);
-      const componentPkgM = await componentPkgMtimeMs();
+      const workspacePkgM = await workspacePkgMtimeMs();
       const intM = await mtimeMs(yarnIntegrity);
       const patchM = await patchesMtimeMs();
       const nodeModulesM = intM || await mtimeMs(nodeModules);
-      if (!nodeModulesM || lockM > nodeModulesM || pkgM > nodeModulesM || componentPkgM > nodeModulesM || patchM > nodeModulesM) {
+      if (!nodeModulesM || lockM > nodeModulesM || pkgM > nodeModulesM || workspacePkgM > nodeModulesM || patchM > nodeModulesM) {
         if (!quiet) {
           // eslint-disable-next-line no-console
-          console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/patches changed)...`);
+          console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/workspace package.json/patches changed)...`);
         }
         await run(pm.cmd, installArgs, { cwd: installDir, stdio, env });
       }
@@ -749,6 +780,21 @@ function collectExpectedPackageFilesFromPackageJson(pkgJson) {
   return [...new Set(candidates)].filter((p) => typeof p === 'string' && (p.startsWith('./') || p.startsWith('dist/')));
 }
 
+function workspacePackageLockSlug(pkgDir, pkgJson) {
+  const raw = String(pkgJson?.name ?? '').trim() || resolve(pkgDir);
+  const slug = raw.replace(/^@/, '').replace(/[^a-zA-Z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug || sha256Hex(resolve(pkgDir)).slice(0, 16);
+}
+
+function resolveWorkspacePackageBuildLockPath(pkgDir, pkgJson) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(pkgDir);
+  const slug = workspacePackageLockSlug(pkgDir, pkgJson);
+  if (monorepoRoot) {
+    return join(monorepoRoot, '.project', 'tmp', 'workspace-dist-builds', `${slug}.lock`);
+  }
+  return join(pkgDir, `.dist-build-${slug}.lock`);
+}
+
 async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn = process.env } = {}) {
   const pkgJsonPath = join(pkgDir, 'package.json');
   if (!(await pathExists(pkgJsonPath))) return { built: false, reason: 'missing-package-json' };
@@ -759,6 +805,39 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
   const expectedFiles = collectExpectedPackageFilesFromPackageJson(pkgJson).map((p) => join(pkgDir, p));
   if (expectedFiles.length === 0) return { built: false, reason: 'no-expected-files' };
 
+  const label = pkgJson?.name ? `${pkgJson.name} dist build` : 'dist build';
+  const reportLockWait = createWorkspaceBuildWaitNotifier({ env, label, kind: 'lock' });
+  const lockPath = resolveWorkspacePackageBuildLockPath(pkgDir, pkgJson);
+  return await withCliDistBuildLock(
+    ({ waited }) =>
+      ensureWorkspacePackageBuiltUnderLock({
+        expectedFiles,
+        env,
+        label,
+        lockPath,
+        pkgDir,
+        pkgJson,
+        pkgJsonPath,
+        quiet,
+        stdio,
+        waited,
+      }),
+    { lockPath, onWait: reportLockWait },
+  );
+}
+
+async function ensureWorkspacePackageBuiltUnderLock({
+  expectedFiles,
+  env,
+  label,
+  lockPath,
+  pkgDir,
+  pkgJson,
+  pkgJsonPath,
+  quiet,
+  stdio,
+  waited,
+}) {
   const missingBefore = expectedFiles.filter((p) => !existsSync(p));
 
   const distDir = join(pkgDir, 'dist');
@@ -770,8 +849,6 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
       return abs === distRoot || abs.startsWith(distRoot + sep);
     });
 
-  const label = pkgJson?.name ? `${pkgJson.name} dist build` : 'dist build';
-  const reportLockWait = createWorkspaceBuildWaitNotifier({ env, label, kind: 'lock' });
   const reportImportRetry = createWorkspaceBuildWaitNotifier({ env, label, kind: 'imports' });
   let needsRebuildForPartialDist = false;
   if (missingBefore.length === 0 && distEntrypoints.length > 0) {
@@ -806,45 +883,47 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
 
   const pm = await getComponentPm(pkgDir, env);
 
-  const lockPath = join(getHappyStacksHomeDir(), 'cache', 'build', 'workspace-dist', `${sha256Hex(resolve(pkgDir))}.lock`);
+  const buildEnv = { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath };
   const runBuild = async () => {
     if (pm.name === 'yarn') {
       await ensureYarnReady({ dir: pkgDir, env, quiet });
-      await run(pm.cmd, ['-s', 'build'], { cwd: pkgDir, stdio, env });
+      await run(pm.cmd, ['-s', 'build'], { cwd: pkgDir, stdio, env: buildEnv });
     } else {
-      await run(pm.cmd, ['run', '-s', 'build'], { cwd: pkgDir, stdio, env });
+      await run(pm.cmd, ['run', '-s', 'build'], { cwd: pkgDir, stdio, env: buildEnv });
     }
   };
 
-  const res = await withCliDistBuildLock(async ({ waited }) => {
-    if (waited) {
-      // Another process may have rebuilt while we waited; re-check before running build again.
-      const expectedAgain = collectExpectedPackageFilesFromPackageJson(await readJson(pkgJsonPath)).map((p) => join(pkgDir, p));
-      const missingAgain = expectedAgain.filter((p) => !existsSync(p));
-      if (missingAgain.length === 0) {
-        const distDirAgain = join(pkgDir, 'dist');
-        const distRootAgain = resolve(distDirAgain);
-        const distEntrypointsAgain = expectedAgain
-          .filter((p) => /\.(?:mjs|cjs|js)$/.test(p))
-          .filter((p) => {
-            const abs = resolve(p);
-            return abs === distRootAgain || abs.startsWith(distRootAgain + sep);
-          });
-        for (const entryPath of distEntrypointsAgain) {
-          await assertNoMissingLocalImportsWithRetry({
-            distDir: distDirAgain,
-            entryPath,
-            label,
-            env,
-            onRetry: reportImportRetry,
-          });
-        }
-        return { built: false, reason: 'concurrent_build_already_completed' };
+  let res;
+  if (waited) {
+    // Another process may have rebuilt while we waited; re-check before running build again.
+    const expectedAgain = collectExpectedPackageFilesFromPackageJson(await readJson(pkgJsonPath)).map((p) => join(pkgDir, p));
+    const missingAgain = expectedAgain.filter((p) => !existsSync(p));
+    if (missingAgain.length === 0) {
+      const distDirAgain = join(pkgDir, 'dist');
+      const distRootAgain = resolve(distDirAgain);
+      const distEntrypointsAgain = expectedAgain
+        .filter((p) => /\.(?:mjs|cjs|js)$/.test(p))
+        .filter((p) => {
+          const abs = resolve(p);
+          return abs === distRootAgain || abs.startsWith(distRootAgain + sep);
+        });
+      for (const entryPath of distEntrypointsAgain) {
+        await assertNoMissingLocalImportsWithRetry({
+          distDir: distDirAgain,
+          entryPath,
+          label,
+          env,
+          onRetry: reportImportRetry,
+        });
       }
+      res = { built: false, reason: 'concurrent_build_already_completed' };
     }
+  }
+
+  if (!res) {
     await runBuild();
-    return { built: true, reason: 'rebuilt' };
-  }, { lockPath, onWait: reportLockWait });
+    res = { built: true, reason: 'rebuilt' };
+  }
 
   const missingAfter = expectedFiles.filter((p) => !existsSync(p));
   if (missingAfter.length > 0) {
@@ -884,6 +963,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { q
   const componentPkg = await readJson(componentPkgPath);
   const componentName = typeof componentPkg?.name === 'string' ? componentPkg.name : '';
   const built = [];
+  const workspacePackageDirsByName = await collectWorkspacePackageDirsByName(monorepoRoot);
 
   const visited = new Set([componentName].filter(Boolean));
   const collectInternalDeps = (pkgJson, currentPkgName) => {
@@ -916,9 +996,8 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { q
     }
 
     for (const depName of collectInternalDeps(pkgJson, pkgName)) {
-      const depId = String(depName).split('/')[1] ?? '';
-      if (!depId) continue;
-      const depDir = join(monorepoRoot, 'packages', depId);
+      const depDir = workspacePackageDirsByName.get(depName);
+      if (!depDir) continue;
       if (!(await pathExists(join(depDir, 'package.json')))) continue;
       await buildWorkspaceClosure(depDir);
     }
@@ -930,9 +1009,8 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { q
   };
 
   for (const depName of collectInternalDeps(componentPkg, componentName)) {
-    const depId = String(depName).split('/')[1] ?? '';
-    if (!depId) continue;
-    const depDir = join(monorepoRoot, 'packages', depId);
+    const depDir = workspacePackageDirsByName.get(depName);
+    if (!depDir) continue;
     if (!(await pathExists(join(depDir, 'package.json')))) continue;
     await buildWorkspaceClosure(depDir);
   }

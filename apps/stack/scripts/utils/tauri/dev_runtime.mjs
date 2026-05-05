@@ -1,4 +1,3 @@
-import { sanitizeDnsLabel } from '../net/dns.mjs';
 import { applyStackTauriOverrides } from './stack_overrides.mjs';
 
 function isPlainObject(value) {
@@ -18,6 +17,14 @@ function mergeTauriConfig(baseValue, overlayValue) {
     out[key] = mergeTauriConfig(baseValue[key], value);
   }
   return out;
+}
+
+function hasStackTauriOverride(env = {}) {
+  return String(env?.HAPPIER_STACK_STACK ?? '').trim() !== ''
+    || String(env?.HAPPIER_STACK_TAURI_IDENTIFIER ?? '').trim() !== ''
+    || String(env?.HAPPIER_STACK_TAURI_PRODUCT_NAME ?? '').trim() !== ''
+    || String(env?.HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS ?? '').trim() !== ''
+    || String(env?.TAURI_SIGNING_PRIVATE_KEY ?? '').trim() !== '';
 }
 
 export function resolveStackTauriDevUrl({ runtimeState, defaultPort = 8081 } = {}) {
@@ -43,30 +50,15 @@ export function resolveStackTauriDevUrl({ runtimeState, defaultPort = 8081 } = {
 }
 
 export function buildStackTauriDevConfig({ baseConfig, overlayConfig, devUrl, env = process.env } = {}) {
-    const merged = mergeTauriConfig(baseConfig ?? {}, overlayConfig ?? {});
-    merged.build = {
-        ...(merged.build ?? {}),
-        devUrl: String(devUrl ?? '').trim() || 'http://localhost:8081',
-        beforeDevCommand: '',
-        beforeBuildCommand: '',
-    };
-    const normalizedStack = String(env?.HAPPIER_STACK_STACK ?? '').trim()
-        ? sanitizeDnsLabel(String(env.HAPPIER_STACK_STACK).trim())
-        : '';
-    const derivedStackOverrideEnv = normalizedStack
-        ? {
-            ...env,
-            HAPPIER_STACK_TAURI_IDENTIFIER: String(env?.HAPPIER_STACK_TAURI_IDENTIFIER ?? '').trim() || `com.happier.stack.${normalizedStack}`,
-            HAPPIER_STACK_TAURI_PRODUCT_NAME: String(env?.HAPPIER_STACK_TAURI_PRODUCT_NAME ?? '').trim() || `Happier (${normalizedStack})`,
-        }
-        : env;
-    const hasExplicitStackOverride =
-    String(derivedStackOverrideEnv?.HAPPIER_STACK_TAURI_IDENTIFIER ?? '').trim() !== ''
-    || String(derivedStackOverrideEnv?.HAPPIER_STACK_TAURI_PRODUCT_NAME ?? '').trim() !== ''
-    || String(derivedStackOverrideEnv?.HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS ?? '').trim() !== ''
-    || String(derivedStackOverrideEnv?.TAURI_SIGNING_PRIVATE_KEY ?? '').trim() !== '';
-    if (hasExplicitStackOverride) {
-    applyStackTauriOverrides({ tauriConfig: merged, env: derivedStackOverrideEnv });
-    }
-    return merged;
+  const merged = mergeTauriConfig(baseConfig ?? {}, overlayConfig ?? {});
+  merged.build = {
+    ...(merged.build ?? {}),
+    devUrl: String(devUrl ?? '').trim() || 'http://localhost:8081',
+    beforeDevCommand: '',
+    beforeBuildCommand: '',
+  };
+  if (hasStackTauriOverride(env)) {
+    applyStackTauriOverrides({ tauriConfig: merged, env, baseProductName: 'Happier' });
+  }
+  return merged;
 }

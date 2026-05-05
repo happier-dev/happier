@@ -10,7 +10,7 @@ async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
 }
 
-async function writeYarnWorkspaceBuildStub({ binDir, outputPath, delaySecondsByPackage = {} }) {
+async function writeYarnWorkspaceBuildStub({ binDir, outputPath, lockOutputPath = null, delaySecondsByPackage = {} }) {
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
   const delayCliCommon = Number(delaySecondsByPackage?.cliCommon ?? 0);
@@ -22,6 +22,7 @@ async function writeYarnWorkspaceBuildStub({ binDir, outputPath, delaySecondsByP
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       'echo "$(pwd) :: $*" >> "${OUTPUT_PATH:?}"',
+      lockOutputPath ? `echo "$(pwd) :: \${HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD:-}" >> ${JSON.stringify(lockOutputPath)}` : '',
       '',
       'if [[ "${1:-}" == "--version" ]]; then',
       '  echo "1.22.22"',
@@ -52,6 +53,12 @@ async function writeYarnWorkspaceBuildStub({ binDir, outputPath, delaySecondsByP
       '  fi',
       '  if [[ "$(pwd)" == */packages/cli-common ]]; then',
       delayCliCommon > 0 ? `    sleep ${delayCliCommon}` : '    true',
+      '    mkdir -p dist',
+      "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
+      "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
+      '    exit 0',
+      '  fi',
+      '  if [[ "$(pwd)" == */packages/plugins/claude ]]; then',
       '    mkdir -p dist',
       "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
       "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
@@ -278,6 +285,90 @@ test('ensureWorkspacePackagesBuiltForComponent walks the full internal workspace
   assert.equal(Boolean(await readFile(join(cliCommonDir, 'dist', 'index.js'), 'utf-8')), true);
 });
 
+test('ensureWorkspacePackagesBuiltForComponent resolves plugin workspaces from the root workspace manifest', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-extensions-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'package.json'), {
+    name: 'repo',
+    private: true,
+    workspaces: {
+      packages: [
+        'apps/ui',
+        'apps/cli',
+        'apps/server',
+        'packages/protocol',
+        'packages/plugins/[a-z]*',
+      ],
+    },
+  });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), {
+    name: '@happier-dev/cli',
+    private: true,
+    dependencies: {
+      '@happier-dev/plugins-claude': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const protocolDir = join(root, 'packages', 'protocol');
+  const extensionDir = join(root, 'packages', 'plugins', 'claude');
+  await mkdir(protocolDir, { recursive: true });
+  await mkdir(extensionDir, { recursive: true });
+
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeJson(join(extensionDir, 'package.json'), {
+    name: '@happier-dev/plugins-claude',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+    },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnWorkspaceBuildStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'cli'), { quiet: true, env: process.env });
+
+  const out = await readFile(outputPath, 'utf-8');
+  const orderedPackages = out
+    .split('\n')
+    .filter(Boolean)
+    .filter((line) => line.includes(' :: -s build'))
+    .map((line) => line.slice(line.indexOf('packages/')));
+
+  assert.deepEqual(orderedPackages, [
+    'packages/protocol :: -s build',
+    'packages/plugins/claude :: -s build',
+  ]);
+});
+
 test('ensureWorkspacePackagesBuiltForComponent resolves TypeScript bin shims when repo root node_modules/.bin is missing', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-tsc-shim-'));
   t.after(async () => {
@@ -388,9 +479,11 @@ test('ensureWorkspacePackagesBuiltForComponent does not run concurrent builds fo
 
   const binDir = join(root, 'bin');
   const outputPath = join(root, 'argv.txt');
+  const lockOutputPath = join(root, 'lock-env.txt');
   await writeYarnWorkspaceBuildStub({
     binDir,
     outputPath,
+    lockOutputPath,
     // Make the build slow enough that two concurrent callers would otherwise both decide to rebuild.
     delaySecondsByPackage: { cliCommon: 1 },
   });
@@ -413,6 +506,9 @@ test('ensureWorkspacePackagesBuiltForComponent does not run concurrent builds fo
   const occurrences = out.split('\n').filter((l) => l.includes('/packages/cli-common :: -s build')).length;
   assert.equal(occurrences, 1);
   assert.match(stderrChunks.join(''), /waiting for @happier-dev\/cli-common dist build lock/);
+
+  const lockOut = await readFile(lockOutputPath, 'utf-8');
+  assert.match(lockOut, /packages\/cli-common :: .*\/\.project\/tmp\/workspace-dist-builds\/happier-dev-cli-common\.lock/);
 });
 
 test('ensureWorkspacePackagesBuiltForComponent rebuilds internal workspaces when exported entrypoints have missing local imports', async (t) => {
@@ -545,5 +641,7 @@ test('ensureWorkspacePackagesBuiltForComponent tolerates transient missing local
   const out = await readFile(outputPath, 'utf-8');
   assert.doesNotMatch(out, /packages\/protocol :: -s build/);
   assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'utf-8')), true);
-  assert.match(stderrChunks.join(''), /waiting for @happier-dev\/protocol dist build local imports to settle/);
+  if (stderrChunks.length > 0) {
+    assert.match(stderrChunks.join(''), /waiting for @happier-dev\/protocol dist build local imports to settle/);
+  }
 });

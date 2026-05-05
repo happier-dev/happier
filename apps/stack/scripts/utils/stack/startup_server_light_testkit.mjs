@@ -69,13 +69,13 @@ async function writeYarnShim({ root, markerPath }) {
   return { binDir, yarnPath };
 }
 
-export async function createServerLightFixture(t, { prefix, socketPort }) {
+export async function createServerLightFixture(t, { prefix, serverDirRelative = 'server', socketPort }) {
   const root = await mkdtemp(join(tmpdir(), prefix));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  const serverDir = join(root, 'server');
+  const serverDir = join(root, serverDirRelative);
   await mkdir(serverDir, { recursive: true });
   await writeJson(join(serverDir, 'package.json'), { name: 'server', version: '0.0.0', type: 'module' });
   await writeFile(join(serverDir, 'yarn.lock'), '# yarn\n', 'utf-8');

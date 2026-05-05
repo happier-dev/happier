@@ -5,6 +5,7 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
@@ -758,7 +759,8 @@ test('hstack stack auth copy-from reads source light sqlite db from the source s
 
   const migrateSqlite = async (dataDir) => {
     const { spawnSync } = await import('node:child_process');
-    const res = spawnSync('yarn', ['-s', 'migrate:sqlite:deploy'], {
+    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:sqlite:deploy']);
+    const res = spawnSync(invocation.command, invocation.args, {
       cwd: serverDir,
       env: {
         ...process.env,
@@ -768,6 +770,9 @@ test('hstack stack auth copy-from reads source light sqlite db from the source s
         HAPPIER_DB_PROVIDER: 'sqlite',
       },
       encoding: 'utf-8',
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
     });
     assert.equal(res.status, 0, `expected sqlite migrations to succeed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   };
@@ -924,7 +929,8 @@ test('hstack stack auth copy-from does not require source sqlite migrations when
 
   const migrateSqlite = async (dataDir) => {
     const { spawnSync } = await import('node:child_process');
-    const res = spawnSync('yarn', ['-s', 'migrate:sqlite:deploy'], {
+    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:sqlite:deploy']);
+    const res = spawnSync(invocation.command, invocation.args, {
       cwd: serverDir,
       env: {
         ...process.env,
@@ -934,6 +940,9 @@ test('hstack stack auth copy-from does not require source sqlite migrations when
         HAPPIER_DB_PROVIDER: 'sqlite',
       },
       encoding: 'utf-8',
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
     });
     assert.equal(res.status, 0, `expected sqlite migrations to succeed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   };

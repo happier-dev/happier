@@ -17,6 +17,7 @@ import { coercePort } from '../utils/server/port.mjs';
 import { waitForHttpOk } from '../utils/server/server.mjs';
 import { getCliHomeDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { findRunningExpoStateInRoot, looksLikeExpoMetro } from '../utils/expo/expo.mjs';
+import { resolveExpoTailscaleEnabled } from '../utils/dev/expo_dev_tailscale.mjs';
 import {
   deleteStackRuntimeStateFile,
   getStackRuntimeProcessEntries,
@@ -42,6 +43,12 @@ export function shouldReuseRuntimePortsOnRestart({ wantsRestart = false, runtime
   return Boolean(wantsRestart && (wasRunning || hasRecordedRuntimePortsForRestart(runtimeState)));
 }
 
+function isMobileRequestedForDevScript({ args = [], env = process.env } = {}) {
+  if (!Array.isArray(args)) return false;
+  if (args.includes('--mobile') || args.includes('--with-mobile')) return true;
+  return resolveExpoTailscaleEnabled({ env, expoTailscale: args.includes('--expo-tailscale') });
+}
+
 export async function inspectExistingStartLikeRuntime({
   stackName = '',
   envPath = '',
@@ -49,6 +56,7 @@ export async function inspectExistingStartLikeRuntime({
   expectedUiDir = '',
   scriptPath,
   args = [],
+  env = process.env,
   runtimeState = null,
 } = {}) {
   const existingOwnerPid = Number(runtimeState?.ownerPid);
@@ -59,7 +67,7 @@ export async function inspectExistingStartLikeRuntime({
   const existingExpoPort = Number(runtimeState?.expo?.port ?? runtimeState?.expo?.webPort ?? runtimeState?.expo?.mobilePort);
 
   const wantsUi = scriptPath === 'dev.mjs' && !args.includes('--no-ui');
-  const wantsMobile = scriptPath === 'dev.mjs' && (args.includes('--mobile') || args.includes('--with-mobile'));
+  const wantsMobile = scriptPath === 'dev.mjs' && isMobileRequestedForDevScript({ args, env });
 
   const ownerRunning = Number.isFinite(existingOwnerPid) && existingOwnerPid > 1 ? isPidAlive(existingOwnerPid) : false;
   const serverPidRunning = Number.isFinite(existingServerPid) && existingServerPid > 1 ? isPidAlive(existingServerPid) : false;
@@ -118,6 +126,14 @@ export function shouldAdoptOccupiedRuntimePortsForRecovery(existingRuntimeStatus
       !existingRuntimeStatus.canShortCircuit &&
       (existingRuntimeStatus.wantsUi || existingRuntimeStatus.wantsMobile)
   );
+}
+
+export function buildAlreadyRunningMobileMetroArgs(args = []) {
+  const out = ['--metro'];
+  if (Array.isArray(args) && args.includes('--expo-tailscale')) {
+    out.push('--expo-tailscale');
+  }
+  return out;
 }
 
 async function forceStopRecordedPid(pid) {
@@ -336,6 +352,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                   expectedUiDir,
                   scriptPath,
                   args,
+                  env,
                   runtimeState,
                 });
                 shouldCleanup = shouldReuseRuntimePortsOnRestart({
@@ -389,6 +406,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           expectedUiDir,
           scriptPath,
           args,
+          env,
           runtimeState,
         });
         const wasRunning = existingRuntimeStatus.wasRunning;
@@ -456,9 +474,12 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
 
           // Opt-in: allow starting mobile Metro alongside an already-running stack without restarting the runner.
           // This is important for workflows like re-running `setup-pr` with --mobile after the stack is already up.
-          const wantsMobile = args.includes('--mobile') || args.includes('--with-mobile');
+          const wantsMobile = isMobileRequestedForDevScript({ args, env });
           if (wantsMobile) {
-            await run(process.execPath, [join(rootDir, 'scripts', 'mobile.mjs'), '--metro'], { cwd: rootDir, env });
+            await run(process.execPath, [join(rootDir, 'scripts', 'mobile.mjs'), ...buildAlreadyRunningMobileMetroArgs(args)], {
+              cwd: rootDir,
+              env,
+            });
           }
           return;
         }

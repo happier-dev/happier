@@ -21,6 +21,24 @@ function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   return true;
 }
 
+function isMobileRepoLocalCommand(cmd) {
+  const c = String(cmd ?? '').trim();
+  return c === 'mobile' || c === 'mobile-dev-client' || c.startsWith('mobile:');
+}
+
+function prepareRepoLocalDependencyInstallEnv({ cmd, env }) {
+  const next = { ...(env ?? process.env) };
+  if (isMobileRepoLocalCommand(cmd)) {
+    if (!String(next.SKIP_SKIA_DOWNLOAD ?? '').trim()) {
+      next.SKIP_SKIA_DOWNLOAD = '1';
+    }
+    if (!String(next.HAPPIER_INSTALL_SCOPE ?? '').trim()) {
+      next.HAPPIER_INSTALL_SCOPE = 'ui';
+    }
+  }
+  return next;
+}
+
 async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, autoInstallOverride = '', preflightRootOverride = '' }) {
   const autoInstallRaw = String(autoInstallOverride ?? '').trim();
   const autoInstall = autoInstallRaw ? autoInstallRaw !== '0' : true;
@@ -29,8 +47,9 @@ async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, autoInstallOverrid
 
   // Test hook: allow validating auto-install behavior without mutating the real repo checkout.
   const preflightRoot = String(preflightRootOverride ?? '').trim() || repoRoot;
+  const installEnv = prepareRepoLocalDependencyInstallEnv({ cmd, env });
 
-  await ensureDepsInstalled(preflightRoot, 'happier-monorepo', { quiet: false, env });
+  await ensureDepsInstalled(preflightRoot, 'happier-monorepo', { quiet: false, env: installEnv });
 }
 
 function usage() {

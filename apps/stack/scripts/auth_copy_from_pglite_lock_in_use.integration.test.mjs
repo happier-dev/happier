@@ -51,6 +51,10 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
 
   const source = await mkStackEnv('dev-auth');
   await mkStackEnv('dev');
+  const sourceCliHome = join(source.baseDir, 'cli');
+  await mkdir(sourceCliHome, { recursive: true });
+  await writeFile(join(sourceCliHome, 'access.key'), 'seed-token\n', 'utf-8');
+  await writeFile(join(sourceCliHome, 'settings.json'), JSON.stringify({ machineId: 'seed-machine' }) + '\n', 'utf-8');
 
   const lockPath = join(source.dataDir, '.happier.pglite.lock');
   const holder = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
@@ -72,7 +76,7 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
       HAPPIER_STACK_ENV_FILE: join(storageDir, 'dev', 'env'),
     };
 
-    const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', 'dev-auth'], { cwd: rootDir, env });
+    const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', 'dev-auth', '--offline-ok'], { cwd: rootDir, env });
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     const combinedOutput = `${res.stdout}\n${res.stderr}`;
     assert.match(combinedOutput, /\bdb seed skipped\b/i, `expected db seed to be skipped\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);

@@ -18,6 +18,12 @@ import { parseBuildSelection } from './build/build_targets.mjs';
 import { shouldBuildStackArtifacts } from './build/build_mode.mjs';
 import { buildStackArtifacts } from './build/build_stack_artifacts.mjs';
 
+async function prepareTauriSidecarForBuild({ env }) {
+  const moduleUrl = new URL('../../ui/scripts/prepareTauriSidecar.mjs', import.meta.url);
+  const { prepareTauriSidecar } = await import(moduleUrl.href);
+  await prepareTauriSidecar({ env });
+}
+
 /**
  * Build a lightweight static web UI bundle (no Expo dev server).
  *
@@ -185,6 +191,8 @@ async function main() {
   const tauriDistDir = process.env.HAPPIER_STACK_TAURI_UI_DIR?.trim()
     ? process.env.HAPPIER_STACK_TAURI_UI_DIR.trim()
     : join(uiDir, 'dist');
+
+  await prepareTauriSidecarForBuild({ env: process.env });
 
   await rm(tauriDistDir, { recursive: true, force: true });
   await mkdir(tauriDistDir, { recursive: true });

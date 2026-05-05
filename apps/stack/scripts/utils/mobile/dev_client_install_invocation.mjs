@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import { parseArgs } from '../cli/args.mjs';
 import { getFlagValue } from '../cli/arg_values.mjs';
-import { defaultDevClientIdentity } from './identifiers.mjs';
+import { defaultDevClientIdentity, sanitizeBundleIdSegment, sanitizeUrlScheme } from './identifiers.mjs';
 
 function normalizePortArg(raw) {
   const s = String(raw ?? '').trim();
@@ -10,6 +10,61 @@ function normalizePortArg(raw) {
   const n = Number(s);
   if (!Number.isFinite(n) || n <= 0) return '';
   return String(Math.floor(n));
+}
+
+function splitJvmFlags(raw) {
+  return String(raw ?? '')
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function upsertJvmFlag(parts, flag, predicate) {
+  const next = parts.filter((part) => !predicate(part));
+  next.push(flag);
+  return next;
+}
+
+function resolveAndroidDevClientGradleOpts(raw) {
+  let parts = splitJvmFlags(raw);
+  parts = upsertJvmFlag(parts, '-Dorg.gradle.daemon=false', (part) => part.startsWith('-Dorg.gradle.daemon='));
+  parts = upsertJvmFlag(parts, '-Dorg.gradle.parallel=false', (part) => part.startsWith('-Dorg.gradle.parallel='));
+  parts = upsertJvmFlag(parts, '-Dorg.gradle.workers.max=1', (part) => part.startsWith('-Dorg.gradle.workers.max='));
+  return parts.join(' ');
+}
+
+function sanitizeAndroidPackageSegment(raw) {
+  const cleaned = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .replace(/^[0-9]+/, '');
+  return cleaned || 'app';
+}
+
+function deriveCustomAppNameSlug(rawAppName) {
+  const raw = String(rawAppName ?? '').trim();
+  const parenthesizedLabel = raw.match(/\(([^)]+)\)/)?.[1]?.trim();
+  if (parenthesizedLabel) {
+    return sanitizeBundleIdSegment(parenthesizedLabel);
+  }
+  const withoutProductName = raw.replace(/^happier\b/i, '').trim();
+  return sanitizeBundleIdSegment(withoutProductName || raw);
+}
+
+function resolveIosDevClientBundlePrefix(identityBase) {
+  if (identityBase.profile === 'internaldev') {
+    return 'dev.happier.app.dev';
+  }
+  if (identityBase.profile === 'publicdev') {
+    return 'dev.happier.app.publicdev';
+  }
+  return String(identityBase.iosBundleId ?? '').replace(/(?:\.[^.]+)?\.devclient$/, '');
+}
+
+function resolveAndroidDevClientPackagePrefix(identityBase) {
+  return String(identityBase.androidPackage ?? '').replace(/\.devclient$/, '');
 }
 
 export function buildMobileDevClientInstallInvocation({
@@ -38,16 +93,42 @@ export function buildMobileDevClientInstallInvocation({
   const port = normalizePortArg(getFlagValue({ argv: a, kv, flag: '--port' }));
 
   const user = (baseEnv.USER ?? baseEnv.USERNAME ?? 'user').toString();
-  const identityBase = defaultDevClientIdentity({ user });
+  const profile = String(
+    getFlagValue({ argv: a, kv, flag: '--profile' }) ??
+      baseEnv.HAPPIER_STACK_DEV_CLIENT_PROFILE ??
+      baseEnv.HAPPIER_MOBILE_DEV_CLIENT_PROFILE ??
+      ''
+  ).trim();
+  const identityBase = defaultDevClientIdentity({ user, profile });
 
   const schemeOverride = String(getFlagValue({ argv: a, kv, flag: '--scheme' }) ?? '').trim();
   const bundleIdOverride = String(getFlagValue({ argv: a, kv, flag: '--bundle-id' }) ?? '').trim();
+  const androidPackageOverride = String(getFlagValue({ argv: a, kv, flag: '--android-package' }) ?? '').trim();
   const appNameOverride = String(getFlagValue({ argv: a, kv, flag: '--app-name' }) ?? '').trim();
+  const appNameSlug = appNameOverride ? deriveCustomAppNameSlug(appNameOverride) : '';
+  const derivedIosBundleId =
+    appNameSlug && !bundleIdOverride
+      ? `${resolveIosDevClientBundlePrefix(identityBase)}.${appNameSlug}.devclient`
+      : '';
+  const derivedAndroidPackage =
+    appNameSlug && !androidPackageOverride
+      ? `${resolveAndroidDevClientPackagePrefix(identityBase)}.${sanitizeAndroidPackageSegment(appNameSlug)}.devclient`
+      : '';
+  const derivedScheme =
+    !schemeOverride && bundleIdOverride
+      ? sanitizeUrlScheme(bundleIdOverride)
+      : !schemeOverride && appNameSlug
+        ? sanitizeUrlScheme(`happier-${appNameSlug}`)
+        : '';
 
   const identity = {
     ...identityBase,
-    ...(schemeOverride ? { scheme: schemeOverride } : {}),
+    ...(derivedScheme ? { scheme: derivedScheme } : {}),
+    ...(schemeOverride ? { scheme: sanitizeUrlScheme(schemeOverride) } : {}),
+    ...(derivedIosBundleId ? { iosBundleId: derivedIosBundleId } : {}),
     ...(bundleIdOverride ? { iosBundleId: bundleIdOverride } : {}),
+    ...(derivedAndroidPackage ? { androidPackage: derivedAndroidPackage } : {}),
+    ...(androidPackageOverride ? { androidPackage: androidPackageOverride } : {}),
     ...(appNameOverride ? { iosAppName: appNameOverride } : {}),
   };
 
@@ -55,7 +136,7 @@ export function buildMobileDevClientInstallInvocation({
 
   const nodeArgs = [
     mobileScript,
-    '--app-env=development',
+    `--app-env=${identity.appEnv}`,
     `--ios-app-name=${identity.iosAppName}`,
     `--ios-bundle-id=${identity.iosBundleId}`,
     `--scheme=${identity.scheme}`,
@@ -73,18 +154,26 @@ export function buildMobileDevClientInstallInvocation({
     EXPO_APP_SCHEME: identity.scheme,
     EXPO_APP_NAME: identity.iosAppName,
     EXPO_APP_BUNDLE_ID: identity.iosBundleId,
+    EXPO_ANDROID_PACKAGE: identity.androidPackage,
     EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: baseEnv.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE ?? '',
   };
+  if (platform === 'android') {
+    env.GRADLE_OPTS = resolveAndroidDevClientGradleOpts(baseEnv.GRADLE_OPTS);
+    env.HAPPIER_STACK_CLEAR_ANDROID_NATIVE_BUILD_STATE = '1';
+  }
   // Keep Expo slug stable so EAS local builds don't fail when `extra.eas.projectId` is configured.
   // Dev/prod isolation should be done via EXPO_APP_SCHEME (and bundle id), not slug.
   // Explicitly blank EXPO_APP_SLUG so higher-precedence pipeline env sources (env-files/Keychain bundles)
   // cannot accidentally override it back to a non-matching slug.
   env.EXPO_APP_SLUG = '';
+  env.HAPPIER_EXPO_DEVCLIENT_ADD_GENERATED_SCHEME = '0';
 
   return {
     nodeArgs,
     env,
     identity,
+    profile: identity.profile,
+    easBuildProfile: identity.easBuildProfile,
     platform,
     device,
     clean,

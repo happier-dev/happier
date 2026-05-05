@@ -51,6 +51,7 @@ import { readStackInfoSnapshot } from './stack/stack_info_snapshot.mjs';
 import { runStackScriptWithStackEnv } from './stack/run_script_with_stack_env.mjs';
 import { printDelegatedStackHelpIfAvailable } from './stack/stack_delegated_help.mjs';
 import { runStackWorkspaceCommand } from './stack/stack_workspace_command.mjs';
+import { runStackInstallCommand } from './stack/stack_install_command.mjs';
 import { resolveRequestedRepoCheckoutDir } from './stack/repo_checkout_resolution.mjs';
 import { resolveTransientRepoOverrides } from './stack/transient_repo_overrides.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
@@ -2251,6 +2252,10 @@ async function main() {
     } else {
       console.log(`[stack] archived "${stackName}" -> ${res.archivedStackDir}`);
     }
+    return;
+  }
+  if (cmd === 'install') {
+    await runStackInstallCommand({ rootDir, stackName, argv: passthrough, json });
     return;
   }
 

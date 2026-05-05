@@ -19,6 +19,26 @@ test('buildMobileDevClientInstallInvocation builds an Android run invocation whe
 
   assert.ok(inv.nodeArgs.includes('--port=14362'), `expected --port to be forwarded\nnodeArgs:\n${inv.nodeArgs.join(' ')}`);
   assert.ok(inv.nodeArgs.includes('--device=ABC123'), `expected --device to be forwarded\nnodeArgs:\n${inv.nodeArgs.join(' ')}`);
+  assert.equal(inv.env.EXPO_ANDROID_PACKAGE, 'dev.happier.app.internaldev.devclient');
+  assert.equal(inv.env.HAPPIER_STACK_CLEAR_ANDROID_NATIVE_BUILD_STATE, '1');
+});
+
+test('buildMobileDevClientInstallInvocation serializes Android Gradle work for native module build stability', () => {
+  const inv = buildMobileDevClientInstallInvocation({
+    rootDir: '/repo/apps/stack',
+    argv: ['--install', '--platform=android'],
+    baseEnv: {
+      USER: 'leeroy',
+      GRADLE_OPTS: '-Xmx1024m -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=8',
+    },
+  });
+
+  assert.match(inv.env.GRADLE_OPTS, /(?:^|\s)-Xmx1024m(?:\s|$)/);
+  assert.match(inv.env.GRADLE_OPTS, /(?:^|\s)-Dorg\.gradle\.daemon=false(?:\s|$)/);
+  assert.match(inv.env.GRADLE_OPTS, /(?:^|\s)-Dorg\.gradle\.parallel=false(?:\s|$)/);
+  assert.match(inv.env.GRADLE_OPTS, /(?:^|\s)-Dorg\.gradle\.workers\.max=1(?:\s|$)/);
+  assert.doesNotMatch(inv.env.GRADLE_OPTS, /(?:^|\s)-Dorg\.gradle\.parallel=true(?:\s|$)/);
+  assert.doesNotMatch(inv.env.GRADLE_OPTS, /(?:^|\s)-Dorg\.gradle\.workers\.max=8(?:\s|$)/);
 });
 
 test('buildMobileDevClientInstallInvocation accepts space-separated --platform android', () => {

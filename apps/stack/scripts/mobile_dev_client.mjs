@@ -23,9 +23,15 @@ function resolveAbsPathFromRepoRoot(repoRoot, rawPath) {
   return join(repoRoot, p);
 }
 
-function resolveAndroidDevClientCachedApkPath({ env } = {}) {
+function resolveAndroidDevClientCachedApkPath({ env, profile } = {}) {
   const home = getHappyStacksHomeDir(env ?? process.env);
-  return join(home, 'mobile-dev-client', 'android', 'happier-dev-client-android.apk');
+  const profileDir = String(profile ?? '').trim() || 'internaldev';
+  return join(home, 'mobile-dev-client', profileDir, 'android', 'happier-dev-client-android.apk');
+}
+
+function resolveAndroidDevClientDistApkPath({ repoRoot, profile } = {}) {
+  const profileDir = String(profile ?? '').trim() || 'internaldev';
+  return join(repoRoot, 'dist', 'ui-mobile', profileDir, 'happier-dev-client-android.apk');
 }
 
 async function main() {
@@ -39,9 +45,11 @@ async function main() {
       data: {
         flags: [
           '--platform=ios|android',
+          '--profile=internaldev|publicdev',
           '--device=<id-or-name>',
           '--scheme=<url-scheme>',
           '--bundle-id=<bundle-id>',
+          '--android-package=<package-name>',
           '--app-name=<name>',
           '--port=<port>',
           '--reuse',
@@ -55,10 +63,11 @@ async function main() {
         banner('mobile-dev-client', { subtitle: 'Install the shared dev-client app (one-time).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hstack mobile-dev-client')} --install [--platform=ios|android] [--device=...] [--scheme=...] [--bundle-id=...] [--app-name=...] [--port=...] [--clean] [--configuration=Debug|Release] [--json]`,
+        `  ${cyan('hstack mobile-dev-client')} --install [--profile=internaldev|publicdev] [--platform=ios|android] [--device=...] [--scheme=...] [--bundle-id=...] [--android-package=...] [--app-name=...] [--port=...] [--clean] [--configuration=Debug|Release] [--json]`,
         '',
         sectionTitle('notes:'),
         `- Installs a dedicated ${cyan('hstack Dev')} Expo dev-client app on your phone.`,
+        `- ${cyan('--profile=publicdev')} installs the public dev app identity (${cyan('happier-dev')}).`,
         `- This app is intended to be ${cyan('reused across stacks')} (no per-stack installs).`,
         `- If you install with a custom ${cyan('--scheme')}, set ${cyan('HAPPIER_STACK_DEV_CLIENT_SCHEME')} to the same value so QR links open the right app.`,
         `- iOS requires ${yellow('Xcode')} + ${yellow('CocoaPods')} (macOS).`,
@@ -130,13 +139,15 @@ async function main() {
   const plan = { platform, strategy: platform === 'android' ? 'unknown' : 'ios', steps: [] };
 
   if (platform === 'android') {
-    const defaultApkAbs = join(repoRoot, 'dist', 'ui-mobile', 'happier-dev-client-android.apk');
-    const cachedApkAbs = resolveAndroidDevClientCachedApkPath({ env: process.env });
+    const defaultApkAbs = resolveAndroidDevClientDistApkPath({ repoRoot, profile: invocation.profile });
+    const legacySharedApkAbs = join(repoRoot, 'dist', 'ui-mobile', 'happier-dev-client-android.apk');
+    const cachedApkAbs = resolveAndroidDevClientCachedApkPath({ env: process.env, profile: invocation.profile });
     const requestedApkAbs = apkArg ? resolveAbsPathFromRepoRoot(repoRoot, apkArg) : '';
     const reuseApkAbs = (() => {
       if (requestedApkAbs) return requestedApkAbs;
-      if (existsSync(defaultApkAbs)) return defaultApkAbs;
       if (existsSync(cachedApkAbs)) return cachedApkAbs;
+      if (existsSync(defaultApkAbs)) return defaultApkAbs;
+      if (existsSync(legacySharedApkAbs)) return legacySharedApkAbs;
       return defaultApkAbs;
     })();
 
@@ -187,7 +198,7 @@ async function main() {
     if (strategy.kind === 'expo_run_android') {
       plan.steps.push({ cmd: process.execPath, args: invocation.nodeArgs, cwd: rootDir, env: invocation.env });
     } else if (strategy.kind === 'eas_local_dagger') {
-      const artifactOutRel = 'dist/ui-mobile/happier-dev-client-android.apk';
+      const artifactOutRel = `dist/ui-mobile/${invocation.profile}/happier-dev-client-android.apk`;
       const outJsonRel = 'dist/ui-mobile/eas_build_dev_client_android.json';
       const pipelineScript = `${repoRoot}/scripts/pipeline/run.mjs`;
 
@@ -199,7 +210,7 @@ async function main() {
           '--platform',
           'android',
           '--profile',
-          'development',
+          invocation.easBuildProfile,
           '--out',
           outJsonRel,
           '--build-mode',

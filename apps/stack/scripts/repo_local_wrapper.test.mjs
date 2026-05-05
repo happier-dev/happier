@@ -312,6 +312,60 @@ test('repo-local wrapper auto-installs deps when node_modules are missing', asyn
   }
 });
 
+test('repo-local wrapper skips Skia all-platform package postinstall during mobile dependency preflight', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const preflightRoot = mkdtempSync(join(tmpdir(), 'happier-repo-local-skia-preflight-'));
+  try {
+    writeFileSync(join(preflightRoot, 'package.json'), JSON.stringify({ name: 'tmp', private: true }));
+
+    const binDir = join(preflightRoot, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const logPath = join(preflightRoot, 'yarn.log');
+    const yarnBin = join(binDir, 'yarn');
+    writeFileSync(
+      yarnBin,
+      [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, mkdirSync } from 'node:fs';",
+        "import { join } from 'node:path';",
+        'const logPath = process.env.YARN_LOG;',
+        "appendFileSync(logPath, `${process.argv.slice(2).join(' ')} :: SKIP_SKIA_DOWNLOAD=${process.env.SKIP_SKIA_DOWNLOAD || ''} :: HAPPIER_INSTALL_SCOPE=${process.env.HAPPIER_INSTALL_SCOPE || ''}\\n`);",
+        "if (process.argv.includes('install')) {",
+        "  const nodeModules = join(process.cwd(), 'node_modules');",
+        "  mkdirSync(nodeModules, { recursive: true });",
+        '}',
+        'process.exit(0);',
+      ].join('\n') + '\n',
+    );
+    chmodSync(yarnBin, 0o755);
+
+    const res = await runNode(
+      [join(packageRoot, 'scripts', 'repo_local.mjs'), 'mobile-dev-client'],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          YARN_LOG: logPath,
+          HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT: preflightRoot,
+          HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
+        },
+      }
+    );
+
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    const log = readFileSync(logPath, 'utf-8');
+    assert.match(log, /\binstall\b/);
+    assert.match(log, /SKIP_SKIA_DOWNLOAD=1/);
+    assert.match(log, /HAPPIER_INSTALL_SCOPE=ui/);
+  } finally {
+    rmSync(preflightRoot, { recursive: true, force: true });
+  }
+});
+
 test('repo-local wrapper preserves user-defined env keys while managing stack-owned keys', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack
