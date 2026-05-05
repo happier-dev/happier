@@ -61,4 +61,8 @@ Pod::Spec.new do |s|
   s.libraries = 'c++'
 
   s.source_files = '**/*.{h,m,mm,swift}'
+  s.exclude_files = 'Tests/**/*'
+  s.resource_bundles = {
+    'HappierSherpaNativeResources' => ['../android/src/main/assets/silero_vad_v5.onnx']
+  }
 end

@@ -1,10 +1,13 @@
 #include <jni.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <mutex>
-#include <string>
 #include <unordered_map>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <android/log.h>
 
@@ -67,6 +70,17 @@ struct AsrEngine {
 struct AsrStreamState {
   AsrEngine *engine = nullptr;
   SherpaOnnxOnlineStream *stream = nullptr;
+};
+
+struct VadSession {
+  const SherpaOnnxVoiceActivityDetector *vad = nullptr;
+
+  ~VadSession() {
+    if (vad) {
+      SherpaOnnxDestroyVoiceActivityDetector(vad);
+      vad = nullptr;
+    }
+  }
 };
 
 std::mutex g_asrMutex;
@@ -216,6 +230,38 @@ std::vector<float> Pcm16LeToMonoFloats(const int16_t *samples, size_t n, int32_t
     out[i] = (static_cast<float>(sum) / static_cast<float>(channels)) / 32768.0f;
   }
   return out;
+}
+
+VadSession *CreateVadSession(const std::string &modelPath, int32_t sampleRate, float minSpeechSec, float minSilenceSec) {
+  auto session = std::make_unique<VadSession>();
+  if (modelPath.empty() || !SherpaOnnxFileExists(modelPath.c_str())) {
+    __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Missing required Silero VAD model at %s", modelPath.c_str());
+    return nullptr;
+  }
+
+  SherpaOnnxVadModelConfig config;
+  memset(&config, 0, sizeof(config));
+  config.sample_rate = sampleRate > 0 ? sampleRate : 16000;
+  config.num_threads = 2;
+  config.provider = "cpu";
+  config.debug = 0;
+  config.silero_vad.model = modelPath.c_str();
+  config.silero_vad.threshold = 0.5f;
+  config.silero_vad.min_speech_duration = minSpeechSec < 0 ? 0.0f : minSpeechSec;
+  config.silero_vad.min_silence_duration = minSilenceSec < 0 ? 0.0f : minSilenceSec;
+  config.silero_vad.window_size = 512;
+  config.silero_vad.max_speech_duration = 30.0f;
+  config.ten_vad.model = nullptr;
+
+  const SherpaOnnxVoiceActivityDetector *vad =
+      SherpaOnnxCreateVoiceActivityDetector(&config, /*buffer_size_in_seconds=*/60.0f);
+  if (!vad) {
+    __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Failed to initialize sherpa VAD");
+    return nullptr;
+  }
+
+  session->vad = vad;
+  return session.release();
 }
 
 jobject MakePushFrameResult(JNIEnv *env, const std::string &text, bool endpoint) {
@@ -454,4 +500,67 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCancelStreaming(JNIEnv *env
     SherpaOnnxDestroyOnlineStream(it->second.stream);
   }
   g_asrStreamsByJobId.erase(it);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCreateVadSession(
+    JNIEnv *env,
+    jclass /*clazz*/,
+    jstring modelPath,
+    jint sampleRate,
+    jfloat minSpeechSec,
+    jfloat minSilenceSec) {
+  const std::string path = JStringToUtf8(env, modelPath);
+  if (path.empty()) return 0;
+  VadSession *session = CreateVadSession(path, sampleRate, minSpeechSec, minSilenceSec);
+  return reinterpret_cast<jlong>(session);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeDestroyVadSession(
+    JNIEnv * /*env*/,
+    jclass /*clazz*/,
+    jlong handle) {
+  auto *session = reinterpret_cast<VadSession *>(handle);
+  delete session;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeVadAcceptPcm16(
+    JNIEnv *env,
+    jclass /*clazz*/,
+    jlong handle,
+    jshortArray pcm16,
+    jint count,
+    jint channels) {
+  auto *session = reinterpret_cast<VadSession *>(handle);
+  if (!session || !session->vad || !pcm16 || count <= 0) {
+    return JNI_FALSE;
+  }
+
+  const jsize available = env->GetArrayLength(pcm16);
+  const jsize sampleCount = std::min<jsize>(available, count);
+  if (sampleCount <= 0) {
+    return JNI_FALSE;
+  }
+
+  std::vector<int16_t> samples16(static_cast<size_t>(sampleCount));
+  env->GetShortArrayRegion(pcm16, 0, sampleCount, reinterpret_cast<jshort *>(samples16.data()));
+
+  const auto mono = Pcm16LeToMonoFloats(samples16.data(), samples16.size(), channels);
+  if (mono.empty()) {
+    return JNI_FALSE;
+  }
+
+  SherpaOnnxVoiceActivityDetectorAcceptWaveform(session->vad, mono.data(), static_cast<int32_t>(mono.size()));
+  if (SherpaOnnxVoiceActivityDetectorEmpty(session->vad) != 0) {
+    return JNI_FALSE;
+  }
+
+  while (SherpaOnnxVoiceActivityDetectorEmpty(session->vad) == 0) {
+    SherpaOnnxVoiceActivityDetectorPop(session->vad);
+  }
+  SherpaOnnxVoiceActivityDetectorClear(session->vad);
+  SherpaOnnxVoiceActivityDetectorReset(session->vad);
+  return JNI_TRUE;
 }

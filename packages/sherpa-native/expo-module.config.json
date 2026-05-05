@@ -1,4 +1,6 @@
 {
+  "name": "HappierSherpaNative",
+  "platforms": ["ios", "android"],
   "ios": {
     "modules": ["HappierSherpaNativeModule"]
   },

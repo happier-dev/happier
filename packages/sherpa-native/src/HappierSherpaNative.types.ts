@@ -32,7 +32,12 @@ export type SherpaNativeCancelParams = {
   jobId: string;
 };
 
+export type SherpaNativeVadSubscription = {
+  remove: () => void;
+};
+
 export type SherpaNativeModule = {
+  addListener(eventName: 'vadSpeechEnd', listener: (event: { sessionId?: string | null }) => void): SherpaNativeVadSubscription;
   initialize(params: SherpaNativeInitializeParams): Promise<void>;
   listVoices(params: SherpaNativeListVoicesParams): Promise<SherpaNativeVoice[]>;
   synthesizeToWavFile(params: SherpaNativeSynthesizeParams): Promise<SherpaNativeSynthesizeResult>;
@@ -50,5 +55,13 @@ export type SherpaNativeModule = {
     channels: number;
   }): Promise<{ text: string; isEndpoint: boolean }>;
   finishStreaming(params: { jobId: string }): Promise<{ text: string }>;
+  startVadSession(params: {
+    sessionId: string;
+    minSpeechMs: number;
+    redemptionMs: number;
+  }): Promise<void>;
+  stopVadSession(params: {
+    sessionId: string;
+  }): Promise<void>;
   cancel(params: SherpaNativeCancelParams): Promise<void>;
 };

@@ -3,10 +3,47 @@ import ExpoModulesCore
 import Foundation
 
 public class HappierSherpaNativeModule: Module {
+  private static let vadSpeechEndEvent = "vadSpeechEnd"
+
   private let queue = DispatchQueue(label: "dev.happier.sherpa", qos: .userInitiated)
   private var engines: [String: HappierSherpaOfflineTtsEngine] = [:]
   private var asrEngines: [String: HappierSherpaOnlineAsrEngine] = [:]
   private var asrStreams: [String: HappierSherpaOnlineAsrStream] = [:]
+  private var vadRunner: IosVadSessionRunner?
+
+  private func getOrCreateVadRunner() throws -> IosVadSessionRunner {
+    if let existing = vadRunner {
+      return existing
+    }
+
+    let created = IosVadSessionRunner(
+      makeAudioCapture: {
+        AvAudioEngineVadAudioCapture()
+      },
+      makeDetector: { minSpeechSec, minSilenceSec in
+        let modelPath = try VadModelResolver.resolveSileroVadModelPath()
+        return try SileroVadDetector(
+          modelPath: modelPath,
+          sampleRate: 16_000,
+          minSpeechSec: minSpeechSec,
+          minSilenceSec: minSilenceSec
+        )
+      },
+      onSpeechEnd: { [weak self] sessionId in
+        self?.sendEvent(Self.vadSpeechEndEvent, [
+          "sessionId": sessionId,
+        ])
+      }
+    )
+    vadRunner = created
+    return created
+  }
+
+  private func handleModuleDestroy() {
+    guard let runner = vadRunner else { return }
+    vadRunner = nil
+    runner.stopAny()
+  }
 
   private func getEngine(assetsDir: String) throws -> HappierSherpaOfflineTtsEngine {
     if let cached = engines[assetsDir] {
@@ -38,6 +75,10 @@ public class HappierSherpaNativeModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("HappierSherpaNative")
+    Events(Self.vadSpeechEndEvent)
+    OnDestroy {
+      self.handleModuleDestroy()
+    }
 
     AsyncFunction("initialize") { (params: [String: Any]) in
       let assetsDir = (params["assetsDir"] as? String) ?? ""
@@ -162,6 +203,30 @@ public class HappierSherpaNativeModule: Module {
         let text = stream.finishWithError(&err)
         if let err { throw err }
         return ["text": text]
+      }
+    }
+
+    AsyncFunction("startVadSession") { (params: [String: Any]) in
+      let sessionId = (params["sessionId"] as? String) ?? ""
+      let minSpeechMs = (params["minSpeechMs"] as? Int64) ?? Int64((params["minSpeechMs"] as? Int) ?? 0)
+      let redemptionMs = (params["redemptionMs"] as? Int64) ?? Int64((params["redemptionMs"] as? Int) ?? 0)
+
+      try self.queue.sync {
+        try self.getOrCreateVadRunner().startVadSession(
+          sessionId: sessionId,
+          minSpeechMs: minSpeechMs,
+          redemptionMs: redemptionMs
+        )
+      }
+    }
+
+    AsyncFunction("stopVadSession") { (params: [String: Any]) in
+      let sessionId = (params["sessionId"] as? String) ?? ""
+      if sessionId.isEmpty { return }
+
+      self.queue.sync {
+        guard let runner = self.vadRunner else { return }
+        runner.stopVadSession(sessionId: sessionId)
       }
     }
   }

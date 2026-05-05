@@ -233,6 +233,48 @@ void SherpaOnnxDestroyOnlineRecognizerResult(const SherpaOnnxOnlineRecognizerRes
 int32_t SherpaOnnxOnlineStreamIsEndpoint(const SherpaOnnxOnlineRecognizer *recognizer, const SherpaOnnxOnlineStream *stream);
 void SherpaOnnxOnlineStreamReset(const SherpaOnnxOnlineRecognizer *recognizer, SherpaOnnxOnlineStream *stream);
 
+// ============================================================
+// Voice Activity Detection
+// ============================================================
+typedef struct SherpaOnnxSileroVadModelConfig {
+  const char *model;
+  float threshold;
+  float min_silence_duration;
+  float min_speech_duration;
+  int32_t window_size;
+  float max_speech_duration;
+} SherpaOnnxSileroVadModelConfig;
+
+typedef struct SherpaOnnxTenVadModelConfig {
+  const char *model;
+  float threshold;
+  float min_silence_duration;
+  float min_speech_duration;
+  int32_t window_size;
+  float max_speech_duration;
+} SherpaOnnxTenVadModelConfig;
+
+typedef struct SherpaOnnxVadModelConfig {
+  SherpaOnnxSileroVadModelConfig silero_vad;
+  int32_t sample_rate;
+  int32_t num_threads;
+  const char *provider;
+  int32_t debug;
+  SherpaOnnxTenVadModelConfig ten_vad;
+} SherpaOnnxVadModelConfig;
+
+typedef struct SherpaOnnxVoiceActivityDetector SherpaOnnxVoiceActivityDetector;
+
+const SherpaOnnxVoiceActivityDetector *SherpaOnnxCreateVoiceActivityDetector(
+    const SherpaOnnxVadModelConfig *config, float buffer_size_in_seconds);
+void SherpaOnnxDestroyVoiceActivityDetector(const SherpaOnnxVoiceActivityDetector *p);
+void SherpaOnnxVoiceActivityDetectorAcceptWaveform(
+    const SherpaOnnxVoiceActivityDetector *p, const float *samples, int32_t n);
+int32_t SherpaOnnxVoiceActivityDetectorEmpty(const SherpaOnnxVoiceActivityDetector *p);
+void SherpaOnnxVoiceActivityDetectorPop(const SherpaOnnxVoiceActivityDetector *p);
+void SherpaOnnxVoiceActivityDetectorClear(const SherpaOnnxVoiceActivityDetector *p);
+void SherpaOnnxVoiceActivityDetectorReset(const SherpaOnnxVoiceActivityDetector *p);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

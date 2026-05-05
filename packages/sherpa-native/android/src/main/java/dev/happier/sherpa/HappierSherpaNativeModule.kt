@@ -1,12 +1,49 @@
 package dev.happier.sherpa
 
 import android.util.Base64
+import dev.happier.sherpa.vad.AndroidVadSessionRunner
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.concurrent.ConcurrentHashMap
 
-class HappierSherpaNativeModule : Module() {
+class HappierSherpaNativeModule internal constructor(
+  private val createVadRunner: (() -> VadSessionRunnerControl)? = null
+) : Module() {
+  private companion object {
+    private const val VAD_SPEECH_END_EVENT = "vadSpeechEnd"
+  }
+
   private val enginesByAssetsDir = ConcurrentHashMap<String, Long>()
+  private var vadRunner: VadSessionRunnerControl? = null
+
+  internal fun getOrCreateVadRunner(): VadSessionRunnerControl {
+    val existing = vadRunner
+    if (existing != null) {
+      return existing
+    }
+
+    val created = createVadRunner?.invoke() ?: run {
+      val reactContext = appContext.reactContext
+        ?: throw Exception("React context is unavailable")
+      AndroidVadSessionRunner(
+        context = reactContext.applicationContext,
+        onSpeechEnd = { sessionId ->
+          sendEvent(
+            VAD_SPEECH_END_EVENT,
+            mapOf("sessionId" to sessionId)
+          )
+        }
+      )
+    }
+    vadRunner = created
+    return created
+  }
+
+  internal fun handleModuleDestroy() {
+    val runner = vadRunner ?: return
+    vadRunner = null
+    runner.stopAny()
+  }
 
   private fun requireEngine(assetsDir: String): Long {
     if (assetsDir.isBlank()) throw Exception("assetsDir is required")
@@ -23,6 +60,10 @@ class HappierSherpaNativeModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("HappierSherpaNative")
+    Events(VAD_SPEECH_END_EVENT)
+    OnDestroy {
+      handleModuleDestroy()
+    }
 
     AsyncFunction("initialize") { params: Map<String, Any?> ->
       val assetsDir = params["assetsDir"] as? String ?: ""
@@ -112,6 +153,24 @@ class HappierSherpaNativeModule : Module() {
       val text = HappierSherpaNativeJni.nativeFinishStreaming(jobId)
       return@AsyncFunction mapOf("text" to text)
     }
+
+    AsyncFunction("startVadSession") { params: Map<String, Any?> ->
+      val sessionId = params["sessionId"] as? String ?: ""
+      val minSpeechMs = (params["minSpeechMs"] as? Number)?.toLong() ?: 0L
+      val redemptionMs = (params["redemptionMs"] as? Number)?.toLong() ?: 0L
+
+      getOrCreateVadRunner().startVadSession(
+        sessionId = sessionId,
+        minSpeechMs = minSpeechMs,
+        redemptionMs = redemptionMs
+      )
+    }
+
+    AsyncFunction("stopVadSession") { params: Map<String, Any?> ->
+      val sessionId = params["sessionId"] as? String ?: ""
+      if (sessionId.isBlank()) return@AsyncFunction
+      getOrCreateVadRunner().stopVadSession(sessionId)
+    }
   }
 }
 
@@ -135,4 +194,8 @@ object HappierSherpaNativeJni {
   external fun nativePushAudioFrame(jobId: String, pcm16le: ByteArray, sampleRate: Int, channels: Int): Map<String, Any?>
   external fun nativeFinishStreaming(jobId: String): String
   external fun nativeCancelStreaming(jobId: String)
+
+  external fun nativeCreateVadSession(modelPath: String, sampleRate: Int, minSpeechSec: Float, minSilenceSec: Float): Long
+  external fun nativeVadAcceptPcm16(handle: Long, pcm16: ShortArray, count: Int, channels: Int): Boolean
+  external fun nativeDestroyVadSession(handle: Long)
 }
