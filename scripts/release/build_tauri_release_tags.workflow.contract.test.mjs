@@ -46,7 +46,7 @@ test('build-tauri latest.json generator uses ui-desktop-* release tags and publi
   const raw = await loadWorkflow('build-tauri.yml');
 
   assert.match(raw, /node scripts\/pipeline\/run\.mjs tauri-prepare-assets/);
-  assert.match(raw, /HAPPIER_INSTALL_SCOPE:\s*\"ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor\"/);
+  assert.match(raw, /HAPPIER_INSTALL_SCOPE:\s*\"ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor\"/);
 
   const script = await loadFile('scripts/pipeline/tauri/prepare-publish-assets.mjs');
   assert.match(script, /ui-desktop-preview/);
@@ -67,4 +67,13 @@ test('build-tauri latest.json generator uses ui-desktop-* release tags and publi
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-dev/);
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-v/);
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-stable/);
+});
+
+test('build-tauri publishes the stable update feed after stable versioned assets exist', async () => {
+  const raw = await loadWorkflow('build-tauri.yml');
+
+  assert.match(
+    raw,
+    /publish_stable_feed:\n(?:.*\n){0,8}\s+needs:\s*\[\s*prepare_assets\s*,\s*publish_stable_release\s*\]/,
+  );
 });

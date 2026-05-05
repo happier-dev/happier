@@ -37,6 +37,7 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
   const agentsPkg = await readJson('packages/agents/package.json');
   const protocolPkg = await readJson('packages/protocol/package.json');
   const cliCommonPkg = await readJson('packages/cli-common/package.json');
+  const connectionSupervisorPkg = await readJson('packages/connection-supervisor/package.json');
   const releaseRuntimePkg = await readJson('packages/release-runtime/package.json');
 
   assert.match(
@@ -65,6 +66,16 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
     'cli-common typecheck should use the shared TypeScript wrapper'
   );
   assert.match(
+    String(connectionSupervisorPkg?.scripts?.build ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs -p tsconfig\.json\b/,
+    'connection-supervisor build should use the shared TypeScript wrapper'
+  );
+  assert.match(
+    String(connectionSupervisorPkg?.scripts?.typecheck ?? ''),
+    /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
+    'connection-supervisor typecheck should use the shared TypeScript wrapper'
+  );
+  assert.match(
     String(releaseRuntimePkg?.scripts?.['build:esm'] ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs -p tsconfig\.json\b/,
     'release-runtime build:esm should use the shared TypeScript wrapper'
@@ -76,6 +87,8 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
     ['protocol build', protocolPkg?.scripts?.build],
     ['protocol typecheck', protocolPkg?.scripts?.typecheck],
     ['cli-common typecheck', cliCommonPkg?.scripts?.typecheck],
+    ['connection-supervisor build', connectionSupervisorPkg?.scripts?.build],
+    ['connection-supervisor typecheck', connectionSupervisorPkg?.scripts?.typecheck],
     ['release-runtime build:esm', releaseRuntimePkg?.scripts?.['build:esm']],
   ]) {
     assert.doesNotMatch(

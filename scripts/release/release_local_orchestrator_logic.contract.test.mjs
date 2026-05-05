@@ -74,7 +74,7 @@ test('preview: changed cli publishes docker dev-box but not relay', () => {
   assert.equal(plan.dockerBuildRelay, false);
 });
 
-test('production: ui deploy runs when deploy plan says needed', () => {
+test('production: ui deploy also publishes stable ui web when deploy plan says needed', () => {
   const plan = computeReleaseExecutionPlan({
     environment: 'production',
     dryRun: false,
@@ -112,7 +112,7 @@ test('production: ui deploy runs when deploy plan says needed', () => {
 
   assert.equal(plan.runPromoteMain, true);
   assert.equal(plan.runDeployUi, true);
-  assert.equal(plan.runPublishUiWeb, false);
+  assert.equal(plan.runPublishUiWeb, true);
 });
 
 test('preview: server_runner triggers publish_server_runtime', () => {

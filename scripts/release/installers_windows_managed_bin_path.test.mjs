@@ -32,3 +32,84 @@ test('install.ps1 makes the managed home bin directory the canonical PATH target
     'expected install.ps1 to remove the old drifting global shim copy during migration',
   );
 });
+
+test('install.ps1 accepts an exact CLI version request through parameter or environment', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+
+  assert.match(raw, /\[string\]\s+\$Version\s*=\s*\$\(if\s*\(\$env:HAPPIER_INSTALL_VERSION\)/i);
+  assert.match(raw, /Resolve-InstallerRequestedVersionPattern/i);
+  assert.match(raw, /\$assetPattern\s*=\s*Resolve-InstallerRequestedVersionPattern[\s\S]*happier-v[\s\S]*windows-x64/i);
+  assert.match(raw, /\$checksumsPattern\s*=\s*Resolve-InstallerRequestedVersionPattern[\s\S]*checksums-happier-v[\s\S]*\.txt/i);
+  assert.doesNotMatch(raw, /\$asset\s*=\s*Resolve-InstallerAsset\s+-Release\s+\$release\s+-Pattern\s+'[\^]happier-v\.\*-windows-x64/i);
+});
+
+test('install.ps1 semver-sorts rolling assets and keeps default asset patterns channel-safe', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+
+  assert.match(
+    raw,
+    /function Get-ReleaseAssetVersionFromName\s*\{[\s\S]*checksums-.+-v[\s\S]*windows-x64\.tar\.gz/i,
+    'expected install.ps1 to extract release versions from rolling asset names before ranking them',
+  );
+  assert.match(
+    raw,
+    /function Get-ReleaseAssetVersionSortKey\s*\{[\s\S]*stable[\s\S]*preview[\s\S]*dev/i,
+    'expected install.ps1 to build a semantic sort key that preserves stable/preview/dev prerelease ordering',
+  );
+  assert.match(
+    raw,
+    /function Resolve-InstallerDefaultVersionPattern\s*\{[\s\S]*preview[\s\S]*-preview[\s\S]*publicdev[\s\S]*-dev/i,
+    'expected install.ps1 to derive the default rolling version pattern from the selected channel',
+  );
+  assert.match(
+    raw,
+    /function Resolve-InstallerRequestedVersionPattern\s*\{[\s\S]*Resolve-InstallerDefaultVersionPattern/i,
+    'expected install.ps1 to use a channel-safe default asset version pattern when no explicit version is requested',
+  );
+  assert.doesNotMatch(
+    raw,
+    /return\s+"\^\$\(\[Regex\]::Escape\(\$Prefix\)\)\.\*\$\(\[Regex\]::Escape\(\$Suffix\)\)\$"/i,
+    'expected install.ps1 not to use a catch-all rolling asset wildcard that can cross channel boundaries',
+  );
+  assert.match(
+    raw,
+    /function Get-AssetByPattern\s*\{[\s\S]*Get-ReleaseAssetVersionSortKey/i,
+    'expected remote release asset lookup to rank matches by semantic version instead of provider order',
+  );
+  assert.match(
+    raw,
+    /function Get-LocalAssetByPattern\s*\{[\s\S]*Get-ReleaseAssetVersionSortKey/i,
+    'expected local release asset lookup to rank matches by semantic version instead of filesystem order',
+  );
+  assert.doesNotMatch(
+    raw,
+    /function Get-AssetByPattern\s*\{[\s\S]*Select-Object\s+-Last\s+1/i,
+    'expected remote release asset lookup to avoid trusting GitHub asset order',
+  );
+  assert.doesNotMatch(
+    raw,
+    /function Get-LocalAssetByPattern\s*\{[\s\S]*Select-Object\s+-Last\s+1/i,
+    'expected local release asset lookup to avoid trusting filesystem enumeration order',
+  );
+});
+
+test('install.ps1 exposes installer-side rollback without invoking the current happier command', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+
+  assert.match(raw, /\[switch\]\s+\$Rollback/i);
+  assert.match(raw, /HAPPIER_INSTALLER_ACTION/i);
+  assert.match(raw, /function Invoke-InstallerCliRollback\s*\{/i);
+  assert.match(raw, /previous\.version/i);
+  assert.match(raw, /New-Item\s+-ItemType\s+HardLink[\s\S]*Resolve-CliShimName/i);
+  const rollbackDispatchIndex = raw.indexOf('if ($InstallerAction -eq "rollback")');
+  const installedCliFastPathIndex = raw.indexOf('if ($Run -and -not $SetupRelay -and ($existing = Resolve-InstalledCliInvoker))');
+  assert.ok(rollbackDispatchIndex >= 0, 'expected install.ps1 to dispatch rollback directly');
+  assert.ok(installedCliFastPathIndex >= 0, 'expected install.ps1 to keep the installed CLI fast path');
+  assert.ok(
+    rollbackDispatchIndex < installedCliFastPathIndex,
+    'expected rollback to run before any installed CLI fast path can invoke the current happier command',
+  );
+});

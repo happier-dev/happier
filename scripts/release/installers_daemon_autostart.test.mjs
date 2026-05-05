@@ -35,6 +35,7 @@ async function runInstallerScenario(envOverrides = {}, options = {}) {
   await mkdir(systemdSystemDir, { recursive: true });
 
   const {
+    __installerArgs: installerArgs = [],
     HAPPIER_TEST_NATIVE_USER_SERVICE_CONTENT: nativeUserServiceContent,
     HAPPIER_TEST_NATIVE_SYSTEM_SERVICE_CONTENT: nativeSystemServiceContent,
     ...installerEnvOverrides
@@ -159,6 +160,17 @@ if [[ ( "$1" = "service" || "$1" = "doctor" ) && "$2" = "repair" && "$3" = "--js
   fi
   echo "error: unknown option '--json'" >&2
   exit 1
+fi
+if [[ "$1" = "doctor" && "$2" = "repair" && "$3" = "--report-only" ]]; then
+  if [[ "\${HAPPIER_TEST_UNSUPPORTED_DOCTOR_REPAIR_REPORT_ONLY:-0}" = "1" ]]; then
+    echo "error: unknown option '--report-only'" >&2
+    exit 1
+  fi
+  echo "doctor repair-report-only ${version} home=\${HAPPIER_HOME_DIR:-unset} channel=\${HAPPIER_DAEMON_SERVICE_CHANNEL:-unset} public=\${HAPPIER_PUBLIC_RELEASE_CHANNEL:-unset} strategy=\${HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY:-unset}" >> "${logPath}"
+  if [[ -n "\${HAPPIER_TEST_DOCTOR_REPAIR_REPORT_ONLY_TEXT:-}" ]]; then
+    printf '%s\n' "\${HAPPIER_TEST_DOCTOR_REPAIR_REPORT_ONLY_TEXT}"
+  fi
+  exit 0
 fi
 if [[ "$1" = "service" && "$2" = "list" && "$3" = "--json" ]]; then
   if [[ "\${HAPPIER_TEST_LOG_SERVICE_PREFLIGHT:-0}" = "1" ]]; then
@@ -348,7 +360,7 @@ printf '%s' '${releaseJson}'
     ...installerEnvOverrides,
   };
 
-  const res = spawnSync('bash', [installerPath], { env, encoding: 'utf8' });
+  const res = spawnSync('bash', [installerPath, ...installerArgs], { env, encoding: 'utf8' });
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
   if (expectedFailureMessage) {
@@ -403,6 +415,7 @@ test('install.sh skips daemon service preflight when daemon setup is explicitly 
     HAPPIER_WITH_DAEMON: '0',
     HAPPIER_TEST_LOG_SERVICE_PREFLIGHT: '1',
     HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      schemaVersion: 2,
       ok: true,
       executed: false,
       existingServices: [
@@ -463,53 +476,118 @@ test('install.sh retries transient minisign signature downloads before failing t
   }
 });
 
-test('install.sh renders a concise background-service summary without raw system manager output', async () => {
+test('install.sh does not render a shell-owned post-install summary when doctor repair --report-only yields no output', async () => {
   const scenario = await runInstallerScenario({
     HAPPIER_NONINTERACTIVE: '',
     HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
       ok: true,
       executed: false,
       existingServices: [
-        { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' },
+        {
+          name: 'Default background service',
+          serverId: 'default',
+          mode: 'user',
+          path: '/tmp/com.happier.cli.daemon.default.plist',
+          targetMode: 'default-following',
+          releaseChannel: 'stable',
+        },
+        {
+          name: 'company',
+          serverId: 'company',
+          mode: 'user',
+          path: '/tmp/com.happier.cli.daemon.env_9675c02.plist',
+          targetMode: 'pinned',
+          releaseChannel: 'stable',
+        },
       ],
-      actions: [
-        { kind: 'remove-service', service: { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' } },
-        { kind: 'install-default-following-service', releaseChannel: 'publicdev', mode: 'user' },
+      daemonStatus: {
+        daemon: {
+          running: true,
+          pid: 28768,
+          startedWithCliVersion: '0.2.1-preview.1775503793.4227',
+          startedWithPublicReleaseChannel: null,
+          serviceManaged: false,
+        },
+      },
+      relays: [
+        {
+          ring: 'dev',
+          scope: 'user',
+          relayUrl: 'http://127.0.0.1:4400',
+          healthy: true,
+          serviceActive: true,
+          serviceEnabled: true,
+        },
       ],
+      actions: [],
       manualWarnings: [],
     }),
     HAPPIER_TEST_SERVICE_LIST_TEXT: 'Default background service (default, stable)\n  installed: /tmp/com.happier.cli.daemon.default.plist',
-    HAPPIER_TEST_SERVICE_STATUS_JSON: JSON.stringify({
-      ok: true,
-      daemon: { running: true, pid: 28768 },
-      owner: {
-        serviceManaged: false,
-        startedWithPublicReleaseChannel: null,
-        startedWithCliVersion: '0.2.1-preview.1775503793.4227',
-        currentInvocationMatches: false,
-      },
-      system: {
-        ok: true,
-        output: 'gui/501/com.happier.cli.daemon.default = { raw launchctl dump }',
-      },
-    }),
   });
   try {
-    assert.match(scenario.stdout, /Background Service/);
-    assert.match(scenario.stdout, /• Running now: yes \(pid 28768\)/);
-    assert.match(scenario.stdout, /• Current owner: manual relay runtime/);
-    assert.match(scenario.stdout, /• Owner CLI: unknown • 0\.2\.1-preview\.1775503793\.4227/);
-    assert.match(scenario.stdout, /Current CLI differs from the running manual relay runtime/);
-    assert.doesNotMatch(scenario.stdout, /gui\/501\/com\.happier\.cli\.daemon\.default/);
-    assert.match(scenario.stdout, /Automatic startup still follows the current managed default release-channel/);
+    assert.match(scenario.log, /doctor repair-report-only 1\.2\.4 home=.*\/install/);
+    assert.doesNotMatch(scenario.stdout, /Automatic Startup/);
+    assert.doesNotMatch(scenario.stdout, /Installed background services:/);
   } finally {
     await scenario.cleanup();
   }
 });
 
-test('install.sh does not invent a relay owner when service status reports owner null', async () => {
+test('install.sh uses doctor repair --report-only for the post-install summary when supported', async () => {
   const scenario = await runInstallerScenario({
     HAPPIER_NONINTERACTIVE: '',
+    HAPPIER_TEST_DOCTOR_REPAIR_REPORT_ONLY_TEXT: [
+      'Automatic startup:',
+      '  - Report-only automatic startup summary',
+      '',
+      'Current daemon status:',
+      '  - Running now: yes (pid 5555)',
+      '',
+      'Local relays:',
+      '  - preview (user) -> http://127.0.0.1:4400',
+    ].join('\n'),
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      ok: true,
+      executed: false,
+      existingServices: [
+        { mode: 'user', targetMode: 'default-following', releaseChannel: 'stable' },
+      ],
+      daemonStatus: {
+        daemon: {
+          running: true,
+          pid: 5555,
+          startedWithCliVersion: '0.2.5-dev.7.1',
+          startedWithPublicReleaseChannel: 'dev',
+          serviceManaged: false,
+        },
+      },
+      relays: [
+        {
+          ring: 'preview',
+          scope: 'user',
+          relayUrl: 'http://127.0.0.1:4400',
+          healthy: true,
+          serviceActive: true,
+          serviceEnabled: true,
+        },
+      ],
+      actions: [],
+      manualWarnings: [],
+    }),
+  });
+  try {
+    assert.match(scenario.log, /doctor repair-report-only 1\.2\.4 home=.*\/install/);
+    assert.match(scenario.stdout, /Report-only automatic startup summary/);
+    assert.doesNotMatch(scenario.stdout, /Installed background services:/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh skips the post-install summary when doctor repair --report-only is unsupported', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_NONINTERACTIVE: '',
+    HAPPIER_TEST_UNSUPPORTED_DOCTOR_REPAIR_REPORT_ONLY: '1',
     HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
       ok: true,
       executed: false,
@@ -519,22 +597,11 @@ test('install.sh does not invent a relay owner when service status reports owner
       actions: [],
       manualWarnings: [],
     }),
-    HAPPIER_TEST_SERVICE_LIST_TEXT: 'Default background service (default, stable)\n  installed: /tmp/com.happier.cli.daemon.default.plist',
-    HAPPIER_TEST_SERVICE_STATUS_JSON: JSON.stringify({
-      ok: true,
-      daemon: { running: false, pid: null },
-      owner: null,
-      system: {
-        ok: true,
-        output: 'gui/501/com.happier.cli.daemon.default = { raw launchctl dump }',
-      },
-    }),
   });
   try {
-    assert.match(scenario.stdout, /Background Service/);
-    assert.match(scenario.stdout, /• Running now: no/);
-    assert.doesNotMatch(scenario.stdout, /• Current owner:/);
-    assert.doesNotMatch(scenario.stdout, /Current owner: relay owner/);
+    assert.doesNotMatch(scenario.log, /doctor repair-report-only 1\.2\.4/);
+    assert.doesNotMatch(scenario.stdout, /Automatic Startup/);
+    assert.doesNotMatch(scenario.stdout, /Installed background services:/);
   } finally {
     await scenario.cleanup();
   }
@@ -563,6 +630,7 @@ test('install.sh installs and enables daemon service when explicitly opted in (b
   const scenario = await runInstallerScenario({
     HAPPIER_WITH_DAEMON: '1',
     HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      schemaVersion: 2,
       ok: true,
       executed: false,
       existingServices: [],
@@ -685,6 +753,7 @@ test('install.sh uses aggregated repair preflight JSON before attempting noninte
       ],
     }),
     HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      schemaVersion: 2,
       ok: true,
       executed: false,
       existingServices: [
@@ -710,10 +779,49 @@ test('install.sh uses aggregated repair preflight JSON before attempting noninte
   }
 });
 
+test('install.sh accepts doctor repair inventory by shape before attempting noninteractive repair', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_WITH_DAEMON: '1',
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      ok: true,
+      executed: false,
+      existingServices: [
+        { mode: 'system', targetMode: 'default-following' },
+      ],
+      actions: [],
+      manualWarnings: [],
+    }),
+    HAPPIER_TEST_SERVICE_LIST_JSON: JSON.stringify({
+      entries: [
+        { mode: 'user', targetMode: 'default-following' },
+      ],
+    }),
+    HAPPIER_TEST_SERVICE_LIST_TEXT: 'default service (user)',
+    HAPPIER_TEST_SERVICE_STATUS_TEXT: 'current owner: background service',
+  });
+  try {
+    assert.match(scenario.stderr, /system background services require sudo to repair or switch/i);
+    assert.match(scenario.stderr, /sudo .*doctor repair --yes/);
+    assert.equal(scenario.log.trim(), '');
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh does not prompt for automatic-startup changes when the current default service already matches the selected release channel', async () => {
+  const raw = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.sh'), 'utf8');
+
+  assert.match(
+    raw,
+    /if \[\[ "\$\{NONINTERACTIVE\}" == "1" \]\]; then[\s\S]*fi[\s\S]*if \[\[ "\$\{has_existing_services\}" == "1" \]\] && background_service_inventory_has_matching_default_following "\$\{services_json\}"; then[\s\S]*echo "0"[\s\S]*return[\s\S]*fi[\s\S]*prompt_for_daemon_install_choice/,
+  );
+});
+
 test('install.sh trusts CLI repair preflight over native Linux unit scans when service inventory is supported', async () => {
   const scenario = await runInstallerScenario({
     HAPPIER_WITH_DAEMON: '1',
     HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      schemaVersion: 2,
       ok: true,
       executed: false,
       existingServices: [

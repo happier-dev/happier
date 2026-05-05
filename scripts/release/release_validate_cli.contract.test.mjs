@@ -315,12 +315,16 @@ test('release-validate plans cli-update continuity against the core e2e lane', a
 
 test('release-validate materializes cli-update local-build targets before running the continuity lane', async () => {
   const calls = [];
+  const windowsComspec = 'C:\\Windows\\System32\\cmd.exe';
   runCliUpdateValidation({
     repoRoot,
     update: {
       from: { kind: 'published-channel', ref: 'preview' },
       to: { kind: 'local-build', ref: 'HEAD' },
     },
+    platform: 'win32',
+    npmExecPath: 'C:\\npm\\node_modules\\npm\\bin\\npm-cli.js',
+    comspec: windowsComspec,
     exec(command, args, options = {}) {
       calls.push({ command, args, options });
       if (args[0]?.endsWith('/apps/cli/scripts/packTarball.mjs')) {
@@ -343,8 +347,13 @@ test('release-validate materializes cli-update local-build targets before runnin
   });
 
   assert.equal(calls.length, 4);
-  assert.match(calls[0].command, /yarn(?:\.cmd)?$/);
-  assert.deepEqual(calls[0].args, ['-s', 'workspace', '@happier-dev/cli', 'build']);
+  assert.equal(calls[0].command, windowsComspec);
+  assert.equal(calls[0].options.windowsVerbatimArguments, true);
+  assert.match(calls[0].args.join(' '), /yarn\.cmd/);
+  assert.match(calls[0].args.join(' '), /workspace/);
+  assert.match(calls[0].args.join(' '), /@happier-dev\/cli/);
+  assert.match(calls[0].args.join(' '), /build/);
+  assert.doesNotMatch(calls[0].args.join(' '), /npm-cli\.js/);
   assert.equal(calls[0].options.cwd, repoRoot);
   assert.equal(calls[1].command, process.execPath);
   assert.equal(calls[1].args[0], resolve(repoRoot, 'apps', 'cli', 'scripts', 'packTarball.mjs'));

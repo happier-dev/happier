@@ -11,6 +11,10 @@ async function readJson(relativePath) {
     return JSON.parse(await readFile(join(repoRoot, relativePath), 'utf8'));
 }
 
+function assertPreparesTauriSidecar(script, message) {
+    assert.match(script, /(?:prepareTauriSidecar\.mjs|tauri:prepare:sidecar)/, message);
+}
+
 test('ui tauri workflows build the bootstrap sidecar before dev/build and cargo tracks the source artifact', async () => {
     const uiPackageJson = await readJson('apps/ui/package.json');
     const bootstrapPackageJson = await readJson('apps/bootstrap/package.json');
@@ -35,14 +39,12 @@ test('ui tauri workflows build the bootstrap sidecar before dev/build and cargo 
         /node \.\/scripts\/prepareTauriSidecar\.mjs/,
         'ui package should route sidecar preparation through the target-aware preparation script'
     );
-    assert.match(
+    assertPreparesTauriSidecar(
         String(uiPackageJson?.scripts?.['tauri:prepare:dev'] ?? ''),
-        /prepareTauriSidecar\.mjs/,
         'tauri dev preparation should run sidecar preparation before starting Expo'
     );
-    assert.match(
+    assertPreparesTauriSidecar(
         String(uiPackageJson?.scripts?.['tauri:prepare:build'] ?? ''),
-        /prepareTauriSidecar\.mjs/,
         'tauri build preparation should run sidecar preparation before exporting the web frontend'
     );
     assert.match(

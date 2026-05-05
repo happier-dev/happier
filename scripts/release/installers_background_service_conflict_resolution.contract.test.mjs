@@ -12,24 +12,20 @@ test('installers perform installed-service preflight before interactive backgrou
   const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
 
   assert.ok(bashSource.includes('service list --json'), 'expected bash installer to preflight installed background services');
-  assert.ok(bashSource.includes('doctor repair --json'), 'expected bash installer to prefer aggregated background-service repair preflight when available');
-  assert.ok(bashSource.includes('service list 2>/dev/null'), 'expected bash installer to print installed background-service summaries');
-  assert.ok(bashSource.includes('service status --json 2>/dev/null'), 'expected bash installer to summarize current background-service owner status from JSON');
-  assert.match(
-    bashSource,
-    /Switching managed background-service startup to this release-channel[\s\S]*doctor repair --yes/,
-    'expected bash installer replace-existing path to route through doctor repair',
+  assert.ok(bashSource.includes('doctor repair --json'), 'expected bash installer to prefer aggregated doctor repair preflight when available');
+  assert.ok(bashSource.includes('daemonRunning'), 'expected bash installer to consume aggregated daemon status from doctor repair preflight');
+  assert.ok(
+    bashSource.includes('defaultFollowingMatchesSelectedReleaseChannel'),
+    'expected bash installer to consume aggregated default-following channel matching from doctor repair preflight when available',
   );
+  assert.ok(bashSource.includes('doctor repair --report-only'), 'expected bash installer to delegate interactive post-install reporting to doctor repair');
+  assert.ok(bashSource.includes('run_background_service_repair_if_supported'), 'expected bash installer replace-existing path to route through the repair compatibility helper');
   assert.ok(bashSource.includes('background_service_inventory_has_default_following'), 'expected bash installer to distinguish singleton default services from add-another flows');
 
   assert.ok(powershellSource.includes('service", "list", "--json"'), 'expected PowerShell installer to preflight installed background services');
-  assert.ok(powershellSource.includes('@("service", "list")'), 'expected PowerShell installer to print installed background-service summaries');
-  assert.ok(powershellSource.includes('@("service", "status")'), 'expected PowerShell installer to print current background-service owner status');
-  assert.match(
-    powershellSource,
-    /Switching managed background-service startup to this release-channel[\s\S]*@\("doctor", "repair", "--yes"\)/,
-    'expected PowerShell installer replace-existing path to route through doctor repair',
-  );
+  assert.ok(powershellSource.includes('daemonRunning'), 'expected PowerShell installer to consume aggregated daemon status from doctor repair preflight');
+  assert.ok(powershellSource.includes('@("doctor", "repair", "--report-only")'), 'expected PowerShell installer to delegate interactive post-install reporting to doctor repair');
+  assert.ok(powershellSource.includes('Invoke-DoctorRepairIfSupported'), 'expected PowerShell installer replace-existing path to route through the repair compatibility helper');
   assert.ok(powershellSource.includes(".targetMode -eq 'default-following'"), 'expected PowerShell installer to distinguish singleton default services from add-another flows');
 });
 
@@ -50,18 +46,15 @@ test('installers accept both service-list JSON shapes used by dev and remote-dev
 
   assert.ok(powershellSource.includes('$payload.entries'), 'expected PowerShell installer to read entries inventories');
   assert.ok(powershellSource.includes('$payload.services'), 'expected PowerShell installer to read services inventories');
-});
-
-test('install.sh trusts aggregated repair preflight for any supported inventory shape', async () => {
-  const bashSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.sh'), 'utf8');
-
-  assert.ok(
-    bashSource.includes('if background_service_inventory_json_is_supported "${repair_json}"; then'),
-    'expected bash installer to validate aggregated repair preflight via the supported-inventory helper (entries/services/existingServices), not by key-specific substring gates',
+  assert.match(
+    powershellSource,
+    /if \(\$entries\.Count -gt 0 -or \$services\.Count -gt 0 -or \$propertyNames -contains 'entries' -or \$propertyNames -contains 'services'\)/,
+    'expected PowerShell installer to treat empty legacy inventories as supported rather than unsupported',
   );
-  assert.ok(
-    !bashSource.includes(`'"existingServices":'`),
-    'expected bash installer repair preflight gating to be shape-based (entries/services/existingServices), not hard-coded to existingServices only',
+  assert.match(
+    powershellSource,
+    /Entries = if \(\$entries\.Count -gt 0\) \{ \$entries \} elseif \(\$services\.Count -gt 0\) \{ \$services \} else \{ @\(\) \}/,
+    'expected PowerShell installer to normalize services-only inventories into canonical Entries for downstream decisions',
   );
 });
 
@@ -95,20 +88,69 @@ test('installers preserve existing background services during noninteractive pre
   );
 });
 
-test('installers explain existing background services before asking whether to update startup behavior', async () => {
+test('installers prefer doctor repair --report-only for interactive post-install summaries when supported', async () => {
   const bashSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.sh'), 'utf8');
   const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
 
-  assert.ok(bashSource.includes('Background Service'), 'expected bash installer to show installed background services before prompting');
-  assert.ok(
-    bashSource.includes('Switch the managed default background service to this release-channel'),
-    'expected bash installer to explain managed default release-channel behavior when services already exist',
+  assert.ok(bashSource.includes('doctor repair --report-only'), 'expected bash installer to prefer doctor repair --report-only for post-install summaries');
+  assert.doesNotMatch(
+    bashSource,
+    /report_text=.*doctor repair --report-only|doctor repair --report-only.*report_text=/,
+    'expected bash installer to stream doctor repair --report-only directly (preserving colors) rather than capturing output',
   );
-
-  assert.ok(powershellSource.includes('Current background services:'), 'expected PowerShell installer to show installed background services before prompting');
+  assert.doesNotMatch(
+    bashSource,
+    /print_installed_background_service_summary|Installed background services:|Local relays:/,
+    'expected bash installer to avoid shell-owned post-install summary rendering',
+  );
   assert.ok(
-    powershellSource.includes('Switch the managed default background service to this release-channel'),
-    'expected PowerShell installer to explain managed default release-channel behavior when services already exist',
+    powershellSource.includes('@("doctor", "repair", "--report-only")'),
+    'expected PowerShell installer to prefer doctor repair --report-only for post-install summaries',
+  );
+  assert.doesNotMatch(
+    powershellSource,
+    /Get-BackgroundServiceReportText|Invoke-NativeCommandCapturingOutput[\s\S]{0,1200}@\(\"doctor\",\s*\"repair\",\s*\"--report-only\"\)/,
+    'expected PowerShell installer to stream doctor repair --report-only directly (preserving colors) rather than capturing output',
+  );
+  assert.doesNotMatch(
+    powershellSource,
+    /Show-InstalledBackgroundServiceSummary|Show-InstalledLocalRelaySummary|Installed background services:|Local relays:/,
+    'expected PowerShell installer to avoid PowerShell-owned post-install summary rendering',
+  );
+});
+
+test('PowerShell installer attempts doctor repair --report-only even before any background service exists', async () => {
+  const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
+
+  assert.match(
+    powershellSource,
+    /\$shouldInspectBackgroundServices[\s\S]*\$backgroundServiceInventory = Get-InstalledBackgroundServiceInventory[\s\S]*\$backgroundServiceInventory\.RepairSupported[\s\S]*@\(\"doctor\",\s*\"repair\",\s*\"--report-only\"\)/,
+    'expected PowerShell installer to try doctor repair --report-only for interactive installs even when no background service is installed yet',
+  );
+});
+
+test('PowerShell installer treats doctor repair preflight crashes as non-fatal', async () => {
+  const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
+
+  assert.match(
+    powershellSource,
+    /\$doctorPreflightResult\s*=\s*Invoke-NativeCommandCapturingOutput[\s\S]*@\("doctor",\s*"repair",\s*"--json"\)/,
+    'expected doctor repair preflight to be captured as a native command result',
+  );
+  assert.match(
+    powershellSource,
+    /if\s*\(\$doctorPreflightResult\.ExitCode\s*-eq\s*0\s*-and\s*\$preflightJsonIsSupported\s*-and\s*-not\s*\$preflightLooksLikePlainReport\)/,
+    'expected installer to parse doctor repair JSON only after a successful native exit AND the output passed the fail-closed shape checks (mirrors install.sh:835-862)',
+  );
+  assert.match(
+    powershellSource,
+    /Write-Warning\s+"Automatic startup inspection failed; continuing without blocking install/,
+    'expected installer to warn briefly instead of aborting when doctor repair preflight crashes',
+  );
+  assert.match(
+    powershellSource,
+    /\$serviceListResult\s*=\s*Invoke-NativeCommandCapturingOutput[\s\S]*@\("service",\s*"list",\s*"--json"\)/,
+    'expected installer to fall back to legacy service list preflight after doctor repair failure',
   );
 });
 
@@ -116,14 +158,36 @@ test('installers reuse --yes when auto-installing a background service after non
   const bashSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.sh'), 'utf8');
   const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
 
+  assert.ok(bashSource.includes('run_background_service_repair_if_supported'), 'expected bash installer to centralize repair compatibility handling');
+  assert.ok(bashSource.includes('run_background_service_install_compatibly'), 'expected bash installer to centralize service-install compatibility handling');
+  assert.ok(powershellSource.includes('Invoke-DoctorRepairIfSupported'), 'expected PowerShell installer to centralize repair compatibility handling');
+  assert.ok(powershellSource.includes('Invoke-BackgroundServiceInstallCompatibly'), 'expected PowerShell installer to centralize service-install compatibility handling');
+});
+
+test('installers skip doctor repair execution when the installed CLI only exposes legacy service commands', async () => {
+  const bashSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.sh'), 'utf8');
+  const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
+
   assert.match(
     bashSource,
-    /Reconciling existing background services \(best-effort\)\.\.\.[\s\S]*doctor repair --yes[\s\S]*service install --yes/,
-    'expected bash installer to auto-confirm service install after noninteractive repair',
+    /run_background_service_repair_if_supported[\s\S]*if \[\[ "\$\{repair_status\}" == "2" \]\]; then[\s\S]*run_background_service_install_compatibly/,
+    'expected bash installer to bypass doctor repair execution when the command is unsupported and continue with legacy service install',
   );
   assert.match(
     powershellSource,
-    /Reconciling existing background services \(best-effort\)\.\.\.[\s\S]*@\("doctor", "repair", "--yes"\)[\s\S]*@\("service", "install", "--yes"\)/,
-    'expected PowerShell installer to auto-confirm service install after noninteractive repair',
+    /Invoke-DoctorRepairIfSupported[\s\S]*elseif \(\$repairResult\.Status -eq 'unsupported'\) \{[\s\S]*Invoke-BackgroundServiceInstallCompatibly/,
+    'expected PowerShell installer to bypass doctor repair execution when the command is unsupported and continue with legacy service install',
+  );
+});
+
+test('installers filter unsupported setup-relay default flags against the installed CLI help surface', async () => {
+  const bashSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.sh'), 'utf8');
+  const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
+
+  assert.ok(bashSource.includes('filter_supported_setup_relay_default_args'), 'expected bash installer to filter setup-relay default args against relay host install help');
+  assert.match(
+    powershellSource,
+    /Get-SupportedSetupRelayDefaultArgs[\s\S]*relay host install --help/,
+    'expected PowerShell installer to filter setup-relay default args against relay host install help',
   );
 });

@@ -393,3 +393,75 @@ exit 22
 
   await rm(root, { recursive: true, force: true });
 });
+
+test('install.sh --run setup-relay filters default relay args unsupported by an older CLI', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-setup-relay-filter-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(installDir, 'cli', 'current'), { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(curlStubPath, '#!/usr/bin/env bash\necho \"curl should not run\" >&2\nexit 88\n', 'utf8');
+  await chmod(curlStubPath, 0o755);
+
+  const cliPath = join(installDir, 'cli', 'current', 'happier');
+  await writeFile(
+    cliPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "relay" && "$2" = "--help" ]]; then
+  echo "happier relay host install"
+  exit 0
+fi
+if [[ "$1" = "relay" && "$2" = "host" && "$3" = "install" && "$4" = "--help" ]]; then
+  echo "Usage: happier relay host install [--mode <mode>]"
+  exit 0
+fi
+if [[ "$1" = "relay" && "$2" = "host" && "$3" = "install" ]]; then
+  shift 3
+  if [[ " $* " != *" --mode user "* ]]; then
+    echo "missing supported --mode user" >&2
+    exit 21
+  fi
+  for unsupported in --yes --channel --preserve-active-server; do
+    if [[ " $* " == *" $unsupported "* ]]; then
+      echo "unsupported default arg leaked: $unsupported" >&2
+      exit 22
+    fi
+  done
+  echo "filtered relay args: $*"
+  exit 0
+fi
+echo "unexpected args: $@" >&2
+exit 22
+`,
+    'utf8',
+  );
+  await chmod(cliPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--run', 'setup-relay'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  assert.equal(res.status, 0, `expected setup-relay defaults to be filtered:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.match(stdout, /filtered relay args: --mode user/);
+
+  await rm(root, { recursive: true, force: true });
+});

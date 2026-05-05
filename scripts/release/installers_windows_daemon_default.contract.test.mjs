@@ -28,6 +28,17 @@ test('install.ps1 scopes background-service commands to the installer home when 
   assert.match(raw, /\$DaemonServiceStateHomeDir\s*=\s*\$env:HAPPIER_HOME_DIR/i);
 });
 
+test('install.ps1 uses HAPPIER_HOME_DIR as the default install root when HAPPIER_INSTALL_DIR is unset', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+
+  assert.match(
+    raw,
+    /\$InstallDir\s*=\s*if\s*\(\$env:HAPPIER_INSTALL_DIR\)\s*\{[\s\S]*?\}\s*elseif\s*\(\$env:HAPPIER_HOME_DIR\)\s*\{[\s\S]*?\$env:HAPPIER_HOME_DIR[\s\S]*?\}\s*else\s*\{[\s\S]*?\.happier[\s\S]*?\}/i,
+    'expected Windows installer default install root precedence to be HAPPIER_INSTALL_DIR, then HAPPIER_HOME_DIR, then %USERPROFILE%\\.happier',
+  );
+});
+
 test('install.ps1 calls Resolve-WithDaemonPreference with the renamed Entries parameter', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
   const raw = await readFile(path, 'utf8');

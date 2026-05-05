@@ -24,6 +24,7 @@ test('apps/ui/eas.json defines publicdev profiles for the public nightly dev lan
   assert.equal(publicdev?.env?.EXPO_UPDATES_CHANNEL, 'dev');
   assert.equal(publicdev?.env?.EXPO_APP_NAME, 'Happier (dev)');
   assert.equal(publicdev?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev');
+  assert.equal(publicdev?.env?.EXPO_ANDROID_PACKAGE, 'dev.happier.app.publicdev');
   assert.equal(publicdev?.env?.EXPO_APP_SCHEME, 'happier-dev');
 
   const publicdevApk = build?.['publicdev-apk'] ?? null;
@@ -37,7 +38,24 @@ test('apps/ui/eas.json defines publicdev profiles for the public nightly dev lan
   assert.equal(publicdevApk?.env?.EXPO_UPDATES_CHANNEL, 'dev');
   assert.equal(publicdevApk?.env?.EXPO_APP_NAME, 'Happier (dev)');
   assert.equal(publicdevApk?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev');
+  assert.equal(publicdevApk?.env?.EXPO_ANDROID_PACKAGE, 'dev.happier.app.publicdev');
   assert.equal(publicdevApk?.env?.EXPO_APP_SCHEME, 'happier-dev');
+
+  const publicdevDevClient = build?.['publicdev-dev-client'] ?? null;
+  assert.ok(publicdevDevClient, 'expected publicdev-dev-client build profile');
+  assert.equal(publicdevDevClient.extends, 'base');
+  assert.equal(publicdevDevClient.environment, 'preview');
+  assert.equal(publicdevDevClient.developmentClient, true);
+  assert.equal(publicdevDevClient.distribution, 'internal');
+  assert.equal(publicdevDevClient.channel, 'dev');
+  assert.equal(publicdevDevClient?.android?.buildType, 'apk');
+  assert.match(publicdevDevClient?.android?.gradleCommand ?? '', /assembleDebug/);
+  assert.equal(publicdevDevClient?.env?.APP_ENV, 'publicdev');
+  assert.equal(publicdevDevClient?.env?.EXPO_UPDATES_CHANNEL, 'dev');
+  assert.equal(publicdevDevClient?.env?.EXPO_APP_NAME, 'Happier (dev)');
+  assert.equal(publicdevDevClient?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev.devclient');
+  assert.equal(publicdevDevClient?.env?.EXPO_ANDROID_PACKAGE, 'dev.happier.app.publicdev.devclient');
+  assert.equal(publicdevDevClient?.env?.EXPO_APP_SCHEME, 'happier-dev');
 
   const submit = eas?.submit ?? null;
   assert.equal(typeof submit, 'object');

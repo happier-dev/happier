@@ -16,6 +16,13 @@ test('install.ps1 refreshes the current session PATH and prints Windows PATH rel
   assert.match(guidanceMatch[0], /The current PowerShell session can use \$ShimName immediately/i);
   assert.match(guidanceMatch[0], /Other already-open terminals keep their old PATH until you restart them/i);
   assert.match(guidanceMatch[0], /\$ShimName/);
-  assert.match(raw, /\$env:Path\s*=\s*\(\$updatedPathEntries -join ';'\)/i);
+  assert.match(raw, /\$machinePath\s*=\s*\[Environment\]::GetEnvironmentVariable\("Path",\s*\[EnvironmentVariableTarget\]::Machine\)/i);
+  assert.match(raw, /\$processPathEntries\s*=\s*@\(\$updatedPathEntries\)\s*\+\s*@\(\$machinePathEntries\)/i);
+  assert.match(raw, /\$env:Path\s*=\s*\(\$processPathEntries -join ';'\)/i);
+  assert.doesNotMatch(
+    raw,
+    /\$env:Path\s*=\s*\(\$updatedPathEntries -join ';'\)/i,
+    'expected the refreshed process PATH to keep machine PATH entries such as System32',
+  );
   assert.match(raw, /Show-PathReloadGuidance\s+-ShimName\s+\(Resolve-CliShimName\)\s+-BinDir\s+\$BinDir/i);
 });

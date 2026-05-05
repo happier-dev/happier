@@ -59,4 +59,14 @@ test('install.ps1 applies setup-relay default relay-host arguments for both shor
     /if \(\$runValue -eq "setup-relay" -and \$setupRelayDefaultArgs\.Count -eq 0\) \{\s*\$setupRelayDefaultArgs = @\("--mode", "user", "--yes", "--channel", \$\(if \(\$Channel -eq "publicdev"\) \{ "dev" \} else \{ \$Channel \}\), "--preserve-active-server"\)\s*\}/i,
     'expected explicit -Run setup-relay to receive the same default relay-host arguments as the setup-relay shortcut',
   );
+  assert.match(
+    raw,
+    /function Filter-SetupRelayDefaultArgsByHelp[\s\S]*relay", "host", "install", "--help"/i,
+    'expected PowerShell installer to filter setup-relay defaults against relay host install help',
+  );
+  assert.match(
+    invokePostInstallAction[0],
+    /Filter-SetupRelayDefaultArgsByHelp\s+-CliPath\s+\$CliPath\s+-DefaultArgs\s+\$setupRelayDefaultArgs/i,
+    'expected PowerShell setup-relay invocation to filter unsupported default args before invoking older CLIs',
+  );
 });

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { execYarn } from '../../../workspaces/execYarnCommand.mjs';
 import { resolveCoreE2eSlowSuiteCommand } from './core-e2e-slow-suite.mjs';
 
 const CLI_UPDATE_CONTINUITY_TEST_FILES = [
@@ -15,10 +16,6 @@ const CLI_UPDATE_CONTINUITY_TEST_FILES = [
  * @typedef {{ from: ReleaseValidationSource; to: ReleaseValidationSource }} ReleaseValidationUpdate
  * @typedef {(command: string, args: string[], options?: import('node:child_process').ExecFileSyncOptions) => unknown} ExecFileSyncLike
  */
-
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
 
 /**
  * @param {string} repoRoot
@@ -89,12 +86,16 @@ function assertCliPackHasRuntimeEntrypoints({ tarballPath, exec }) {
 }
 
 /**
- * @param {{ repoRoot: string; exec: ExecFileSyncLike }} params
+ * @param {{ repoRoot: string; exec: ExecFileSyncLike; platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }} params
  * @returns {ReleaseValidationSource}
  */
-function packLocalBuildCliSource({ repoRoot, exec }) {
+function packLocalBuildCliSource({ repoRoot, exec, platform = process.platform, npmExecPath = process.env.npm_execpath, comspec }) {
   const packDir = createLocalBuildPackDir(repoRoot);
-  exec(yarnCommand(), ['-s', 'workspace', '@happier-dev/cli', 'build'], {
+  execYarn(['-s', 'workspace', '@happier-dev/cli', 'build'], {
+    execFileSync: exec,
+    platform,
+    npmExecPath,
+    comspec,
     cwd: repoRoot,
     env: {
       ...process.env,
@@ -120,16 +121,16 @@ function packLocalBuildCliSource({ repoRoot, exec }) {
 }
 
 /**
- * @param {{ repoRoot: string; update: ReleaseValidationUpdate; exec: ExecFileSyncLike }} params
+ * @param {{ repoRoot: string; update: ReleaseValidationUpdate; exec: ExecFileSyncLike; platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }} params
  * @returns {ReleaseValidationUpdate}
  */
-function materializeCliUpdateSourcesForExecution({ repoRoot, update, exec }) {
+function materializeCliUpdateSourcesForExecution({ repoRoot, update, exec, platform, npmExecPath, comspec }) {
   if (update.to.kind !== 'local-build') {
     return update;
   }
   return {
     ...update,
-    to: packLocalBuildCliSource({ repoRoot, exec }),
+    to: packLocalBuildCliSource({ repoRoot, exec, platform, npmExecPath, comspec }),
   };
 }
 
@@ -172,15 +173,25 @@ export function resolveCliUpdateExecution({ repoRoot, update }) {
 }
 
 /**
- * @param {{ repoRoot: string; update: ReleaseValidationUpdate | null; exec?: ExecFileSyncLike }} params
+ * @param {{ repoRoot: string; update: ReleaseValidationUpdate | null; exec?: ExecFileSyncLike; platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }} params
  */
-export function runCliUpdateValidation({ repoRoot, update, exec = execFileSync }) {
+export function runCliUpdateValidation({
+  repoRoot,
+  update,
+  exec = execFileSync,
+  platform = process.platform,
+  npmExecPath = process.env.npm_execpath,
+  comspec,
+}) {
   const execution = resolveCliUpdateExecution({
     repoRoot,
     update: materializeCliUpdateSourcesForExecution({
       repoRoot,
       update: requireCliUpdateSources(update),
       exec,
+      platform,
+      npmExecPath,
+      comspec,
     }),
   });
   exec(execution.command, execution.args, {

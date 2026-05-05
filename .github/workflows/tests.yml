@@ -476,12 +476,14 @@ jobs:
 
       - name: Run shared package unit tests
         run: |
+          yarn workspace @happier-dev/peer-mediation test
           yarn workspace @happier-dev/transfers test
           yarn workspace @happier-dev/agents test
           yarn workspace @happier-dev/cli-common test
           yarn workspace @happier-dev/support test
           yarn workspace @happier-dev/connection-supervisor test
           yarn workspace @happier-dev/bootstrap test
+          yarn workspace @happier-dev/plugin-sdk test
           yarn --cwd packages/relay-server test
 
   server:

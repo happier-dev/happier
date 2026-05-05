@@ -168,11 +168,12 @@ function main() {
   const publishCli = deployTargets.includes('cli');
   const publishStack = deployTargets.includes('stack');
   const publishServer = deployTargets.includes('server_runner');
+  const targetsServerRelease = deployTargets.includes('server') || publishServer;
 
   const changedApp = versionedAppChanged ?? (changedUi || changedShared);
   const changedCli = versionedCliChanged ?? (changedCliRaw || changedShared || changedCliStackShared);
   const changedStack = versionedStackChanged ?? (changedStackRaw || changedShared || changedCliStackShared);
-  const changedServer = versionedServerChanged ?? (changedServerRaw || changedShared);
+  const changedServer = targetsServerRelease ? (versionedServerChanged ?? (changedServerRaw || changedShared)) : false;
 
   const bumpApp = shouldBumpComponent(changedApp, resolveOverride(bumpAppOverride, bumpPreset));
   const bumpCli = shouldBumpComponent(changedCli, resolveOverride(bumpCliOverride, bumpPreset));

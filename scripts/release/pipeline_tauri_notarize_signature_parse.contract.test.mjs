@@ -16,3 +16,25 @@ test('extractTauriUpdaterSignature picks the base64 signature out of noisy tauri
   assert.equal(extractTauriUpdaterSignature(out), sig);
 });
 
+test('extractTauriUpdaterSignature preserves a standalone long signature line', () => {
+  const sig = Buffer.from(
+    [
+      'untrusted comment: signature from tauri secret key',
+      `${'A'.repeat(88)}==`,
+      'trusted comment: timestamp:1775372442\tfile:Happier.app.tar.gz',
+      `${'B'.repeat(88)}==`,
+      '',
+    ].join('\n'),
+    'utf8',
+  ).toString('base64');
+  assert.ok(sig.length > 256);
+
+  const out = [
+    'tauri signer sign v2.0.0',
+    'Signature:',
+    sig,
+    '',
+  ].join('\n');
+
+  assert.equal(extractTauriUpdaterSignature(out), sig);
+});
