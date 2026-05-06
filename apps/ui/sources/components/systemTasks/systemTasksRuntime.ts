@@ -1,9 +1,11 @@
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { Platform } from 'react-native';
 
 import { buildLocalMachineSetupSystemTaskSpec } from './buildLocalMachineSetupSystemTaskSpec';
 import { createSystemTaskBridge } from './createSystemTaskBridge';
 import { createSystemTaskRunner } from './createSystemTaskRunner';
 import type { SystemTaskRunner, SystemTaskRunnerMode } from './types';
+import { resolveDefaultNativeSshSystemTaskCapability } from './bridges/native';
 
 let sharedRunner: SystemTaskRunner | null = null;
 
@@ -14,6 +16,9 @@ function resolveRunnerMode(): SystemTaskRunnerMode {
     }
     if (isTauriDesktop()) {
         return 'tauri';
+    }
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
+        return 'native';
     }
     if (process.env.NODE_ENV === 'test') {
         return 'dev';
@@ -27,8 +32,15 @@ export function getSystemTasksRunner(): SystemTaskRunner {
     }
 
     const mode = resolveRunnerMode();
+    const nativeSshCapability = mode === 'native'
+        ? resolveDefaultNativeSshSystemTaskCapability({
+            platformOS: Platform.OS,
+            buildIncluded: String(process.env.HAPPIER_ENABLE_NATIVE_SSH ?? '').trim() === '1',
+        })
+        : undefined;
     const bridge = createSystemTaskBridge({
         mode,
+        nativeSshCapability,
     });
     sharedRunner = createSystemTaskRunner({ bridge, mode });
     return sharedRunner;

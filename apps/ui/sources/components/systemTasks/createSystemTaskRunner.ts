@@ -182,6 +182,9 @@ export function createSystemTaskRunner(options: Readonly<{
         async start(spec: SystemTaskSpec): Promise<string> {
             const parsedSpec = SystemTaskSpecSchema.parse(spec);
             const taskId = await options.bridge.start(parsedSpec);
+            if (tasks.has(taskId)) {
+                return taskId;
+            }
             const record: TaskRecord = {
                 state: createInitialTaskState(taskId),
                 listeners: new Set(),
