@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+    AZ_CLI_SETUP_URL,
     buildConnectedServiceCredentialRecord,
     sealAccountScopedBlobCiphertext,
     type ScmHostingProviderRef,
@@ -254,7 +255,7 @@ describe('createScmHostingProviderRuntimeServices', () => {
             authenticated: true,
             authStatus: 'authenticated' as const,
             remediationReason: null,
-            setupUrl: 'https://learn.microsoft.com/cli/azure/install-azure-cli',
+            setupUrl: AZ_CLI_SETUP_URL,
             loginCommand: ['az', 'login'] as const,
             accountName: 'dev@example.com',
             tenantId: 'tenant-1',

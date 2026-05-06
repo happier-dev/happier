@@ -56,7 +56,7 @@ describe('buildPluginContributionRegistry', () => {
                   providerId: 'ohMyPi',
                   runtimeKind: 'acp',
                   runtimeCoreHooks: [],
-                  capabilities: {},
+                  capabilities: { executionRun: { supported: true } },
                 },
               ],
               actions: [
