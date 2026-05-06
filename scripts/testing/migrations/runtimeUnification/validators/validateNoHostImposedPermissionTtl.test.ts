@@ -103,6 +103,52 @@ test('validateNoHostImposedPermissionTtl rejects host permission timers outside 
   assert.ok(result.errors.some((error) => error.includes('setTimeout')));
 });
 
+test('validateNoHostImposedPermissionTtl rejects copied plugin lifecycle timers outside permission folders', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  writeRepoFile(
+    rootDir,
+    'packages/plugins/claude/src/backend/utils/permissionRuntime.ts',
+    [
+      'const pendingRequests = new Map<string, unknown>();',
+      'export function expireCopiedLifecycle(id: string) {',
+      '  setTimeout(() => pendingRequests.delete(id), 30000);',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('packages/plugins/claude/src/backend/utils/permissionRuntime.ts')));
+  assert.ok(result.errors.some((error) => error.includes('pendingRequests')));
+});
+
+test('validateNoHostImposedPermissionTtl treats permission-owned timers as suspicious by path', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  writeRepoFile(
+    rootDir,
+    'apps/cli/src/agent/permissions/permissionRequestCoordinator.ts',
+    [
+      'export function schedule(id: string) {',
+      '  setTimeout(() => cancel(id), 30000);',
+      '}',
+      'function cancel(_id: string) {}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('permissionRequestCoordinator.ts')));
+  assert.ok(result.errors.some((error) => error.includes('setTimeout')));
+});
+
 test('validateNoHostImposedPermissionTtl rejects missing allowlist marker proof', async () => {
   const { validateNoHostImposedPermissionTtl } = await loadValidator();
   const rootDir = createRepo();
@@ -165,4 +211,32 @@ test('validateNoHostImposedPermissionTtl rejects wall-clock late-decision cleanu
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((error) => error.includes('lateDecisions')));
   assert.ok(result.errors.some((error) => error.includes('Date.now')));
+});
+
+test('validateNoHostImposedPermissionTtl rejects split-clock permission TTL checks', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  writeRepoFile(
+    rootDir,
+    'packages/plugins/claude/src/backend/utils/permissionRuntime.ts',
+    [
+      'const TTL_MS = 30000;',
+      'const pendingRequests = new Map<string, { createdAt: number }>();',
+      'export function pruneCopiedLifecycle(id: string, entry: { createdAt: number }) {',
+      '  const now = Date.now();',
+      '  const requestAgeMs = now - entry.createdAt;',
+      '  if (requestAgeMs > TTL_MS) {',
+      '    pendingRequests.delete(id);',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('Date.now')));
+  assert.ok(result.errors.some((error) => error.includes('createdAt')));
 });
