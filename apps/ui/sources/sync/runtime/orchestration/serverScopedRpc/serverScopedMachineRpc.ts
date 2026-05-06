@@ -19,6 +19,7 @@ import {
     postProductionMachineRpcDirect,
     resolveProductionMachineRpcDirectRoute,
 } from '@/sync/domains/machines/peer/mediation/rpc/productionRoute';
+import { recordMachineRpcPeerMediationReceipt } from '@/sync/domains/machines/peer/mediation/rpc/receiptLog';
 
 import type { ServerScopedMachineRpcParams, SocketRpcResult } from './serverScopedRpcTypes';
 import { isGuardedMachineRpcMethod, resolveTransferPolicyAllowsMachineRpcDirect } from './guardedMachineRpcPolicy';
@@ -295,6 +296,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
             timeoutMs: params.timeoutMs,
         }),
         postDirect: postProductionMachineRpcDirect,
+        recordReceipt: recordMachineRpcPeerMediationReceipt,
         serverFallback: async (fallbackInput) => await machineRpcWithServerTransport<R, A>({
             machineId: fallbackInput.machineId,
             method: fallbackInput.method,

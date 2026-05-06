@@ -34,7 +34,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
 
         expect(mod?.registerPeerTcpTunnelLoopbackRoutes).toBeTypeOf('function');
         mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
-            nowMs: loopbackOptions.nowMs(),
+            nowMs: loopbackOptions.nowMs,
             expected: {
                 accountId: 'account_1',
                 machineId: 'machine_1',
@@ -45,7 +45,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
         });
 
         expect(() => mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
-            nowMs: loopbackOptions.nowMs(),
+            nowMs: loopbackOptions.nowMs,
             expected: {
                 accountId: 'account_1',
                 machineId: 'machine_1',
@@ -78,7 +78,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
         }));
 
         mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
-            nowMs: loopbackOptions.nowMs(),
+            nowMs: loopbackOptions.nowMs,
             expected: {
                 accountId: 'account_1',
                 machineId: 'machine_1',
@@ -116,13 +116,65 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
         await app.close();
     });
 
+    it('evaluates nowMs for each tunnel open request instead of freezing route registration time', async () => {
+        const mod = await loadRegisterRoutesModule();
+        const app = createPeerMediationLoopbackApp(loopbackOptions);
+        let nowMs = 2_000;
+        const openTunnel = vi.fn(async (input) => ({
+            ok: true as const,
+            response: {
+                v: 1 as const,
+                tunnelId: (input.open as { tunnelId: string }).tunnelId,
+                streamPath: '/peer-mediation/v1/tunnel/stream' as const,
+                encoding: 'json_base64_v1' as const,
+                initialWindowBytes: 1024 * 1024,
+                maxFrameBytes: 64 * 1024,
+            },
+            receipt: 'peer.tunnel.opened' as const,
+            connection: { close: async () => undefined },
+            limits: testTunnelLimits,
+        }));
+
+        mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
+            nowMs: () => nowMs,
+            expected: {
+                accountId: 'account_1',
+                machineId: 'machine_1',
+                endpointFingerprint: 'endpoint_1',
+            },
+            trustRoots: [],
+            connectTcp: async () => ({ close: async () => undefined }),
+            openTunnel,
+        });
+
+        nowMs = 2_500;
+        await app.inject({
+            method: 'POST',
+            url: '/peer-mediation/v1/tunnel/open',
+            payload: {
+                v: 1,
+                kind: 'open',
+                tunnelId: 'tun_now',
+                targetMachineId: 'machine_1',
+                routeKind: 'loopback_direct',
+                destination: { host: '127.0.0.1', port: 3000 },
+            },
+        });
+
+        expect(openTunnel).toHaveBeenCalledWith(expect.objectContaining({
+            nowMs: 2_500,
+        }));
+
+        await app.close();
+    });
+
     it('uses Fastify-owned websocket routing instead of attaching a raw upgrade listener', async () => {
         const mod = await loadRegisterRoutesModule();
         const app = createPeerMediationLoopbackApp(loopbackOptions);
         const listenerCountBefore = app.server.listenerCount('upgrade');
 
         mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
-            nowMs: loopbackOptions.nowMs(),
+            nowMs: loopbackOptions.nowMs,
             expected: {
                 accountId: 'account_1',
                 machineId: 'machine_1',
@@ -156,7 +208,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
         }));
 
         mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
-            nowMs: loopbackOptions.nowMs(),
+            nowMs: loopbackOptions.nowMs,
             expected: {
                 accountId: 'account_1',
                 machineId: 'machine_1',
@@ -207,7 +259,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             limits: testTunnelLimits,
         }));
         const options = {
-            nowMs: loopbackOptions.nowMs(),
+            nowMs: loopbackOptions.nowMs,
             expected: {
                 accountId: 'account_1',
                 machineId: 'machine_1',
@@ -283,7 +335,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
 
         try {
             mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
-                nowMs: loopbackOptions.nowMs(),
+                nowMs: loopbackOptions.nowMs,
                 expected: {
                     accountId: 'account_1',
                     machineId: 'machine_1',

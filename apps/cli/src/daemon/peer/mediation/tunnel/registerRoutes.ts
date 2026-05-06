@@ -23,7 +23,8 @@ const DEFAULT_DIRECT_TUNNEL_LIMITS: Readonly<{
 };
 const DEFAULT_OPEN_STREAM_TIMEOUT_MS = 30_000;
 
-export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelInput, 'open'> & Readonly<{
+export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelInput, 'open' | 'nowMs'> & Readonly<{
+    nowMs: () => number;
     openTunnel?: (input: OpenPeerTcpTunnelInput) => Promise<OpenPeerTcpTunnelResult>;
     maxActiveTunnels?: number;
     openStreamTimeoutMs?: number;
@@ -156,6 +157,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         }
         const result = await openTunnel({
             ...options,
+            nowMs: options.nowMs(),
             open: request.body,
         });
         if (!result.ok) {

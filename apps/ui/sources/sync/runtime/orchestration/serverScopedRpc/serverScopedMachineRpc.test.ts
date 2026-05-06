@@ -125,6 +125,7 @@ describe('machineRpcWithServerScope', () => {
             resolveDirectRoute: expect.any(Function),
             postDirect: expect.any(Function),
             serverFallback: expect.any(Function),
+            recordReceipt: expect.any(Function),
         }));
         expect(machineRpcSpy).not.toHaveBeenCalled();
         expect(createEphemeralSocketSpy).not.toHaveBeenCalled();

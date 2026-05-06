@@ -47,6 +47,8 @@ function createDirectionState(initialWindowBytes: number): DirectionState {
 export type PeerTcpTunnelStreamConnection = Readonly<{
     write?: (bytes: Uint8Array) => Promise<void> | void;
     endWrite?: () => Promise<void> | void;
+    pauseRead?: () => Promise<void> | void;
+    resumeRead?: () => Promise<void> | void;
     onData?: (handler: (bytes: Uint8Array) => Promise<void> | void) => (() => void) | void;
     close: () => Promise<void> | void;
 }>;
@@ -64,6 +66,7 @@ export type PeerTcpTunnelStreamSessionResult =
             | 'payload_base64_invalid'
             | 'decoded_payload_too_large'
             | 'tunnel_id_mismatch'
+            | 'direction_not_allowed'
             | 'ack_sequence_invalid'
             | 'send_window_exceeded'
             | 'total_bytes_exceeded'
@@ -314,6 +317,10 @@ export function createPeerTcpTunnelStreamSession(input: Readonly<{
     let totalBytes = 0;
     let daemonToClientSequence = 0;
     let closed = false;
+    let daemonToClientHalfClosed = false;
+    let daemonReadPaused = false;
+    let drainingDaemonQueue = false;
+    const pendingDaemonChunks: Uint8Array[] = [];
     const ackTimers: Partial<Record<PeerTcpTunnelDirectionV1, ReturnType<typeof setTimeout>>> = {};
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let durationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -345,6 +352,7 @@ export function createPeerTcpTunnelStreamSession(input: Readonly<{
             closed = true;
             clearAckTimers();
             clearLifecycleTimers();
+            pendingDaemonChunks.length = 0;
             await sendAbort(reasonCode);
             detachConnectionData?.();
             await input.connection.close();
@@ -430,15 +438,28 @@ export function createPeerTcpTunnelStreamSession(input: Readonly<{
         }, delayMs);
     }
 
-    async function sendDaemonData(bytes: Uint8Array): Promise<void> {
-        if (closed || bytes.byteLength === 0) return;
+    async function pauseDaemonReads(): Promise<void> {
+        if (daemonReadPaused || closed) return;
+        daemonReadPaused = true;
+        await input.connection.pauseRead?.();
+    }
+
+    async function resumeDaemonReads(): Promise<void> {
+        if (!daemonReadPaused || closed || daemonToClientHalfClosed || pendingDaemonChunks.length > 0) return;
+        daemonReadPaused = false;
+        await input.connection.resumeRead?.();
+    }
+
+    function queueDaemonData(bytes: Uint8Array): void {
+        for (let offset = 0; offset < bytes.byteLength; offset += input.maxFrameBytes) {
+            pendingDaemonChunks.push(bytes.subarray(offset, offset + input.maxFrameBytes));
+        }
+    }
+
+    async function sendDaemonDataFrame(bytes: Uint8Array): Promise<void> {
         const lifecycleDeny = lifecycleDenyReason(bytes.byteLength);
         if (lifecycleDeny) {
             await abortAndClose(lifecycleDeny.reasonCode);
-            return;
-        }
-        if (bytes.byteLength > availableSendWindow('daemon_to_client')) {
-            await abortAndClose('send_window_exceeded');
             return;
         }
         const frame: PeerTcpTunnelFrameV1 = {
@@ -464,15 +485,41 @@ export function createPeerTcpTunnelStreamSession(input: Readonly<{
         await input.sendFrame(frame);
     }
 
+    async function drainDaemonQueue(): Promise<void> {
+        if (drainingDaemonQueue) return;
+        drainingDaemonQueue = true;
+        try {
+            while (!closed && !daemonToClientHalfClosed && pendingDaemonChunks.length > 0) {
+                const next = pendingDaemonChunks[0]!;
+                if (next.byteLength > availableSendWindow('daemon_to_client')) {
+                    await pauseDaemonReads();
+                    return;
+                }
+                pendingDaemonChunks.shift();
+                await sendDaemonDataFrame(next);
+            }
+            await resumeDaemonReads();
+        } finally {
+            drainingDaemonQueue = false;
+        }
+    }
+
+    async function enqueueDaemonData(bytes: Uint8Array): Promise<void> {
+        if (closed || daemonToClientHalfClosed || bytes.byteLength === 0) return;
+        queueDaemonData(bytes);
+        await drainDaemonQueue();
+    }
+
     let detachConnectionData: (() => void) | void;
     detachConnectionData = input.connection.onData?.((bytes) => {
-        void sendDaemonData(bytes);
+        return enqueueDaemonData(bytes);
     });
 
     async function closeConnection(): Promise<void> {
         closed = true;
         clearAckTimers();
         clearLifecycleTimers();
+        pendingDaemonChunks.length = 0;
         detachConnectionData?.();
         await input.connection.close();
     }
@@ -496,6 +543,11 @@ export function createPeerTcpTunnelStreamSession(input: Readonly<{
             }
 
             if (frame.kind === 'data') {
+                if (frame.direction !== 'client_to_daemon') {
+                    await sendAbort('direction_not_allowed');
+                    return { ok: false, reasonCode: 'direction_not_allowed' };
+                }
+
                 const caps = validatePeerTcpTunnelDataFrameCaps({
                     frame,
                     maxEncodedFrameBytes: input.maxFrameBytes,
@@ -544,6 +596,9 @@ export function createPeerTcpTunnelStreamSession(input: Readonly<{
                 if (!ack.ok) {
                     await sendAbort(ack.reasonCode);
                 }
+                if (ack.ok && frame.direction === 'daemon_to_client') {
+                    await drainDaemonQueue();
+                }
                 return ack;
             }
 
@@ -552,6 +607,10 @@ export function createPeerTcpTunnelStreamSession(input: Readonly<{
                     accounting.markHalfClosed({ direction: frame.direction });
                     if (frame.direction === 'client_to_daemon') {
                         await input.connection.endWrite?.();
+                    } else {
+                        daemonToClientHalfClosed = true;
+                        pendingDaemonChunks.length = 0;
+                        await pauseDaemonReads();
                     }
                     return { ok: true };
                 }

@@ -70,6 +70,23 @@ function createDataEnvelope(tunnelId: string, payload: string, sequence = 0) {
     } as const;
 }
 
+function createMachineDataEnvelope(tunnelId: string, payload: string, sequence = 0) {
+    return {
+        v: 1,
+        scopeUserId: 'user_1',
+        sender: { kind: 'machine', machineId: 'machine_1' },
+        recipient: { kind: 'user' },
+        frame: {
+            v: 1,
+            kind: 'data',
+            tunnelId,
+            direction: 'daemon_to_client',
+            sequence,
+            payloadBase64: Buffer.from(payload).toString('base64'),
+        },
+    } as const;
+}
+
 describe('registerPeerTcpTunnelRelaySocketHandler', () => {
     it('fails duplicate tunnel handler registration on one socket', async () => {
         const mod = await loadRegisterRelayModule();
@@ -206,6 +223,89 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
         expect(io.roomEmit).not.toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
             frame: expect.objectContaining({ kind: 'data' }),
         }));
+    });
+
+    it('rejects user-sent relay data frames that spoof the daemon-to-client direction', async () => {
+        const mod = await loadRegisterRelayModule();
+        const socket = createSocket();
+        const io = createIo();
+        expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+        mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+            io,
+            serverRoutedEnabled: true,
+            allowedPorts: [3000],
+        });
+
+        socket.trigger('peer:tunnel:v1', createOpenEnvelope('tun_direction'));
+        socket.trigger('peer:tunnel:v1', {
+            ...createDataEnvelope('tun_direction', 'spoof'),
+            frame: {
+                ...createDataEnvelope('tun_direction', 'spoof').frame,
+                direction: 'daemon_to_client',
+            },
+        });
+
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'abort',
+                tunnelId: 'tun_direction',
+                reasonCode: 'direction_not_allowed',
+            }),
+        }));
+        expect(io.roomEmit).not.toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'data',
+                direction: 'daemon_to_client',
+            }),
+        }));
+
+        socket.trigger('disconnect');
+    });
+
+    it('rejects machine-sent relay data frames that spoof the client-to-daemon direction', async () => {
+        const mod = await loadRegisterRelayModule();
+        const userSocket = createSocket();
+        const machineSocket = createSocket({ clientType: 'machine-scoped', machineId: 'machine_1' });
+        const io = createIo();
+        expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+        mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', userSocket, {
+            io,
+            serverRoutedEnabled: true,
+            allowedPorts: [3000],
+        });
+        mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', machineSocket, {
+            io,
+            serverRoutedEnabled: true,
+            allowedPorts: [3000],
+        });
+
+        userSocket.trigger('peer:tunnel:v1', createOpenEnvelope('tun_machine_direction'));
+        machineSocket.trigger('peer:tunnel:v1', {
+            ...createMachineDataEnvelope('tun_machine_direction', 'spoof'),
+            frame: {
+                ...createMachineDataEnvelope('tun_machine_direction', 'spoof').frame,
+                direction: 'client_to_daemon',
+            },
+        });
+
+        expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'abort',
+                tunnelId: 'tun_machine_direction',
+                reasonCode: 'direction_not_allowed',
+            }),
+        }));
+        expect(io.roomEmit).not.toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+            frame: expect.objectContaining({
+                kind: 'data',
+                direction: 'client_to_daemon',
+            }),
+        }));
+
+        userSocket.trigger('disconnect');
+        machineSocket.trigger('disconnect');
     });
 
     it('rejects tunnel opens when the declared sender is not bound to the authenticated socket', async () => {
@@ -434,6 +534,47 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
                     kind: 'abort',
                     tunnelId: 'tun_idle',
                     reasonCode: 'relay_cap_exceeded',
+                }),
+            }));
+
+            socket.trigger('disconnect');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('expires idle relay tunnels without waiting for another frame to clean up state', async () => {
+        vi.useFakeTimers();
+        try {
+            const mod = await loadRegisterRelayModule();
+            const socket = createSocket();
+            const io = createIo();
+            expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+
+            vi.setSystemTime(0);
+            mod?.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+                io,
+                serverRoutedEnabled: true,
+                allowedPorts: [3000],
+                maxIdleMs: 30,
+            });
+
+            socket.trigger('peer:tunnel:v1', createOpenEnvelope('tun_idle_timer'));
+            await vi.advanceTimersByTimeAsync(31);
+            socket.trigger('peer:tunnel:v1', createDataEnvelope('tun_idle_timer', 'x'));
+
+            expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+                frame: expect.objectContaining({
+                    kind: 'abort',
+                    tunnelId: 'tun_idle_timer',
+                    reasonCode: 'relay_cap_exceeded',
+                }),
+            }));
+            expect(io.roomEmit).toHaveBeenCalledWith('peer:tunnel:v1', expect.objectContaining({
+                frame: expect.objectContaining({
+                    kind: 'abort',
+                    tunnelId: 'tun_idle_timer',
+                    reasonCode: 'tunnel_not_open',
                 }),
             }));
 

@@ -18,6 +18,7 @@ export const PeerMachineRpcDirectFallbackReasonCodeV1Schema = z.enum([
   'grant_not_yet_valid',
   'grant_revoked',
   'grant_scope_mismatch',
+  'grant_idle_expired',
   'grant_bad_signature',
   'grant_unknown_key',
   'endpoint_mismatch',

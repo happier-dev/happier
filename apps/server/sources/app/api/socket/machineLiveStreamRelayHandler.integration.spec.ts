@@ -494,6 +494,64 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(JSON.stringify(socketEmit.mock.calls)).not.toContain('payloadBase64');
   });
 
+  it('throttles repeated bandwidth capped receipts within the cap interval', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socketEmit = vi.fn();
+    const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    const ctx = {
+      io: { to },
+      serverRoutedLiveStreamEnabled: true,
+      relayCaps: {
+        ...relayCaps,
+        maxTotalBytes: 1_000,
+      },
+      relayAuthorizationTrustRoots,
+      relayWindowFrames: 1,
+      relayWindowBytes: 1_000,
+      nowMs: () => 1_000,
+    };
+
+    machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, ctx);
+
+    const handler = getSocketHandler(socket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    await handler(startMessage('stream_1', undefined, { maxTotalBytes: 1_000 }));
+    await handler({
+      v: 1,
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      message: { kind: 'frame', frame: frame({ sequence: 1, payloadKind: 'image_keyframe', payloadSizeBytes: 3 }) },
+    });
+    await handler({
+      v: 1,
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      message: { kind: 'frame', frame: frame({ sequence: 2, payloadKind: 'image_delta', payloadSizeBytes: 3 }) },
+    });
+    await handler({
+      v: 1,
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      message: { kind: 'frame', frame: frame({ sequence: 3, payloadKind: 'image_delta', payloadSizeBytes: 3 }) },
+    });
+    await handler({
+      v: 1,
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      message: { kind: 'frame', frame: frame({ sequence: 4, payloadKind: 'image_delta', payloadSizeBytes: 3 }) },
+    });
+
+    const cappedReceipts = socketEmit.mock.calls.filter(([, payload]) =>
+      JSON.stringify(payload).includes(PEER_MEDIATION_RECEIPTS.streamBandwidthCapped),
+    );
+    expect(cappedReceipts).toHaveLength(1);
+  });
+
   it('drains queued relay frames only after a target ack advertises credit', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emit = vi.fn();
@@ -837,5 +895,94 @@ describe('machineLiveStreamRelayHandler', () => {
       type: 'machine-live-stream',
       error: 'max_concurrent_streams_per_socket_exceeded',
     });
+  });
+
+  it('enforces concurrent stream caps when another socket tries to attach to stale stream state', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const to = vi.fn(() => ({ emit: vi.fn() }));
+    const firstEmit = vi.fn();
+    const secondEmit = vi.fn();
+    const firstSocket = createFakeSocket({ emit: firstEmit, id: 'source-socket-1' });
+    firstSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    const secondSocket = createFakeSocket({ emit: secondEmit, id: 'source-socket-2' });
+    secondSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    const ctx = {
+      io: { to },
+      serverRoutedLiveStreamEnabled: true,
+      relayCaps: {
+        ...relayCaps,
+        maxConcurrentStreamsPerAccount: 1,
+        maxConcurrentStreamsPerSocket: 1,
+        maxConcurrentStreamsPerMachine: 1,
+      },
+      relayAuthorizationTrustRoots,
+      nowMs: () => 1_000,
+    };
+
+    machineLiveStreamRelayHandler('user-1', firstSocket as unknown as LiveStreamRelaySocket, ctx);
+    machineLiveStreamRelayHandler('user-1', secondSocket as unknown as LiveStreamRelaySocket, ctx);
+
+    await getSocketHandler(firstSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)(startMessage('stream_1'));
+    await getSocketHandler(secondSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)(startMessage('stream_1'));
+
+    expect(secondEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+      type: 'machine-live-stream',
+      error: 'max_concurrent_streams_per_account_exceeded',
+    });
+  });
+
+  it('prunes expired stream state before running concurrency checks for a replacement start', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const to = vi.fn(() => ({ emit: vi.fn() }));
+    const firstEmit = vi.fn();
+    const secondEmit = vi.fn();
+    const firstSocket = createFakeSocket({ emit: firstEmit, id: 'source-socket-1' });
+    firstSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    const secondSocket = createFakeSocket({ emit: secondEmit, id: 'source-socket-2' });
+    secondSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    let nowMs = 1_000;
+    const ctx = {
+      io: { to },
+      serverRoutedLiveStreamEnabled: true,
+      relayCaps: {
+        ...relayCaps,
+        maxConcurrentStreamsPerAccount: 1,
+        maxConcurrentStreamsPerSocket: 1,
+        maxConcurrentStreamsPerMachine: 1,
+      },
+      relayAuthorizationTrustRoots,
+      nowMs: () => nowMs,
+    };
+
+    machineLiveStreamRelayHandler('user-1', firstSocket as unknown as LiveStreamRelaySocket, ctx);
+    machineLiveStreamRelayHandler('user-1', secondSocket as unknown as LiveStreamRelaySocket, ctx);
+
+    await getSocketHandler(firstSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)(
+      startMessage('stream_1', relayAuthorization('stream_1', liveStreamCaps(), { exp: 1_100 })),
+    );
+    nowMs = 1_101;
+    await getSocketHandler(secondSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)(
+      startMessage('stream_1', relayAuthorization('stream_1', liveStreamCaps(), { iat: 1_100, exp: 2_000 })),
+    );
+
+    expect(secondEmit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+      type: 'machine-live-stream',
+      error: 'max_concurrent_streams_per_account_exceeded',
+    });
+    expect(secondEmit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
+      error: expect.stringMatching(/concurrent/),
+    }));
   });
 });

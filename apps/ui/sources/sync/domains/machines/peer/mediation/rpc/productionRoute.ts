@@ -350,9 +350,13 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
         return availability;
     }
 
-    const grant = await requestGrant();
+    const grant = availability.grant
+        ? { ok: true as const, value: availability.grant }
+        : await requestGrant();
     if (!grant.ok) return fallback(grant.reasonCode);
-    const nonceProof = createProof(grant.value);
+    const nonceProof = availability.nonceProof
+        ? { ok: true as const, value: availability.nonceProof }
+        : createProof(grant.value);
     if (!nonceProof.ok) return fallback(nonceProof.reasonCode);
 
     return {

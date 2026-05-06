@@ -12,7 +12,7 @@ export type PeerMachineRpcCallLimitScope = Readonly<{
 
 export type PeerMachineRpcCallLimitAcquireResult =
     | Readonly<{ ok: true; release: () => void }>
-    | Readonly<{ ok: false; reasonCode: 'direct_call_limit_exceeded' | 'grant_scope_mismatch' }>;
+    | Readonly<{ ok: false; reasonCode: 'direct_call_limit_exceeded' | 'grant_idle_expired' }>;
 
 export type PeerMachineRpcCallLimiter = Readonly<{
     tryAcquire(input: Readonly<{
@@ -40,6 +40,10 @@ function normalizeCap(value: number | undefined): number {
     return Math.max(1, Math.floor(value));
 }
 
+function normalizeIdleMs(value: number): number {
+    return Number.isFinite(value) && value >= 1 ? Math.floor(value) : 1;
+}
+
 export function createPeerMachineRpcCallLimiter(
     options: CreatePeerMachineRpcCallLimiterOptions,
 ): PeerMachineRpcCallLimiter {
@@ -50,13 +54,20 @@ export function createPeerMachineRpcCallLimiter(
         tryAcquire(input) {
             const key = keyOf(input.key);
             const nowMs = options.nowMs();
+            const maxIdleMs = normalizeIdleMs(input.scope.maxIdleMs);
+            const staleCutoffMs = nowMs - (maxIdleMs * 2);
+            for (const [candidateKey, lastActivity] of lastActivityByKey) {
+                if (lastActivity < staleCutoffMs) {
+                    lastActivityByKey.delete(candidateKey);
+                }
+            }
             const scopeMaxCalls = Math.max(1, Math.floor(input.scope.maxCalls));
             const cap = Math.min(scopeMaxCalls, normalizeCap(options.localPerPeerMaxConcurrentCalls));
             const active = activeByKey.get(key) ?? 0;
             const lastActivity = lastActivityByKey.get(key);
 
-            if (lastActivity !== undefined && nowMs - lastActivity > input.scope.maxIdleMs) {
-                return { ok: false, reasonCode: 'grant_scope_mismatch' };
+            if (lastActivity !== undefined && nowMs - lastActivity > maxIdleMs) {
+                return { ok: false, reasonCode: 'grant_idle_expired' };
             }
             if (active >= cap) {
                 return { ok: false, reasonCode: 'direct_call_limit_exceeded' };

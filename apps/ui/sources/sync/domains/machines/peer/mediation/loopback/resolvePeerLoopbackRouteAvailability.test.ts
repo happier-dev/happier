@@ -83,6 +83,16 @@ describe('resolvePeerLoopbackRouteAvailability', () => {
             routeKind: 'loopback_direct',
             flowKind: 'bounded_transfer',
             endpointFingerprint: 'loopback_endpoint_1',
+            grant,
+            nonceProof: {
+                v: 1,
+                grantId: 'grant_1',
+                routeKind: 'loopback_direct',
+                flowKind: 'bounded_transfer',
+                endpointFingerprint: 'loopback_endpoint_1',
+                nonceBase64Url: 'nonce_1',
+                signatureBase64Url: 'AbCdEf012_-',
+            },
         });
         expect(cache.read({
             serverId: 'server-1',

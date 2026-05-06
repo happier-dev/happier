@@ -144,4 +144,28 @@ describe('openPeerTcpTunnel', () => {
 
         expect(connectTcp).not.toHaveBeenCalled();
     });
+
+    it('normalizes bracketed IPv6 loopback before opening the TCP connection', async () => {
+        const mod = await loadOpenModule();
+        const connectTcp = vi.fn(async () => ({ close: vi.fn() }));
+        expect(mod?.openPeerTcpTunnel).toBeTypeOf('function');
+
+        await expect(mod?.openPeerTcpTunnel({
+            open: createOpen({ destination: { host: '[::1]', port: 3000 } }),
+            nowMs: 2_000,
+            expected: {
+                accountId: 'account_1',
+                machineId: 'machine_1',
+                endpointFingerprint: 'endpoint_1',
+                accountPublicKey: toBase64Url(accountKeyPair.publicKey),
+            },
+            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            connectTcp,
+        })).resolves.toMatchObject({
+            ok: true,
+            receipt: 'peer.tunnel.opened',
+        });
+
+        expect(connectTcp).toHaveBeenCalledWith({ host: '::1', port: 3000 });
+    });
 });

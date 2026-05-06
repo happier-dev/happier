@@ -102,6 +102,44 @@ describe('peer TCP tunnel frame accounting', () => {
         });
     });
 
+    it('rejects client-sent data frames that claim the daemon-to-client direction', async () => {
+        const mod = await loadFramesModule();
+        const createSession = mod?.createPeerTcpTunnelStreamSession as unknown as CreateStreamSessionForTest | undefined;
+        const writes: string[] = [];
+        const sent: unknown[] = [];
+        const session = createSession?.({
+            tunnelId: 'tun_1',
+            initialWindowBytes: 8,
+            maxFrameBytes: 1024,
+            connection: {
+                write: async (bytes: Uint8Array) => {
+                    writes.push(Buffer.from(bytes).toString('utf8'));
+                },
+                close: async () => undefined,
+            },
+            sendFrame: async (frame: unknown) => {
+                sent.push(frame);
+            },
+        });
+
+        await expect(session?.acceptFrame({
+            v: 1,
+            kind: 'data',
+            tunnelId: 'tun_1',
+            direction: 'daemon_to_client',
+            sequence: 0,
+            payloadBase64: Buffer.from('spoof').toString('base64'),
+        })).resolves.toEqual({ ok: false, reasonCode: 'direction_not_allowed' });
+
+        expect(writes).toEqual([]);
+        expect(sent).toContainEqual({
+            v: 1,
+            kind: 'abort',
+            tunnelId: 'tun_1',
+            reasonCode: 'direction_not_allowed',
+        });
+    });
+
     it('waits for the configured ack cadence before replenishing receive credit', async () => {
         const mod = await loadFramesModule();
         const createSession = mod?.createPeerTcpTunnelStreamSession as unknown as CreateStreamSessionForTest | undefined;
@@ -233,11 +271,13 @@ describe('peer TCP tunnel frame accounting', () => {
         });
     });
 
-    it('does not send daemon data beyond peer receive credit until an ack extends the window', async () => {
+    it('pauses daemon TCP reads instead of aborting when peer receive credit is exhausted', async () => {
         const mod = await loadFramesModule();
         const createSession = mod?.createPeerTcpTunnelStreamSession as unknown as CreateStreamSessionForTest | undefined;
         let dataHandler: ((bytes: Uint8Array) => Promise<void> | void) | undefined;
         const sent: unknown[] = [];
+        const pauseRead = vi.fn();
+        const resumeRead = vi.fn();
         const session = createSession?.({
             tunnelId: 'tun_1',
             initialWindowBytes: 4,
@@ -246,6 +286,8 @@ describe('peer TCP tunnel frame accounting', () => {
                 onData: (handler: (bytes: Uint8Array) => Promise<void> | void) => {
                     dataHandler = handler;
                 },
+                pauseRead,
+                resumeRead,
                 close: async () => undefined,
             },
             sendFrame: async (frame: unknown) => {
@@ -256,45 +298,34 @@ describe('peer TCP tunnel frame accounting', () => {
         await dataHandler?.(Buffer.from('ping'));
         await dataHandler?.(Buffer.from('!'));
 
-        expect(sent).toContainEqual(expect.objectContaining({
+        expect(pauseRead).toHaveBeenCalledOnce();
+        expect(sent).not.toContainEqual(expect.objectContaining({
             kind: 'abort',
             reasonCode: 'send_window_exceeded',
         }));
+        expect(sent).not.toContainEqual(expect.objectContaining({
+            kind: 'data',
+            payloadBase64: Buffer.from('!').toString('base64'),
+        }));
 
         sent.length = 0;
-        const sessionAfterAck = createSession?.({
-            tunnelId: 'tun_2',
-            initialWindowBytes: 4,
-            maxFrameBytes: 1024,
-            connection: {
-                onData: (handler: (bytes: Uint8Array) => Promise<void> | void) => {
-                    dataHandler = handler;
-                },
-                close: async () => undefined,
-            },
-            sendFrame: async (frame: unknown) => {
-                sent.push(frame);
-            },
-        });
-
-        await dataHandler?.(Buffer.from('ping'));
-        await sessionAfterAck?.acceptFrame({
+        await session?.acceptFrame({
             v: 1,
             kind: 'ack',
-            tunnelId: 'tun_2',
+            tunnelId: 'tun_1',
             direction: 'daemon_to_client',
             nextSequence: 4,
             windowBytes: 4,
         });
-        await dataHandler?.(Buffer.from('!'));
 
         expect(sent).toContainEqual(expect.objectContaining({
             kind: 'data',
-            tunnelId: 'tun_2',
+            tunnelId: 'tun_1',
             direction: 'daemon_to_client',
             sequence: 4,
             payloadBase64: Buffer.from('!').toString('base64'),
         }));
+        expect(resumeRead).toHaveBeenCalledOnce();
         expect(sent).not.toContainEqual(expect.objectContaining({
             kind: 'abort',
             reasonCode: 'send_window_exceeded',
@@ -533,6 +564,46 @@ describe('peer TCP tunnel frame accounting', () => {
             tunnelId: 'tun_1',
             reasonCode: 'direction_half_closed',
         });
+    });
+
+    it('stops daemon-to-client TCP reads after a daemon-to-client half-close', async () => {
+        const mod = await loadFramesModule();
+        let dataHandler: ((bytes: Uint8Array) => Promise<void> | void) | undefined;
+        const pauseRead = vi.fn();
+        const sent: unknown[] = [];
+        const session = mod?.createPeerTcpTunnelStreamSession({
+            tunnelId: 'tun_1',
+            initialWindowBytes: 8,
+            maxFrameBytes: 1024,
+            connection: {
+                onData: (handler: (bytes: Uint8Array) => Promise<void> | void) => {
+                    dataHandler = handler;
+                },
+                pauseRead,
+                close: async () => undefined,
+            },
+            sendFrame: async (frame: unknown) => {
+                sent.push(frame);
+            },
+        });
+
+        await expect(session?.acceptFrame({
+            v: 1,
+            kind: 'close',
+            tunnelId: 'tun_1',
+            direction: 'daemon_to_client',
+            halfClose: true,
+            reasonCode: 'daemon_half_closed',
+        })).resolves.toEqual({ ok: true });
+
+        await dataHandler?.(Buffer.from('late'));
+
+        expect(pauseRead).toHaveBeenCalledOnce();
+        expect(sent).not.toContainEqual(expect.objectContaining({
+            kind: 'data',
+            direction: 'daemon_to_client',
+            payloadBase64: Buffer.from('late').toString('base64'),
+        }));
     });
 
     it('decodes masked client WebSocket text frames and encodes unmasked server text frames', async () => {

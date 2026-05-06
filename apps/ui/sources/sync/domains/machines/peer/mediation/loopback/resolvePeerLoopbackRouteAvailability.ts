@@ -18,6 +18,8 @@ export type PeerLoopbackRouteAvailabilityResult =
         routeKind: 'loopback_direct';
         flowKind: PeerFlowKindV1;
         endpointFingerprint: string;
+        grant?: SignedDirectRouteGrantV1;
+        nonceProof?: PeerRouteNonceProofV1;
     }>
     | Readonly<{
         kind: 'fallback';
@@ -147,5 +149,7 @@ export async function resolvePeerLoopbackRouteAvailability(
         routeKind: probe.routeKind,
         flowKind: probe.flowKind,
         endpointFingerprint: probe.endpointFingerprint,
+        grant: grant.grant,
+        nonceProof: nonceProof.nonceProof,
     };
 }

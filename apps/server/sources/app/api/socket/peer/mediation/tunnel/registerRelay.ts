@@ -29,6 +29,10 @@ const authorizedTunnelKeys = new Set<TunnelKey>();
 const bytesByTunnelKey = new Map<TunnelKey, number>();
 const tunnelStartedAtByKey = new Map<TunnelKey, number>();
 const tunnelLastActivityAtByKey = new Map<TunnelKey, number>();
+const tunnelTimersByKey = new Map<TunnelKey, Readonly<{
+    idleTimer?: ReturnType<typeof setTimeout>;
+    durationTimer?: ReturnType<typeof setTimeout>;
+}>>();
 
 function getFrameTunnelId(frame: PeerTcpTunnelFrameV1): string {
     return frame.kind === 'open' ? frame.open.tunnelId : frame.tunnelId;
@@ -87,6 +91,17 @@ function validateOpenFramePolicy(input: Readonly<{
     return null;
 }
 
+function validateRelayFrameDirection(envelope: PeerTcpTunnelRelayEnvelopeV1): string | null {
+    if (envelope.frame.kind !== 'data') return null;
+    if (envelope.sender.kind === 'user' && envelope.frame.direction !== 'client_to_daemon') {
+        return 'direction_not_allowed';
+    }
+    if (envelope.sender.kind === 'machine' && envelope.frame.direction !== 'daemon_to_client') {
+        return 'direction_not_allowed';
+    }
+    return null;
+}
+
 function emitSocketError(socket: TunnelRelaySocket, error: string): void {
     socket.emit('error', {
         type: 'peer-tunnel',
@@ -140,6 +155,17 @@ function frameDecodedBytes(frame: PeerTcpTunnelFrameV1, maxFrameBytes: number): 
     return capped.ok ? capped.decodedBytes : maxFrameBytes + 1;
 }
 
+function clearTunnelState(tunnelKey: TunnelKey): void {
+    const timers = tunnelTimersByKey.get(tunnelKey);
+    if (timers?.idleTimer) clearTimeout(timers.idleTimer);
+    if (timers?.durationTimer) clearTimeout(timers.durationTimer);
+    tunnelTimersByKey.delete(tunnelKey);
+    authorizedTunnelKeys.delete(tunnelKey);
+    bytesByTunnelKey.delete(tunnelKey);
+    tunnelStartedAtByKey.delete(tunnelKey);
+    tunnelLastActivityAtByKey.delete(tunnelKey);
+}
+
 export function registerPeerTcpTunnelRelaySocketHandler(
     userId: string,
     socket: TunnelRelaySocket,
@@ -154,6 +180,31 @@ export function registerPeerTcpTunnelRelaySocketHandler(
     const caps = resolvePeerTcpTunnelRelayCaps(ctx);
     const socketTunnelKeys = new Set<TunnelKey>();
     activeTunnelKeysBySocket.set(socketObject, socketTunnelKeys);
+
+    function scheduleTunnelTimers(
+        tunnelKey: TunnelKey,
+        envelope: PeerTcpTunnelRelayEnvelopeV1,
+    ): void {
+        const existing = tunnelTimersByKey.get(tunnelKey);
+        if (existing?.idleTimer) clearTimeout(existing.idleTimer);
+        if (existing?.durationTimer) clearTimeout(existing.durationTimer);
+        const now = Date.now();
+        const startedAt = tunnelStartedAtByKey.get(tunnelKey) ?? now;
+        const durationRemainingMs = Math.max(1, caps.maxDurationMs - Math.max(0, now - startedAt));
+        const idleTimer = setTimeout(() => {
+            emitAbort({ io: ctx.io, userId, envelope, reasonCode: 'relay_cap_exceeded' });
+            socketTunnelKeys.delete(tunnelKey);
+            clearTunnelState(tunnelKey);
+        }, Math.max(1, caps.maxIdleMs));
+        const durationTimer = setTimeout(() => {
+            emitAbort({ io: ctx.io, userId, envelope, reasonCode: 'relay_cap_exceeded' });
+            socketTunnelKeys.delete(tunnelKey);
+            clearTunnelState(tunnelKey);
+        }, durationRemainingMs);
+        idleTimer.unref?.();
+        durationTimer.unref?.();
+        tunnelTimersByKey.set(tunnelKey, { idleTimer, durationTimer });
+    }
 
     socket.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (raw: unknown) => {
         const parsed = PeerTcpTunnelRelayEnvelopeV1Schema.safeParse(raw);
@@ -191,6 +242,13 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         if (policyDenyReason) {
             emitAbort({ io: ctx.io, userId, envelope, reasonCode: policyDenyReason });
             emitSocketError(socket, 'Server-routed peer tunnel destination policy denied the tunnel');
+            return;
+        }
+
+        const directionDenyReason = validateRelayFrameDirection(envelope);
+        if (directionDenyReason) {
+            emitAbort({ io: ctx.io, userId, envelope, reasonCode: directionDenyReason });
+            emitSocketError(socket, 'Server-routed peer tunnel frame direction does not match sender binding');
             return;
         }
 
@@ -241,23 +299,18 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         }
         bytesByTunnelKey.set(tunnelKey, nextBytes);
         tunnelLastActivityAtByKey.set(tunnelKey, now);
+        scheduleTunnelTimers(tunnelKey, envelope);
         ctx.io.to(participantRoom(userId, envelope.recipient)).emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, envelope);
 
         if (envelope.frame.kind === 'close' || envelope.frame.kind === 'abort') {
             socketTunnelKeys.delete(tunnelKey);
-            authorizedTunnelKeys.delete(tunnelKey);
-            bytesByTunnelKey.delete(tunnelKey);
-            tunnelStartedAtByKey.delete(tunnelKey);
-            tunnelLastActivityAtByKey.delete(tunnelKey);
+            clearTunnelState(tunnelKey);
         }
     });
 
     socket.on('disconnect', () => {
         for (const tunnelKey of socketTunnelKeys) {
-            authorizedTunnelKeys.delete(tunnelKey);
-            bytesByTunnelKey.delete(tunnelKey);
-            tunnelStartedAtByKey.delete(tunnelKey);
-            tunnelLastActivityAtByKey.delete(tunnelKey);
+            clearTunnelState(tunnelKey);
         }
         socketTunnelKeys.clear();
     });

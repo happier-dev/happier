@@ -19,6 +19,7 @@ import {
 } from '../verifyDirectRouteGrantV1';
 import type { PeerMachineRpcCallLimiter } from './callLimits';
 import type { PeerMachineRpcVerificationQuarantine } from './quarantine';
+import type { PeerMachineRpcReplayKeyCache } from './replayKeys';
 
 export type PeerMachineRpcDirectExpectedBinding = Readonly<{
     accountId: string;
@@ -52,6 +53,7 @@ export type ValidatePeerMachineRpcDirectRequestOptions = Readonly<{
     revokedGrantFamilyIds?: ReadonlySet<string>;
     callLimiter: PeerMachineRpcCallLimiter;
     quarantine: PeerMachineRpcVerificationQuarantine;
+    replayKeyCache: PeerMachineRpcReplayKeyCache;
 }>;
 
 function fallback(input: Readonly<{
@@ -88,18 +90,19 @@ function mapGrantFailureReason(reasonCode: string): PeerMachineRpcDirectFallback
 
 function quarantineKey(input: Readonly<{
     expected: PeerMachineRpcDirectExpectedBinding;
-    endpointFingerprint?: string;
 }>) {
     return {
         accountId: input.expected.accountId,
         machineId: input.expected.machineId,
-        endpointFingerprint: input.endpointFingerprint ?? input.expected.endpointFingerprint,
+        endpointFingerprint: input.expected.endpointFingerprint,
     };
 }
 
 function validateCommandReceipt(input: Readonly<{
     request: PeerMachineRpcDirectRequestV1;
     grantId: string;
+    grantExpiresAtMs: number;
+    replayKeyCache: PeerMachineRpcReplayKeyCache;
 }>): PeerMachineRpcDirectFallbackReasonCodeV1 | null {
     const receipt = input.request.commandReceipt;
     if (!receipt) return 'command_receipt_required';
@@ -112,6 +115,13 @@ function validateCommandReceipt(input: Readonly<{
         replayKey: receipt.replayKey,
     });
     if (receipt.issuer !== 'ui' || receipt.requestHash !== expectedRequestHash) {
+        return 'command_receipt_rejected';
+    }
+    if (!input.replayKeyCache.claim({
+        grantId: input.grantId,
+        replayKey: receipt.replayKey,
+        expiresAtMs: input.grantExpiresAtMs,
+    })) {
         return 'command_receipt_rejected';
     }
     return null;
@@ -145,7 +155,6 @@ export function validatePeerMachineRpcDirectRequest(
 
     const qKey = quarantineKey({
         expected: options.expected,
-        endpointFingerprint: request.endpointFingerprint,
     });
     if (options.quarantine.isQuarantined(qKey)) {
         return {
@@ -276,6 +285,8 @@ export function validatePeerMachineRpcDirectRequest(
         const receiptFailure = validateCommandReceipt({
             request,
             grantId: grantVerification.payload.grantId,
+            grantExpiresAtMs: grantVerification.payload.exp,
+            replayKeyCache: options.replayKeyCache,
         });
         if (receiptFailure) {
             return {

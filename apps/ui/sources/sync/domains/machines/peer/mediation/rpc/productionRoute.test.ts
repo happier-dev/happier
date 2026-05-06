@@ -206,6 +206,9 @@ describe('production peer mediation machine RPC route adapter', () => {
                 }),
             }),
         );
+        expect(fetchSpy.mock.calls.filter(([url]) =>
+            new URL(String(url)).pathname === '/v1/machines/peer/mediation/route-grants',
+        )).toHaveLength(1);
     });
 
     it('fails closed to fallback when grant transport is unavailable', async () => {

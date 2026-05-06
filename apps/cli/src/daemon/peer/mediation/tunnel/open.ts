@@ -23,6 +23,8 @@ import {
 export type PeerTcpTunnelTcpConnection = Readonly<{
     write?: (bytes: Uint8Array) => Promise<void> | void;
     endWrite?: () => Promise<void> | void;
+    pauseRead?: () => Promise<void> | void;
+    resumeRead?: () => Promise<void> | void;
     onData?: (handler: (bytes: Uint8Array) => Promise<void> | void) => (() => void) | void;
     close: () => Promise<void> | void;
 }>;
@@ -119,6 +121,12 @@ async function defaultConnectTcp(target: Readonly<{ host: string; port: number }
         endWrite: () => new Promise<void>((resolve) => {
             socket.end(() => resolve());
         }),
+        pauseRead: () => {
+            socket.pause();
+        },
+        resumeRead: () => {
+            socket.resume();
+        },
         onData: (handler) => {
             const dataHandler = (bytes: Buffer) => {
                 void handler(bytes);
@@ -197,7 +205,7 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
     let connection: PeerTcpTunnelTcpConnection;
     try {
         connection = await (input.connectTcp ?? defaultConnectTcp)({
-            host: open.destination.host,
+            host: normalizeDestinationHost(open.destination.host),
             port: open.destination.port,
         });
     } catch {

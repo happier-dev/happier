@@ -301,6 +301,9 @@ describe('production peer mediation live-stream route adapter', () => {
             'http://127.0.0.1:46021/peer-mediation/v1/live-stream/start',
             expect.objectContaining({ method: 'POST' }),
         );
+        expect(fetchSpy.mock.calls.filter(([url]) =>
+            new URL(String(url)).pathname === '/v1/machines/peer/mediation/route-grants',
+        )).toHaveLength(1);
     });
 
     it('requests relay authorization before building the server-relay start request', async () => {

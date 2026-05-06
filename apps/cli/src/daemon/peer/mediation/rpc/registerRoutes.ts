@@ -21,6 +21,10 @@ import {
     createPeerMachineRpcVerificationQuarantine,
     type PeerMachineRpcVerificationQuarantine,
 } from './quarantine';
+import {
+    createPeerMachineRpcReplayKeyCache,
+    type PeerMachineRpcReplayKeyCache,
+} from './replayKeys';
 
 export type PeerMachineRpcDirectHandlerManager = Readonly<{
     invokeLocal(method: string, params: unknown): Promise<unknown>;
@@ -30,6 +34,7 @@ export type PeerMachineRpcDirectRuntimeOptions = Readonly<{
     rpcHandlerManager: PeerMachineRpcDirectHandlerManager;
     callLimiter?: PeerMachineRpcCallLimiter;
     quarantine?: PeerMachineRpcVerificationQuarantine;
+    replayKeyCache?: PeerMachineRpcReplayKeyCache;
     localPerPeerMaxConcurrentCalls?: number;
     revokeGrant?: (input: Readonly<{ grantId: string; grantFamilyId?: string }>) => void;
 }>;
@@ -77,6 +82,9 @@ export function registerPeerMediationMachineRpcDirectRoutes(
     const quarantine = options.quarantine ?? createPeerMachineRpcVerificationQuarantine({
         nowMs: options.nowMs,
     });
+    const replayKeyCache = options.replayKeyCache ?? createPeerMachineRpcReplayKeyCache({
+        nowMs: options.nowMs,
+    });
 
     app.post(PEER_MACHINE_RPC_DIRECT_PATH_V1, async (request): Promise<PeerMachineRpcDirectResponseV1> => {
         const validation = validatePeerMachineRpcDirectRequest({
@@ -88,6 +96,7 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             revokedGrantFamilyIds: options.revokedGrantFamilyIds,
             callLimiter,
             quarantine,
+            replayKeyCache,
         });
         if (!validation.ok) {
             if (validation.response.reasonCode === 'quarantined' && validation.grant) {

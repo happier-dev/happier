@@ -188,7 +188,7 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
     const expected = resolveExpectedBindingForFlow(options, 'tcp_tunnel');
     registerPeerTcpTunnelLoopbackRoutes(app, {
       ...options.tunnel,
-      nowMs: options.nowMs(),
+      nowMs: options.nowMs,
       expected: {
         accountId: expected.accountId,
         machineId: expected.machineId,

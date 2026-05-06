@@ -32,6 +32,7 @@ type MachineLiveStreamRelayState = {
     bytesDropped: number;
     framesRelayed: number;
     framesDropped: number;
+    lastBandwidthCappedReceiptAtMs: number | null;
     recentFrames: Array<Readonly<{ atMs: number; bytes: number }>>;
     queuedFrames: MachineLiveStreamFrameV1[];
     availableWindowFrames: number;
@@ -193,6 +194,7 @@ function createState(input: Readonly<{
         bytesDropped: 0,
         framesRelayed: 0,
         framesDropped: 0,
+        lastBandwidthCappedReceiptAtMs: null,
         recentFrames: [],
         queuedFrames: [],
         availableWindowFrames: 1,
@@ -210,7 +212,7 @@ function isRelayStateExpired(state: MachineLiveStreamRelayState, nowMs: number):
 }
 
 function pruneRecentFrames(state: MachineLiveStreamRelayState, nowMs: number): void {
-    const minMs = nowMs - 999;
+    const minMs = nowMs - 1_000;
     while (state.recentFrames.length > 0 && state.recentFrames[0]!.atMs < minMs) {
         state.recentFrames.shift();
     }
@@ -416,17 +418,21 @@ function applyRelayWindowPressure(input: Readonly<{
     userId: string;
     state: MachineLiveStreamRelayState;
     envelope: MachineLiveStreamRelayEnvelopeV1;
+    nowMs: number;
 }>): void {
+    const capIntervalExceeded = input.state.lastBandwidthCappedReceiptAtMs === null
+        || input.nowMs - input.state.lastBandwidthCappedReceiptAtMs >= 1_000;
     const pressured = applyMachineLiveStreamRelayBackpressure({
         streamId: input.state.streamId,
         routeKind: 'server_relay',
         frames: input.state.queuedFrames,
         maxWindowFrames: input.state.maxWindowFrames,
         maxWindowBytes: input.state.maxWindowBytes,
-        capIntervalExceeded: true,
+        capIntervalExceeded,
     });
     input.state.queuedFrames = [...pressured.frames];
     if (pressured.receipt) {
+        input.state.lastBandwidthCappedReceiptAtMs = input.nowMs;
         input.state.framesDropped += pressured.receipt.framesDropped ?? 0;
         input.state.bytesDropped += pressured.receipt.bytesDropped ?? 0;
         emitReceipt({
@@ -448,6 +454,7 @@ function enqueueRelayFrame(input: Readonly<{
     state: MachineLiveStreamRelayState;
     envelope: MachineLiveStreamRelayEnvelopeV1;
     frame: MachineLiveStreamFrameV1;
+    nowMs: number;
 }>): void {
     if (input.state.awaitingKeyframe && input.frame.payloadKind === 'image_delta') {
         input.state.framesDropped += 1;
@@ -614,7 +621,7 @@ export function machineLiveStreamRelayHandler(
             if (existingState && isRelayStateExpired(existingState, nowMs)) {
                 removeStream(streamKey);
             }
-            if (!socketStreamKeys.has(streamKey) && !streamStateByKey.has(streamKey)) {
+            if (!socketStreamKeys.has(streamKey)) {
                 const concurrencyFailure = canStartStream({
                     userId,
                     sourceMachineId: envelope.sourceMachineId,
@@ -693,6 +700,7 @@ export function machineLiveStreamRelayHandler(
                 state,
                 envelope,
                 frame: envelope.message.frame,
+                nowMs,
             });
             drainRelayQueue({
                 io: ctx.io,

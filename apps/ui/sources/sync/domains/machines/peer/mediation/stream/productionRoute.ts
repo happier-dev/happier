@@ -149,9 +149,13 @@ async function resolveDirectAuthorization(input: Readonly<{
     });
     if (availability.kind === 'fallback') return { ok: false, reasonCode: availability.reasonCode };
 
-    const grant = await requestGrant();
+    const grant = availability.grant
+        ? { ok: true as const, value: availability.grant }
+        : await requestGrant();
     if (!grant.ok) return { ok: false, reasonCode: grant.reasonCode };
-    const nonceProof = createProof(grant.value);
+    const nonceProof = availability.nonceProof
+        ? { ok: true as const, value: availability.nonceProof }
+        : createProof(grant.value);
     if (!nonceProof.ok) return { ok: false, reasonCode: nonceProof.reasonCode };
     return {
         ok: true,
