@@ -402,7 +402,7 @@ test('validateRpcActionCoverage rejects exceptions for required generic ActionSp
   const result = validateRpcActionCoverage({
     rpcMethods: { SESSIONS_SUBAGENTS_LIST: 'sessions.subagents.list' },
     sessionRpcMethods: {},
-    genericActionSpecRpcMethods: [],
+    genericActionSpecRpcMethods: ['sessions.subagents.list'],
     actionSpecRpcExceptions: [
       {
         method: 'sessions.subagents.list',
@@ -427,7 +427,7 @@ test('validateRpcActionCoverage rejects exceptions for required generic ActionSp
   assert.equal(result.ok, false);
   assert.deepEqual(
     result.errors.map((error) => error.code),
-    ['action-rpc-exception-generically-servable'],
+    ['action-rpc-exception-generically-servable', 'duplicate-action-rpc-method-coverage'],
   );
 });
 

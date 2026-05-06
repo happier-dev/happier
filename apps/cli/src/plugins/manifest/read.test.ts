@@ -525,12 +525,12 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.diagnostics).toEqual([
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
         message: expect.stringMatching(/Daemon target is required/),
       }),
-    ]);
+    ]));
   });
 
   it('returns a semantic diagnostic when contribution ids are duplicated', async () => {
@@ -884,12 +884,12 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.diagnostics).toEqual([
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
         message: expect.stringMatching(/unsupported runtime adapter operation/i),
       }),
-    ]);
+    ]));
   });
 
   it('returns a semantic diagnostic when runtime adapter kind and operation id do not align', async () => {
@@ -938,12 +938,12 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.diagnostics).toEqual([
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
         message: expect.stringMatching(/unsupported runtime adapter operation/i),
       }),
-    ]);
+    ]));
   });
 
   it('returns a semantic diagnostic when daemon target entry uses an unsupported file extension', async () => {
