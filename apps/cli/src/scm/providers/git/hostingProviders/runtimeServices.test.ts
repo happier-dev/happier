@@ -240,4 +240,40 @@ describe('createScmHostingProviderRuntimeServices', () => {
             timeoutMs: 1000,
         });
     });
+
+    it('resolves dep.az as a system-only provider CLI dependency', async () => {
+        const getAzDepStatus = vi.fn(async (_opts?: Readonly<{ includeLatestVersion?: boolean; onlyIfInstalled?: boolean }>) => ({
+            capabilityId: 'dep.az' as const,
+            installed: true,
+            resolvedSource: 'system' as const,
+            binPath: '/usr/local/bin/az',
+            installDir: null,
+            managedBinPath: null,
+            installedVersion: '2.72.0',
+            sourceKind: 'manual_only' as const,
+            authenticated: true,
+            authStatus: 'authenticated' as const,
+            remediationReason: null,
+            setupUrl: 'https://learn.microsoft.com/cli/azure/install-azure-cli',
+            loginCommand: ['az', 'login'] as const,
+            accountName: 'dev@example.com',
+            tenantId: 'tenant-1',
+            lastInstallLogPath: null,
+            lastBackgroundUpdateCheckAtMs: null,
+        }));
+        const services = createScmHostingProviderRuntimeServices({
+            readCredentials: async () => legacyCredentials,
+            createApi: async () => createApi({}),
+            getGhDepStatus: vi.fn(),
+            getAzDepStatus,
+            runCommand: vi.fn(),
+        });
+
+        await expect(services.resolveInstallableCommand?.({ capabilityId: 'dep.az' })).resolves.toEqual({
+            kind: 'available',
+            source: 'system',
+            binPath: '/usr/local/bin/az',
+        });
+        expect(getAzDepStatus).toHaveBeenCalledWith({ onlyIfInstalled: true });
+    });
 });
