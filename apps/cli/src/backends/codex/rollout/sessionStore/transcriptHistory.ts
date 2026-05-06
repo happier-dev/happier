@@ -9,13 +9,13 @@ import {
     decodeCodexDirectForwardCursor,
     encodeCodexDirectForwardCursor,
     type CodexDirectForwardCursor,
-} from '../../session/external/codexDirectForwardCursor';
+} from '../../externalSessions/codexDirectForwardCursor';
 import {
     mapCodexDirectSessionAppServerPreviewToMessage,
     resolveCodexDirectSessionAppServerMetadata,
 } from '../resolveCodexDirectSessionAppServerMetadata';
 import { readCodexSessionTitleFromRollout } from '../readCodexSessionTitleFromRollout';
-import { homeEntries as resolveHomeEntries } from '../../session/external/homeEntries';
+import { homeEntries as resolveHomeEntries } from '../../externalSessions/homeEntries';
 import { mapCodexRolloutLineToDirectMessages } from '../mapCodexRolloutLineToDirectMessages';
 import { createCodexRolloutSemanticTracker } from '../createCodexRolloutSemanticTracker';
 import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from '../discovery/collectCodexSessionRolloutFiles';

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveConfiguredOhMyPiAgentDir } from '../session/external/resolveOhMyPiAgentDir';
+import { resolveConfiguredOhMyPiAgentDir } from '../externalSessions/resolveOhMyPiAgentDir';
 import { resolveOhMyPiTerminalTranscriptBinding } from './resolveOhMyPiTerminalTranscriptBinding';
 import { waitForOhMyPiTerminalTranscriptBinding } from './waitForOhMyPiTerminalTranscriptBinding';
 

@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { canonicalizeDirectSessionsPath } from '@/session/external/sourceValidation';
 import { getTerminalId } from '@/agent/terminalRuntime/providers/getTerminalId';
 
-import { resolveConfiguredOhMyPiAgentDir } from '../session/external/resolveOhMyPiAgentDir';
+import { resolveConfiguredOhMyPiAgentDir } from '../externalSessions/resolveOhMyPiAgentDir';
 
 export type ResolveOhMyPiTerminalRuntimeBreadcrumbParams = Readonly<{
     cwd: string;

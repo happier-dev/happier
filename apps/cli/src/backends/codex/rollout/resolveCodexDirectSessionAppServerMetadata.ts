@@ -2,7 +2,7 @@ import type { DirectSessionCandidateV1, DirectSessionsSource, DirectTranscriptRa
 
 import { findCodexDirectSessionCandidateViaAppServer } from '../appServer/session/findCodexDirectSessionCandidateViaAppServer';
 
-import { homes as resolveHomes } from '../session/external/homes';
+import { homes as resolveHomes } from '../externalSessions/homes';
 
 type CodexDirectSessionAppServerMetadata = Readonly<{
   updatedAtMs: number;
